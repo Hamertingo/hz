@@ -5,6 +5,31 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.17.2
+
+### Added
+
+- **Codex's model list comes from Codex.** A model OpenAI ships is
+  pickable the day it lands rather than the day Dray next releases. The
+  first two rows are the top level and the Shift+Tab cycle, so a new
+  flagship arrives there on its own; the rest fold into More models. The
+  built-in table stays as the offline fallback.
+
+### Changed
+
+- **A prompt running one of Greptile's commands is tinted to say whose
+  it is**, queued or sent.
+- **Analytics counts a day you used Dray**, not only a launch or a new
+  session — a day spent in one resumed session read as nobody there.
+  Still nothing about what you write.
+
+### Fixed
+
+- **Links in your own messages no longer draw a dark underline** under
+  white text in default light.
+- **A subagent run with nothing to show can't be expanded** onto an
+  empty box. It opens again as soon as it has events.
+
 ## 0.17.1
 
 ### Changed
