@@ -5,6 +5,21 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.18.1
+
+### Added
+
+- **fx sessions get a `/` picker**, filled from the skills fx itself
+  would run — its own roots on disk, since fx publishes no command
+  list. A skill linked in from outside the workspace or home is left
+  out, matching what fx will actually load.
+
+### Changed
+
+- **A harness with no slash commands says so in one line** instead of
+  opening an empty menu, and only once its own list has answered — a
+  CLI that could not be reached is not a CLI with nothing to offer.
+
 ## 0.18.0
 
 ### Added
