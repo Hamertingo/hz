@@ -5,6 +5,18 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.18.0
+
+### Added
+
+- **fx is a fourth harness.** Pick it in the composer like Claude Code,
+  Codex or pi: sessions stream, resume and stop, permission requests
+  are answered in the transcript, and model, effort and stance apply to
+  a running session in place. Models come from fx itself, so one it
+  ships is pickable without a Dray release. fx has two stances of its
+  own, Ask and Auto, so the picker offers those: a session arriving on
+  Plan asks about everything, and one arriving on Bypass runs as Auto.
+
 ## 0.17.3
 
 ### Changed
