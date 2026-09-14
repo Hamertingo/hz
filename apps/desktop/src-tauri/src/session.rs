@@ -305,6 +305,15 @@ impl StatusTracker {
         self.open_tool_calls > 0
     }
 
+    /// Gives back a turn reserved by [`Self::on_send`] that never reached the
+    /// child — an fx flush whose whole queue failed to send, or was emptied by
+    /// a cancel between the reservation and the flush. Back to `Completed`, the
+    /// state the ending turn would have left had nothing been queued behind it.
+    pub fn release_reserved_turn(&mut self) -> Option<SessionStatus> {
+        self.model_call_open = false;
+        self.set(SessionStatus::Completed)
+    }
+
     /// The user read the finished session. Only `Completed` clears — selecting
     /// a running session must not stop it reading as busy.
     pub fn mark_seen(&mut self) -> Option<SessionStatus> {
@@ -445,6 +454,7 @@ impl SessionManager {
         // key for is the worst possible first run.
         let model_spec = match harness {
             Harness::Pi => crate::harness::pi::models::find(&model).await,
+            Harness::Fx => crate::harness::fx::models::find(&model).await,
             // Codex's list is the machine's answer too now, with the table
             // behind it — so a model shipped after this build still spawns.
             Harness::Codex => crate::harness::codex::models::find(&model).await,
@@ -852,21 +862,42 @@ impl SessionManager {
                     });
                 }
 
-                if tool_in_flight {
-                    s.queue_and_flush(prompt, attachment_paths, issues, from, app)
-                        .await;
+                // fx has no injection point at all: `session/prompt` blocks for
+                // the turn and a second one written meanwhile takes over the one
+                // id the read loop settles the turn on, so the first is never
+                // closed. It queues to the turn's end, whatever is running — and
+                // the decision is atomic with the turn-end reservation, so a
+                // completion cannot slip between the check and the enqueue.
+                // `None` means the turn ended under this read: fall through and
+                // start a new one.
+                if matches!(s.stdin, Transport::Fx(_)) {
+                    if let Some(queued) = s
+                        .fx_queue_if_in_flight(prompt, attachment_paths, issues, from.clone())
+                        .await
+                    {
+                        return Ok(SendOutcome {
+                            snapshot: None,
+                            queued: Some(queued),
+                            issues: linked,
+                        });
+                    }
+                } else {
+                    if tool_in_flight {
+                        s.queue_and_flush(prompt, attachment_paths, issues, from, app)
+                            .await;
+                        return Ok(SendOutcome {
+                            issues: linked,
+                            ..Default::default()
+                        });
+                    }
+
+                    let queued = s.queue_msg(prompt, attachment_paths, issues, from).await;
                     return Ok(SendOutcome {
+                        snapshot: None,
+                        queued: Some(queued),
                         issues: linked,
-                        ..Default::default()
                     });
                 }
-
-                let queued = s.queue_msg(prompt, attachment_paths, issues, from).await;
-                return Ok(SendOutcome {
-                    snapshot: None,
-                    queued: Some(queued),
-                    issues: linked,
-                });
             }
 
             // The other side of the respawn rule above, and read off the same
@@ -881,13 +912,18 @@ impl SessionManager {
             let caps = s.harness.caps();
 
             if caps.applies_model_in_place && s.model != model {
-                // A harness that applies a model in place is one Dray names a
-                // default for, so the spec is there by construction — the table
-                // and `default_model_for` agree on which harnesses those are.
-                let spec = model_spec
-                    .as_ref()
-                    .context("no model to switch the session to")?;
-                s.set_model(spec).await?;
+                // Claude Code names a default, so the spec is there by
+                // construction. fx does not — a pick falling to "let fx
+                // decide" has nothing to switch to, and the session stays on
+                // whatever it is running, which is what the unset pick means.
+                match model_spec.as_ref() {
+                    Some(spec) => s.set_model(spec).await?,
+                    None if model.is_unset() => {}
+                    None => bail!("no model to switch the session to"),
+                }
+            }
+            if caps.applies_effort_in_place && s.effort != effort {
+                s.set_effort(effort).await?;
             }
             if caps.applies_permission_in_place && s.permission_mode != permission_mode {
                 s.set_permission_mode(permission_mode).await?;
@@ -1359,6 +1395,9 @@ pub enum Transport {
     /// to address a write to: pi has one conversation per process, so the
     /// client is the whole of it.
     Pi(crate::harness::pi::rpc::PiClient),
+    /// fx's connection: JSON-RPC like Codex's, addressed to the session fx
+    /// minted. See [`FxSession`](crate::harness::fx::FxSession).
+    Fx(crate::harness::fx::FxSession),
 }
 
 impl Transport {
@@ -1371,7 +1410,7 @@ impl Transport {
     pub fn lines(&self) -> Result<&Arc<Mutex<ChildStdin>>> {
         match self {
             Transport::Lines(stdin) => Ok(stdin),
-            Transport::Rpc(_) | Transport::Pi(_) => {
+            Transport::Rpc(_) | Transport::Pi(_) | Transport::Fx(_) => {
                 bail!("this control is not wired for this harness")
             }
         }
@@ -1502,6 +1541,28 @@ impl Session {
                 )
                 .await
             }
+            Harness::Fx => {
+                // Same two refusals as pi's, for the same reasons: fx has no
+                // `-w`, so the tree is made before this; and it has no fork.
+                if worktree_name.is_some() {
+                    bail!("fx cannot create a worktree — it has to be made first");
+                }
+                if fork_from.is_some() {
+                    bail!("fx sessions cannot be forked");
+                }
+
+                crate::harness::fx::init(
+                    session_id,
+                    model,
+                    effort,
+                    permission_mode,
+                    cwd,
+                    session_cwd,
+                    is_new_session,
+                    app,
+                )
+                .await
+            }
             // A session some newer build wrote into the shared index. Its
             // transcript still reads and its row still draws — that is what the
             // tolerant read bought — but there is no CLI here to carry it on,
@@ -1575,6 +1636,36 @@ impl Session {
         };
         self.queued.lock().await.push(message.clone());
         message
+    }
+
+    /// fx alone, and the whole of what keeps its two-prompt race shut. Decides,
+    /// **under the status lock**, whether this prompt joins the running turn —
+    /// queued for the turn-end flush — or finds the turn already over and must
+    /// start a fresh one. `Some` was queued; `None` means the turn ended and
+    /// the caller delivers now.
+    ///
+    /// Holding the status lock across the `turn_in_flight` read *and* the
+    /// enqueue is the point: it makes this exclusive with [`ingest`]'s
+    /// completion-and-reservation, which takes the same lock across its own
+    /// `on_event` and queue inspection. Read `turn_in_flight` and enqueue in
+    /// two separate lock holds — as reading it up in `send_msg` and queueing
+    /// later would — and a completion can slip between, marking the turn done
+    /// with a prompt queued behind it and no reservation, which is the race.
+    ///
+    /// fx has no injection point, so a prompt for a live turn only ever waits
+    /// here for its end; there is no write-through path to take.
+    async fn fx_queue_if_in_flight(
+        &self,
+        prompt: &str,
+        attachment_paths: &[String],
+        issues: &[IssueRef],
+        from: Option<MessageSender>,
+    ) -> Option<QueuedMessage> {
+        let _turn = self.status.lock().await;
+        if !_turn.turn_in_flight() {
+            return None;
+        }
+        Some(self.queue_msg(prompt, attachment_paths, issues, from).await)
     }
 
     /// Takes back the newest held prompt, newest-first because that is the one
@@ -1666,12 +1757,36 @@ impl Session {
     /// There is no `set_effort` counterpart — the CLI rejects that subtype, and
     /// an `effort` field on this request is accepted but ignored.
     pub async fn set_model(&mut self, model: &Model) -> Result<()> {
+        if let Transport::Fx(session) = &self.stdin {
+            crate::harness::fx::set_model(session, model).await?;
+            self.model = model.id.clone();
+            return Ok(());
+        }
+
         write_line(
             self.stdin.lines()?,
             &ControlLine::new(ControlRequest::SetModel { model: &model.arg }),
         )
         .await?;
         self.model = model.id.clone();
+
+        Ok(())
+    }
+
+    /// Switches the effort of a running child — fx alone, whose ACP session
+    /// takes it as a config option. Every other harness respawns for one, and
+    /// `caps().applies_effort_in_place` is what keeps them off this path.
+    ///
+    /// `None` is fx's own `auto`, which nothing here can spell back onto the
+    /// wire, so it is recorded and left to the next respawn.
+    pub async fn set_effort(&mut self, effort: Option<Effort>) -> Result<()> {
+        let Transport::Fx(session) = &self.stdin else {
+            bail!("this harness has no in-place effort switch");
+        };
+        if let Some(effort) = effort {
+            crate::harness::fx::set_effort(session, effort).await?;
+        }
+        self.effort = effort;
 
         Ok(())
     }
@@ -1688,6 +1803,12 @@ impl Session {
         // reports the stop — nothing waits here for the turn to actually end.
         if let Transport::Rpc(thread) = &self.stdin {
             return crate::harness::codex::interrupt_turn(thread).await;
+        }
+
+        // A notification: fx answers the prompt itself with `cancelled`, and
+        // the reader reports the stop off that.
+        if let Transport::Fx(session) = &self.stdin {
+            return crate::harness::fx::cancel(session);
         }
 
         // pi never reaches here: its Stop goes through
@@ -1735,6 +1856,12 @@ impl Session {
     /// Switches the permission stance of a running child. Unlike effort, the CLI
     /// does have a `set_permission_mode` subtype, so this needs no respawn.
     pub async fn set_permission_mode(&mut self, mode: ApprovalPolicy) -> Result<()> {
+        if let Transport::Fx(session) = &self.stdin {
+            crate::harness::fx::set_mode(session, mode).await?;
+            self.permission_mode = mode;
+            return Ok(());
+        }
+
         write_line(
             self.stdin.lines()?,
             &ControlLine::new(ControlRequest::SetPermissionMode {
@@ -1792,6 +1919,15 @@ impl Session {
                     .clone()
                     .context("this option carries no decision to send")?;
                 thread.client.respond(*rpc_id, json!({"decision": decision}))?;
+            }
+            // fx's decision is the whole ACP outcome envelope, built by the
+            // button, so it goes back as the result itself.
+            (Transport::Fx(session), Reply::Rpc(rpc_id)) => {
+                let outcome = chosen
+                    .decision
+                    .clone()
+                    .context("this option carries no outcome to send")?;
+                session.client.respond(*rpc_id, outcome)?;
             }
             _ => {
                 write_line(
@@ -1906,6 +2042,12 @@ impl Session {
             // reader an answer still fails honestly: `close` breaks the writer,
             // so the reply errors rather than being claimed as delivered.
             crate::harness::pi::shutdown(&mut self.child, client).await;
+            return Ok(());
+        }
+
+        // fx holds a `session.lock` per session, released on a clean exit.
+        if let Transport::Fx(session) = &self.stdin {
+            crate::harness::fx::shutdown(&mut self.child, session).await;
             return Ok(());
         }
 
@@ -2071,6 +2213,12 @@ async fn deliver_prompt(
     if let Transport::Pi(client) = transport {
         return crate::harness::pi::send_prompt(client, &text, delivery, &prepared.images).await;
     }
+    // fx takes a prompt as a request that blocks for the turn, so the write
+    // is the send and the reader settles the answer. Images not wired: the
+    // Codex provider answered `refused` to one on capture.
+    if let Transport::Fx(session) = transport {
+        return crate::harness::fx::start_turn(session, &text).await;
+    }
     let stdin = transport.lines()?;
 
     // A bare string is the whole content when nothing is attached — the
@@ -2160,12 +2308,15 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // safe, and it is at any point inside a turn — a prompt written early
     // waits in the CLI's own buffer for the same main-thread result it
     // would have waited here for.
-    let at_boundary = matches!(
-        agent_event.payload,
-        AgentEventPayload::ToolCallStarted { .. }
-            | AgentEventPayload::ToolCallCompleted { .. }
-            | AgentEventPayload::TurnCompleted { .. }
-    );
+    let at_boundary = match agent_event.payload {
+        AgentEventPayload::TurnCompleted { .. } => true,
+        // A tool boundary is a place to hand over only where the child has a
+        // buffer to absorb the prompt into; fx's next prompt is its next turn.
+        AgentEventPayload::ToolCallStarted { .. } | AgentEventPayload::ToolCallCompleted { .. } => {
+            !matches!(ctx.flush_transport, Transport::Fx(_))
+        }
+        _ => false,
+    };
 
     if let Err(err) = app.emit("agent_event", &agent_event) {
         eprintln!("[emit err] {err}");
@@ -2175,12 +2326,40 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // `on_event` because the subagent test needs the envelope: a subagent's
     // tool call runs on its own thread, and its result is not a point where
     // the CLI injects a queued prompt.
+    //
+    // fx reserves its next turn here, atomically with the completion, and the
+    // queue is inspected **under the status lock** — the crux. fx has a single
+    // prompt id and no injection point, so a turn ending with a prompt queued
+    // must hand straight to it, and between this completion and the flush below
+    // sit two awaits (publish, append). A send racing that gap would read no
+    // turn in flight and start a second fx prompt over the one id.
+    //
+    // A send decides queue-vs-deliver in `fx_queue_if_in_flight`, which takes
+    // this same status lock across its `turn_in_flight` read *and* its enqueue.
+    // So this section and that one cannot interleave: whichever holds the lock
+    // runs whole. Either the send queues first and this sees the message and
+    // reserves, or this completes first and the send reads the completed turn
+    // and delivers directly instead of queueing. Inspecting the queue outside
+    // this lock is what reopened the race — a send could enqueue in the gap
+    // between the inspection and this taking the lock.
+    //
+    // Order is status→queued, matching every other holder of both, so no
+    // deadlock: nothing holds `queued` while awaiting `status`.
     let next_status = {
         let mut tracker = ctx.status.lock().await;
+        let before = tracker.status();
         if agent_event.subagent.is_none() {
             tracker.note_tool_call(&agent_event.payload);
         }
-        tracker.on_event(&agent_event.payload)
+        tracker.on_event(&agent_event.payload);
+        let reserve = matches!(ctx.flush_transport, Transport::Fx(_))
+            && matches!(agent_event.payload, AgentEventPayload::TurnCompleted { .. })
+            && !ctx.queued.lock().await.is_empty();
+        if reserve {
+            tracker.on_send();
+        }
+        let after = tracker.status();
+        (after != before).then_some(after)
     };
     if let Some(next) = next_status {
         publish_status(ctx.session_id, next, app).await;
@@ -2317,17 +2496,130 @@ pub async fn flush_queued(
     status: &Arc<Mutex<StatusTracker>>,
     app: &AppHandle,
 ) {
-    // Drained under one lock so a cancel arriving mid-flush either takes a
-    // message back before any of this or finds nothing — never races a
-    // half-written batch.
-    let batch: Vec<QueuedMessage> = std::mem::take(&mut *queued.lock().await);
+    // fx drains one prompt per turn and reserves the next in `ingest`, so its
+    // release is a two-lock affair the batch model has no answer to. Its own
+    // path.
+    if matches!(transport, Transport::Fx(_)) {
+        flush_fx(session_id, harness, queued, seq, events, transport, status, app).await;
+        return;
+    }
 
+    // Every other transport takes the whole batch at a boundary. Drained under
+    // one lock so a cancel arriving mid-flush either takes a message back before
+    // any of this or finds nothing — never races a half-written batch.
+    let batch: Vec<QueuedMessage> = std::mem::take(&mut *queued.lock().await);
     if batch.is_empty() {
         return;
     }
 
     let mut delivered = 0;
+    deliver_batch(
+        batch, session_id, harness, seq, events, transport, app, &mut delivered,
+    )
+    .await;
 
+    // A delivered batch at `turn_completed` opens a turn the CLI has not
+    // announced yet, so without this the composer reads idle for the second or
+    // so until `init` arrives — offering to send into a session that is already
+    // working. Redundant at a tool boundary, where the session is in-progress
+    // and `on_send` reports no change.
+    //
+    // Only where something actually reached the child. A batch that all failed
+    // starts no turn, and reporting one would leave the session running forever
+    // on a prompt the agent never received.
+    if delivered == 0 {
+        return;
+    }
+    if let Some(next) = status.lock().await.on_send() {
+        publish_status(session_id, next, app).await;
+    }
+}
+
+/// The fx flush: one prompt per turn, and the release symmetric to the
+/// reservation `ingest` makes.
+///
+/// The empty-check and the release of the reservation are done **while holding
+/// both status and queued** — the crux, symmetric to `fx_queue_if_in_flight`
+/// on the send side. Release the queue lock before marking the turn Completed
+/// and a send can enqueue in the gap, leaving a prompt with no turn to flush
+/// it. Holding both, a send either lands its message before the empty-check
+/// (drained here, or reserved for the next turn) or reads the released
+/// Completed after and delivers directly.
+///
+/// A message that fails to send starts no turn and so no flush to reach the
+/// next, hence the loop: keep taking until one is delivered or the queue is
+/// empty. Locks are dropped across each delivery, so a cancel or a send can
+/// move the queue between attempts — which the next iteration re-reads.
+///
+/// Order is status→queued, as everywhere; nothing holds queued while awaiting
+/// status, so no deadlock.
+async fn flush_fx(
+    session_id: &str,
+    harness: Harness,
+    queued: &QueuedMessages,
+    seq: &Arc<AtomicU64>,
+    events: &Arc<Mutex<Vec<AgentEvent>>>,
+    transport: &Transport,
+    status: &Arc<Mutex<StatusTracker>>,
+    app: &AppHandle,
+) {
+    loop {
+        let message = {
+            let mut tracker = status.lock().await;
+            let mut held = queued.lock().await;
+            match held.is_empty() {
+                // Nothing to hand over: the whole queue failed to send, or a
+                // cancel emptied it. Give the reserved turn back under both
+                // locks, or the session hangs `InProgress` on a prompt no child
+                // holds — and a send racing this either queued before the check
+                // (so it is not empty) or reads Completed after and delivers.
+                true => {
+                    let released = tracker.release_reserved_turn();
+                    drop(held);
+                    drop(tracker);
+                    if let Some(next) = released {
+                        publish_status(session_id, next, app).await;
+                    }
+                    return;
+                }
+                false => held.remove(0),
+            }
+        };
+
+        // Delivered outside the locks — attachment prep, the log write and
+        // `start_turn` all await. On success the reservation stands as
+        // `InProgress` and the turn is the delivered prompt's; on failure
+        // `deliver_batch` reports it and the loop takes the next.
+        let mut delivered = 0;
+        deliver_batch(
+            vec![message],
+            session_id,
+            harness,
+            seq,
+            events,
+            transport,
+            app,
+            &mut delivered,
+        )
+        .await;
+
+        if delivered > 0 {
+            return;
+        }
+    }
+}
+
+/// Hands one drained batch to the child, oldest first, counting what landed.
+async fn deliver_batch(
+    batch: Vec<QueuedMessage>,
+    session_id: &str,
+    harness: Harness,
+    seq: &Arc<AtomicU64>,
+    events: &Arc<Mutex<Vec<AgentEvent>>>,
+    transport: &Transport,
+    app: &AppHandle,
+    delivered: &mut usize,
+) {
     for message in batch {
         // No baseline, and this is the load-bearing half of the queued case:
         // the changes panel pairs the newest baseline with the newest head
@@ -2352,7 +2644,7 @@ pub async fn flush_queued(
         )
         .await
         {
-            Ok(()) => delivered += 1,
+            Ok(()) => *delivered += 1,
             Err(err) => {
                 eprintln!("[queued flush err] {err}");
                 // Drawn, not only logged. The prompt is already on screen and in
@@ -2364,23 +2656,6 @@ pub async fn flush_queued(
                 report_send_failure(session_id, harness, &err.to_string(), seq, events, app).await;
             }
         }
-    }
-
-    // A flush at `turn_completed` lands just after the tracker marked the
-    // session finished, and the prompt it just wrote opens a new turn the CLI
-    // has not announced yet. Without this the composer reads idle for the
-    // second or so until `init` arrives — offering to send into a session that
-    // is already working. Redundant at a tool boundary, where the session is
-    // in-progress and `on_send` reports no change.
-    //
-    // Only where something actually reached the child. A batch that all failed
-    // starts no turn, and reporting one would leave the session running forever
-    // on a prompt the agent never received.
-    if delivered == 0 {
-        return;
-    }
-    if let Some(next) = status.lock().await.on_send() {
-        publish_status(session_id, next, app).await;
     }
 }
 
@@ -2421,6 +2696,94 @@ async fn report_send_failure(
     events.lock().await.push(agent_event.clone());
     if let Err(err) = append_session_event(session_id, agent_event).await {
         eprintln!("[queued flush log err] {err}");
+    }
+}
+
+/// A read loop calls this when its child's stdout ends, before ingesting the
+/// closing turn. Two failures to head off: a turn in flight never gets its
+/// answer, so the session would hang `in_progress`; and prompts queued behind
+/// it would be handed to the *dead* child by the turn-end boundary flush —
+/// `start_turn` there sends into a writer whose child is gone and waits on a
+/// response that never comes, hanging the session again. So the queue is
+/// drained and reported here, and the caller ingests the closing turn with the
+/// queue already empty, which is what stops that flush from firing into a
+/// corpse.
+///
+/// Each stranded prompt gets its own bubble and a failure beside it, so a queued
+/// row the composer is showing resolves into the transcript rather than sitting
+/// pending forever, and the reader sees the prompt was lost and can resend it.
+pub async fn strand_queue_on_exit(
+    session_id: &str,
+    harness: Harness,
+    queued: &QueuedMessages,
+    seq: &Arc<AtomicU64>,
+    events: &Arc<Mutex<Vec<AgentEvent>>>,
+    app: &AppHandle,
+) {
+    let stranded: Vec<QueuedMessage> = std::mem::take(&mut *queued.lock().await);
+    for message in stranded {
+        // The same preparation delivery does, so the bubble carries exactly what
+        // would have been sent: images resolved to `ImageRef`, non-image
+        // attachments folded into the text as `@path` mentions. Without it the
+        // row retiring the queued prompt would drop its attachments from the
+        // transcript while telling the reader to resend it. Best effort — a
+        // failed prep still surfaces the text rather than losing the prompt.
+        let (text, images) =
+            match attachments::prepare(session_id, &message.text, &message.attachment_paths, harness)
+                .await
+            {
+                Ok(prepared) => (
+                    prepared.text,
+                    prepared
+                        .images
+                        .iter()
+                        .map(|i| ImageRef {
+                            path: Some(i.stored_path.clone()),
+                            url: None,
+                            mime_type: Some(i.mime_type.clone()),
+                        })
+                        .collect(),
+                ),
+                Err(err) => {
+                    eprintln!("[fx strand prepare err] {err:#}");
+                    (message.text.clone(), Vec::new())
+                }
+            };
+        let bubble = AgentEvent {
+            id: Uuid::now_v7().to_string(),
+            session_id: session_id.to_string(),
+            harness,
+            seq: seq.fetch_add(1, Relaxed),
+            ts: now_rfc3339(),
+            turn_id: None,
+            subagent: None,
+            payload: AgentEventPayload::UserMessage {
+                text,
+                issues: message.issues.clone(),
+                images,
+                baseline: None,
+                queued: true,
+                from: message.from.clone(),
+                cwd: None,
+            },
+            raw: None,
+        };
+        if let Err(err) = app.emit("agent_event", &bubble) {
+            eprintln!("[fx strand emit err] {err}");
+        }
+        events.lock().await.push(bubble.clone());
+        if let Err(err) = append_session_event(session_id, bubble).await {
+            eprintln!("[fx strand log err] {err}");
+        }
+        report_send_failure(
+            session_id,
+            harness,
+            "the agent exited before this queued message was sent — send it again to retry",
+            seq,
+            events,
+            app,
+        )
+        .await;
     }
 }
 
@@ -2483,6 +2846,42 @@ mod tests {
         }
 
         assert!(!tracker.tool_in_flight());
+    }
+
+    /// fx reserves its next turn the instant one ends with a prompt queued, so
+    /// the tracker never reads idle in the window before the flush hands the
+    /// queued prompt over — a send racing that window would otherwise start a
+    /// second fx prompt over the one id. The reservation nets `InProgress`, and
+    /// a flush that then delivers nothing gives the turn back to `Completed`.
+    #[test]
+    fn an_fx_reservation_holds_the_turn_across_the_flush() {
+        let done = AgentEventPayload::TurnCompleted {
+            status: crate::events::TurnStatus::Success,
+            stop_reason: None,
+            final_text: None,
+            usage: None,
+            duration_ms: None,
+            head: None,
+            auth_failed: false,
+        };
+
+        let mut tracker = StatusTracker::default();
+        tracker.on_send();
+
+        // The completion followed at once by the reservation, as `ingest` does
+        // it under one lock: net `InProgress`, and the turn still in flight, so
+        // a racing send queues rather than sending.
+        assert_eq!(tracker.on_event(&done), Some(SessionStatus::Completed));
+        assert_eq!(tracker.on_send(), Some(SessionStatus::InProgress));
+        assert!(tracker.turn_in_flight());
+
+        // The flush delivered nothing — every queued prompt failed, or a cancel
+        // emptied the queue — so the reservation is given back.
+        assert_eq!(
+            tracker.release_reserved_turn(),
+            Some(SessionStatus::Completed)
+        );
+        assert!(!tracker.turn_in_flight());
     }
 
     /// The fixture's second turn spawns a background agent: its `result`

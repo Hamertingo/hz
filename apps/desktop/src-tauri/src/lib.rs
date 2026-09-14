@@ -262,6 +262,7 @@ async fn list_models(harness: Option<harness::Harness>) -> Vec<Model> {
     // harness still gets the list it always got.
     match harness.unwrap_or(harness::Harness::ClaudeCode) {
         harness::Harness::Pi => harness::pi::models::list().await,
+        harness::Harness::Fx => harness::fx::models::list().await,
         harness::Harness::Codex => harness::codex::models::list().await,
         other => models::models_for(other),
     }
@@ -274,7 +275,19 @@ async fn list_models(harness: Option<harness::Harness>) -> Vec<Model> {
 #[tauri::command]
 async fn refresh_models() {
     harness::pi::models::forget();
+    // Not just `forget`: fx serves the subscription providers from static
+    // tables, so dropping the cache alone would still answer from a table. A
+    // manual Refresh means "ask fx again", so probe the active provider now.
+    harness::fx::models::refresh().await;
     harness::codex::models::forget();
+}
+
+/// Switches fx's active provider, which is what its model list is drawn from.
+#[tauri::command]
+async fn set_fx_provider(provider: String) -> Result<(), String> {
+    harness::fx::models::set_provider(&provider)
+        .await
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// The preferences Rust owns. Everything else the settings dialog draws is the
@@ -374,7 +387,8 @@ async fn list_slash_commands(cwd: &str, harness: Harness) -> Result<Vec<SlashCom
             .map_err(|e| e.to_string())?,
         Harness::Pi => harness::pi::commands::list_commands(cwd).await,
         Harness::Codex => harness::codex::commands::list_commands(cwd).await,
-        Harness::Other(_) => Vec::new(),
+        // `available_commands_update` arrived empty on every capture.
+        Harness::Fx | Harness::Other(_) => Vec::new(),
     })
 }
 
@@ -649,6 +663,7 @@ pub fn run() {
             read_attachments,
             list_models,
             refresh_models,
+            set_fx_provider,
             agent_availability,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_open,
