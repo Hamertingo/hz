@@ -8,6 +8,8 @@ import PermissionSelector, {
   offersPermissionModes,
 } from "@/components/composer/PermissionSelector";
 import ProjectSelector from "@/components/composer/ProjectSelector";
+import RepoSelector from "@/components/composer/RepoSelector";
+import RolePicker from "@/components/RolePicker";
 import WorktreeToggle from "@/components/composer/WorktreeToggle";
 import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
@@ -20,6 +22,7 @@ import type {
   Model,
   ModelId,
   Project,
+  RepoSummary,
 } from "@/types/events";
 
 type ComposerToolbarProps = {
@@ -44,9 +47,34 @@ type ComposerToolbarProps = {
   onSelectProject: (path: string) => void;
   onAttachProject: () => void;
 
+  /// The repositories the project holds, and which one a new session runs in.
+  /// Empty and `null` for a project that is itself a repository or that holds
+  /// none, which is where the control draws nothing.
+  repos: RepoSummary[];
+  /// `null` is the project root — a workspace's whole-project target, and the
+  /// ordinary answer for a project that is itself a repository.
+  repoPath: string | null;
+  onSelectRepo: (path: string | null) => void;
+  /// Whether that target is a workspace's root rather than a repository. A root
+  /// is not a repository, so the branch picker and the worktree toggle are both
+  /// withheld for it.
+  atWorkspaceRoot: boolean;
+
   branches: BranchList | null;
   branch: string | null;
   onSelectBranch: (branch: string) => void;
+
+  /// The responsibility a new session starts under, from the sticky defaults.
+  /// Creation-time like the project beside it: the spawn reads it once, and a
+  /// session that already exists has the header's own picker instead.
+  roleId: string | null;
+  onRoleChange: (roleId: string | null) => void;
+  /// Promotes a global role to the default every project starts under — the
+  /// every-project level the composer's own pick cannot reach.
+  onRoleGlobal: (roleId: string | null) => void;
+  /// The path the offered roles resolve against — a workspace's repository
+  /// target, or the project root.
+  roleOfferPath: string | null;
 
   /// Set while a switch waits on the uncommitted-changes prompt.
   pendingBranch: string | null;
@@ -93,9 +121,17 @@ export default function ComposerToolbar({
   projectPath,
   onSelectProject,
   onAttachProject,
+  repos,
+  repoPath,
+  onSelectRepo,
+  atWorkspaceRoot,
   branches,
   branch,
   onSelectBranch,
+  roleId,
+  onRoleChange,
+  onRoleGlobal,
+  roleOfferPath,
   pendingBranch,
   onConfirmBranchSwitch,
   onCancelBranchSwitch,
@@ -151,9 +187,40 @@ export default function ComposerToolbar({
             onAttach={onAttachProject}
           />
 
-          {/* Both describe a repo, so neither means anything until one is
-              picked — and a worktree has nothing to fork from. */}
+          {/* Where the session runs, for a project that is a workspace: the
+              whole project first, then the repositories inside it. Drawn only
+              when there is more than one repository, so every project that is
+              itself a repository is untouched — and it comes before the branch
+              picker because the branches below belong to whatever is chosen
+              here. */}
           {projectPath && (
+            <RepoSelector
+              rootPath={projectPath}
+              repos={repos}
+              value={repoPath}
+              onSelect={onSelectRepo}
+            />
+          )}
+
+          {/* The responsibility this agent is being started with. It sits after
+              the project and repository because that is what its scope is
+              resolved against — a role filed on a workspace is offered whether
+              the session runs at the root or in one of its repositories. */}
+          <RolePicker
+            roleId={roleId}
+            projects={projects}
+            offerPath={roleOfferPath}
+            defaultProjectPath={projectPath}
+            onSelect={onRoleChange}
+            onSelectGlobal={onRoleGlobal}
+          />
+
+          {/* Both describe a repository, so neither means anything at a
+              workspace root — which is not one. There is no branch to list and
+              no tree to fork, and asking git for either is the pretence this
+              picker exists to avoid; the root's session reaches the
+              repositories by path instead, which is the whole point of it. */}
+          {!atWorkspaceRoot && (
             <>
               <WorktreeToggle on={useWorktree} onToggle={onToggleWorktree} />
 

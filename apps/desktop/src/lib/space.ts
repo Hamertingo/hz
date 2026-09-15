@@ -1,4 +1,5 @@
 import type { Project } from "@/types/events";
+import { containingProject } from "@/lib/project";
 
 /// Where the active space is stored. Read outside React by `announce`, which
 /// fires from a listener registered once and so cannot hold hook state.
@@ -75,15 +76,19 @@ export function inSpace(projects: Project[], space: string | null): Project[] {
 /// A session under a project nobody has attached has no space to be in, so it
 /// shows under every project and under no space — the same reading `inSpace`
 /// gives its project.
+///
+/// Asked of the **containing** project rather than of the path itself, which is
+/// what makes a workspace work: a session runs in `hyze-cloud/api` while the
+/// reader filed `hyze-cloud`, so matching on the exact path found no project and
+/// filed the session nowhere — hidden the moment any space was active. For a
+/// session in a project that is itself a repository the two are the same project,
+/// which is every session that predates workspaces.
 export function sessionInSpace(
   projects: Project[],
   space: string | null,
   projectPath: string,
 ): boolean {
-  return (
-    space === null ||
-    projects.some((p) => p.path === projectPath && p.space === space)
-  );
+  return space === null || containingProject(projects, projectPath)?.space === space;
 }
 
 /// Whether a session may be *announced* under the active space, given whatever

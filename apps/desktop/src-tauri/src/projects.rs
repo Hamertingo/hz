@@ -193,6 +193,99 @@ pub async fn retag_space(from: &str, to: Option<String>) -> Result<Vec<Project>,
     Ok(projects)
 }
 
+/// The attached project a path belongs to: the **longest** attached path that
+/// contains it, or `None` when nothing does.
+///
+/// The Rust half of `containingProject` in `src/lib/project.ts`, and the two
+/// must agree — the frontend decides which role a picker offers and this decides
+/// which one a spawn applies, and a reader seeing a role in the menu that the
+/// agent never received is the failure the pair exists to prevent. Neither side
+/// can call the other, so the rule is stated twice *identically*: longest wins,
+/// and the comparison is on a **path boundary**, never a bare prefix.
+///
+/// Longest wins because a repository attached as its own project beats the
+/// workspace holding it — a reader who attached both meant the narrower one. The
+/// boundary is what keeps `/repos/api-v2` out of `/repos/api`.
+///
+/// Read on a spawn, so it costs one small file read per session start. That is
+/// the price of a project-scoped role being resolved against the *attached*
+/// projects rather than against whatever the filesystem happens to contain.
+pub async fn containing_project(path: &str) -> Option<String> {
+    let projects: Vec<Project> = read_json(&projects_path().await.ok()?).await.ok()?;
+
+    longest_containing(projects.iter().map(|p| p.path.as_str()), path).map(str::to_string)
+}
+
+/// The longest of `paths` that is `path` itself or contains it on a **path
+/// boundary**, or `None` when none does.
+///
+/// Split from [`containing_project`] so the rule is testable with no file to
+/// read — which matters more here than usual, since this is the one rule stated
+/// twice across a language boundary and the two copies have to stay identical.
+pub fn longest_containing<'a>(
+    paths: impl Iterator<Item = &'a str>,
+    path: &str,
+) -> Option<&'a str> {
+    let mut best: Option<&'a str> = None;
+
+    for candidate in paths {
+        if path != candidate && !path.starts_with(&format!("{candidate}/")) {
+            continue;
+        }
+        if best.is_none_or(|held| candidate.len() > held.len()) {
+            best = Some(candidate);
+        }
+    }
+
+    best
+}
+
+#[cfg(test)]
+mod containment_tests {
+    use super::longest_containing;
+
+    fn longest<'a>(paths: &'a [&'a str], path: &'a str) -> Option<&'a str> {
+        longest_containing(paths.iter().copied(), path)
+    }
+
+    /// The same four cases `src/lib/project.test.ts` pins, because the two
+    /// implementations cannot call each other and a drift between them shows as
+    /// a role offered in the picker that the agent never receives.
+    #[test]
+    fn the_longest_containing_path_wins() {
+        let paths = ["/repos/hyze-cloud", "/repos/hyze-cloud/api"];
+
+        assert_eq!(longest(&paths, "/repos/hyze-cloud/api"), Some("/repos/hyze-cloud/api"));
+        assert_eq!(longest(&paths, "/repos/hyze-cloud/api/src"), Some("/repos/hyze-cloud/api"));
+        assert_eq!(longest(&paths, "/repos/hyze-cloud/web"), Some("/repos/hyze-cloud"));
+        assert_eq!(longest(&paths, "/tmp/loose"), None);
+    }
+
+    /// **On a path boundary, never a bare prefix.** A project called `api` must
+    /// not claim a sibling called `api-v2` — the mistake `apps.rs` documents for
+    /// bundle names, where a contains-check listed `Cloudflare WARP.app` as
+    /// `Warp.app`.
+    #[test]
+    fn a_sibling_that_merely_starts_the_same_is_not_contained() {
+        assert_eq!(longest(&["/repos/api"], "/repos/api-v2"), None);
+        assert_eq!(longest(&["/repos/api"], "/repos/api2/src"), None);
+        assert_eq!(longest(&["/repos/api"], "/repos/api/v2"), Some("/repos/api"));
+    }
+
+    /// Order in the file must not decide it — the reader's list is sorted by
+    /// when they last selected each project, which changes for unrelated
+    /// reasons.
+    #[test]
+    fn the_answer_does_not_depend_on_the_order() {
+        let deep = "/repos/hyze-cloud/api";
+        let shallow = "/repos/hyze-cloud";
+
+        for order in [[shallow, deep], [deep, shallow]] {
+            assert_eq!(longest(&order, "/repos/hyze-cloud/api/src"), Some(deep));
+        }
+    }
+}
+
 /// Trailing path segment. Mirrors the frontend's `basename` so a project's
 /// cached label matches what the UI would derive from the path.
 fn basename(path: &str) -> String {

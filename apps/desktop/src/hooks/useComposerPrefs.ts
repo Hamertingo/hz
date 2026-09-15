@@ -16,6 +16,8 @@ const SEED: ComposerPrefs = {
   effortByModel: {},
   permissionMode: "auto",
   useWorktree: false,
+  roleDefault: null,
+  roleByProject: {},
 };
 
 /// Effort is a property of the model, not of the picker: switching to Sonnet must
@@ -37,6 +39,12 @@ type ComposerPrefs = {
   effortByModel: EffortByModel;
   permissionMode: ApprovalPolicy;
   useWorktree: boolean;
+  /// The responsibility a new session starts under: the global default, and the
+  /// per-project overrides. Written through `writeDefaultRole` and read through
+  /// `resolveDefaultRole` in [roles.ts](../lib/roles.ts), which is where the
+  /// resolution rule lives.
+  roleDefault: string | null;
+  roleByProject: Record<string, string | null>;
 };
 
 /// The sticky half of the composer. Every control the user can change writes here,

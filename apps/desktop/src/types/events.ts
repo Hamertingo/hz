@@ -605,7 +605,7 @@ unreadable: Unreadable | null, };
  *
  * [`SessionIndexItem.unknown`]: crate::store::SessionIndexItem
  */
-export type Harness = "claude_code" | "codex" | "pi" | "fx";
+export type Harness = "claude_code" | "codex" | "pi" | "fx" | "omp";
 
 export type HookPhase = "started" | "finished";
 
@@ -1257,6 +1257,50 @@ export type RateLimit = { usedPercent: number | null, windowMinutes: number | nu
 resetsAt: string | null, planType: string | null, };
 
 /**
+ * One git repository a project root holds, with the little the composer's
+ * repository control needs to draw a row.
+ */
+export type RepoSummary = { 
+/**
+ * Absolute, and spelled the way `repos_under` was handed it — this is what
+ * becomes a session's `cwd`.
+ */
+path: string, 
+/**
+ * The directory's own name, which is what a row says: a workspace holds
+ * repositories, and each one is named by its folder.
+ */
+name: string, 
+/**
+ * The checked-out branch. `None` on a detached HEAD.
+ */
+branch: string | null, 
+/**
+ * Uncommitted paths, so a row can say which repository is mid-work.
+ */
+dirty: number, };
+
+/**
+ * One responsibility, and the instructions that carry it.
+ */
+export type Role = { id: string, name: string, 
+/**
+ * Free markdown, sent to the harness verbatim. It is the whole feature —
+ * everything else here is bookkeeping around getting this string in front
+ * of a model.
+ */
+instructions: string, 
+/**
+ * `None` is global. `Some(path)` is the project the role belongs to, and
+ * the role applies to a session **at or under** that path.
+ *
+ * `#[serde(default)]` is load-bearing the way every field on a
+ * whole-file-rewritten store is: a role written before the field existed
+ * must still parse, and a role that fails to parse is *every* role gone.
+ */
+projectPath: string | null, };
+
+/**
  * What a save did. `Stale` is not an error: the file moved under the reader,
  * so their text is still in the editor and theirs to force through.
  */
@@ -1378,7 +1422,19 @@ issues: Array<IssueRef>,
  * also what the depth guard reads: a session that was itself spawned may
  * not spawn more.
  */
-parentSessionId: string | null, created: string, modified: string, archived: boolean, pinned: boolean, };
+parentSessionId: string | null, 
+/**
+ * The role this agent carries, if any. See [`crate::roles`].
+ *
+ * An **id**, never a copy of the instructions. That is what makes an edit
+ * to a role reach every agent already carrying it — the text is read at
+ * spawn, so there is nothing to go stale.
+ *
+ * `#[serde(default)]` for the reason every field on this struct has it: the
+ * index is rewritten whole, so an entry written before the field existed
+ * failing to parse is *every session* gone.
+ */
+roleId: string | null, created: string, modified: string, archived: boolean, pinned: boolean, };
 
 /**
  * Session-level facts, known at startup.
@@ -1475,7 +1531,19 @@ issues: Array<IssueRef>,
  * also what the depth guard reads: a session that was itself spawned may
  * not spawn more.
  */
-parentSessionId: string | null, created: string, modified: string, archived: boolean, pinned: boolean, };
+parentSessionId: string | null, 
+/**
+ * The role this agent carries, if any. See [`crate::roles`].
+ *
+ * An **id**, never a copy of the instructions. That is what makes an edit
+ * to a role reach every agent already carrying it — the text is read at
+ * spawn, so there is nothing to go stale.
+ *
+ * `#[serde(default)]` for the reason every field on this struct has it: the
+ * index is rewritten whole, so an entry written before the field existed
+ * failing to parse is *every session* gone.
+ */
+roleId: string | null, created: string, modified: string, archived: boolean, pinned: boolean, };
 
 /**
  * Driven by [`StatusTracker`](crate::session::StatusTracker). `Completed`

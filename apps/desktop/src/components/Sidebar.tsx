@@ -50,6 +50,7 @@ import type { ManualCheck } from "@/hooks/useUpdater";
 import { startSessionDrag, type DropTarget } from "@/lib/dragSession";
 import { isToday, relativeTime } from "@/lib/format";
 import { groupName, members, type SplitGroup } from "@/lib/groups";
+import { projectKey } from "@/lib/project";
 import { sessionBranch } from "@/lib/pr";
 import { cn } from "@/lib/utils";
 import type {
@@ -428,9 +429,14 @@ export function sessionGroups(
     ];
 
   // First appearance, which is what an unattached project is placed by.
+  //
+  // Keyed by the project a session *belongs to* rather than by the path it
+  // recorded, so a workspace's repositories sit under one heading. A session in
+  // a project that is itself a repository keys to that same path — the rule's
+  // fallback is the identity — so nothing about the list moves for one.
   const byPath = new Map<string, SessionListRow[][]>();
   for (const nest of nests) {
-    const path = nest[0].item.projectPath;
+    const path = projectKey(projects, nest[0].item.projectPath);
     const held = byPath.get(path);
     if (held) held.push(nest);
     else byPath.set(path, [nest]);

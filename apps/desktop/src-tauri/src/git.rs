@@ -111,6 +111,107 @@ fn parse_worktree_branch_names(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// One git repository a project root holds, with the little the composer's
+/// repository control needs to draw a row.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSummary {
+    /// Absolute, and spelled the way `repos_under` was handed it — this is what
+    /// becomes a session's `cwd`.
+    pub path: String,
+    /// The directory's own name, which is what a row says: a workspace holds
+    /// repositories, and each one is named by its folder.
+    pub name: String,
+    /// The checked-out branch. `None` on a detached HEAD.
+    pub branch: Option<String>,
+    /// Uncommitted paths, so a row can say which repository is mid-work.
+    pub dirty: u32,
+}
+
+/// The git repositories a project root holds, with the root itself first when
+/// it is one.
+///
+/// **This is the whole of what a "workspace" means here**, and it is a read
+/// rather than a thing: a project whose path is a directory that *contains*
+/// repositories instead of being one. There is no stored workspace, no
+/// repository list on disk and no index field — a root either holds repos or it
+/// does not, and that is a fact about the filesystem.
+///
+/// **A root that is itself a repository answers `[root]` and stops there.** That
+/// is every project Dray has today, so the caller's "more than one" test draws
+/// nothing new; and it is also what keeps a vendored checkout or a submodule
+/// inside a normal repository out of the reader's repository control, where it
+/// is that repository's business rather than a workspace member.
+///
+/// Otherwise: direct children holding a `.git`, and nothing deeper. The entry is
+/// looked for rather than asked about — `is_repo` per child would be one `git`
+/// spawn each for a question a directory read already settles, and a linked
+/// worktree or a submodule writes a `.git` *file* where an ordinary checkout has
+/// a directory, so both shapes count.
+///
+/// Sorted, because `read_dir`'s order is stable nowhere and a control that
+/// reorders itself between two opens reads as the reader having lost their place.
+pub async fn repos_under(root: &str) -> Vec<String> {
+    if is_repo(root).await {
+        return vec![root.to_string()];
+    }
+
+    let Ok(mut entries) = fs::read_dir(root).await else {
+        return Vec::new();
+    };
+
+    let mut children = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if fs::try_exists(path.join(".git")).await.unwrap_or(false) {
+            children.push(path);
+        }
+    }
+
+    children.sort();
+
+    children
+        .into_iter()
+        .filter_map(|path| path.to_str().map(str::to_string))
+        .collect()
+}
+
+/// The repositories under a project root, each with its own branch and dirty
+/// count — what the composer's repository control draws.
+///
+/// One `work_status` per repository, which is several `git` reads each. Bounded
+/// by the control only asking when there is more than one repository, and by a
+/// workspace holding a handful rather than a tree.
+#[tauri::command]
+pub async fn project_repos(root: &str) -> Result<Vec<RepoSummary>, Fail> {
+    let mut repos = Vec::new();
+
+    for path in repos_under(root).await {
+        let status = work_status(&path).await;
+
+        repos.push(RepoSummary {
+            name: basename(&path),
+            branch: status.branch,
+            dirty: status.dirty,
+            path,
+        });
+    }
+
+    Ok(repos)
+}
+
+/// The last path segment, or the whole path where there is none — an empty name
+/// would draw a row with nothing in it.
+fn basename(path: &str) -> String {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
 /// The ref a `-w` worktree forks from. Mirrors the CLI's own resolution, which
 /// reads `origin/HEAD` and falls back through `origin/main` then `origin/master`
 /// — so the composer names the same commit the CLI will actually use.
@@ -1643,6 +1744,128 @@ mod tests {
                 "{path} must not be removable"
             );
         }
+    }
+
+    /// A real repository, because `is_repo` asks git: a fabricated `.git`
+    /// directory answers false, and every test below would then pass for the
+    /// wrong reason.
+    fn init_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .status()
+            .expect("git runs")
+            .success();
+        assert!(ok, "git init failed in {}", dir.display());
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dray-repos-{name}-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(repos: &[String]) -> Vec<&str> {
+        repos
+            .iter()
+            .map(|p| p.trim_end_matches('/').rsplit('/').next().unwrap())
+            .collect()
+    }
+
+    /// **The backward-compatibility argument, as a test.** Every project Dray
+    /// has today is a repository, so the caller's "more than one" test draws
+    /// nothing new for any of them.
+    ///
+    /// The nested repository is the load-bearing half: a vendored checkout or a
+    /// submodule sits inside a normal repository, and offering it in the
+    /// repository control would ask the reader a question about somebody else's
+    /// tree.
+    #[tokio::test]
+    async fn a_plain_repository_answers_itself_and_nothing_below_it() {
+        let root = scratch("plain");
+        init_repo(&root);
+        init_repo(&root.join("vendor/dep"));
+
+        let found = repos_under(root.to_str().unwrap()).await;
+
+        assert_eq!(found, vec![root.to_string_lossy().to_string()]);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A workspace: no `.git` of its own, three repositories under it, and one
+    /// plain directory that is not a repository at all.
+    #[tokio::test]
+    async fn a_workspace_answers_the_repositories_it_holds() {
+        let root = scratch("workspace");
+        for name in ["api", "web", "worker"] {
+            init_repo(&root.join(name));
+        }
+        std::fs::create_dir_all(root.join("outros")).unwrap();
+
+        let found = repos_under(root.to_str().unwrap()).await;
+
+        assert_eq!(names(&found), vec!["api", "web", "worker"]);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The rows hold still between two opens — `read_dir`'s order is stable
+    /// nowhere, and a list that reorders itself reads as lost place.
+    #[tokio::test]
+    async fn the_repositories_come_back_sorted() {
+        let root = scratch("sorted");
+        for name in ["zeta", "alpha", "mid"] {
+            init_repo(&root.join(name));
+        }
+
+        let found = repos_under(root.to_str().unwrap()).await;
+        let mut expected = found.clone();
+        expected.sort();
+
+        assert_eq!(found, expected);
+        assert_eq!(names(&found).len(), 3);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A directory holding no repositories answers nothing, which the caller
+    /// reads as "no repository control" — the state every non-repo project is
+    /// in today.
+    #[tokio::test]
+    async fn a_directory_with_no_repositories_answers_nothing() {
+        let root = scratch("norepos");
+        std::fs::write(root.join("notes.txt"), "hi").unwrap();
+
+        assert!(repos_under(root.to_str().unwrap()).await.is_empty());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A `.git` **file** is a repository too — a linked worktree and a submodule
+    /// both write one — so it counts where a directory-only test would miss it.
+    #[tokio::test]
+    async fn a_git_file_counts_as_a_repository() {
+        let root = scratch("gitfile");
+        let linked = root.join("linked");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::write(linked.join(".git"), "gitdir: /elsewhere\n").unwrap();
+
+        let found = repos_under(root.to_str().unwrap()).await;
+
+        assert_eq!(names(&found), vec!["linked"]);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A path that is not there answers nothing rather than panicking: the
+    /// command is reachable with a project whose directory has been removed.
+    #[tokio::test]
+    async fn a_missing_root_answers_nothing() {
+        let missing = std::env::temp_dir().join(format!("dray-gone-{}", Uuid::now_v7()));
+
+        assert!(repos_under(missing.to_str().unwrap()).await.is_empty());
     }
 
     #[test]

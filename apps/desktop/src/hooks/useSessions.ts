@@ -16,9 +16,11 @@ import { isWindowFocused, onFocusChange } from "@/lib/focus";
 import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableFxModel, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
 import { stanceFor } from "@/lib/permission";
+import { resolveDefaultRole, writeDefaultRole } from "@/lib/roles";
 import { playNotification } from "@/lib/sound";
 import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/space";
-import { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent } from "../types/events";
+import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
+import { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent } from "../types/events";
 
 const DEFAULT_EFFORT: Effort = "high";
 
@@ -242,6 +244,30 @@ export function useSessions() {
     const [permissionMode, setPermissionModeState] = useState<ApprovalPolicy>(() => prefs.permissionMode);
     const [projects, setProjects] = useState<Project[]>([]);
     const [projectPath, setProjectPath] = useState<string | null>(null);
+    // The git repositories the selected project holds, and which of them a new
+    // session runs in.
+    //
+    // A project whose path is itself a repository answers **one** entry — every
+    // project Dray had before workspaces existed — so `repoPath` stays null and
+    // everything downstream reads `projectPath` exactly as it always did. That
+    // single-branch case is the whole backward-compatibility argument, and it is
+    // why nothing here needs a migration.
+    const [repos, setRepos] = useState<RepoSummary[]>([]);
+    const [repoPath, setRepoPath] = useState<string | null>(null);
+    // Where git reads and a new session actually go. One expression, so the
+    // branch list, a checkout and the session a prompt creates cannot end up
+    // pointed at different directories — the failure that would show as a
+    // branch picker offering one repository's branches to another.
+    //
+    // `null` is the project root, which is a workspace's whole-root target *and*
+    // the ordinary case for a project that is itself a repository. See
+    // `lib/target.ts`.
+    const targetPath = sessionTargetPath(projectPath, repoPath);
+    // The target is a workspace's root rather than a repository, so nothing
+    // git-shaped is asked of it: no branch read, and the composer hides the
+    // worktree toggle. Its own `cwd` is still the project — that is the point,
+    // since the agent works across the siblings from there.
+    const atWorkspaceRoot = isWorkspaceRoot(repos, repoPath);
     // Derived from the selected project, not a preference — refetched on switch
     // and never persisted.
     const [branches, setBranches] = useState<BranchList | null>(null);
@@ -308,6 +334,40 @@ const effort: Effort | null = model
     ? effortByModel[modelId] ?? model.defaultEffort ?? DEFAULT_EFFORT
     : null
   : effortByModel[modelId] ?? null;
+
+// The responsibility a new session starts under, resolved from the sticky
+// defaults for whichever project the composer is pointed at. Derived rather
+// than held in state: picking one *writes* the default, so the pick is the
+// resolution and a second copy could only drift from it.
+const roleId = resolveDefaultRole(prefs.roleDefault, prefs.roleByProject, projectPath);
+
+// Files the pick where the composer is: the open project's own default, or the
+// global one when no project is open — which is what "every chat starts with
+// this" means. `lib/roles.ts` states the rule.
+const setRoleId = (next: string | null) => {
+  setPrefs(
+    writeDefaultRole(
+      { roleDefault: prefs.roleDefault, roleByProject: prefs.roleByProject },
+      projectPath,
+      next,
+    ),
+  );
+};
+
+// Writes the *global* default, which is what "every chat starts with this"
+// means. `projectPath` is deliberately not consulted: this is the reader asking
+// for it everywhere, from inside a project they are already working in — the
+// state the composer rule alone cannot reach, since the app always opens onto a
+// project.
+const setGlobalRoleId = (next: string | null) => {
+  setPrefs(
+    writeDefaultRole(
+      { roleDefault: prefs.roleDefault, roleByProject: prefs.roleByProject },
+      null,
+      next,
+    ),
+  );
+};
 
 // A null effort means "just switch to this model" — it must leave the model's
 // remembered pick alone, or coming back to Sonnet would lose the Extra High set
@@ -439,11 +499,11 @@ const handleSelectProject = (path: string | null) => {
 // Checks the branch out for real, so the picker is the only thing that moves the
 // working tree — by send time the repo is already where the session expects it.
 const runCheckout = async (target: string, stash: boolean) => {
-  if (!projectPath) return;
+  if (!targetPath) return;
 
   try {
     const list = await invoke<BranchList>("checkout_branch", {
-      cwd: projectPath,
+      cwd: targetPath,
       branch: target,
       stash,
     });
@@ -465,11 +525,11 @@ const runCheckout = async (target: string, stash: boolean) => {
 // fetched when the project was selected, and the user has been editing files
 // since. A stale zero silently skips the dialog and moves their work.
 const handleSelectBranch = async (target: string) => {
-  if (!projectPath || target === branches?.current) return;
+  if (!targetPath || target === branches?.current) return;
 
   let list: BranchList;
   try {
-    list = await invoke<BranchList>("list_branches", { cwd: projectPath });
+    list = await invoke<BranchList>("list_branches", { cwd: targetPath });
     setBranches(list);
   } catch (e) {
     setError(String(e));
@@ -615,7 +675,14 @@ const handleSendMsg = async (
   const existing = sessionId ? sessions.find((s) => s.sessionId === sessionId) : undefined;
   // The backend reads the recorded cwd on resume, so this only has to be right
   // for a new session.
-  const cwd = isNewSession ? projectPath : existing?.cwd ?? projectPath;
+  //
+  // `targetPath` rather than `projectPath`, and that is the whole of what makes
+  // a workspace work: the session runs in the *repository*, because every git
+  // surface in the app — the branch list, the worktree anchor, the turn
+  // baseline, the pull-request lookup — reads the agent's directory and answers
+  // nothing when it is not one. For a project that is itself a repository the
+  // two are the same string, which is every project Dray had before this.
+  const cwd = isNewSession ? targetPath : existing?.cwd ?? projectPath;
 
   if (!cwd) {
     setError("Attach a project first.");
@@ -663,6 +730,10 @@ const handleSendMsg = async (
       harness,
       cwd,
       projectPath: projectPath ?? cwd,
+      // The responsibility this session is being created under, which the
+      // backend writes to the index before the child spawns — so the shell can
+      // carry it too rather than naming a role that arrives a frame later.
+      roleId,
       branch: !useWorktree ? branch : null,
       worktreeName: null,
       worktreeRemoved: false,
@@ -706,6 +777,9 @@ const handleSendMsg = async (
       branch: isNewSession && !useWorktree ? branch : null,
       useWorktree: isNewSession && useWorktree,
       worktreeName: null,
+      // Only a creation reads it: an existing session already carries whatever
+      // role it was given, and changing that is the header control's job.
+      roleId: isNewSession ? roleId : null,
       isNewSession,
     });
 
@@ -1123,6 +1197,39 @@ const setSessionFlags = async (
   }
 };
 
+/// Points a session at a responsibility, or clears it with `null`, and answers
+/// whether the write landed.
+///
+/// Both copies of the session are updated from what the backend returned, for
+/// `setSessionFlags`' reason: the index is authoritative, and a failed write
+/// must not leave the header naming a responsibility the disk does not have.
+/// The instruction read happens at spawn, so nothing respawns here — a session
+/// already running carries the new role from its next spawn.
+const setSessionRole = async (
+  sessionId: string,
+  roleId: string | null,
+): Promise<boolean> => {
+  try {
+    const updated = await invoke<SessionIndexItem | null>("set_session_role", {
+      sessionId,
+      roleId,
+    });
+    // Null is the backend finding no such session, which is a write that did
+    // not happen like any other.
+    if (!updated) return false;
+    setSessionIndexItems((prev) =>
+      prev.map((i) => (i.sessionId === sessionId ? updated : i)),
+    );
+    setSessions((prev) =>
+      prev.map((s) => (s.sessionId === sessionId ? { ...s, roleId: updated.roleId } : s)),
+    );
+    return true;
+  } catch (e) {
+    setError(String(e));
+    return false;
+  }
+};
+
 // Applies whatever a link write answered with to both copies of the session.
 //
 // Two copies, for `setSessionFlags`' reason: the sidebar reads the index items
@@ -1449,11 +1556,64 @@ useEffect(() => {
     .catch((e) => setError(String(e)));
 }, [])
 
-// Refetched per project rather than cached: branches change outside the app.
-// The guard matters because switching projects quickly would otherwise let a
-// slower repo's response land on top of the faster one's.
+// The repositories under the selected project: one for a project that is itself
+// a repository, several for a workspace, none for a directory holding neither.
+//
+// Refetched per project, and the reset is the load-bearing half: a repository
+// chosen under one project names a directory that does not exist under the next,
+// so carrying the pick across would point the session at nothing.
 useEffect(() => {
+  setRepoPath(null);
+
   if (!projectPath) {
+    setRepos([]);
+    return;
+  }
+
+  let cancelled = false;
+
+  invoke<RepoSummary[]>("project_repos", { root: projectPath })
+    .then((list) => {
+      if (cancelled) return;
+      setRepos(list);
+      // **No pick is made for the reader.** `repoPath` stays null, which is the
+      // project root — a workspace's ordinary target, and the one that lets a
+      // single session reach every repository under it. Narrowing to one is the
+      // reader's move, taken when they want that repository's branches and
+      // worktrees; choosing one for them put the session somewhere they did not
+      // ask for and made the root unreachable without undoing it.
+      //
+      // For a project that is itself a repository this is nothing at all: one
+      // entry, `repoPath` null, and `sessionTargetPath` answers the project —
+      // exactly the directory it always did.
+    })
+    .catch(() => {
+      if (cancelled) return;
+      // A failed read is "no repositories", which is the same state a plain
+      // directory is in: the control is not drawn and the project reads exactly
+      // as it did before any of this existed.
+      setRepos([]);
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}, [projectPath])
+
+// Refetched per target rather than cached: branches change outside the app.
+// The guard matters because switching quickly would otherwise let a slower
+// repository's response land on top of the faster one's.
+//
+// Reads `targetPath` rather than `projectPath`, and that is what makes a
+// workspace work at all: the branches belong to the repository the session will
+// run in, not to the directory that holds it.
+//
+// Skipped outright at a workspace root, which is not a repository. Letting the
+// read run there costs six failing `git` spawns per target change to come back
+// with the empty list this already knows the answer is — and the picker is
+// hidden either way, so nothing is lost but the spawns.
+useEffect(() => {
+  if (!targetPath || atWorkspaceRoot) {
     setBranches(null);
     setBranch(null);
     return;
@@ -1461,7 +1621,7 @@ useEffect(() => {
 
   let cancelled = false;
 
-  invoke<BranchList>("list_branches", { cwd: projectPath })
+  invoke<BranchList>("list_branches", { cwd: targetPath })
     .then((list) => {
       if (cancelled) return;
       setBranches(list);
@@ -1479,7 +1639,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [projectPath])
+}, [targetPath, atWorkspaceRoot])
 
 useEffect(() => {
   const setupListener = async () => {
@@ -2232,6 +2392,6 @@ const contextUsage: { used: number; max: number } | null = (() => {
   return used !== null && max !== null ? { used, max } : null;
 })();
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, models, refreshModels, reloadModels, seedFxModels, loadingModels, modelId, effort, permissionMode, projects, projectPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleStopTask, queuedMessages, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, models, refreshModels, reloadModels, seedFxModels, loadingModels, modelId, effort, permissionMode, roleId, setRoleId, setGlobalRoleId, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleStopTask, queuedMessages, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, setSessionRole, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, indexSide};
 
 }
