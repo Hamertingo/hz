@@ -29,7 +29,7 @@ use crate::store::{self, next_seq_by_session_id};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter};
 use tokio::{
@@ -41,24 +41,6 @@ use tokio::{
 
 /// ACP protocol version fx speaks (`agentCapabilities` answered `1`).
 const PROTOCOL_VERSION: u64 = 1;
-
-/// Dray's rules, which fx has nowhere to put but a prompt.
-///
-/// Every other harness has a surface for this — Claude Code and pi take
-/// `--append-system-prompt`, Codex takes `developerInstructions` — and fx has
-/// none: `fx acp` takes `--model` and `--log-file` and nothing else (0.0.10),
-/// `session/new` has no field for it, and `~/.fx/settings.json` holds no key.
-/// So the text rides the first prompt of a new session and nothing else, since
-/// `session/resume` restores the thread and the rules are in its history.
-///
-/// Its own file rather than pi's: pi's names `~/.agents/skills`, and fx reads
-/// `~/.claude/skills` among its global roots, so each has to name the path its
-/// own agent will actually find the skill at.
-const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
-
-/// The tag the rules are wrapped in, so anything reading the prompt back can
-/// find where they stop.
-const PREAMBLE_TAG: &str = "dray_system_prompt";
 
 /// How long a child is given to leave after `session/close` and EOF before it
 /// is killed. fx holds a `session.lock` per session under `~/.fx/sessions`,
@@ -91,20 +73,6 @@ pub struct FxSession {
     /// [`parser::ConfigOptions::model_effort_levels`] for why this is the
     /// place that may, and the model list is not.
     efforts: Arc<std::sync::Mutex<Option<Vec<Effort>>>>,
-    /// Whether [`SYSTEM_PROMPT`] still has to ride a prompt.
-    ///
-    /// **Not `is_new_session`, and the gap is a real one.** `open_session`
-    /// records fx's thread id *before* the first prompt, so an `init` failing
-    /// after it — a refused stance, a child dying — leaves a session that
-    /// resumes onto a thread no prompt ever reached. Read off
-    /// `is_new_session` alone, that retry resumes with the flag already false
-    /// and the rules are lost for the life of the conversation.
-    ///
-    /// So a resume that has logged nothing counts as owing them too. The
-    /// signal is already on disk: [`crate::session`] writes `user_message`
-    /// before the send, so `seq` still at 0 means no prompt was ever
-    /// delivered and the rules cannot have gone with one.
-    preamble: Arc<AtomicBool>,
 }
 
 impl FxSession {
@@ -265,7 +233,6 @@ pub async fn init(
         id: fx_id,
         prompt_id: Arc::new(std::sync::Mutex::new(None)),
         efforts: Arc::new(std::sync::Mutex::new(None)),
-        preamble: Arc::new(AtomicBool::new(owes_preamble(is_new_session, seq_start))),
     };
     note_config(&session, &config, None, app);
 
@@ -705,54 +672,13 @@ pub async fn set_mode(session: &FxSession, mode: ApprovalPolicy) -> Result<()> {
     Ok(())
 }
 
-/// Whether this spawn still owes [`SYSTEM_PROMPT`] — see [`FxSession::preamble`].
-///
-/// A creation always does. A resume does only where nothing has ever been
-/// logged for the session, which is the shape an `init` that failed after
-/// `session/new` leaves: a thread id on the index, an empty conversation, and
-/// a retry that would otherwise resume with the rules already written off.
-fn owes_preamble(is_new_session: bool, seq_start: u64) -> bool {
-    is_new_session || seq_start == 0
-}
-
-/// The reader's text with [`SYSTEM_PROMPT`] behind it, wrapped in
-/// [`PREAMBLE_TAG`] so where the rules start and stop is mechanical.
-///
-/// **The rules go after the request, and that ordering is measured rather than
-/// stylistic.** fx titles the session off its first turn, so a prompt opening
-/// with 4KB of Dray rules is titled about Dray: the same request came back
-/// "Dray Agent Workflow Instructions" with the block first and "Add Verbose
-/// Flag to CLI Parser" with it last, and fx restates that title on later turns
-/// rather than re-deriving it, so a first turn titled wrong stays wrong. Two
-/// content blocks in the `prompt` array read as the block-first order and title
-/// the same way. The rules are still honoured from down there — pinned live
-/// with a codeword rule the model obeyed on the turn it arrived.
-fn with_preamble(text: &str) -> String {
-    format!("{text}\n\n<{PREAMBLE_TAG}>\n{SYSTEM_PROMPT}\n</{PREAMBLE_TAG}>")
-}
-
 /// Writes one prompt as a turn.
 ///
 /// Sent with an id and **no waiter**: the response is the turn's end, minutes
 /// away, and the read loop settles it on the id kept here. A prompt refused
 /// outright still answers on that id, as an error, which the reader draws as
 /// a failed turn.
-///
-/// **Dray's rules ride the first prompt of a new session**, since fx has no
-/// system-prompt surface at all — see [`SYSTEM_PROMPT`]. Only the *transport*
-/// text carries them: [`crate::session`] logs `user_message` from the reader's
-/// own string, so the transcript never sees the block and there is nothing to
-/// strip on the way out.
 pub async fn start_turn(session: &FxSession, text: &str) -> Result<()> {
-    // Read, not taken: a send that fails hands the line to nobody, and the
-    // reader's retry is then a turn that never learns the rules.
-    let owed = session.preamble.load(std::sync::atomic::Ordering::Relaxed);
-    let sent = if owed {
-        with_preamble(text)
-    } else {
-        text.to_string()
-    };
-
     // Held across the send, which only hands the line to the writer task:
     // an outright refusal can answer before this returns, and `prompt_answer`
     // takes this same lock, so it cannot read the id before it is written.
@@ -761,13 +687,10 @@ pub async fn start_turn(session: &FxSession, text: &str) -> Result<()> {
         "session/prompt",
         json!({
             "sessionId": session.id,
-            "prompt": [{"type": "text", "text": sent}],
+            "prompt": [{"type": "text", "text": text}],
         }),
     )?;
     *running = Some(id);
-    session
-        .preamble
-        .store(false, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -1130,38 +1053,6 @@ mod tests {
         assert_eq!(mode_for(ApprovalPolicy::BypassPermissions), "code");
     }
 
-    /// The rules go **after** the reader's text, which is what keeps fx's own
-    /// title on the work — measured, see [`with_preamble`]. A refactor that
-    /// tidies them to the front reads fine and costs every fx session its
-    /// title, so the order is pinned rather than left to the comment.
-    #[test]
-    fn the_rules_ride_behind_the_prompt_in_a_tag_that_closes() {
-        let sent = with_preamble("add a --verbose flag");
-
-        assert!(sent.starts_with("add a --verbose flag\n\n"));
-        let opens = sent.find("<dray_system_prompt>").expect("no opening tag");
-        let closes = sent.find("</dray_system_prompt>").expect("no closing tag");
-        assert!(opens < closes);
-        assert!(sent.trim_end().ends_with("</dray_system_prompt>"));
-        // The rules themselves, not just an empty envelope.
-        assert!(sent.contains("You run inside Dray"));
-    }
-
-    /// A resume that has logged nothing never delivered a prompt, so it still
-    /// owes the rules — the state an `init` failing after `session/new`
-    /// leaves, where reading `is_new_session` alone lost them for good.
-    #[test]
-    fn a_resume_onto_a_thread_no_prompt_reached_still_owes_the_rules() {
-        assert!(owes_preamble(true, 0));
-        // The failed-creation retry: thread id recorded, nothing logged.
-        assert!(owes_preamble(false, 0));
-        // An ordinary resume — `user_message` is logged before the send, so a
-        // conversation that ran has moved the counter and took the rules with
-        // its first turn.
-        assert!(!owes_preamble(false, 1));
-        assert!(!owes_preamble(false, 420));
-    }
-
     /// fx's refusal names the server in quotes, and that is the whole match:
     /// a server whose name is a prefix of another's must not be blamed for
     /// it, and a message naming none answers `None` so the caller sheds all
@@ -1252,7 +1143,6 @@ mod tests {
                 id: "s".into(),
                 prompt_id: Arc::new(std::sync::Mutex::new(None)),
                 efforts: Arc::new(std::sync::Mutex::new(efforts)),
-                preamble: Arc::new(AtomicBool::new(false)),
             },
             rx,
         )
