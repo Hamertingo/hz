@@ -300,6 +300,27 @@ export function useSessions() {
     // one could never be answered.
     const [asksBySession, setAsksBySession] = useState<Record<string, string[]>>({});
     const [error, setError] = useState<string | null>(null);
+    // Bumped by every navigation, so an action started before it and rejecting
+    // after it can be told from one the reader is still standing next to.
+    // Clearing the slot on the way in is only half of keeping it to its
+    // session: a send, an interrupt or a permission reply can reject seconds
+    // after the reader has moved on, and an unguarded catch would write the
+    // previous session's failure into the composer they moved to.
+    const navGen = useRef(0);
+    /// A catch handler for a *session-scoped* action starting now. Reports into
+    /// the slot only while the reader has not navigated since — taken at the
+    /// start of the action, since the rejection lands after any move.
+    ///
+    /// Only for actions about one session. App-wide loads and actions — the
+    /// index, projects, branches, a checkout — stay on the raw setter: their
+    /// failure is as true after a move as before it, and dropping one leaves a
+    /// list stale or empty with nothing on screen saying why.
+    const failUnlessLeft = () => {
+      const gen = navGen.current;
+      return (e: unknown) => {
+        if (gen === navGen.current) setError(String(e));
+      };
+    };
 
 // Empty is the agreed "not read yet" answer — `usableModel` leaves the pick
 // standing on it and the picker draws its own waiting row — so an absent entry
@@ -646,7 +667,12 @@ const handleSendMsg = async (
     // from an earlier click can land afterwards and roll this one away.
     selectionRequestRef.current = sessionId;
     setSelectedSessionId(sessionId);
+    // A move like any other: the composer now belongs to this session, so an
+    // action still out from the new-task view must not report into it.
+    navGen.current++;
   }
+  // Taken after the mint, so this send's own failure still reports.
+  const fail = failUnlessLeft();
 
   setError(null);
   // Read before the optimistic write below overwrites it. A send onto a running
@@ -807,7 +833,7 @@ const handleSendMsg = async (
         setSelectedSessionId(null);
       }
     }
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -818,6 +844,7 @@ const handleSendMsg = async (
 // past that the CLI owns the prompt and no channel exists to retract it, so the
 // composer is left alone and the message lands as an ordinary one.
 const handleCancelQueued = async (): Promise<QueuedMessage | null> => {
+  const fail = failUnlessLeft();
   if (!selectedSessionId) return null;
   const sessionId = selectedSessionId;
   try {
@@ -845,7 +872,7 @@ const handleCancelQueued = async (): Promise<QueuedMessage | null> => {
     }));
     return cancelled;
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return null;
   }
 };
@@ -854,11 +881,12 @@ const handleCancelQueued = async (): Promise<QueuedMessage | null> => {
 // is not touched here — the abort produces a result event, and the backend's
 // machine reports the transition on `session_status` like any other ending.
 const handleInterrupt = async () => {
+  const fail = failUnlessLeft();
   if (!selectedSessionId) return;
   try {
     await invoke("interrupt_session", { sessionId: selectedSessionId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -870,11 +898,12 @@ const handleInterrupt = async () => {
 // running task alone — a task is backgrounded to outlive its turn, so killing
 // one is its own ask.
 const handleStopTask = async (taskId: string) => {
+  const fail = failUnlessLeft();
   if (!selectedSessionId) return;
   try {
     await invoke("stop_task", { sessionId: selectedSessionId, taskId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -892,10 +921,11 @@ const handleRespondPermission = async (
   requestId: string,
   optionId: string,
 ) => {
+  const fail = failUnlessLeft();
   try {
     await invoke("respond_permission", { sessionId, requestId, optionId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -904,10 +934,11 @@ const handleAnswerQuestions = async (
   requestId: string,
   answers: Record<string, string>,
 ) => {
+  const fail = failUnlessLeft();
   try {
     await invoke("answer_questions", { sessionId, requestId, answers });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -922,6 +953,12 @@ const handleAnswerQuestions = async (
 const handleNewSession = () => {
   selectionRequestRef.current = null;
   setSelectedSessionId(null);
+  // The slot is one value for the whole app, so a failure left in it follows
+  // the reader out of the session it happened in. It reports the reader's own
+  // last action failing, and leaving a session is leaving that action behind —
+  // the bump is what keeps one still in flight from arriving after this.
+  navGen.current++;
+  setError(null);
   setHarnessState(prefs.harness);
   // Repaired against the list on screen, not taken as read. The effect below
   // only fires when the harness *changes*, so a stored model left over from the
@@ -937,9 +974,20 @@ const handleNewSession = () => {
   //
   // `prefs.harness` and not the one on screen: this restores a session, which
   // carries its own agent.
+  //
+  // fx repairs per provider, like every other fx site. `usableModel` here fell
+  // to the unset sentinel whenever the remembered pick was not in the list on
+  // screen — and that is the ordinary state after a provider switch, since the
+  // reload repairs the on-screen pick through the raw setter and prefs keep
+  // naming the model of the provider left. Coming back from another fx session
+  // then drew "Select Model" with nothing to repair it: the harness had not
+  // changed, so no fetch followed.
   const ownList = modelsByHarness[prefs.harness] ?? [];
+  const remembered = rememberedModel(prefs.modelByHarness, prefs.harness);
   setModelId(
-    usableModel(ownList, rememberedModel(prefs.modelByHarness, prefs.harness), prefs.harness),
+    prefs.harness === "fx"
+      ? repairFxModel(ownList, remembered)
+      : usableModel(ownList, remembered, prefs.harness),
   );
   setEffortByModel(prefs.effortByModel);
   setPermissionModeState(prefs.permissionMode);
@@ -991,6 +1039,14 @@ const handleSelectSessionIndexItem = async (sessionId: string) => {
   const previous = selectedSessionIdRef.current;
 
   setSelectedSessionId(sessionId);
+  // Cleared on the way in, never on the way out: the rollback below sets its
+  // own sentence *after* this, so a read that resolves to nothing still says
+  // so. See `handleNewSession` for why the slot has to be cleared at all.
+  navGen.current++;
+  setError(null);
+  // Taken *after* the bump, so this read's own failure still reports — and a
+  // later move retires it like any other action's.
+  const fail = failUnlessLeft();
 
   // Opening the session is answering the notice about it — an unread completion
   // is read, and a pending request is now on screen. Not the ready-to-merge
@@ -1057,7 +1113,7 @@ const handleSelectSessionIndexItem = async (sessionId: string) => {
     // deletion is the likely cause rather than the observed one.
     setError("Session not found.");
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 }
 
@@ -1075,6 +1131,7 @@ const handleSelectSessionIndexItem = async (sessionId: string) => {
 /// failed write must not leave the sidebar drawing a state the disk doesn't
 /// have. Nothing re-parents — detaching is one-way.
 const detachSession = async (sessionId: string) => {
+  const fail = failUnlessLeft();
   try {
     const updated = await invoke<SessionIndexItem | null>("detach_session", {
       sessionId,
@@ -1084,7 +1141,7 @@ const detachSession = async (sessionId: string) => {
       prev.map((i) => (i.sessionId === sessionId ? updated : i)),
     );
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -1097,6 +1154,7 @@ const setSessionFlags = async (
   sessionId: string,
   flags: { archived?: boolean; pinned?: boolean },
 ): Promise<boolean> => {
+  const fail = failUnlessLeft();
   try {
     const updated = await invoke<SessionIndexItem | null>("set_session_flags", {
       sessionId,
@@ -1144,7 +1202,7 @@ const setSessionFlags = async (
     if (updated.archived) evictSessions({ sessionId });
     return true;
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return false;
   }
 };
@@ -1167,10 +1225,11 @@ const applyIssues = (sessionId: string, issues: IssueRef[]) => {
 // Removes one. `key` is the tracker's own id from the row that was clicked; the
 // backend also accepts the human identifier, which is what the CLI passes.
 const unlinkIssue = async (sessionId: string, key: string) => {
+  const fail = failUnlessLeft();
   try {
     applyIssues(sessionId, await invoke<IssueRef[]>("unlink_issue", { sessionId, key }));
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -1321,6 +1380,7 @@ const removeWorktree = (sessionId: string, origin: "asked" | "tidy" = "asked") =
 // snapshot it returns is the parent's copied log, so the new session opens
 // reading exactly like the one it came from.
 const forkSession = async (sessionId: string, worktree: boolean) => {
+  const fail = failUnlessLeft();
   const forkId = crypto.randomUUID();
 
   let snapshot: SessionSnapshot;
@@ -1331,7 +1391,7 @@ const forkSession = async (sessionId: string, worktree: boolean) => {
       worktree,
     });
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return;
   }
 
@@ -1347,6 +1407,9 @@ const forkSession = async (sessionId: string, worktree: boolean) => {
   // fork it is about to show.
   selectionRequestRef.current = snapshot.sessionId;
   setSelectedSessionId(snapshot.sessionId);
+  // A fork opens selected, so this is a move: an action still out on the
+  // parent must not report into the fork's composer.
+  navGen.current++;
   restoreSessionControls(snapshot);
 };
 
@@ -1358,10 +1421,11 @@ const forkSession = async (sessionId: string, worktree: boolean) => {
 // neighbour — the next session is not a guess worth making, and `handleNewSession`
 // is the one path that also restores the user's own defaults.
 const deleteSession = async (sessionId: string) => {
+  const fail = failUnlessLeft();
   try {
     await invoke<boolean>("delete_session", { sessionId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return;
   }
 
@@ -1680,9 +1744,16 @@ useEffect(() => {
             // can land while a background subagent is still running, so the
             // backend's status machine owns the call and reports it on the
             // `session_status` channel instead.
-            if (agentEvent.payload.type === "error") {
-              setError(agentEvent.payload.message);
-            }
+            //
+            // An `error` payload is deliberately **not** mirrored into the
+            // composer's slot. It belongs to the session that raised it, is
+            // persisted, and `EventRow` already draws it as a red row in that
+            // session's transcript — where the slot is one value for the whole
+            // app, so a mirrored copy followed the reader to every other
+            // session and to the new-task composer, outliving the conversation
+            // it was about. One decision for every harness: persisted errors
+            // live in the transcript, the slot reports the reader's own last
+            // action failing.
         } else {
             const payload = agentEvent.payload;
 
