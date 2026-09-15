@@ -5,6 +5,21 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.18.3
+
+### Fixed
+
+- **fx sessions get the MCP servers from `~/.fx/mcp.json`.** `fx acp`
+  reads no config of its own, so a Dray fx session ran without the
+  tools the same machine's `fx` shell had. Sent on resume too. A
+  server Dray cannot authenticate is dropped rather than taking the
+  whole session with it, and tokens named by `bearer_token_env` are
+  read through the login shell, so a launch from the Dock resolves
+  them like a terminal does.
+- **⌘⌥↑/↓ steps projects**, which is what it always said it did — it
+  only moved by project where a split group existed, and otherwise
+  repeated ⌘⇧↑/↓.
+
 ## 0.18.2
 
 ### Added
