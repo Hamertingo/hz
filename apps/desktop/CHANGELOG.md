@@ -5,6 +5,32 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.18.4
+
+### Added
+
+- **fx is told Dray's rules**, which it had no way to learn before —
+  `fx acp` has no system-prompt surface at all, so they ride the first
+  prompt of a new session and the transcript still shows what you
+  wrote.
+- **fx's remaining tool calls are drawn as work** rather than as wire
+  names: a fetched page reports what it fetched, a search names its
+  pattern instead of the directory it scoped, and a run of subagents
+  lists its tasks rather than collapsing into a count.
+
+### Fixed
+
+- **The browser pane stays on screen under menus and dialogs.** Any
+  dropdown anywhere left it a hole; now it only hides where something
+  actually lands on it, behind a picture of the page.
+- **An error stays in the session it came from.** One session's
+  failure used to follow you into every other session and the new-task
+  composer.
+- **A new fx chat keeps a model that matches its provider**, rather
+  than sitting at "Select Model" after a provider switch.
+- **fx is drawn last in the agent list**, and ⌘⇧A steps the same
+  order.
+
 ## 0.18.3
 
 ### Fixed
