@@ -29,7 +29,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::process::Stdio;
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -72,6 +72,7 @@ pub async fn init(
     model: Option<&Model>,
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
+    fast: bool,
     cwd: &str,
     session_cwd: &str,
     is_new_session: bool,
@@ -84,6 +85,30 @@ pub async fn init(
         0
     } else {
         next_seq_by_session_id(session_id).await?
+    };
+
+    // Before the spawn, and only on one: fx reads `fast_mode` out of its
+    // settings file at `session/new` and stamps it onto the session record it
+    // keeps, where a `session/resume` then honours the stamp whatever the file
+    // says since. So this is the only moment it can be set, and a resume asking
+    // again would be a write that changes nothing.
+    //
+    // **The guard has to outlive the write, and that is the whole of it.** What
+    // reads the file is `session/new`, seconds later and a process away — so a
+    // lock around the rewrite alone leaves two creations free to interleave
+    // write, write, read, read, and one session is permanently stamped with the
+    // other's speed while Dray's index records the value that was asked for. A
+    // fan-out of `dray new` is exactly where two land at once.
+    //
+    // Named, not `_`: a plain underscore drops the guard on the spot and puts
+    // the race straight back. It falls at the end of `init`, which is wider than
+    // `open_session` by one handshake and costs nothing worth a narrower scope.
+    let _creating = if is_new_session {
+        let guard = FX_CREATING.lock().await;
+        set_fast_mode(fast).await;
+        Some(guard)
+    } else {
+        None
     };
 
     let bin = crate::binpath::fx().await;
@@ -184,12 +209,39 @@ pub async fn init(
         model: model.map(|m| m.id.clone()).unwrap_or_default(),
         effort,
         permission_mode,
+        fast,
         events,
         seq,
         status,
         pending_permissions: pending,
         queued,
     })
+}
+
+/// Serializes fx session *creation*, so a global setting written for one cannot
+/// be read by another.
+///
+/// Only creation: a resume reads nothing out of the settings file, since fx
+/// honours the stamp on its own session record instead. Two resumes, or a resume
+/// beside a creation, still run side by side.
+static FX_CREATING: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Puts fx's fast mode where the next `session/new` will read it.
+///
+/// **fx's own global setting, and there is no narrower place to put it.** ACP's
+/// `configOptions` are provider, model, mode and effort and nothing else (fx
+/// 0.0.10), `fx acp` takes `--model` and `--log-file` and nothing else, and no
+/// `FX_*` variable names it — so the settings file is the only surface, exactly
+/// as it is for the provider switch next door. The composer's row says so.
+///
+/// Best effort, deliberately. A session must not fail to start because another
+/// tool's config file could not be edited, and the cost of a failed write is a
+/// session running at ordinary speed — which is the safe direction, since the
+/// faster tier is the one that spends more.
+async fn set_fast_mode(fast: bool) {
+    if let Err(error) = models::write_setting("fast_mode", fast.into()).await {
+        eprintln!("[fx] couldn't set fast mode: {error:#}");
+    }
 }
 
 /// `initialize`, then `session/new` or `session/resume`. Answers fx's own id.
