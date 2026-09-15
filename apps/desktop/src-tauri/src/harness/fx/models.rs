@@ -219,7 +219,17 @@ pub(super) async fn write_setting(key: &str, value: serde_json::Value) -> Result
     let path = std::env::home_dir()
         .context("no home dir")?
         .join(".fx/settings.json");
-    let bytes = tokio::fs::read(&path).await.context("reading fx settings")?;
+    write_setting_at(&path, key, value).await
+}
+
+/// Takes the path so a test can round-trip against a tempdir and read the mode
+/// back, rather than writing into the reader's real `~/.fx`.
+async fn write_setting_at(
+    path: &std::path::Path,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<()> {
+    let bytes = tokio::fs::read(path).await.context("reading fx settings")?;
     let mut settings: serde_json::Value =
         serde_json::from_slice(&bytes).context("parsing fx settings")?;
     let fields = settings
@@ -236,14 +246,76 @@ pub(super) async fn write_setting(key: &str, value: serde_json::Value) -> Result
     }
     fields.insert(key.to_string(), value);
 
+    // **The file's own mode, carried onto the temp before the rename.** This is
+    // somebody else's config, so the rule is preserve what was found rather than
+    // mint a mode of our own — and fx keeps it at `0600`, as it does every file
+    // beside it. `fs::write` creates at the process umask, so the rename was
+    // handing the reader back a `0644` copy of their own config on every write
+    // through here — a provider switch, and every session creation that moves
+    // fast mode — readable by any other account on the machine. Measured, not
+    // feared: fx rewrites the mode to `0600` on each of its own writes, so the
+    // widening was Dray's alone and came back every time.
+    //
+    // On the temp at **create**, never on the final file after the rename: the
+    // same ordering [`crate::issues`]'s credential write documents, and for the
+    // same reason — every other order leaves a window where the file exists at
+    // the wider mode.
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::metadata(path)
+            .await
+            .map(|m| m.permissions().mode() & 0o777)
+            // Unreadable metadata on a file we just read whole is not a case
+            // worth a failed switch, and `0600` is the narrow direction.
+            .unwrap_or(0o600)
+    };
+
     let dir = path.parent().context("fx settings has no parent dir")?;
     let tmp = dir.join(format!(".settings.json.dray.{}", std::process::id()));
-    tokio::fs::write(&tmp, serde_json::to_vec(&settings)?)
-        .await
-        .context("writing fx settings")?;
-    tokio::fs::rename(&tmp, &path)
-        .await
-        .context("replacing fx settings")?;
+    // Cleared first, so the `create_new` below is answering "did this call make
+    // the file" rather than failing over one a crashed write left behind.
+    let _ = tokio::fs::remove_file(&tmp).await;
+
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // A ceiling, not the answer: `open` applies `mode & !umask`, so this can only
+    // land at or below what was found. That is the half that matters for safety —
+    // the temp never exists wider than the target is going to be — and the
+    // `set_permissions` below is what makes it *exact*.
+    #[cfg(unix)]
+    options.mode(mode);
+
+    let written = async {
+        use tokio::io::AsyncWriteExt;
+        let mut file = options.open(&tmp).await?;
+        file.write_all(&serde_json::to_vec(&settings)?).await?;
+        file.sync_all().await?;
+        // Restored exactly, because the create above was filtered by the umask:
+        // under `0077` a file found at `0644` would otherwise be renamed into
+        // place at `0600`, silently *narrowing* the reader's own config instead
+        // of preserving it. Still before the rename, so the window the ordering
+        // exists to close stays closed.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(mode))
+                .await?;
+        }
+        anyhow::Ok(())
+    }
+    .await;
+
+    if let Err(error) = written {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(error.context("writing fx settings"));
+    }
+
+    if let Err(error) = tokio::fs::rename(&tmp, path).await {
+        // Or the next switch inherits a stale temp file `create_new` would trip on.
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(anyhow::Error::new(error).context("replacing fx settings"));
+    }
     Ok(())
 }
 
@@ -617,5 +689,66 @@ mod tests {
         assert_eq!(provider_key("Vercel AI Gateway"), "gateway");
         assert_eq!(provider_key("Grok subscription"), "grok");
         assert_eq!(provider_key("Something New"), "something new");
+    }
+
+    /// The file is fx's, kept at `0600` like everything beside it, and **every**
+    /// write through here must hand it back at the mode it was found at — the
+    /// provider switch and the fast-mode write each session creation makes.
+    /// `fs::write` creates at the process umask, so without this the reader's own
+    /// config came back `0644` — and fx rewrites `0600` on its next write, so the
+    /// widening returned each time rather than settling.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_settings_write_hands_the_file_back_at_the_mode_it_found() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "dray-fx-settings-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // `0o777` is what pins the umask half, and it pins it **without setting
+        // a umask here** — which must not happen, since a umask is process-wide
+        // and these tests run in parallel.
+        //
+        // It works because `0o777 & umask != 0` for every umask except `0000`:
+        // a build that only passes `OpenOptions::mode` and never restores the
+        // permissions creates the temp at `0o777 & !umask` and renames that into
+        // place, so this row fails under any umask that filters anything. And
+        // under `0000` nothing is filtered, so that build is *correct* and there
+        // is no regression to catch. The row's coverage is therefore exactly as
+        // wide as the defect's reach, rather than depending on the ambient value.
+        for found in [0o600, 0o644, 0o777] {
+            std::fs::write(
+                &path,
+                br#"{"provider":"codex","models":{"grok":"grok-4.6"},"yolo_acknowledged":true}"#,
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(found)).unwrap();
+
+            write_setting_at(&path, "provider", "grok".into()).await.unwrap();
+
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, found, "a switch must not move the file's mode");
+
+            // Every other field handed back untouched — the whole reason this
+            // edits a `Value` rather than writing an object built here.
+            let after: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(after["provider"], "grok");
+            assert_eq!(after["models"]["grok"], "grok-4.6");
+            assert_eq!(after["yolo_acknowledged"], true);
+
+            // And no temp left beside it holding the same config at the umask's mode.
+            assert!(
+                !dir.join(format!(".settings.json.dray.{}", std::process::id()))
+                    .exists()
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
