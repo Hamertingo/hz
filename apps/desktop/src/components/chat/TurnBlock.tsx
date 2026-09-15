@@ -1,6 +1,6 @@
 import { Fragment, useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
 
+import AgentTrace from "@/components/chat/AgentTrace";
 import AssistantMessage from "@/components/chat/AssistantMessage";
 import EventRow from "@/components/chat/EventRow";
 import SubagentRow from "@/components/chat/SubagentRow";
@@ -8,7 +8,6 @@ import ToolGroupRow from "@/components/chat/ToolGroupRow";
 import UserMessage from "@/components/chat/UserMessage";
 import { GROUP_MIN, isToolGroup, segmentWork, type SubagentRun, type Turn, type TurnSegment, type WorkItem } from "@/lib/transcript";
 import type { FileEdit, ToolResult } from "@/types/events";
-import { cn } from "@/lib/utils";
 
 type TurnBlockProps = {
   turn: Turn;
@@ -110,27 +109,30 @@ export default function TurnBlock({
           )
         : segments.map((seg, i) => {
             const open = !!openSegments[i];
+            // The steps of a finished turn, folded the same way a tool run or a
+            // reasoning block is. `working` is false by construction — this path
+            // only runs once the turn has closed — so the header draws settled
+            // and the body stays where the reader left it.
             return (
               <Fragment key={i}>
-                {seg.rows > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setOpenSegments((prev) => ({ ...prev, [i]: !prev[i] }))}
-                    className="group/turn flex items-center gap-2 text-left text-chat text-muted-foreground"
-                  >
-                    <span>{segmentLabel(seg)}</span>
-                    <ChevronRight
-                      className={cn(
-                        "size-3 shrink-0 transition-all",
-                        open ? "rotate-90 opacity-100" : "opacity-0 group-hover/turn:opacity-100",
-                      )}
-                    />
-                  </button>
-                )}
-                {open &&
-                  seg.items.map((item) =>
-                    renderItem(item, subagentById, resultByCallId, editsByCallId, onOpenSubagent, onOpenSession),
-                  )}
+                <AgentTrace
+                  active={segmentLabel(seg)}
+                  done={segmentLabel(seg)}
+                  working={false}
+                  open={seg.rows > 0 ? open : undefined}
+                  onToggle={
+                    seg.rows > 0
+                      ? () => setOpenSegments((prev) => ({ ...prev, [i]: !prev[i] }))
+                      : undefined
+                  }
+                  rows={
+                    open
+                      ? seg.items.map((item) =>
+                          renderItem(item, subagentById, resultByCallId, editsByCallId, onOpenSubagent, onOpenSession),
+                        )
+                      : []
+                  }
+                />
                 {seg.prompt &&
                   renderItem(
                     seg.prompt,

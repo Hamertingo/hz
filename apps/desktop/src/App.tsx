@@ -30,6 +30,7 @@ import { usePrMarks } from "@/hooks/usePrMarks";
 import { usePrReady } from "@/hooks/usePrReady";
 import { useWorkStatus } from "@/hooks/useWorkStatus";
 import HandoffRow from "@/components/composer/HandoffRow";
+import FollowupStrip, { todoPlan as todoPlanFromInput } from "@/components/composer/FollowupStrip";
 import { trackFeature } from "@/lib/analytics";
 import { handoffActions } from "@/lib/handoff";
 import { prTabVisible, usePullRequest } from "@/hooks/usePullRequest";
@@ -132,8 +133,16 @@ function App() {
     modelId,
     effort,
     permissionMode,
+    roleId,
+    setRoleId,
+    setGlobalRoleId,
     projects,
     projectPath,
+    repos,
+    repoPath,
+    setRepoPath,
+    atWorkspaceRoot,
+    targetPath,
     branches,
     branch,
     useWorktree,
@@ -179,9 +188,6 @@ function App() {
     paneState,
     indexSide,
   } = useSessions();
-
-  // Whether the agent the composer is pointed at can actually be run. Null
-  // while the first read is out and null when it is installed — both mean
   // there is nothing to say, so the composer sends as it always did.
   const missingAgent = useMissingAgent(harness);
 
@@ -434,12 +440,58 @@ function App() {
 
   // The chat derives this too, but the panel and the header count need it here
   // and the memo makes the second pass free.
-  const { subagents, resultByCallId } = useMemo(
+  const { subagents, resultByCallId, events: mainEvents } = useMemo(
     // Same `busy` and task set the chat passes. Left off, a subagent's
     // in-flight call would show in the panel as one that never finished.
     () => buildTranscript(selectedSession?.events ?? [], busy, liveTaskIds),
     [selectedSession?.events, busy, liveTaskIds],
   );
+
+  // The strip is **this turn's** work: runs the agent is holding, and runs that
+  // reported before the turn closed — dropping one the moment it lands reads as
+  // the strip swallowing its own news. The next prompt retires them, since
+  // whatever the agent was mid-way through, this turn is not going to finish it.
+  //
+  // Background work is deliberately absent. A dev server outlives every turn by
+  // design, so holding this band for it would keep the handoff peek away for the
+  // rest of the session — and Run server is exactly what a reader wants while a
+  // server is up. It already has a home: the transcript's own background notice,
+  // which says how many are outstanding wherever the reader is scrolled.
+  const liveRuns = useMemo(() => {
+    if (!busy) return [];
+    let lastPrompt = -1;
+    for (let i = mainEvents.length - 1; i >= 0; i--) {
+      if (mainEvents[i].payload.type === "user_message") {
+        lastPrompt = i;
+        break;
+      }
+    }
+    return subagents.filter((r) => {
+      if (!r.done) return true;
+      const spawn = r.spawn;
+      if (!spawn) return true;
+      return mainEvents.findIndex((e) => e.id === spawn.id) > lastPrompt;
+    });
+  }, [subagents, busy, mainEvents]);
+  const todoPlan = useMemo(() => {
+    const inputs: unknown[] = [];
+    for (const event of mainEvents) {
+      if (
+        event.payload.type === "tool_call_started" &&
+        (event.payload.name === "TodoWrite" || event.payload.name === "todo")
+      ) {
+        inputs.push(event.payload.input);
+      }
+    }
+    return todoPlanFromInput(inputs);
+  }, [mainEvents]);
+
+  // The plan rides the turn. Its whole value here is "which step is the agent on
+  // *now*", and a finished plan left standing would hold the strip up for the
+  // rest of the session — a permanent band above the composer for work that
+  // ended an hour ago. The transcript is where the finished plan lives.
+  const stripPlan = busy ? todoPlan : null;
+  const stripShown = liveRuns.length > 0 || stripPlan !== null;
 
   // What the composer's handoff row draws itself from, and — one line down —
   // which branch the pull requests are looked up by. Read on the same falling
@@ -1669,6 +1721,7 @@ function App() {
                 selectedId={selectedSubagentId}
                 resultByCallId={resultByCallId}
                 live={busy || backgroundTasks.length > 0}
+                canStop={selectedSession?.harness !== "omp"}
                 onSelect={setSelectedSubagentId}
                 onStopTask={handleStopTask}
               />
@@ -1706,6 +1759,18 @@ function App() {
           commandsLoading={slashCommandsLoading}
           cwd={composerCwd}
           onStop={handleInterrupt}
+          // Above the card and outside it: the strip names live work, and the
+          // card's blur backdrops everything inside it — the same trap that
+          // sends the pickers to the wrapper. Unmounted idle, so the composer
+          // never moves for it.
+          followup={
+            <FollowupStrip
+              runs={liveRuns}
+              plan={stripPlan}
+              onOpenRun={openSubagent}
+              onOpenPanel={openSubagentPanel}
+            />
+          }
           onCancelQueued={handleCancelQueued}
           onCancelRecording={() => {
             if (recorder.state !== "recording") return false;
@@ -1755,14 +1820,22 @@ function App() {
                   )
               : undefined
           }
+          // The peek and the strip want the same 4px band above the card, and
+          // the peek's whole affordance is being *tucked behind* the composer:
+          // two button tops showing above a strip is neither — it reads as
+          // debris stuck to the strip's own top edge. So while work is live the
+          // band is status, and the moment it clears the peek is back. Handing
+          // work back mid-turn is queuing it anyway.
           handoff={
-            <HandoffRow
-              actions={handoffActions(workStatus, sessionHasPr, !!selectedSessionId)}
-              // Straight out as a prompt, exactly as if it had been typed. A
-              // turn already running queues it, like any other send.
-              onSend={(prompt) => void handleSendMsg(prompt)}
-              disabled={!selectedSessionId}
-            />
+            stripShown ? null : (
+              <HandoffRow
+                actions={handoffActions(workStatus, sessionHasPr, !!selectedSessionId)}
+                // Straight out as a prompt, exactly as if it had been typed. A
+                // turn already running queues it, like any other send.
+                onSend={(prompt) => void handleSendMsg(prompt)}
+                disabled={!selectedSessionId}
+              />
+            )
           }
           // Only on a new task. An agent is fixed at creation, so a live
           // session cannot be pointed at one that is missing — and a session
@@ -1796,6 +1869,10 @@ function App() {
               projectPath={projectPath}
               onSelectProject={handleSelectProject}
               onAttachProject={handleAttachProject}
+              repos={repos}
+              repoPath={repoPath}
+              onSelectRepo={setRepoPath}
+              atWorkspaceRoot={atWorkspaceRoot}
               branches={branches}
               branch={branch}
               onSelectBranch={handleSelectBranch}
@@ -1804,6 +1881,10 @@ function App() {
                 pendingBranch && runCheckout(pendingBranch, stash)
               }
               onCancelBranchSwitch={() => setPendingBranch(null)}
+              roleId={roleId}
+              onRoleChange={setRoleId}
+              onRoleGlobal={setGlobalRoleId}
+              roleOfferPath={targetPath}
               useWorktree={useWorktree}
               onToggleWorktree={() => setUseWorktree((v) => !v)}
               onAttach={() => void pickAttachments(selectedSessionId)}

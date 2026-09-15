@@ -1,15 +1,15 @@
-import { useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { useMemo } from "react";
+import { Globe } from "lucide-react";
 
+import AgentTrace from "@/components/chat/AgentTrace";
 import EventRow from "@/components/chat/EventRow";
 import { countChanges, editSides } from "@/lib/diff";
 import { groupLabel, groupVerb } from "@/lib/tools";
 import type { ToolGroup } from "@/lib/transcript";
-import { cn } from "@/lib/utils";
 import type { FileEdit, ToolResult } from "@/types/events";
 
-/// A run of consecutive same-tool calls behind one row. Expanding reveals the
-/// individual calls, each still its own independently expandable `ToolCall`.
+/// A run of consecutive same-tool calls behind one trace header. Expanding
+/// reveals the individual calls, each still its own expandable `ToolCall`.
 export default function ToolGroupRow({
   group,
   resultByCallId,
@@ -19,14 +19,22 @@ export default function ToolGroupRow({
   resultByCallId: Map<string, ToolResult>;
   editsByCallId?: Map<string, FileEdit[]>;
 }) {
-  const [open, setOpen] = useState(false);
-
   // Any call still awaiting its result keeps the group live, so a run that
-  // collapses mid-flight still shows it is working.
+  // settles mid-flight still shimmers.
   const pending = group.calls.some(
     (event) =>
       event.payload.type === "tool_call_started" &&
       !resultByCallId.has(event.payload.callId),
+  );
+
+  // A run of web lookups is a search, and reads as one: "Searched the web"
+  // over the queries it ran. Every other run is work on the repository, which
+  // is what the coding trace is for. Decided off the harness's own `tool_type`
+  // rather than off tool names, since only the mapper knows what a name means.
+  const searching = group.calls.every((event) =>
+    event.payload.type === "tool_call_started"
+      ? event.payload.toolType === "web"
+      : true,
   );
 
   // The run's total `+N -M`, summed from the same per-call counts the rows
@@ -67,73 +75,40 @@ export default function ToolGroupRow({
     return any ? { added, removed } : null;
   }, [group.key, group.calls.length]);
 
+  // One target names it instead of counting to one, so the header reads like the
+  // rows underneath — same mono, same truncation. Both tenses are built here
+  // rather than conjugated after the fact: `groupVerb` is the only thing that
+  // knows how a tool conjugates.
+  const active = group.target
+    ? `${groupVerb(group.name, true)} ${group.target}`
+    : groupLabel(group.name, group.targets, true);
+
+  // The churn rides the header text rather than a separate slot, because the
+  // trace header is one sentence and a second column beside it would be read as
+  // a second fact about something else.
+  const done = `${
+    group.target
+      ? `${groupVerb(group.name, false)} ${group.target}`
+      : groupLabel(group.name, group.targets, false)
+  }${changes && (changes.added > 0 || changes.removed > 0) ? ` · +${changes.added} -${changes.removed}` : ""}`;
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="group/group flex w-full items-center gap-2 text-left text-chat text-muted-foreground"
-      >
-        {/* Styled as the turn summary is, not as a tool row: with the
-            double-nesting rule this heads the turn's work where that summary
-            otherwise would, so the two must read as the same kind of toggle.
-            A failing call inside does not color it: one error among a dozen
-            calls would paint the whole run as failed, and the row that failed
-            says so itself once the group is expanded. */}
-        <span className={cn("shrink-0", pending && "shimmer-text")}>
-          {group.target
-            ? groupVerb(group.name, pending)
-            : groupLabel(group.name, group.targets, pending)}
-        </span>
-
-        {/* A run that hit one target names it instead of counting to one, so it
-            reads like the `ToolCall` rows underneath — same mono, same truncation
-            — with the verb above keeping the group's own styling. */}
-        {group.target && (
-          <span className="min-w-0 max-w-fit truncate font-mono">{group.target}</span>
-        )}
-
-        {/* The label counts targets, so repeat visits vanish from it — 30 edits
-            across 12 files reads as "12 files". This is the only place that
-            gap is visible, and without it a 3-row group can say "1 file". */}
-        {group.calls.length > group.targets && (
-          <span className="shrink-0">{group.calls.length} calls</span>
-        )}
-
-        {/* Same slot and same styling as the single row's, so a run that grows
-            past `GROUP_MIN` doesn't move its own counter when the group forms
-            around it. */}
-        {changes && (changes.added > 0 || changes.removed > 0) && (
-          <span className="shrink-0 font-mono tabular-nums">
-            {changes.added > 0 && <span className="text-accent-add">+{changes.added}</span>}
-            {changes.added > 0 && changes.removed > 0 && " "}
-            {changes.removed > 0 && <span className="text-destructive">-{changes.removed}</span>}
-          </span>
-        )}
-
-        <ChevronRight
-          className={cn(
-            "size-3 shrink-0 transition-all",
-            open ? "rotate-90 opacity-100" : "opacity-0 group-hover/group:opacity-100",
-          )}
+    <AgentTrace
+      // A run of searches is the one trace that is not the agent's own work on
+      // the repository, so it gets the globe.
+      icon={searching ? <Globe className="size-3.5" /> : undefined}
+      active={active}
+      done={done}
+      working={pending}
+      rows={group.calls.map((event) => (
+        <EventRow
+          key={event.id}
+          event={event}
+          resultByCallId={resultByCallId}
+          editsByCallId={editsByCallId}
+          hideToolLabel
         />
-      </button>
-
-      {/* Indented so the calls read as belonging to the row above rather than
-          as siblings that appeared from nowhere. */}
-      {open && (
-        <div className="flex flex-col gap-1.5 border-l border-border/60 pl-3">
-          {group.calls.map((event) => (
-            <EventRow
-              key={event.id}
-              event={event}
-              resultByCallId={resultByCallId}
-              editsByCallId={editsByCallId}
-              hideToolLabel
-            />
-          ))}
-        </div>
-      )}
-    </div>
+      ))}
+    />
   );
 }

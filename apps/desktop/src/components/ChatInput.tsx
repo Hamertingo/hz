@@ -107,6 +107,11 @@ type ChatInputProps = {
   /// card's own top edge — it clips itself to that edge, so nothing can come
   /// between them. Absent on a new task: there is no session to send into.
   handoff?: ReactNode;
+  /// Live work above the card: running subagents, the active plan. A node like
+  /// `handoff`, and placed for the same reason — same column, against the
+  /// card's top edge. Unlike the handoff row it is always fully drawn and
+  /// unmounts with nothing live, so the composer never moves for it.
+  followup?: ReactNode;
   busy?: boolean;
   /// Which session's draft is in the box, and what the composer refocuses on
   /// when the user switches. `null` is the new task's own draft, not the
@@ -207,6 +212,7 @@ export default function ChatInput({
   notice,
   modelTakesImages = true,
   handoff,
+  followup,
   busy = false,
   sessionId = null,
   isNewTask = false,
@@ -738,10 +744,13 @@ export default function ChatInput({
 
         {/* Directly above the card and with no gap: the row runs on past its own
             reserve and behind the card, which is the opaque thing that hides it.
-            Anything between the two would show the buttons through the gap and
-            leave them floating rather than tucked. */}
+            Withheld entirely while the live-work strip is up — the two want the
+            same band, and this one only reads as *tucked behind* the composer
+            when the composer is what it tucks behind. A 4px slice of button top
+            above a strip is neither, and reads as debris stuck to it. */}
         {!isNewTask && handoff}
 
+        {!isNewTask && followup}
         {/* The picker anchors to this wrapper rather than to the card, and it has
             to: an element carrying `backdrop-filter` is a backdrop root for
             everything inside it, so the list's own blur — nested in the card —

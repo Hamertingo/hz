@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import Orb from "@/components/Orb";
+import { TraceIcon } from "@/components/chat/AgentTrace";
 import { compactTokens } from "@/lib/format";
 
 /// "Thinking" is one of these rather than a label the harness switches on. It is
@@ -26,10 +26,14 @@ export default function WorkingIndicator({
 
   return (
     <div className="flex items-center gap-2" aria-live="polite">
-      {/* 20 and 64 are separately tuned designs rather than one scaled to the
-          other, so 20 is the only inline-with-text option. Mode comes from
-          `Orb`, which is the whole reason that wrapper exists. */}
-      <Orb state="listening" size={20} aria-hidden />
+      {/* The trace's own glyph, so the live row and the header a trace settles
+          behind are recognisably the same thing — this is that header, before
+          there is anything behind it. `text-muted-foreground/70` matches the
+          trace header's, so the two do not shift colour as one becomes the
+          other. */}
+      <span className="shrink-0 text-muted-foreground/70">
+        <TraceIcon className="size-3.5" />
+      </span>
 
       <span className="shimmer-text text-chat">{label}</span>
 

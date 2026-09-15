@@ -111,6 +111,28 @@ Black card was tried first, on reasoning that white veil over light page is invi
 
 **No row in changes list open by default.** List = answer to "what did this turn touch", and auto-opening one file by position put arbitrary diff above that list and push rest off screen.
 
+## Trace rows
+
+**Four surfaces, one primitive.** [AgentTrace](src/components/chat/AgentTrace.tsx) draw the header and the body frame; live thinking ([WorkingIndicator](src/components/chat/WorkingIndicator.tsx)), committed reasoning ([Reasoning](src/components/chat/Reasoning.tsx)), a run of web lookups and a run of tool calls ([ToolGroupRow](src/components/chat/ToolGroupRow.tsx)) and a finished turn's steps ([TurnBlock](src/components/chat/TurnBlock.tsx)) are its call sites. Work the agent did on its way to an answer fold, settle and re-open the same way, so a reader who learn one have learn all four.
+
+**Header carry the tense, body carry the work.** Same row say `Thinking` shimmering while it run and `Thought` once it land — no spinner-then-tick, no second line of chrome saying what the first one already said. Sparkle head it; the one exception is a run of web lookups, which take a globe because it the one trace that not work on the repository.
+
+**It open itself while it the live edge, and close when it land.** Running step = only thing on screen saying what agent doing, so make reader click for it = ask them to know it there. Settled = scrollback, and scrollback that unfold itself push the answer they waiting for off bottom. Reader's own click win over both permanently — `manual` = tri-state, so `null` mean "following the work".
+
+**Body rule = the trace, not decoration.** Rows sit behind a left border, which what make them read as one piece of work rather than an indented list; and they arrive staggered 60ms apart, capped at eight, so a trace read as work happening in order rather than as a block that appeared whole.
+
+**Nothing behind the header = no chevron.** A trace with no rows draw as one plain line. Chevron pointing at empty box = control that answer nothing.
+
+## The band above the composer
+
+**One thing lives there at a time.** While a turn is in flight the band is the **follow-up strip** — this turn's subagent runs and its plan. The moment the turn closes it is the **handoff peek** (Commit, Create PR, Run server) again. They never both draw, and that is not tidiness: they want the same 4px, and the peek only reads as *tucked behind* the composer when the composer is what it tucks behind. A slice of button top sitting above a strip is neither, and read as debris glued to the strip's corner.
+
+**The strip = this turn, never background work.** A dev server outlive every turn by design, so holding the band for it would keep the peek away for the whole session — and Run server = exactly what reader want while server up. Background work already have a home: the transcript's own notice, which say how many outstanding wherever reader scrolled.
+
+**The strip carry a surface**, `bg-composer` + the same blur every floating thing takes — it hover over transcript that scroll under it, where a card's flat veil would let the text read through the rows. Rows name three runs at most and fold the rest into one that open the panel: past three the list stop being a status line and start being the panel.
+
+**Plan ring, not count alone.** `2/4` answer "how much left" only to somebody who remember total, and this line read at glance or not at all. Green once it close, muted while moving — same pair the sidebar rail use, same reason.
+
 ## PR panel
 
 **Tab called `PR`, and it lead when PR is open.** Short form what anyone working on one call it. `tabOrder` put it first when session have **open** PR (draft count, being `OPEN` with `isDraft` set) — at that point session's work about landing, not about this turn. Merged or closed PR don't promote: it record, not something to act on.
