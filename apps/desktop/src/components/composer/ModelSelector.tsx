@@ -49,6 +49,7 @@ const AGENT_LABELS: Record<Harness, string> = {
   codex: "Codex",
   pi: "pi",
   fx: "fx",
+  omp: "omp",
 };
 const AGENTS = HARNESS_ORDER.map((id) => ({ id, label: AGENT_LABELS[id] }));
 
@@ -299,9 +300,10 @@ export default function ModelSelector({
               {/* Effort is a qualifier on the model, not part of its name, so it's
                   held back a step rather than reading as one long label. */}
               {/* The unset sentinel is not a name and there is no name to
-                  draw, so the placeholder stands in. pi is the one harness
-                  that reaches this: Dray names no default for it, and the
-                  spawn omits the flag so pi's own settings decide. */}
+                  draw, so the placeholder stands in. The multi-provider
+                  harnesses reach this — pi, fx and omp: Dray names no default
+                  for them, and the spawn omits the flags so their own settings
+                  decide. */}
               <span>{selected?.label ?? (isUnsetModel(modelId) ? "Select Model" : modelId)}</span>
               {effort && (
                 <span className="text-muted-foreground/60">{EFFORT_LABELS[effort]}</span>

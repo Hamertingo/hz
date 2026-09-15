@@ -11,12 +11,18 @@ export const STARRED_MODELS_KEY = "ade.starredModels";
 
 /// Harnesses whose picker draws the shortlist rather than the whole list.
 ///
-/// pi and fx, and not as a preference. Their lists are *discovered* — every
-/// model the reader's providers serve, 247 on fx's gateway — so they have no
-/// bound, and a menu of everything is a menu nobody reads. Claude Code and
-/// Codex each ship a handful of models Dray names itself, where a shortlist
-/// would be one more thing to set up before the picker works at all.
-const SHORTLISTED: Harness[] = ["pi", "fx"];
+/// The discovered-list ones, and not as a preference. Their lists are
+/// *discovered* — every model the reader's providers serve, 247 on fx's gateway
+/// and 218 on omp's machine, across four providers — so they have no bound, and
+/// a menu of everything is a menu nobody reads. Claude Code and Codex each ship
+/// a handful of models Dray names itself, where a shortlist would be one more
+/// thing to set up before the picker works at all.
+///
+/// This is also what turns the picker's provider **headings** on, and that is
+/// load-bearing rather than cosmetic: a discovered list carries its provider per
+/// row, so without the shortlist its rows are drawn flat and several providers'
+/// models arrive mixed into one column with nothing saying which is which.
+const SHORTLISTED: Harness[] = ["pi", "fx", "omp"];
 
 export function usesShortlist(harness: Harness): boolean {
   return SHORTLISTED.includes(harness);
@@ -48,9 +54,9 @@ export function shortlist(
 /// which is what it did on pi — the menu drew the reader's shortlist while the
 /// chord walked every model every logged-in provider serves.
 ///
-/// The two harnesses answer the same question differently and both are here:
-/// pi bounds an unbounded discovered list by what the reader starred, where
-/// Claude Code and Codex bound a written one by `secondary`.
+/// The two kinds of harness answer the same question differently and both are
+/// here: a discovered list is bounded by what the reader starred, where a
+/// written one is bounded by `secondary`.
 export function topLevel(
   models: Model[],
   starred: ModelId[],

@@ -433,6 +433,13 @@ impl SessionManager {
         // nothing below here knows sessions. `None` is the ordinary case and
         // hands the tree to `claude -w`, which forks it from `origin/<default>`.
         base_ref: Option<&str>,
+        // The responsibility a new session starts under. Written onto the index
+        // entry *before* the child spawns, which is the whole reason it is a
+        // parameter rather than a `set_session_role` call after the fact: the
+        // role is resolved from the entry at spawn, so a session created with
+        // one here carries it from its first turn instead of its next respawn.
+        // Ignored for an existing session, whose role is already recorded.
+        role_id: Option<&str>,
         is_new_session: bool,
         // Set only for a session created over the orchestration socket. The
         // composer never has one, and it is recorded rather than acted on —
@@ -455,6 +462,9 @@ impl SessionManager {
         let model_spec = match harness {
             Harness::Pi => crate::harness::pi::models::find(&model).await,
             Harness::Fx => crate::harness::fx::models::find(&model).await,
+            // omp's list is a read too, and the same shape: multi-provider, so
+            // any constant Dray named could be one the reader has no key for.
+            Harness::Omp => crate::harness::omp::models::find(&model).await,
             // Codex's list is the machine's answer too now, with the table
             // behind it — so a model shipped after this build still spawns.
             Harness::Codex => crate::harness::codex::models::find(&model).await,
@@ -607,6 +617,11 @@ impl SessionManager {
             // appears before the child spawns, and a tab that arrived a beat
             // later would be one more thing moving while the first turn starts.
             item.issues = linked_issues.clone();
+
+            // And the role with it, for the same reason and one more: the spawn
+            // below reads the entry, so a role written anywhere but here would
+            // reach the agent one turn late.
+            item.role_id = role_id.map(str::to_string);
 
             // The one failure that has to undo the tree, and the row that just
             // failed to be written is exactly why: removal is offered from a
@@ -1130,19 +1145,21 @@ impl SessionManager {
             bail!("this session has no conversation to fork yet");
         }
 
-        // For pi this *is* the fork: its resume handle is the file, so the copy
-        // carries the conversation and the first send is an ordinary spawn.
-        // Propagated rather than logged, unlike the delete path's — a fork whose
-        // file failed to copy would open as an empty session claiming to hold
-        // its parent's conversation, and the entry has not been written yet, so
-        // failing here leaves nothing behind.
+        // For pi and omp this *is* the fork: their resume handle is the file, so
+        // the copy carries the conversation and the first send is an ordinary
+        // spawn. Propagated rather than logged, unlike the delete path's — a fork
+        // whose file failed to copy would open as an empty session claiming to
+        // hold its parent's conversation, and the entry has not been written yet,
+        // so failing here leaves nothing behind.
         //
-        // Asked for by harness rather than by probing the path, so that a
-        // missing file is an error where it means something and never reached
-        // where it is the ordinary state. Every other harness forks through the
-        // CLI and has no transcript of its own here.
-        if parent.harness == Harness::Pi {
-            crate::store::copy_pi_session_file(session_id, fork_id).await?;
+        // Asked for by harness rather than by probing the path, so that a missing
+        // file is an error where it means something and never reached where it is
+        // the ordinary state. Every other harness forks through the CLI and has no
+        // transcript of its own here.
+        match parent.harness {
+            Harness::Pi => crate::store::copy_pi_session_file(session_id, fork_id).await?,
+            Harness::Omp => crate::store::copy_omp_session_file(session_id, fork_id).await?,
+            _ => {}
         }
 
         let item = parent.fork(fork_id, worktree_name.as_deref());
@@ -1345,6 +1362,14 @@ impl SessionManager {
             eprintln!("could not delete pi's session file for {session_id}: {e}");
         }
 
+        // And omp's, for the same reason under a different file: its resume
+        // handle is the transcript too, so leaving it behind orphans a whole
+        // conversation on disk under `~/.dray/omp-sessions/`. Best-effort and
+        // unconditional, and a missing one reads as done.
+        if let Err(e) = crate::store::delete_omp_session_file(session_id).await {
+            eprintln!("could not delete omp's session file for {session_id}: {e}");
+        }
+
         delete_session(session_id).await
     }
 
@@ -1398,6 +1423,11 @@ pub enum Transport {
     /// fx's connection: JSON-RPC like Codex's, addressed to the session fx
     /// minted. See [`FxSession`](crate::harness::fx::FxSession).
     Fx(crate::harness::fx::FxSession),
+    /// omp's connection. pi's shape exactly — a peer that does not speak
+    /// JSON-RPC, with one conversation per process — for the reason the two
+    /// harnesses are forks of one another. See
+    /// [`OmpClient`](crate::harness::omp::rpc::OmpClient).
+    Omp(crate::harness::omp::rpc::OmpClient),
 }
 
 impl Transport {
@@ -1410,7 +1440,7 @@ impl Transport {
     pub fn lines(&self) -> Result<&Arc<Mutex<ChildStdin>>> {
         match self {
             Transport::Lines(stdin) => Ok(stdin),
-            Transport::Rpc(_) | Transport::Pi(_) | Transport::Fx(_) => {
+            Transport::Rpc(_) | Transport::Pi(_) | Transport::Fx(_) | Transport::Omp(_) => {
                 bail!("this control is not wired for this harness")
             }
         }
@@ -1552,6 +1582,32 @@ impl Session {
                 }
 
                 crate::harness::fx::init(
+                    session_id,
+                    model,
+                    effort,
+                    permission_mode,
+                    cwd,
+                    session_cwd,
+                    is_new_session,
+                    app,
+                )
+                .await
+            }
+            Harness::Omp => {
+                // Same two refusals as pi's, for the same reasons: omp has no
+                // `-w`, so the tree is made before this; and its fork *is* the
+                // copied session file, so a `fork_from` arriving here is a
+                // caller expecting a CLI-side half omp does not have.
+                if worktree_name.is_some() {
+                    bail!("omp cannot create a worktree — it has to be made first");
+                }
+                if fork_from.is_some() {
+                    bail!("an omp fork is the copied session file — there is nothing to resume from");
+                }
+
+                // `None` where omp picked for itself: multi-provider, so the
+                // flags are omitted and its own settings decide.
+                crate::harness::omp::init(
                     session_id,
                     model,
                     effort,
@@ -1811,6 +1867,15 @@ impl Session {
             return crate::harness::fx::cancel(session);
         }
 
+        // omp's Stop is `abort` alone, and OMP-PLAN §7 states why that is short
+        // of pi's: its RPC has no `clear_queue` at all, and its `abort` does not
+        // drain the queue either — a queued steer resumes the run. The gap is
+        // closed on this side instead: the omp transport never steers, so the
+        // queue Dray could fill is empty by the time this runs.
+        if let Transport::Omp(client) = &self.stdin {
+            return crate::harness::omp::interrupt(client).await;
+        }
+
         // pi never reaches here: its Stop goes through
         // [`pi::desk`](crate::harness::pi::desk), which is registered for the
         // life of the reader. Arriving means the desk has gone and the child
@@ -2004,11 +2069,29 @@ impl Session {
                 .with_context(|| format!("no pending permission request {request_id}"))?
         };
 
-        write_line(
-            self.stdin.lines()?,
-            &answer_response(request_id, &pending, &answers),
-        )
-        .await?;
+        // Answered in the shape the asking method reads. omp goes on its own
+        // channel rather than down a stdin line — its dialogs are answered with
+        // an `extension_ui_response` carrying omp's id, which is not a line this
+        // app's control vocabulary could compose.
+        //
+        // Unlike pi, this does not have to detour around the session map: pi asks
+        // during startup, before the session is in the map at all, which is what
+        // its desk exists for. omp's first dialog is an approval, and an approval
+        // cannot arrive before a turn, which cannot arrive before the session.
+        if let Transport::Omp(client) = &self.stdin {
+            let method = pending.reply.dialog_method().unwrap_or_default();
+            client.send(&crate::harness::omp::dialog::response(
+                &method,
+                request_id,
+                &answers,
+            ))?;
+        } else {
+            write_line(
+                self.stdin.lines()?,
+                &answer_response(request_id, &pending, &answers),
+            )
+            .await?;
+        }
 
         let decision = dialog_decided(
             &self.id,
@@ -2048,6 +2131,15 @@ impl Session {
         // fx holds a `session.lock` per session, released on a clean exit.
         if let Transport::Fx(session) = &self.stdin {
             crate::harness::fx::shutdown(&mut self.child, session).await;
+            return Ok(());
+        }
+
+        // omp is asked to leave for fx's shape of reason: it runs its own
+        // teardown, closing its session file and its SQLite handles, where a
+        // `SIGKILL` leaves both mid-write. Not pi's reason — omp has no auth
+        // lock for a kill to strand onto the next spawn.
+        if let Transport::Omp(client) = &self.stdin {
+            crate::harness::omp::shutdown(&mut self.child, client).await;
             return Ok(());
         }
 
@@ -2212,6 +2304,13 @@ async fn deliver_prompt(
     // schedule.
     if let Transport::Pi(client) = transport {
         return crate::harness::pi::send_prompt(client, &text, delivery, &prepared.images).await;
+    }
+    // omp answers the same way, and one thing is narrower here: no
+    // `streamingBehavior` is ever named, because this transport does not steer.
+    // See `omp.rs` — the field is required while a turn runs, so a mid-turn
+    // prompt would be refused, and Dray never sends one there.
+    if let Transport::Omp(client) = transport {
+        return crate::harness::omp::send_prompt(client, &text, &prepared.images).await;
     }
     // fx takes a prompt as a request that blocks for the turn, so the write
     // is the send and the reader settles the answer. Images not wired: the

@@ -15,6 +15,9 @@ pub mod pi;
 #[path = "fx/fx.rs"]
 pub mod fx;
 
+#[path = "omp/omp.rs"]
+pub mod omp;
+
 pub mod rpc;
 
 use serde::{Deserialize, Serialize};
@@ -257,7 +260,7 @@ mod wire_tests {
     /// recognise — the worse half of this failure, not a lesser one.
     #[test]
     fn an_unknown_name_survives_a_round_trip() {
-        for name in ["some_future_agent", "claude_code", "codex", "pi", "fx"] {
+        for name in ["some_future_agent", "claude_code", "codex", "pi", "fx", "omp"] {
             let json = format!("\"{name}\"");
             let parsed: Harness = serde_json::from_str(&json).expect("parses");
 
@@ -437,6 +440,11 @@ pub enum Harness {
     Codex,
     Pi,
     Fx,
+    /// omp, the `oh-my-pi` fork of pi. Its own variant rather than a flag on
+    /// [`Harness::Pi`] despite the shared lineage: the two diverge on the one
+    /// thing this enum exists to answer — what closes a turn — and on the
+    /// session file's format, the permission surface and the command set.
+    Omp,
     /// A harness some other build named and this one has never heard of, with
     /// its spelling kept so a round trip does not lose it.
     ///
@@ -491,7 +499,13 @@ impl Harness {
     /// [`Harness::Other`] is deliberately absent: it is a value read off disk,
     /// never one to pick, so a picker or an availability read built from this
     /// cannot offer it.
-    pub const ALL: [Harness; 4] = [Harness::ClaudeCode, Harness::Codex, Harness::Pi, Harness::Fx];
+    pub const ALL: [Harness; 5] = [
+        Harness::ClaudeCode,
+        Harness::Codex,
+        Harness::Pi,
+        Harness::Fx,
+        Harness::Omp,
+    ];
 
     /// How the wire spells it — what `dray new --harness` takes and what an
     /// index entry holds.
@@ -510,6 +524,7 @@ impl Harness {
             Harness::Codex => "codex".to_string(),
             Harness::Pi => "pi".to_string(),
             Harness::Fx => "fx".to_string(),
+            Harness::Omp => "omp".to_string(),
             Harness::Other(name) => name.to_string(),
         }
     }
@@ -663,6 +678,31 @@ impl Harness {
                 forkable: false,
                 fork_needs_cli: false,
             },
+            // Worktrees and the three settings are pi's answers, for pi's
+            // reasons: no `-w` flag, and `set_model` / `set_thinking_level` are
+            // commands nothing here drives on a live connection yet, so every
+            // change is a respawn — which always applies it.
+            //
+            // Forkable, and by pi's route: omp's resume handle is a *file*, so
+            // copying it is the whole fork and no CLI half is needed. Verified
+            // live — two spawns on one path report the same `sessionId`, and
+            // `--resume <path>` reports it too. `store::copy_omp_session_file`
+            // does the copy; its own directory, since omp forked the wire
+            // protocol but not the session file's format.
+            //
+            // `expands_at_mentions` is false for pi's reason and one more: omp's
+            // RPC notes say `@file` *arguments* are rejected in that mode, and
+            // there is no parser on the prompt path to expand one anyway, so a
+            // mention reaches the model as literal punctuation.
+            Harness::Omp => Capabilities {
+                creates_own_worktree: false,
+                applies_model_in_place: false,
+                applies_effort_in_place: false,
+                applies_permission_in_place: false,
+                expands_at_mentions: false,
+                forkable: true,
+                fork_needs_cli: false,
+            },
             // A session some other build wrote and this one cannot run. `false`
             // throughout: the row still draws, so the reader can see the session
             // is there and read its transcript, and `names_a_cli` is what stops
@@ -686,6 +726,9 @@ impl Harness {
             Harness::Codex => "Codex",
             Harness::Pi => "pi",
             Harness::Fx => "fx",
+            // The binary's own name, and the one its reader types. The project
+            // is `oh-my-pi`; nothing on the machine is called that.
+            Harness::Omp => "omp",
             // Its own spelling, the only thing known about it — and the honest
             // thing to put in a sentence, since the name a newer build wrote is
             // the one its reader will recognise.
@@ -715,6 +758,13 @@ impl Harness {
             Harness::Pi => "curl -fsSL https://pi.dev/install.sh | sh",
             // Vercel's own installer, off fx.sh/docs/getting-started/installation.
             Harness::Fx => "curl -fsSL https://fx.sh/setup.sh | bash",
+            // omp's own installer, off its README. The URL answers 200 and is
+            // the one the README prints; it has not been dry-parsed, so treat
+            // that half as unverified. omp also publishes to npm and Homebrew,
+            // and the docs page below names both for anyone who wants them;
+            // this is the route that needs nothing already on the machine,
+            // which is the rule the other three follow.
+            Harness::Omp => "curl -fsSL https://omp.sh/install | sh",
             // Empty, because there is nothing to install: the CLI is not what
             // is missing, this build is. A command guessed from the name would
             // be the one thing worse than no command.
@@ -732,6 +782,9 @@ impl Harness {
             Harness::Codex => "https://learn.chatgpt.com/docs/codex/cli",
             Harness::Pi => "https://pi.dev/docs/latest",
             Harness::Fx => "https://fx.sh/docs/getting-started/installation",
+            // omp's own docs root, which is where the install page and the RPC
+            // reference both live. Its README also points at the repo.
+            Harness::Omp => "https://omp.sh/docs",
             // Empty, so the notice draws no link rather than a wrong one: the
             // cure here is a newer Dray, not a CLI to install.
             Harness::Other(_) => "",
@@ -759,6 +812,14 @@ impl Harness {
             // `fx login [vercel|codex|grok]` — bare, it asks which. Verified
             // against `fx --help`.
             Harness::Fx => "fx login",
+            // pi's shape, verified against `omp --help`: there is no `login`
+            // subcommand. `omp setup` is not it either — it refuses without a
+            // `COMPONENT` (python|speech) and is about optional dependencies,
+            // not auth. Signing in is `/login` inside the TUI, so the command
+            // opens omp and [`Harness::login_hint`] carries the rest. The RPC
+            // does expose `login` / `get_login_providers`, which is a later
+            // slice's route rather than this notice's.
+            Harness::Omp => "omp",
             // Nothing to log in to, for the same reason there is nothing to
             // install: this build cannot name the CLI, let alone drive it.
             Harness::Other(_) => "",
@@ -778,6 +839,9 @@ impl Harness {
             Harness::Codex => &["login"],
             Harness::Pi => &[],
             Harness::Fx => &["login"],
+            // Empty, so this is the same shape as pi's: the command opens the
+            // CLI rather than starting a login, and the hint says what to type.
+            Harness::Omp => &[],
             Harness::Other(_) => &[],
         }
     }
@@ -801,6 +865,12 @@ impl Harness {
             // Per provider too, and the command asks which. A working Codex
             // login says nothing about fx: it keeps its own store.
             Harness::Fx => Some("and pick the provider it asks for"),
+            // pi's hint verbatim, because it is pi's situation: the command
+            // opens a TUI rather than starting a login, and omp's credentials
+            // are per provider — so it can be signed in for one and out for
+            // another, which is why a working Codex session says nothing about
+            // whether omp can reach the same account. Separate stores.
+            Harness::Omp => Some("then type /login and pick the provider"),
             Harness::ClaudeCode | Harness::Codex | Harness::Other(_) => None,
         }
     }

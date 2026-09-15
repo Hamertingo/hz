@@ -31,11 +31,14 @@ const SPARK = model("openai-codex/gpt-5.3-codex-spark");
 const SOL = model("openai-codex/gpt-5.6-sol");
 
 describe("usesShortlist", () => {
-  /// pi's list is discovered, so it has no bound. The other two ship a handful
+  /// Every harness whose list is *discovered* has no bound — omp's machine
+  /// reported 218 models across four providers — so it draws the reader's
+  /// shortlist, and its provider headings with it. The other two ship a handful
   /// of models Dray names itself, where a shortlist would be one more thing to
   /// set up before the picker works at all.
-  it("is pi's alone", () => {
+  it("is the discovered-list harnesses' alone", () => {
     expect(usesShortlist("pi")).toBe(true);
+    expect(usesShortlist("omp")).toBe(true);
     expect(usesShortlist("claude_code")).toBe(false);
     expect(usesShortlist("codex")).toBe(false);
   });

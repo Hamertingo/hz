@@ -382,6 +382,10 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
             // nobody wanted. `None` lets the app generate a readable one.
             None,
             base_ref.as_deref(),
+            // `dray new` names no role: the caller is an agent, the skill
+            // decides whether to inherit one, and the flag surface has no
+            // `--role` to carry it today.
+            None,
             true,
             create.parent_session_id.as_deref(),
             // The creating session is this one's *parent*, which the sidebar
@@ -617,6 +621,10 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
             None,
             false,
             None,
+            None,
+            // A relayed message must not reconfigure the session it arrives at,
+            // and a role is a creation-time property besides. The target is
+            // already running, so this is ignored either way.
             None,
             false,
             None,

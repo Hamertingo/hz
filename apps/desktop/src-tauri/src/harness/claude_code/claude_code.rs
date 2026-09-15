@@ -81,7 +81,19 @@ pub async fn init(
 
     args.extend(["--permission-mode", permission_mode.as_arg()]);
 
-    args.extend(["--append-system-prompt", APPEND_SYSTEM_PROMPT]);
+    // Dray's own instructions, then the session's role if it has one.
+    //
+    // **Joined, not a second flag.** `--append-system-prompt` takes a single
+    // value here, and whether a second one appends or replaces is not documented
+    // — so the role rides the end of the string Dray already sends rather than
+    // betting the reader's own setup on an unstated precedence. What Claude Code
+    // reads for itself (`CLAUDE.md`, the project's own files) is untouched and
+    // stays underneath both.
+    let appended = match crate::roles::section_for(session_id).await {
+        Some(role) => format!("{APPEND_SYSTEM_PROMPT}\n\n{role}"),
+        None => APPEND_SYSTEM_PROMPT.to_string(),
+    };
+    args.extend(["--append-system-prompt", appended.as_str()]);
 
     // The literal `stdio` is a special case, not a tool name: the flag otherwise
     // takes an MCP tool, and it is undocumented in `--help`. Without it the CLI

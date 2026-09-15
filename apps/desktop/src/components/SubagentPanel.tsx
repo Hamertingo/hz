@@ -19,6 +19,11 @@ type SubagentPanelProps = {
   /// killed child looks unfinished forever, and its task died with the process
   /// — so the stop button is withheld rather than offered and then erroring.
   live: boolean;
+  /// Whether this harness exposes a per-task stop. omp's RPC has no stop
+  /// command — its `abort` ends the turn and leaves a detached run going —
+  /// so offering the button there is a control that answers success and does
+  /// nothing.
+  canStop: boolean;
   onSelect: (id: string | null) => void;
   onStopTask: (taskId: string) => void;
 };
@@ -28,16 +33,12 @@ type SubagentPanelProps = {
 ///
 /// Shaped like [ChangesPanel](./ChangesPanel.tsx) rather than as a list above a
 /// detail pane: a fixed-height list gave the runs a few rows to live in however
-/// much space the pane had, and the split meant one run was always open whether
-/// or not the reader asked for it.
-///
-/// Newest first, ordered by [buildTranscript](@/lib/transcript). The running run
-/// is the one with a decision attached to it, and it is always the newest.
 export default function SubagentPanel({
   runs,
   selectedId,
   resultByCallId,
   live,
+  canStop,
   onSelect,
   onStopTask,
 }: SubagentPanelProps) {
@@ -56,6 +57,7 @@ export default function SubagentPanel({
           open={run.id === selectedId}
           resultByCallId={resultByCallId}
           live={live}
+          canStop={canStop}
           onToggle={() => onSelect(run.id === selectedId ? null : run.id)}
           onStopTask={onStopTask}
         />
@@ -77,12 +79,23 @@ export default function SubagentPanel({
 /// already reading `Read footer` — the same fact twice, in the one slot the
 /// reader opened the run to read.
 ///
-/// Read off the call rather than off the harness: a spawn is worth drawing
-/// when it briefs the agent, whoever sent it.
 function hasBrief(spawn: AgentEvent): boolean {
   if (spawn.payload.type !== "tool_call_started") return false;
-  const prompt = (spawn.payload.input as Record<string, unknown> | null)?.prompt;
-  return typeof prompt === "string" && prompt.trim().length > 0;
+  const input = spawn.payload.input as Record<string, unknown> | null;
+  // omp's `task` spawn briefs in `tasks[].task`, not `prompt` — Claude's word
+  // for the same thing. Read either, so a spawn that briefed its agent draws
+  // its brief whichever harness sent it.
+  const prompt = input?.prompt;
+  if (typeof prompt === "string" && prompt.trim().length > 0) return true;
+  const tasks = input?.tasks;
+  return (
+    Array.isArray(tasks) &&
+    tasks.some(
+      (t) =>
+        typeof (t as Record<string, unknown>)?.task === "string" &&
+        ((t as Record<string, unknown>).task as string).trim().length > 0,
+    )
+  );
 }
 
 function RunRow({
@@ -90,6 +103,7 @@ function RunRow({
   open,
   resultByCallId,
   live,
+  canStop,
   onToggle,
   onStopTask,
 }: {
@@ -97,6 +111,7 @@ function RunRow({
   open: boolean;
   resultByCallId: Map<string, ToolResult>;
   live: boolean;
+  canStop: boolean;
   onToggle: () => void;
   onStopTask: (taskId: string) => void;
 }) {
@@ -117,9 +132,10 @@ function RunRow({
   const tokens = run.usage?.totalTokens ?? null;
 
   // Only a run the harness still holds can be stopped. `taskId` is null until a
-  // lifecycle event names it, and a dead child's tasks died with it — either way
-  // the button would be one the CLI answers success to and nothing happens.
-  const stoppable = live && !run.done && run.taskId !== null;
+  // lifecycle event names it, a dead child's tasks died with it — and some
+  // harnesses (omp) expose no per-task stop at all. Either way the button
+  // would be one the CLI answers success to and nothing happens.
+  const stoppable = live && !run.done && run.taskId !== null && canStop;
 
   // A run whose spawn carries no brief and which has filed no events of its own
   // expands onto an empty box. Events arrive as it works, so this flips back on

@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { Harness } from "@/types/events";
 
-/// The two agents' own marks, drawn wherever a session's harness is named.
+/// Every agent's own mark, drawn wherever a session's harness is named.
 ///
 /// `currentColor` for [`LinearIcon`](./LinearIcon.tsx)'s reason: these sit in a
 /// row of muted chrome, and a saturated logo would be the loudest thing on a
@@ -95,12 +95,74 @@ function PiIcon({ className }: { className?: string }) {
   );
 }
 
+/// omp's own mark, from `assets/icon.svg` in its repository, redrawn on
+/// `currentColor` with its connector left in omp's orange.
+///
+/// MIT, © Can Bölük and Stencil Labs, Inc. — the same fork the licence names
+/// beside Mario Zechner's, credited in the root README.
+///
+/// The shape is the fork made literal: where pi's mark is a P, omp's is that
+/// same bar and legs carrying a **plugin connector**. Flattening the whole
+/// thing to `currentColor` would leave a wordless row of marks with nothing
+/// saying which is which — see [`OMP_CONNECTOR`] for why this one keeps its
+/// colour where the other monochrome marks do not.
+///
+/// `fill-rule="evenodd"` is load-bearing on the connector: its two slots are
+/// holes cut by second and third contours in the same path, and the default
+/// `nonzero` fills them in — which reads as a solid blob rather than as a plug.
+///
+/// The original's rounded corners are square here, and that is the cost of the
+/// holes: a rounded rect cannot also carry a cut-out without a mask, and at the
+/// two sizes this is drawn at (14px in the picker, 12px on the trigger) a 3-unit
+/// radius on a 120-unit box is a fifth of a pixel.
+function OmpIcon({ className, brand }: { className?: string; brand?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 120 90"
+      className={cn("size-4 shrink-0", className)}
+      fill="currentColor"
+      role="img"
+      aria-label="omp"
+    >
+      {/* The bar and the two legs: pi's skeleton, which the fork kept. */}
+      <rect x="10" y="8" width="100" height="12" rx="2" />
+      <rect x="25" y="20" width="12" height="62" rx="2" />
+      <rect x="75" y="20" width="12" height="45" rx="2" />
+      {/* Everything that is omp's own: the connector, and the two accent dots
+          the original sits on the bar. */}
+      <g className={cn(brand && OMP_CONNECTOR)}>
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M71 55H91V71H71ZM76 59H79V67H76ZM82 59H85V67H82Z"
+        />
+        <circle cx="18" cy="14" r="2" opacity="0.8" />
+        <circle cx="102" cy="14" r="2" opacity="0.8" />
+      </g>
+    </svg>
+  );
+}
+
 /// Claude's own rust. The one saturated colour allowed on these marks, and it
 /// is a brand constant rather than a theme token — no palette should be able to
 /// move it, and no other surface should be able to reach for it. OpenAI's mark
 /// has no counterpart: it is monochrome by design, so `brand` leaves it on
 /// `currentColor` and the row still reads as one set.
 const CLAUDE_RUST = "text-[#d97757]";
+
+/// omp's orange, and the deliberate second exception to the rule above.
+///
+/// The rule is about a row of marks staying quiet, and a plug the size of a
+/// pixel and a half does not threaten it — while monochrome would, because it
+/// would leave omp's mark as pi's mark. The two harnesses are forks of one
+/// another and their skeletons *are* the same drawing; the connector is the
+/// whole of what tells them apart at the size a wordless row draws them.
+///
+/// It is still a brand constant rather than a theme token, for
+/// [`CLAUDE_RUST`]'s reason, and it is applied only where `brand` is set — the
+/// agent picker and the composer's trigger. Drawn as a bullet in a row of muted
+/// chrome, the plug goes back to `currentColor` with the rest of it.
+const OMP_CONNECTOR = "text-[#f97316]";
 
 /// The mark for a harness, so a caller with a `Harness` in hand never has to
 /// branch on it. One place to add the third agent's.
@@ -127,6 +189,12 @@ export default function AgentIcon({
       return <PiIcon className={className} />;
     case "fx":
       return <FxIcon className={className} />;
+    // omp's own mark, and not pi's — which is what a stand-in showed here
+    // until its own was drawn. The two are forks of one another, so their
+    // skeletons *are* the same drawing and only the connector tells them
+    // apart; pi's would leave a reader unable to say which agent a row is.
+    case "omp":
+      return <OmpIcon className={className} brand={brand} />;
     default:
       return <ClaudeIcon className={cn(brand && CLAUDE_RUST, className)} />;
   }

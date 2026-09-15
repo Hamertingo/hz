@@ -93,10 +93,23 @@ pub struct TurnSettings {
     pub effort: Option<&'static str>,
     pub approval_policy: &'static str,
     pub sandbox: &'static str,
+    /// The session's role, already resolved and wrapped by
+    /// [`crate::roles::section_for`]. `None` leaves the developer instructions
+    /// exactly what they were before roles existed.
+    ///
+    /// Held here rather than read at each `thread/start`, because
+    /// `thread_params` is pure and both `thread/start` and `thread/resume` call
+    /// it — one resolution per spawn, and the two can never disagree about it.
+    pub role: Option<String>,
 }
 
 impl TurnSettings {
-    fn new(model: &Model, effort: Option<Effort>, permission_mode: ApprovalPolicy) -> Self {
+    fn new(
+        model: &Model,
+        effort: Option<Effort>,
+        permission_mode: ApprovalPolicy,
+        role: Option<String>,
+    ) -> Self {
         let (approval_policy, sandbox) = approval_for(permission_mode);
 
         Self {
@@ -104,6 +117,7 @@ impl TurnSettings {
             effort: effort.map(Effort::as_arg),
             approval_policy,
             sandbox,
+            role,
         }
     }
 
@@ -115,8 +129,23 @@ impl TurnSettings {
             "model": self.model,
             "approvalPolicy": self.approval_policy,
             "sandbox": self.sandbox,
-            "developerInstructions": DEVELOPER_INSTRUCTIONS,
+            "developerInstructions": self.developer_instructions(),
         })
+    }
+
+    /// Codex's own developer instructions, then the session's role if it has one.
+    ///
+    /// **Joined, never replaced.** `developerInstructions` is a single string on
+    /// the wire, so a role cannot ride a second field — and Dray's own rules
+    /// name `AskUserQuestion` and the Agent tool, neither of which Codex has, so
+    /// dropping them to make room for a role would be trading a working setup
+    /// for a broken one. Codex's built-in prompt is a different field entirely
+    /// (`baseInstructions`, which this deliberately never touches).
+    fn developer_instructions(&self) -> String {
+        match &self.role {
+            Some(role) => format!("{DEVELOPER_INSTRUCTIONS}\n\n{role}"),
+            None => DEVELOPER_INSTRUCTIONS.to_string(),
+        }
     }
 }
 
@@ -134,7 +163,12 @@ pub async fn init(
     // and the kill-wrapped `open_thread` below has to be infallible, or a `?`
     // returns leaving a child nothing can reach. An unreadable log is a
     // refusal that owes the caller no process.
-    let settings = TurnSettings::new(model, effort, permission_mode);
+    let settings = TurnSettings::new(
+        model,
+        effort,
+        permission_mode,
+        crate::roles::section_for(session_id).await,
+    );
     let seq_start = if is_new_session {
         0
     } else {
@@ -1403,7 +1437,7 @@ mod tests {
         let default = crate::models::default_model_for(Codex).expect("Codex names a default model");
         let model =
             crate::models::find_model(&default).expect("the default Codex model should be listed");
-        let settings = TurnSettings::new(&model, None, ApprovalPolicy::Auto);
+        let settings = TurnSettings::new(&model, None, ApprovalPolicy::Auto, None);
 
         let thread_id = start_thread(
             &client,

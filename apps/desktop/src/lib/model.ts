@@ -33,6 +33,10 @@ export const DEFAULT_MODEL_FOR: Record<Harness, ModelId> = {
   pi: UNSET_MODEL,
   // Multi-provider like pi, and its settings file already names a model.
   fx: UNSET_MODEL,
+  // The same answer again: 60+ providers, so any constant here could name one
+  // the reader has no key for. It has not been *reached* yet either way — the
+  // harness is not offered in the picker until the transport lands.
+  omp: UNSET_MODEL,
 };
 
 /// The providers `fx provider` takes, in fx's own words. Fixed by fx's CLI
@@ -113,7 +117,7 @@ export function usableFxModel(
 /// The agents in the order the picker draws them, which is also the order ⌘⇧A
 /// steps through. One list: a chord visiting a harness the row cannot show, or
 /// skipping one it can, reads as the chord being broken.
-export const HARNESS_ORDER: Harness[] = ["claude_code", "codex", "fx", "pi"];
+export const HARNESS_ORDER: Harness[] = ["claude_code", "codex", "fx", "pi", "omp"];
 
 /// Where ⌘⇧A lands from `current`, wrapping. An unknown current steps onto the
 /// first, the same place the picker parks its thumb.

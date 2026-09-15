@@ -150,6 +150,24 @@ pub async fn fx() -> PathBuf {
     cached(&FX_PATH, or_bare("fx")).await
 }
 
+static OMP_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Where `omp` is, or the bare name as a last resort — [`claude`]'s shape.
+///
+/// Every documented install lands somewhere [`known_dirs`] already walks:
+/// Homebrew's `/opt/homebrew/bin`, `~/.local/bin` for the curl script, and the
+/// npm or bun global bin between them. So this is the ordinary resolution and
+/// nothing omp-specific.
+///
+/// **No version floor**, for [`pi`]'s reason and one more: omp runs its own
+/// version train — 18.x where pi is 0.84.x — so a number compared against pi's
+/// would mean nothing. The question worth asking is whether *this* omp answers
+/// the commands Dray drives it with, and the model probe already spawns
+/// `omp --mode rpc` and asks, so the real check costs nothing extra there.
+pub async fn omp() -> PathBuf {
+    cached(&OMP_PATH, or_bare("omp")).await
+}
+
 #[cfg(test)]
 mod pi_resolution_tests {
     /// Prints what the resolver found rather than asserting about this machine,
@@ -210,6 +228,7 @@ pub async fn agent_binary(harness: Harness) -> PathBuf {
         Harness::Codex => codex().await,
         Harness::Pi => pi().await,
         Harness::Fx => fx().await,
+        Harness::Omp => omp().await,
         // A harness only some other build knows. Its own spelling, which is
         // relative and so reads as "not installed" — the refusal has to happen
         // here rather than by falling back to Claude Code, which would run the
@@ -320,7 +339,7 @@ pub fn known_dirs() -> Vec<PathBuf> {
 /// sibling: mise's npm backend puts the CLI under `installs/npm-<pkg>` and
 /// node under `installs/node`, proto puts globals one dir over from its node.
 pub fn resolved_bin_dirs() -> Vec<PathBuf> {
-    [CLAUDE_PATH.get(), CODEX_PATH.get(), PI_PATH.get()]
+    [CLAUDE_PATH.get(), CODEX_PATH.get(), PI_PATH.get(), OMP_PATH.get()]
         .into_iter()
         .flatten()
         .chain(GH_PATH.get().into_iter().flatten())

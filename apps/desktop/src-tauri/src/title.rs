@@ -224,6 +224,11 @@ async fn title_command(harness: Harness, prompt: &str, cwd: &str) -> Result<Comm
         // turn — and `fx.rs` writes that through the same `session_title`
         // event this module emits. No second model call wanted.
         Harness::Fx => bail!("fx titles its own sessions"),
+        // pi's reason: the list is discovered, so there is no constant cheap
+        // model to reach for until the probe lands. omp does not fill the gap
+        // either — its RPC mode disables automatic title generation by default,
+        // so the prompt-derived title stands.
+        Harness::Omp => bail!("omp is not wired into Dray yet"),
         // A harness only some other build knows, so there is no binary to name
         // — the same refusal `Session::init` makes, one turn earlier.
         Harness::Other(name) => bail!("no title model for {name}"),

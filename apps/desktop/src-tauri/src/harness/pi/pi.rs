@@ -145,7 +145,12 @@ pub async fn init(
     }
 
     args.push("--append-system-prompt".into());
-    args.push(APPEND_SYSTEM_PROMPT.to_string());
+    // Joined for the same reason Claude Code's is: one flag, one value, and the
+    // role goes after what Dray already sends. See `roles::section`.
+    args.push(match crate::roles::section_for(session_id).await {
+        Some(role) => format!("{APPEND_SYSTEM_PROMPT}\n\n{role}"),
+        None => APPEND_SYSTEM_PROMPT.to_string(),
+    });
 
     let bin = crate::binpath::pi().await;
     let mut command = Command::new(&bin);

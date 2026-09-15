@@ -46,6 +46,7 @@ pub mod notifications;
 pub mod orchestration;
 pub mod projects;
 pub mod quit;
+pub mod roles;
 pub mod session;
 pub mod settings;
 pub mod store;
@@ -101,6 +102,10 @@ async fn send_msg(
     branch: Option<&str>,
     use_worktree: bool,
     worktree_name: Option<&str>,
+    // The responsibility the composer picked for this session, or `None`.
+    // Applied only when a session is created — an existing one already carries
+    // whatever role it was given, and `send_msg` ignores it otherwise.
+    role_id: Option<String>,
     is_new_session: bool,
     app: AppHandle,
     manager: State<'_, SessionManager>,
@@ -143,6 +148,7 @@ async fn send_msg(
             // is one the reader is starting fresh, and the picker already hides
             // the branch list in worktree mode because `-w` would not honour it.
             None,
+            role_id.as_deref(),
             is_new_session,
             // The composer never has a parent, and its prompts are the user's
             // own; only the orchestration socket sets either.
@@ -263,6 +269,7 @@ async fn list_models(harness: Option<harness::Harness>) -> Vec<Model> {
     match harness.unwrap_or(harness::Harness::ClaudeCode) {
         harness::Harness::Pi => harness::pi::models::list().await,
         harness::Harness::Fx => harness::fx::models::list().await,
+        harness::Harness::Omp => harness::omp::models::list().await,
         harness::Harness::Codex => harness::codex::models::list().await,
         other => models::models_for(other),
     }
@@ -390,6 +397,13 @@ async fn list_slash_commands(cwd: &str, harness: Harness) -> Result<Vec<SlashCom
         Harness::Pi => harness::pi::commands::list_commands(cwd).await,
         Harness::Codex => harness::codex::commands::list_commands(cwd).await,
         Harness::Fx => harness::fx::commands::list_commands(cwd).await,
+        // Empty, and that is a fact about the wire rather than about omp: it
+        // does not answer a request for its command list. It *pushes* one
+        // unprompted as `available_commands_update` — at startup and whenever
+        // the metadata changes — so the picker is filled from the reader's own
+        // stream once the transport lands, not asked for here. Drawing this as
+        // "publishes no slash commands" would be wrong: it publishes 54.
+        Harness::Omp => Vec::new(),
         Harness::Other(_) => Vec::new(),
     })
 }
@@ -709,6 +723,7 @@ pub fn run() {
             projects::retag_space,
             git::list_branches,
             git::checkout_branch,
+            git::project_repos,
             git::changes_since,
             git::file_change,
             head_tree,
@@ -716,6 +731,11 @@ pub fn run() {
             git::log_branch_commits,
             work_status,
             store::set_session_flags,
+            roles::save_role,
+            roles::delete_role,
+            roles::list_roles,
+            roles::all_roles,
+            store::set_session_role,
             store::detach_session,
             delete_session,
             fork_session,

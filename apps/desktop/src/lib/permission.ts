@@ -31,6 +31,18 @@ const HONOURED: Partial<Record<Harness, ApprovalPolicy[]>> = {
   codex: ["bypassPermissions", "manual", "auto"],
   pi: [],
   fx: ["manual", "auto"],
+  // Empty for this slice, and it is a "not yet" rather than a "cannot" — omp
+  // *does* have a native gate (`--approval-mode always-ask|write|yolo`) and
+  // raises its own approval card, which Dray already draws. What is missing is
+  // the mapping: which of its three corresponds to Dray's `auto`, and what
+  // `write` means precisely, is not verified against a capture. Promising a
+  // stance from the picker before that would set a session freer or stricter
+  // than the reader asked for.
+  //
+  // `omp.rs` enforces `plan` anyway, with `--tools read,grep,glob` — the one
+  // stance omp can make true by construction — so a session already recorded
+  // `plan` still runs read-only. OMP-PLAN.md §6 and slice 2 own the rest.
+  omp: [],
 };
 
 /// The stance a harness actually runs when handed one it does not honour.
