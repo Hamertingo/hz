@@ -5,6 +5,16 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.18.5
+
+### Fixed
+
+- **A screenshot no longer disturbs the page you are looking at.** An agent
+  sizing one used to leave the browser pane letterboxed for the rest of the
+  session, and taking one visibly reflowed the page on screen. The size an
+  agent asks for is capture-only now, and the view hides behind a still of
+  the page for the shot.
+
 ## 0.18.4
 
 ### Added
