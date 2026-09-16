@@ -5,6 +5,16 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.4
+
+### Fixed
+
+- **The effort control on an fx gateway model now matches what the
+  model takes.** Dray reads each model's levels from the gateway's own
+  catalog, so a model with no reasoning levels — grok-4.6,
+  claude-sonnet-4 — draws no effort control instead of offering four
+  the model refuses.
+
 ## 0.20.3
 
 ### Fixed
