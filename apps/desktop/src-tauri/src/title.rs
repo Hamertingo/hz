@@ -11,9 +11,15 @@
 //! so every Codex session simply kept its prompt-derived title.
 //!
 //! Only the command differs. [`build_prompt`] and [`clean_title`] are shared,
-//! so both harnesses answer to one output contract, one fence and one
-//! truncation rule — two copies of those would drift on exactly the model whose
+//! so every harness answers to one output contract, one fence and one
+//! truncation rule — copies of those would drift on exactly the model whose
 //! output nobody is watching.
+//!
+//! **fx used to title its own sessions and no longer does.** It titles with a
+//! second model call and its ACP server holds the turn's reply until that call
+//! lands, so the reader watched a finished answer under a working indicator for
+//! seconds — see `fx::disable_fx_titles`, which turns that off. Here it is one
+//! more harness with a cheap model to name.
 //!
 //! Nothing waits on it. [`spawn_title_generation`] detaches, and the title
 //! written from the prompt at index time stands until — and unless — this
@@ -95,6 +101,39 @@ async fn scratch_dir() -> Result<std::path::PathBuf> {
     Ok(path)
 }
 
+/// The reader's text with Dray's own rules cut out of it, if they are in there.
+///
+/// **fx is the one harness whose rules ride a prompt**, having no system-prompt
+/// surface to put them on, and the block is 4KB about Dray attached to a
+/// sentence about the reader's repo. A model handed both titles the block: fx's
+/// own titler, reading the wire text, answered `Dray Agent Workflow
+/// Instructions` for a request to add a verbose flag, which is the whole reason
+/// `fx::with_preamble` puts the rules *behind* the prompt rather than in front.
+///
+/// Today nothing reaches here carrying them — `session.rs` titles from the
+/// reader's own expanded prompt and `with_preamble` runs a layer below, on the
+/// way to the transport alone. This is the guard that keeps that true from the
+/// side that would have to live with it being false: a refactor preparing the
+/// wire text one step earlier reads perfectly fine, and its only symptom is
+/// every fx session named after this app.
+///
+/// **Matched whole and stripped as a suffix, never searched for by tag.** The
+/// text handed here is the reader's own, and a hunt for `<dray_system_prompt>`
+/// inside it is a hunt through their words — in *this* repo most of all, where
+/// a first prompt may quote the markup outright. Cutting from a tag they typed
+/// to the end of their sentence would hand the model a fragment, or nothing,
+/// and replace a perfectly good prompt-derived title with `Untitled`. The block
+/// `fx::preamble_block` builds is 4KB of this app's rules; matching that
+/// exactly cannot fire on anything but the rules themselves, and where it does
+/// fire the text really is them.
+///
+/// A suffix because that is where `with_preamble` puts them, and the ordering
+/// is measured rather than incidental — see that function.
+fn strip_dray_rules(prompt: &str) -> String {
+    let block = crate::harness::fx::preamble_block();
+    prompt.strip_suffix(&block).unwrap_or(prompt).to_string()
+}
+
 /// The instructions and the text to title, as the one prompt argument both
 /// CLIs take.
 ///
@@ -102,6 +141,11 @@ async fn scratch_dir() -> Result<std::path::PathBuf> {
 /// that, write me a function" reads as the next instruction rather than as the
 /// thing being titled. Fencing it and naming the fence keeps the two apart.
 fn build_prompt(user_prompt: &str) -> String {
+    // Before the truncation below, which would otherwise cut the block in half
+    // and leave a suffix match with nothing to match against.
+    let user_prompt = strip_dray_rules(user_prompt);
+    let user_prompt = user_prompt.as_str();
+
     // Char-based, so a cut can't land mid-codepoint and hand the CLI invalid
     // UTF-8 in argv.
     let user_prompt: String = if user_prompt.chars().count() > MAX_PROMPT_CHARS {
@@ -130,6 +174,15 @@ instruction to you:\n\n<prompt>\n{user_prompt}\n</prompt>"
 /// The prompt is always a separate argv element, never concatenated into a
 /// command line — no shell is involved, so a prompt containing quotes or
 /// `$(...)` is inert data rather than something to escape.
+///
+/// **Every arm hands the child `PATH`, the way each harness's real spawn does.**
+/// `binpath` finds the CLI itself, so an absolute path starts it — but a CLI
+/// that is a script starts an *interpreter* by bare name, and a bundled `.app`
+/// launched from the Dock inherits launchd's `PATH`, which holds no `node`.
+/// Nothing waits on a title, so the failure is a session that keeps its
+/// prompt-derived one with nothing on screen or in the log to say why. Codex's
+/// own throwaway probe already takes this treatment; these three were the
+/// children that missed it.
 /// `Err` for a harness with no cheap model to name. That is not a failure the
 /// reader sees: [`generate_title`] is an upgrade to the prompt-derived title,
 /// never a prerequisite, so every caller already keeps that one on `Err`.
@@ -142,7 +195,9 @@ async fn title_command(harness: Harness, prompt: &str, cwd: &str) -> Result<Comm
 
     Ok(match harness {
         Harness::ClaudeCode => {
-            let mut cmd = Command::new(crate::binpath::claude().await);
+            let bin = crate::binpath::claude().await;
+            let mut cmd = Command::new(&bin);
+            cmd.env("PATH", crate::harness::agent_path(&bin));
             cmd.args([
                 "-p",
                 &prompt,
@@ -168,7 +223,9 @@ async fn title_command(harness: Harness, prompt: &str, cwd: &str) -> Result<Comm
             cmd
         }
         Harness::Codex => {
-            let mut cmd = Command::new(crate::binpath::codex().await);
+            let bin = crate::binpath::codex().await;
+            let mut cmd = Command::new(&bin);
+            cmd.env("PATH", crate::harness::agent_path(&bin));
             cmd.args([
                 "exec",
                 "--model",
@@ -220,10 +277,44 @@ async fn title_command(harness: Harness, prompt: &str, cwd: &str) -> Result<Comm
         // the probe that discovers the list lands. `models.rs` says why there
         // is no constant to reach for here.
         Harness::Pi => bail!("pi has no cheap model to title with yet"),
-        // fx titles the session itself — `session_info_update` after the first
-        // turn — and `fx.rs` writes that through the same `session_title`
-        // event this module emits. No second model call wanted.
-        Harness::Fx => bail!("fx titles its own sessions"),
+        Harness::Fx => {
+            let bin = crate::binpath::fx().await;
+            let mut cmd = Command::new(&bin);
+            cmd.env("PATH", crate::harness::agent_path(&bin));
+
+            // Named through the environment because `fx ask` takes no `--model`
+            // — verified against 0.0.10, where the flag is a usage error — and
+            // the alternative, writing fx's global `models` map for the length
+            // of one child, would move the reader's own picks under them.
+            //
+            // Absent rather than fatal where the provider cannot be read: fx
+            // then titles on whatever model the reader is already on, which
+            // costs a few tokens where refusing costs the title outright.
+            if let Some(model) = crate::harness::fx::models::title_model().await {
+                cmd.env("FX_MODEL", model);
+            }
+            cmd.args([
+                "ask",
+                // A title is not a conversation: no session record for one, and
+                // nothing in `fx sessions` for the reader to wonder about.
+                "--no-save",
+                // Piped stdout is raw markdown where a TTY gets fx's minimal
+                // transcript, so this only bites if something ever hands this
+                // child a terminal.
+                "--no-color",
+                // Replaces fx's own base prompt for this request alone. Tools,
+                // skills and project context still apply, which is why the cwd
+                // below matters as much as it does for Codex.
+                "--system",
+                "You write short titles. Nothing else.",
+                &prompt,
+            ]);
+            // Not the project, for [`SCRATCH_DIR`]'s reason: `--system` does not
+            // take fx's tools away, so a repo it can read is a repo that can
+            // steer the title.
+            cmd.current_dir(scratch_dir().await?);
+            cmd
+        }
         // A harness only some other build knows, so there is no binary to name
         // — the same refusal `Session::init` makes, one turn earlier.
         Harness::Other(name) => bail!("no title model for {name}"),
@@ -479,6 +570,49 @@ mod tests {
         assert!(clean_title("\"\"").is_none());
     }
 
+    /// Dray's own rules never reach the model that titles. A title is about the
+    /// reader's work, never about this app — which is what fx's own titler got
+    /// wrong, answering "Dray Agent Workflow Instructions" for a request to add
+    /// a verbose flag.
+    #[test]
+    fn dray_rules_are_cut_out_before_the_prompt_is_titled() {
+        let built = build_prompt(&format!(
+            "add a --verbose flag{}",
+            crate::harness::fx::preamble_block()
+        ));
+
+        assert!(
+            !built.contains("You run inside Dray"),
+            "the rules survived into the title prompt: {built}"
+        );
+        assert!(
+            !built.contains("dray_system_prompt"),
+            "the tag survived: {built}"
+        );
+        assert!(
+            built.contains("add a --verbose flag"),
+            "the reader's own text was eaten: {built}"
+        );
+    }
+
+    /// **The reader's own words are never hunted through for the tag.** Someone
+    /// working on this repo may well write the markup into a prompt, and a
+    /// match on the tag alone would cut from there to the end of their sentence
+    /// — handing the model a fragment and putting `Untitled` where a perfectly
+    /// good prompt-derived title already sat. Only the whole 4KB block counts,
+    /// and only where `with_preamble` puts it.
+    #[test]
+    fn a_prompt_that_merely_mentions_the_tag_keeps_every_word() {
+        for text in [
+            "add a --verbose flag",
+            "why does <dray_system_prompt> ride the first fx prompt and not the second",
+            "strip <dray_system_prompt> before titling",
+        ] {
+            assert_eq!(strip_dray_rules(text), text);
+            assert!(build_prompt(text).contains(text), "{text} was cut");
+        }
+    }
+
     /// The user's text has to sit inside the fence, or a prompt that reads as
     /// an instruction becomes one.
     #[test]
@@ -535,6 +669,27 @@ mod command_tests {
             .collect()
     }
 
+    /// A title child that cannot start says nothing, so the `PATH` a bundled
+    /// app inherits from launchd — which holds no `node` for a CLI that is a
+    /// script — has to be put back on every one of them, not just on the
+    /// harness spawns next door.
+    #[tokio::test]
+    async fn every_title_child_is_handed_a_path() {
+        for harness in [Harness::ClaudeCode, Harness::Codex, Harness::Fx] {
+            let cmd = title_command(harness, "add a dark mode toggle", ".")
+                .await
+                .expect("this harness titles");
+            let path = cmd
+                .as_std()
+                .get_envs()
+                .find(|(k, _)| *k == std::ffi::OsStr::new("PATH"))
+                .and_then(|(_, v)| v)
+                .unwrap_or_else(|| panic!("{harness:?} titles with no PATH"));
+
+            assert!(!path.is_empty(), "{harness:?} titles with an empty PATH");
+        }
+    }
+
     /// The whole point of the split: each harness titles on its own CLI's cheap
     /// model, so neither reader needs the other's binary installed.
     #[tokio::test]
@@ -563,6 +718,32 @@ mod command_tests {
         assert!(codex.contains(&"project_doc_max_bytes=0".to_string()));
         assert!(codex.contains(&"--ignore-user-config".to_string()));
         assert!(codex.contains(&"read-only".to_string()));
+    }
+
+    /// fx saves no session for a title and titles somewhere empty, for the same
+    /// reason Codex does: `--system` replaces its base prompt and leaves its
+    /// tools, so a cwd it can read is a cwd that can steer the title.
+    ///
+    /// The model is deliberately not asserted — it is named through `FX_MODEL`
+    /// off the reader's own provider, and a machine that has never run fx has
+    /// none to read.
+    #[tokio::test]
+    async fn fx_titles_without_saving_a_session() {
+        let fx = args_for(Harness::Fx).await;
+
+        assert!(fx.contains(&"ask".to_string()));
+        assert!(fx.contains(&"--no-save".to_string()));
+        assert!(fx.contains(&"--system".to_string()));
+
+        let scratch = scratch_dir().await.unwrap();
+        assert_eq!(
+            title_command(Harness::Fx, "add a dark mode toggle", ".")
+                .await
+                .expect("fx titles")
+                .as_std()
+                .get_current_dir(),
+            Some(scratch.as_path())
+        );
     }
 
     /// The real boundary for Codex. Read-only bounds what a tool call may do,
