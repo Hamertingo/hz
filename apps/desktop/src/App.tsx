@@ -1889,6 +1889,7 @@ function App() {
             onOpenSubagentPanel: openSubagentPanel,
             onRespondPermission: handleRespondPermission,
             onAnswerQuestions: handleAnswerQuestions,
+            onSendNow: handleInterrupt,
           }}
         />
       ) : (
@@ -1914,6 +1915,7 @@ function App() {
         compacting={compacting}
         apiRetry={apiRetry}
         queuedMessages={queuedMessages}
+        onSendNow={handleInterrupt}
         working={working}
         crowded={!collapsed && (panelShown || (issuesOpen && !!pickedIssue))}
         active={!issuesOpen && viewTab === "chat"}
