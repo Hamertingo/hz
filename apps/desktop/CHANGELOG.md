@@ -5,6 +5,40 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.0
+
+### Added
+
+- **The sidebar and the right panel drag wider.** Both were fixed
+  widths; each now holds at its default mid-drag so you can find it
+  back by feel, and the separator works from the keyboard too.
+- **The split view takes more than four panes.** The 2x2 cap is gone —
+  the screen decides — and digits 1-9 reach panes row by row. Dropping
+  a session onto an empty main column opens it.
+- **⌘W closes the thing you are looking at**: the Files view's file,
+  the Browser's tab, a split pane, then the panel's browser.
+- **The file list hides**, leaving its filter row and the code pane.
+- **fx sessions change provider mid-conversation.** It used to be
+  creation-time only, and a session whose provider had moved
+  underneath it could not be opened at all.
+
+### Changed
+
+- **A large file opens instantly in the Files view.** An 8000-line
+  lockfile switched tabs in ~56ms where it took up to 900ms.
+- **The PR panel costs a fraction of your GitHub rate limit.** Reading
+  a branch used to spend 11 API points per poll, which two Dray windows
+  could drain in an hour and leave every agent's own `gh` call failing.
+  It is 2 now.
+
+### Fixed
+
+- **fx keeps its working indicator up for the whole turn**, instead of
+  going dark while the model wrote its first message or worked behind a
+  finished one.
+- A newly opened file tab scrolls into view rather than sitting off the
+  end of the strip.
+
 ## 0.19.0
 
 ### Added
