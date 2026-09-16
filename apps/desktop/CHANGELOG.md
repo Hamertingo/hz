@@ -5,6 +5,16 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.3
+
+### Fixed
+
+- **No more stray chime at the end of an fx turn.** Naming an fx session
+  played fx's own completion sound, which landed where the first turn
+  finished and read as Dray having grown a sound per turn.
+- **A session that fails to get a title now says why.** The agent's own
+  reason was being thrown away as it was written.
+
 ## 0.20.2
 
 ### Fixed
