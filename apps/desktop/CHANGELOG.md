@@ -5,6 +5,15 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.2
+
+### Fixed
+
+- **An fx turn ends when the answer does.** fx held every first reply
+  for several seconds while it wrote the session title, leaving the
+  working indicator spinning over finished work. Dray titles those
+  sessions itself now.
+
 ## 0.20.1
 
 ### Fixed
