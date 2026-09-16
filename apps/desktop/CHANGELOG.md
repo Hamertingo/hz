@@ -5,6 +5,30 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.19.0
+
+### Added
+
+- **A Files tab beside Chat, Changes and Browser.** A folder tree with a
+  filter box, an editor's tab strip, and the same code renderer the diffs
+  use. A file link in the transcript opens here rather than leaving for an
+  external editor; ⌘-click still goes out there.
+- **fx takes your whole held queue as one turn.** A second sentence typed
+  while fx is working no longer waits out the answer to the first, and
+  **Now** (⌘⏎) under the newest bubble stops the wait and sends
+  immediately.
+
+### Changed
+
+- **Code colours ~6x faster.** A 2000-line diff took 5.8s to highlight and
+  now takes 0.9s.
+
+### Fixed
+
+- **A prompt sent to a resumed session shows up straight away**, instead of
+  sitting off screen for the seconds the agent takes to wake up.
+- ⌘⏎ no longer sends the draft by accident.
+
 ## 0.18.5
 
 ### Fixed
