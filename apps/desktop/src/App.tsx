@@ -62,6 +62,7 @@ import { DROP_ATTR, useSessionDrag, type DropTarget } from "@/lib/dragSession";
 import {
   closePane,
   dropLabel,
+  EMPTY_VIEW,
   GROUPS_KEY,
   groupName,
   members,
@@ -121,6 +122,8 @@ import {
 import { worktreeNoticeDetail } from "@/lib/worktree";
 import { buildTranscript } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
+
+const PANE_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 function App() {
   const {
@@ -627,7 +630,8 @@ function App() {
   // the grid for that session's single view.
   const dropSession = ({ sessionId: anchor, region }: DropTarget, dropped: string) => {
     if (!dropLabel(spaceGroups, anchor, dropped, region)) return;
-    setGroups((prev) => openBeside(prev, anchor, dropped, region, space));
+    // Nothing open, so the drop is the click: the session opens whole.
+    if (anchor !== EMPTY_VIEW) setGroups((prev) => openBeside(prev, anchor, dropped, region, space));
     void handleSelectSessionIndexItem(dropped);
   };
 
@@ -638,12 +642,14 @@ function App() {
     if (next) void handleSelectSessionIndexItem(next);
   };
 
-  // The single view's own drop zone; a grid's panes draw theirs.
+  // The single view's own drop zone; a grid's panes draw theirs. The empty
+  // column is one too, drawn whole: the drop opens the session, so there is
+  // no side to the zone.
   const drag = useSessionDrag();
   const singleDrop =
-    drag?.over && !activeGroup && drag.over.sessionId === selectedSessionId
+    drag?.over && !activeGroup && drag.over.sessionId === (selectedSessionId ?? EMPTY_VIEW)
       ? {
-          region: drag.over.region,
+          region: selectedSessionId ? drag.over.region : ("center" as const),
           label: dropLabel(spaceGroups, drag.over.sessionId, drag.sessionId, drag.over.region),
         }
       : null;
@@ -1378,10 +1384,9 @@ function App() {
     void handleSelectSessionIndexItem(id);
     focusComposer();
   };
-  useHotkey("pane.1", () => focusPane(1), { enabled: gridShown });
-  useHotkey("pane.2", () => focusPane(2), { enabled: gridShown });
-  useHotkey("pane.3", () => focusPane(3), { enabled: gridShown });
-  useHotkey("pane.4", () => focusPane(4), { enabled: gridShown });
+  // Nine digits, so a tenth pane has no chord — it still takes a click. A
+  // fixed list, so the hook count never moves between renders.
+  for (const n of PANE_DIGITS) useHotkey(`pane.${n}`, () => focusPane(n), { enabled: gridShown });
   // ⌘W closes the innermost thing the main column has open, which is what it
   // means in every editor and browser this app is read beside. The views are
   // mutually exclusive, so the chain is an ordering rather than an
@@ -1546,6 +1551,7 @@ function App() {
       // The issues page fills the column, so the centred empty-composer state
       // is wrong there even with no session selected.
       centered={!selectedSession && !issuesOpen}
+      overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <Sidebar
           items={searchedSessions}
