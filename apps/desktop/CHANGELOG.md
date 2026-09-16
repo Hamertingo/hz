@@ -5,6 +5,23 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.1
+
+### Fixed
+
+- **The sidebar and the right panel can no longer be dragged over the
+  conversation.** Each now stops where the chat's own width begins,
+  whatever the window size and whatever the other pane is holding.
+- **A session header no longer overlaps itself** in a narrow column.
+- **The working indicator shows up when a queued prompt is handed
+  over**, instead of leaving the transcript looking dead until the
+  model spoke.
+
+### Changed
+
+- **The Changes panel says something useful when a turn changed
+  nothing**, with a way through to the Diff view.
+
 ## 0.20.0
 
 ### Added
