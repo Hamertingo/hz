@@ -5,6 +5,14 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.5
+
+### Fixed
+
+- **An fx session keeps its own provider's models.** Switching provider
+  in one session moved the model list under every other fx session, and
+  could repair a session's model onto the provider it had just left.
+
 ## 0.20.4
 
 ### Fixed
