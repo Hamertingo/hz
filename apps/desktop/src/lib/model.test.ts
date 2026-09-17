@@ -8,6 +8,9 @@ import {
   UNSET_MODEL,
   usableEffort,
   usableFxModel,
+  fxListFor,
+  landedFxModel,
+  seededFxModel,
   usableModel,
 } from "./model";
 import type { Effort, Model } from "@/types/events";
@@ -137,6 +140,69 @@ describe("usableFxModel", () => {
   /// An empty list has not arrived yet, so the pick stands.
   it("leaves the pick alone until the list lands", () => {
     expect(usableFxModel([], "gpt56_sol" as never, { gateway: "x" })).toBe("gpt56_sol");
+  });
+});
+
+describe("fxListFor", () => {
+  const GATEWAY = [model("anthropic/fable", "gateway")];
+  const CODEX = [model("gpt-5.6-sol", "codex")];
+  const cache = { gateway: GATEWAY, codex: CODEX };
+
+  /// The bug: fx's provider moved under session A, and session B's picker drew
+  /// A's list. B's pick names its own provider, so its list follows the pick.
+  it("draws the picked model's provider over the active one", () => {
+    expect(fxListFor(cache, "anthropic/fable" as never, CODEX)).toBe(GATEWAY);
+  });
+
+  it("draws the active list where the pick is on it", () => {
+    expect(fxListFor(cache, "gpt-5.6-sol" as never, CODEX)).toBe(CODEX);
+  });
+
+  it("draws the active list for a pick no provider names, and for none", () => {
+    expect(fxListFor(cache, "nobody/knows" as never, CODEX)).toBe(CODEX);
+    expect(fxListFor(cache, UNSET_MODEL, CODEX)).toBe(CODEX);
+  });
+});
+
+describe("landedFxModel", () => {
+  const GATEWAY = [model("anthropic/fable", "gateway")];
+  const CODEX = [model("gpt-5.6-sol", "codex")];
+  const cache = { gateway: GATEWAY, codex: CODEX };
+
+  /// The race: session A switched to codex, the reader opened session B on
+  /// gateway before codex's list landed. B's model is the pick when it does.
+  it("keeps a pick the cache can name a provider for", () => {
+    expect(landedFxModel(cache, CODEX, "anthropic/fable" as never, { codex: "gpt-5.6-sol" })).toBe(
+      "anthropic/fable",
+    );
+  });
+
+  /// The ordinary landing: the switch seeded nothing, the pick is the
+  /// sentinel, and the landed provider's last model comes back.
+  it("repairs a pick no provider names against the landed list", () => {
+    expect(landedFxModel(cache, CODEX, UNSET_MODEL, { codex: "gpt-5.6-sol" })).toBe("gpt-5.6-sol");
+    expect(landedFxModel({}, CODEX, "stale/model" as never, {})).toBe(UNSET_MODEL);
+  });
+});
+
+describe("seededFxModel", () => {
+  const GATEWAY = [model("anthropic/fable", "gateway")];
+  const cache = { gateway: GATEWAY };
+
+  it("repairs against the provider's cached list", () => {
+    expect(seededFxModel(cache, "gateway", "gpt-5.6-sol" as never, { gateway: "anthropic/fable" })).toBe(
+      "anthropic/fable",
+    );
+  });
+
+  /// A cold provider has no list to draw, but the pick must still leave the
+  /// old one, or `fxListFor` keeps drawing the old provider and the switch
+  /// reads as inert.
+  it("moves the pick off the old provider with nothing cached", () => {
+    expect(seededFxModel(cache, "codex", "anthropic/fable" as never, { codex: "gpt-5.6-sol" })).toBe(
+      "gpt-5.6-sol",
+    );
+    expect(seededFxModel(cache, "codex", "anthropic/fable" as never, {})).toBe(UNSET_MODEL);
   });
 });
 

@@ -110,6 +110,60 @@ export function usableFxModel(
   return UNSET_MODEL;
 }
 
+/// The provider serving this model, from the lists fx has answered so far, or
+/// `undefined` where none of them names it. What lets a session's model say
+/// which provider it belongs to without a field on the index for it.
+export function fxProviderOf(cache: Record<string, Model[]>, id: ModelId): string | undefined {
+  if (isUnsetModel(id)) return undefined;
+  return Object.keys(cache).find((provider) => cache[provider].some((m) => m.id === id));
+}
+
+/// The fx list the composer draws: the one serving `picked`, where the cache
+/// knows it, else `active` — the list fx's global provider last answered.
+///
+/// fx's provider is one setting for the whole machine, and the composer used to
+/// draw its list from that alone — so switching provider in one session put the
+/// new provider's thumb and rows under every other fx session's picker, drew
+/// their models as bare ids, and let ⇧⇥ cycle them onto the wrong provider.
+/// The pick is per session and names its provider, so the list follows it.
+export function fxListFor(
+  cache: Record<string, Model[]>,
+  picked: ModelId,
+  active: Model[],
+): Model[] {
+  const own = fxProviderOf(cache, picked);
+  if (!own || own === active[0]?.provider) return active;
+  return cache[own] ?? active;
+}
+
+/// The pick once fx's global list lands. Kept where the cache names its
+/// provider — that is a session's own model, and the read may be landing after
+/// the reader moved onto it from the session whose switch asked for it — else
+/// repaired against the landed list as [`usableFxModel`] does.
+export function landedFxModel(
+  cache: Record<string, Model[]>,
+  landed: Model[],
+  current: ModelId,
+  picks: Record<string, ModelId>,
+): ModelId {
+  return fxProviderOf(cache, current) ? current : usableFxModel(landed, current, picks);
+}
+
+/// The pick the moment a provider is switched to: repaired against that
+/// provider's cached list, or with none cached its last pick — the pick still
+/// has to leave the old provider, or [`fxListFor`] keeps drawing the old
+/// provider's list and the switch reads as having done nothing.
+export function seededFxModel(
+  cache: Record<string, Model[]>,
+  provider: string,
+  current: ModelId,
+  picks: Record<string, ModelId>,
+): ModelId {
+  const cached = cache[provider];
+  if (!cached?.length) return picks[provider] ?? UNSET_MODEL;
+  return usableFxModel(cached, current, picks);
+}
+
 /// The effort a model will actually run at, given what the reader last picked
 /// for it.
 ///

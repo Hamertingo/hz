@@ -14,7 +14,7 @@ import {
 } from "@/hooks/useNotices";
 import { fastFor, fastNotice } from "@/lib/fastMode";
 import { isWindowFocused, onFocusChange } from "@/lib/focus";
-import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableEffort, usableFxModel, usableModel } from "@/lib/model";
+import { DEFAULT_MODEL_FOR, fxListFor, isUnsetModel, landedFxModel, rememberedModel, seededFxModel, usableEffort, usableFxModel, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
 import { stanceFor } from "@/lib/permission";
 import { isProvisional, nextMainSeq, provisionalId, retireOldestProvisional } from "@/lib/provisional";
@@ -326,7 +326,14 @@ export function useSessions() {
 // Empty is the agreed "not read yet" answer — `usableModel` leaves the pick
 // standing on it and the picker draws its own waiting row — so an absent entry
 // needs nothing beside it to say so.
-const models = modelsByHarness[harness] ?? [];
+//
+// fx's slot holds the list its *global* provider last answered; what is drawn
+// follows the pick, which is per session and names its provider. See
+// `fxListFor` for the bug that is.
+const models = useMemo(() => {
+  const active = modelsByHarness[harness] ?? [];
+  return harness === "fx" ? fxListFor(readFxModelCache(), modelId, active) : active;
+}, [modelsByHarness, harness, modelId]);
 
 // What actually gets sent for the current model: its remembered pick, else its
 // own default, and null for a model that takes no effort flag at all.
@@ -1523,9 +1530,12 @@ useEffect(() => {
       // A model belongs to exactly one harness, so switching harness leaves the
       // pick naming something the new one cannot run. Repaired here, where the
       // real list has just landed, rather than guessed at when the toggle moved.
-      // fx repairs per provider, restoring that provider's last model.
+      // fx repairs per provider, restoring that provider's last model — see
+      // `landedFxModel` for the pick it must leave alone.
       setModelId((current) =>
-        harness === "fx" ? repairFxModel(list, current) : usableModel(list, current, harness),
+        harness === "fx"
+          ? landedFxModel(readFxModelCache(), list, current, readFxPicks())
+          : usableModel(list, current, harness),
       );
     })
     .finally(() => {
@@ -1562,12 +1572,13 @@ const reloadModels = () => setModelsGeneration((n) => n + 1);
 /// Nothing happens for a provider never visited (gateway on a cold install),
 /// which is the one case that still waits on the probe's loading state.
 const seedFxModels = (provider: string) => {
-  const cached = readFxModelCache()[provider];
-  if (!cached?.length) return;
-  setModelsByHarness((prev) => ({ ...prev, fx: cached }));
+  const cache = readFxModelCache();
+  const cached = cache[provider];
+  if (cached?.length) setModelsByHarness((prev) => ({ ...prev, fx: cached }));
   // Restore this provider's last model at once too, so the trigger and the
-  // list's own mark are right on the same frame the rows appear.
-  setModelId((current) => repairFxModel(cached, current));
+  // list's own mark are right on the same frame the rows appear — and with
+  // nothing cached, `seededFxModel` says why the pick still moves.
+  setModelId((current) => seededFxModel(cache, provider, current, readFxPicks()));
 };
 
 useEffect(() => {
