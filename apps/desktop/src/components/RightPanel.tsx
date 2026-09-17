@@ -6,6 +6,7 @@ import PanelRightIcon from "@/components/icons/PanelRightIcon";
 import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useResizable } from "@/components/ResizeHandle";
 import { cn } from "@/lib/utils";
 
 /// The header button that opens and closes the pane. Lives here rather than in
@@ -59,7 +60,10 @@ export function PanelToggle({
             indicating ? (pr ? "Show pull request" : "Show changes") : "Toggle panel"
           }
           className={cn(
-            "transition-opacity",
+            // `shrink-0` because this is the way back out of a pane dragged
+            // wide: everything else in that header may give up width or clip,
+            // this may not.
+            "shrink-0 transition-opacity",
             indicating ? "opacity-100" : "opacity-80 hover:opacity-100",
           )}
         >
@@ -271,19 +275,36 @@ export default function RightPanel({
   children,
 }: RightPanelProps) {
   const tabs = tabOrder({ pr, docs, issue, subagents });
+  // 32rem, the width this pane opened at before it could be dragged.
+  const { style, handle } = useResizable({
+    storageKey: "ade.rightPanelWidth",
+    initial: 512,
+    min: 320,
+    edge: "left",
+    label: "Resize the panel",
+    // Dropped while closed, for the sidebar's reason: this pane hides rather
+    // than unmounting, so it would go on holding width the sidebar could not
+    // bid for while nothing of it is on screen.
+    pane: open ? "panel" : undefined,
+  });
 
   return (
     <aside
+      style={style}
       className={cn(
-        "w-[32rem] shrink-0 flex-col border-l border-border bg-sidebar",
+        "relative shrink-0 flex-col border-l border-border bg-sidebar",
         // Conditional `flex` rather than `flex` plus `hidden`: both set
         // `display`, so stacking them leaves the winner to stylesheet order.
         open ? "flex" : "hidden",
       )}
     >
+      {handle}
       <div
         className={cn(
-          "flex h-(--titlebar-h) shrink-0 items-center gap-0.5 px-2",
+          // `overflow-hidden` for the reason the app header carries it: this
+          // pane can be dragged narrow, and what runs out of room has to clip
+          // at its own edge rather than draw over the transcript beside it.
+          "flex h-(--titlebar-h) shrink-0 items-center gap-0.5 overflow-hidden px-2",
           !heading && "border-b border-border",
         )}
         data-tauri-drag-region="deep"
@@ -362,7 +383,7 @@ export default function RightPanel({
           {/* Ahead of Refresh, and outside the tab row's own logic: it acts on
               the session rather than on whatever tab is open, so unlike Refresh
               it does not change meaning from one tab to the next. */}
-          {cwd && <OpenInButton cwd={cwd} />}
+          {cwd && <OpenInButton path={cwd} />}
 
           {/* Gone entirely on Subagents, which has nothing to re-read. It
               reserved its width back when the keycaps sat to its right and

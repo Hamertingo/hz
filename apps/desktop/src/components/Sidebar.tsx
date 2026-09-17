@@ -52,6 +52,7 @@ import { isToday, relativeTime } from "@/lib/format";
 import { groupName, members, type SplitGroup } from "@/lib/groups";
 import { projectKey } from "@/lib/project";
 import { sessionBranch } from "@/lib/pr";
+import { useResizable } from "@/components/ResizeHandle";
 import { cn } from "@/lib/utils";
 import type {
   PrMark,
@@ -536,6 +537,41 @@ export function sortSessions(
   );
 }
 
+/// That same order with each *heading's* run folded into one step, for the
+/// chord that walks headings rather than rows.
+///
+/// The unit is what the reader sees a heading over: a split group, the Pinned
+/// run, or a project. A project's state runs fold back together because they
+/// draw under one heading — stepping into "Completed" inside the project the
+/// reader is already in is not the jump the chord promises.
+///
+/// Keyed rather than counted, since the runs of one project are consecutive by
+/// construction and nothing else should ever fold.
+export function sessionUnits(
+  items: SessionIndexItem[],
+  projects: Project[] = [],
+  live?: LiveSessions,
+  settled = false,
+  splits: SplitGroup[] = [],
+): SessionIndexItem[][] {
+  const key = (group: SessionGroup) =>
+    group.kind === "project"
+      ? `p${group.projectPath}`
+      : group.kind === "group"
+        ? `g${group.id}`
+        : "pinned";
+
+  const units: SessionIndexItem[][] = [];
+  let last: string | null = null;
+  for (const group of sessionGroups(items, projects, live, settled, splits)) {
+    const rows = group.rows.map((row) => row.item);
+    if (key(group) === last) units[units.length - 1].push(...rows);
+    else units.push(rows);
+    last = key(group);
+  }
+  return units;
+}
+
 /// The rows a query leaves on screen, matched on `title` alone.
 ///
 /// Applied *before* grouping, so a heading only draws where a group still holds
@@ -842,6 +878,21 @@ export default function Sidebar({
   onOpenSettings,
 }: SidebarProps) {
   const fullscreen = useFullscreen();
+  // 240 is `w-60`, the width this opened at before it could be dragged — and
+  // its floor as well as its default: narrower, the rows' timestamps and marks
+  // start eating the title they sit beside, so this only ever widens.
+  const { style, handle } = useResizable({
+    storageKey: "ade.sidebarWidth",
+    initial: 240,
+    min: 240,
+    edge: "right",
+    label: "Resize the sidebar",
+    // Dropped while collapsed, which is not an unmount: this component returns
+    // `null` below with its hooks already run, so publishing on mount alone
+    // left the panel taking a sidebar's width off its own cap with no sidebar
+    // on screen.
+    pane: collapsed ? undefined : "sidebar",
+  });
 
   const closeSearch = () => {
     onSearchOpenChange(false);
@@ -921,7 +972,11 @@ export default function Sidebar({
   if (collapsed) return null;
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border">
+    <aside
+      className="relative flex shrink-0 flex-col border-r border-sidebar-border"
+      style={style}
+    >
+      {handle}
       {/* The toggle shares this strip with the traffic lights, so it sits at the
           right to clear them — except in fullscreen, where they're gone and the
           left edge is free. */}
@@ -1282,8 +1337,10 @@ function ShortcutHint({
           className={HINT_KEYS}
         />
       </HintRow>
-      {/* Only while a group exists: the chord steps groups as one row each,
-          and with none it is ⌘⇧ under another name. */}
+      {/* The chord steps every heading — projects included — but it is only
+          taught where a grid exists. Two chords a keystroke apart in the same
+          corner is one too many to read past, and the project jump is the half
+          a reader finds by trying the pair they already know. */}
       {grouped && (
         <HintRow label="Switch groups">
           <ShortcutKeys ids={["group.prev", "group.next"]} className={HINT_KEYS} />

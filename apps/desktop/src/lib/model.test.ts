@@ -6,10 +6,14 @@ import {
   nextHarness,
   rememberedModel,
   UNSET_MODEL,
+  usableEffort,
   usableFxModel,
+  fxListFor,
+  landedFxModel,
+  seededFxModel,
   usableModel,
 } from "./model";
-import type { Model } from "@/types/events";
+import type { Effort, Model } from "@/types/events";
 
 const model = (id: string, provider?: string): Model =>
   ({ id, label: id, efforts: [], defaultEffort: null, provider }) as unknown as Model;
@@ -139,19 +143,118 @@ describe("usableFxModel", () => {
   });
 });
 
+describe("fxListFor", () => {
+  const GATEWAY = [model("anthropic/fable", "gateway")];
+  const CODEX = [model("gpt-5.6-sol", "codex")];
+  const cache = { gateway: GATEWAY, codex: CODEX };
+
+  /// The bug: fx's provider moved under session A, and session B's picker drew
+  /// A's list. B's pick names its own provider, so its list follows the pick.
+  it("draws the picked model's provider over the active one", () => {
+    expect(fxListFor(cache, "anthropic/fable" as never, CODEX)).toBe(GATEWAY);
+  });
+
+  it("draws the active list where the pick is on it", () => {
+    expect(fxListFor(cache, "gpt-5.6-sol" as never, CODEX)).toBe(CODEX);
+  });
+
+  it("draws the active list for a pick no provider names, and for none", () => {
+    expect(fxListFor(cache, "nobody/knows" as never, CODEX)).toBe(CODEX);
+    expect(fxListFor(cache, UNSET_MODEL, CODEX)).toBe(CODEX);
+  });
+});
+
+describe("landedFxModel", () => {
+  const GATEWAY = [model("anthropic/fable", "gateway")];
+  const CODEX = [model("gpt-5.6-sol", "codex")];
+  const cache = { gateway: GATEWAY, codex: CODEX };
+
+  /// The race: session A switched to codex, the reader opened session B on
+  /// gateway before codex's list landed. B's model is the pick when it does.
+  it("keeps a pick the cache can name a provider for", () => {
+    expect(landedFxModel(cache, CODEX, "anthropic/fable" as never, { codex: "gpt-5.6-sol" })).toBe(
+      "anthropic/fable",
+    );
+  });
+
+  /// The ordinary landing: the switch seeded nothing, the pick is the
+  /// sentinel, and the landed provider's last model comes back.
+  it("repairs a pick no provider names against the landed list", () => {
+    expect(landedFxModel(cache, CODEX, UNSET_MODEL, { codex: "gpt-5.6-sol" })).toBe("gpt-5.6-sol");
+    expect(landedFxModel({}, CODEX, "stale/model" as never, {})).toBe(UNSET_MODEL);
+  });
+});
+
+describe("seededFxModel", () => {
+  const GATEWAY = [model("anthropic/fable", "gateway")];
+  const cache = { gateway: GATEWAY };
+
+  it("repairs against the provider's cached list", () => {
+    expect(seededFxModel(cache, "gateway", "gpt-5.6-sol" as never, { gateway: "anthropic/fable" })).toBe(
+      "anthropic/fable",
+    );
+  });
+
+  /// A cold provider has no list to draw, but the pick must still leave the
+  /// old one, or `fxListFor` keeps drawing the old provider and the switch
+  /// reads as inert.
+  it("moves the pick off the old provider with nothing cached", () => {
+    expect(seededFxModel(cache, "codex", "anthropic/fable" as never, { codex: "gpt-5.6-sol" })).toBe(
+      "gpt-5.6-sol",
+    );
+    expect(seededFxModel(cache, "codex", "anthropic/fable" as never, {})).toBe(UNSET_MODEL);
+  });
+});
+
 describe("nextHarness", () => {
   /// Toggling between two was written when there were two, and silently never
   /// reached the third. The chord steps the picker's own row instead.
   it("steps through every harness in the picker's order and wraps", () => {
-    expect(HARNESS_ORDER).toEqual(["claude_code", "codex", "fx", "pi", "omp"]);
+    expect(HARNESS_ORDER).toEqual(["claude_code", "codex", "pi", "fx", "omp"]);
     expect(nextHarness("claude_code")).toBe("codex");
-    expect(nextHarness("codex")).toBe("fx");
-    expect(nextHarness("fx")).toBe("pi");
-    expect(nextHarness("pi")).toBe("omp");
+    expect(nextHarness("codex")).toBe("pi");
+    expect(nextHarness("pi")).toBe("fx");
+    expect(nextHarness("fx")).toBe("omp");
     expect(nextHarness("omp")).toBe("claude_code");
   });
 
   it("parks an unknown harness on the first", () => {
     expect(nextHarness("other" as never)).toBe("claude_code");
+  });
+});
+
+describe("usableEffort", () => {
+  const withEfforts = (efforts: Effort[], defaultEffort: Effort | null = null): Model =>
+    ({ id: "m", label: "m", efforts, defaultEffort }) as unknown as Model;
+
+  const LUNA: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+  it("keeps a remembered level the model offers", () => {
+    expect(usableEffort(withEfforts(LUNA), "high", "high")).toBe("high");
+  });
+
+  /// DRA-221: fx's ladder is per model and learned from a live session, so a
+  /// level picked off the provider's guess can stop being offered mid-session.
+  /// Left standing, the trigger names a rung the menu no longer has and the
+  /// next send asks fx for it again.
+  it("drops a remembered level the model has stopped offering", () => {
+    expect(usableEffort(withEfforts(LUNA), "ultra", "high")).toBe("high");
+  });
+
+  /// The fall-back is the top of the ladder, not the app default: a pick that
+  /// has fallen off the list is one above the model's top rung, so landing on
+  /// medium would be a downgrade nobody asked for.
+  it("falls to the highest rung when nothing else is offered", () => {
+    expect(usableEffort(withEfforts(["low", "medium"]), "ultra", "high")).toBe("medium");
+  });
+
+  it("prefers the model's own default over the app's", () => {
+    expect(usableEffort(withEfforts(LUNA, "low"), "ultra", "high")).toBe("low");
+  });
+
+  /// An empty ladder is a real answer — fx reports no `effort` option at all
+  /// for a model that does no reasoning — and `null` is what hides the control.
+  it("answers null for a model that takes no effort", () => {
+    expect(usableEffort(withEfforts([]), "high", "high")).toBeNull();
   });
 });

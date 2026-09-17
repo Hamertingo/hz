@@ -12,11 +12,13 @@ import {
   pushNotice,
   type NoticeKind,
 } from "@/hooks/useNotices";
+import { fastFor, fastNotice } from "@/lib/fastMode";
 import { isWindowFocused, onFocusChange } from "@/lib/focus";
-import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableFxModel, usableModel } from "@/lib/model";
+import { DEFAULT_MODEL_FOR, fxListFor, isUnsetModel, landedFxModel, rememberedModel, seededFxModel, usableEffort, usableFxModel, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
 import { stanceFor } from "@/lib/permission";
 import { resolveDefaultRole, writeDefaultRole } from "@/lib/roles";
+import { isProvisional, nextMainSeq, provisionalId, retireOldestProvisional } from "@/lib/provisional";
 import { playNotification } from "@/lib/sound";
 import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/space";
 import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
@@ -242,6 +244,11 @@ export function useSessions() {
     );
     const [effortByModel, setEffortByModel] = useState<EffortByModel>(() => prefs.effortByModel);
     const [permissionMode, setPermissionModeState] = useState<ApprovalPolicy>(() => prefs.permissionMode);
+    // The pick as *asked for*, not as it will be honoured. Kept whole so a trip
+    // through a model or agent with no faster tier comes back to it, exactly
+    // the way `effortByModel` keeps a level for a model not on screen; `fastFor`
+    // is what settles what actually goes out.
+    const [fastState, setFastState] = useState(() => prefs.fast);
     const [projects, setProjects] = useState<Project[]>([]);
     const [projectPath, setProjectPath] = useState<string | null>(null);
     // The git repositories the selected project holds, and which of them a new
@@ -320,19 +327,49 @@ export function useSessions() {
     // one could never be answered.
     const [asksBySession, setAsksBySession] = useState<Record<string, string[]>>({});
     const [error, setError] = useState<string | null>(null);
+    // Bumped by every navigation, so an action started before it and rejecting
+    // after it can be told from one the reader is still standing next to.
+    // Clearing the slot on the way in is only half of keeping it to its
+    // session: a send, an interrupt or a permission reply can reject seconds
+    // after the reader has moved on, and an unguarded catch would write the
+    // previous session's failure into the composer they moved to.
+    const navGen = useRef(0);
+    /// A catch handler for a *session-scoped* action starting now. Reports into
+    /// the slot only while the reader has not navigated since — taken at the
+    /// start of the action, since the rejection lands after any move.
+    ///
+    /// Only for actions about one session. App-wide loads and actions — the
+    /// index, projects, branches, a checkout — stay on the raw setter: their
+    /// failure is as true after a move as before it, and dropping one leaves a
+    /// list stale or empty with nothing on screen saying why.
+    const failUnlessLeft = () => {
+      const gen = navGen.current;
+      return (e: unknown) => {
+        if (gen === navGen.current) setError(String(e));
+      };
+    };
 
 // Empty is the agreed "not read yet" answer — `usableModel` leaves the pick
 // standing on it and the picker draws its own waiting row — so an absent entry
 // needs nothing beside it to say so.
-const models = modelsByHarness[harness] ?? [];
+//
+// fx's slot holds the list its *global* provider last answered; what is drawn
+// follows the pick, which is per session and names its provider. See
+// `fxListFor` for the bug that is.
+const models = useMemo(() => {
+  const active = modelsByHarness[harness] ?? [];
+  return harness === "fx" ? fxListFor(readFxModelCache(), modelId, active) : active;
+}, [modelsByHarness, harness, modelId]);
 
 // What actually gets sent for the current model: its remembered pick, else its
 // own default, and null for a model that takes no effort flag at all.
 const model = models.find((m) => m.id === modelId) ?? null;
+// Resolved against the model's *own* ladder rather than taken as remembered.
+// fx learns that ladder from a live session, so a level picked off the
+// provider's guess can stop being offered mid-session — and a trigger naming
+// a rung the menu beside it no longer has is the state DRA-221 is about.
 const effort: Effort | null = model
-  ? model.efforts.length
-    ? effortByModel[modelId] ?? model.defaultEffort ?? DEFAULT_EFFORT
-    : null
+  ? usableEffort(model, effortByModel[modelId] ?? null, DEFAULT_EFFORT)
   : effortByModel[modelId] ?? null;
 
 // The responsibility a new session starts under, resolved from the sticky
@@ -367,6 +404,16 @@ const setGlobalRoleId = (next: string | null) => {
       next,
     ),
   );
+};
+
+// What the composer draws and what the send carries — the pick narrowed to what
+// this agent and this model can honour. One value, so the row cannot be lit over
+// a model with no faster tier and the send cannot carry one the row never showed.
+const fast = fastFor(fastState, harness, models, modelId);
+
+const setFast = (next: boolean) => {
+  setFastState(next);
+  setPrefs({ fast: next });
 };
 
 // A null effort means "just switch to this model" — it must leave the model's
@@ -617,24 +664,19 @@ const mergeEvents = (into: SessionSnapshot, from: AgentEvent[]): SessionSnapshot
   return { ...into, events: [...into.events, ...missing].sort((a, b) => a.seq - b.seq) };
 };
 
-// The user's own prompt, drawn before the backend has answered for the session.
-// A new session's `send_msg` resolves only once the worktree is made, the child
-// spawned and the harness has taken the prompt — 1–2s on pi and Codex in a
-// worktree — and the real `user_message` is minted at the far end of that wait.
-// The id prefix is what retires it, on either path the real one can arrive by.
-const PROVISIONAL_PREFIX = "provisional:";
-const isProvisional = (e: AgentEvent) => e.id.startsWith(PROVISIONAL_PREFIX);
-
 const provisionalPrompt = (
+  id: string,
   sessionId: string,
   harness: Harness,
   text: string,
   attachments: Attachment[],
+  // A new session holds no events and starts at 0.
+  seq = 0,
 ): AgentEvent => ({
-  id: `${PROVISIONAL_PREFIX}${sessionId}`,
+  id,
   sessionId,
   harness,
-  seq: 0,
+  seq,
   ts: new Date().toISOString(),
   turnId: null,
   subagent: null,
@@ -650,6 +692,22 @@ const provisionalPrompt = (
   },
   raw: null,
 });
+
+// Taken back where the send answered with something else to draw — a prompt the
+// backend queued, which has its own pending row, or a send that failed outright.
+// The ordinary retirement is the real `user_message` landing in the listener.
+//
+// By id, so a send only ever takes back its own row: another prompt typed
+// during the wait is still out and still has to be drawn.
+const dropProvisional = (sessionId: string, id: string) =>
+  setSessions((prev) =>
+    prev.map((s) =>
+      s.sessionId === sessionId && s.events.some((e) => e.id === id)
+        ? { ...s, events: s.events.filter((e) => e.id !== id) }
+        : s,
+    ),
+  );
+
 
 const upsertSession = (snapshot: SessionSnapshot) =>
   setSessions((prev) =>
@@ -695,7 +753,12 @@ const handleSendMsg = async (
     // from an earlier click can land afterwards and roll this one away.
     selectionRequestRef.current = sessionId;
     setSelectedSessionId(sessionId);
+    // A move like any other: the composer now belongs to this session, so an
+    // action still out from the new-task view must not report into it.
+    navGen.current++;
   }
+  // Taken after the mint, so this send's own failure still reports.
+  const fail = failUnlessLeft();
 
   setError(null);
   // Read before the optimistic write below overwrites it. A send onto a running
@@ -723,9 +786,11 @@ const handleSendMsg = async (
   // Every field is one this call is already passing, so nothing here is a guess.
   // The three the backend alone resolves — the worktree name, the truncated
   // title, the recorded branch — arrive with the snapshot and replace these.
+  const provisional = provisionalId();
+
   if (isNewSession) {
     const shell: SessionSnapshot = {
-      events: [provisionalPrompt(sessionId, harness, message, attachments)],
+      events: [provisionalPrompt(provisional, sessionId, harness, message, attachments)],
       sessionId,
       harness,
       cwd,
@@ -744,6 +809,7 @@ const handleSendMsg = async (
       model: modelId,
       effort,
       permissionMode: stanceFor(harness, permissionMode),
+      fast,
       status: "in_progress",
       forkFrom: null,
       threadId: null,
@@ -755,6 +821,29 @@ const handleSendMsg = async (
       pinned: false,
     };
     upsertSession(shell);
+  } else {
+    // The same row for a session already on screen, whose child may have to be
+    // spawned and resumed before anything can mint the real one.
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.sessionId === sessionId
+          ? {
+              ...s,
+              events: [
+                ...s.events,
+                provisionalPrompt(
+                  provisional,
+                  sessionId,
+                  harness,
+                  message,
+                  attachments,
+                  nextMainSeq(s.events),
+                ),
+              ],
+            }
+          : s,
+      ),
+    );
   }
 
   try {
@@ -771,6 +860,11 @@ const handleSendMsg = async (
       // `dray new` inheriting it, so a stance nothing enforces is worse there
       // than on screen, where the control is at least hidden.
       permissionMode: stanceFor(harness, permissionMode),
+      // Already narrowed to this agent and model, for the same reason the
+      // stance above is: the index is read back by a later build and by
+      // `dray new` inheriting it, so a `true` nothing can honour is worse on
+      // disk than on screen.
+      fast,
       cwd,
       // Recorded, not acted on — the picker already checked it out. Null for a
       // worktree session, whose branch the CLI names itself.
@@ -804,6 +898,9 @@ const handleSendMsg = async (
 
     if (outcome.queued) {
       const queued = outcome.queued;
+      // The prompt is held, and the queue draws its own pending row — so the
+      // provisional would be that sentence on screen twice.
+      dropProvisional(sessionId, provisional);
       setQueuedBySession((prev) => ({
         ...prev,
         [sessionId]: [...(prev[sessionId] ?? []), { message: queued, attachments }],
@@ -831,7 +928,7 @@ const handleSendMsg = async (
     setSessionIndexItems((prev) =>
       prev.map((i) =>
         i.sessionId === sessionId
-          ? { ...i, model: modelId, effort, permissionMode, modified: new Date().toISOString() }
+          ? { ...i, model: modelId, effort, permissionMode, fast, modified: new Date().toISOString() }
           : i,
       ),
     );
@@ -856,8 +953,12 @@ const handleSendMsg = async (
       if (selectionRequestRef.current === sessionId) {
         setSelectedSessionId(null);
       }
+    } else {
+      // Nothing took the prompt, so the row drawn for it goes with the failure —
+      // the composer still holds the text and the error says why.
+      dropProvisional(sessionId, provisional);
     }
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -868,6 +969,7 @@ const handleSendMsg = async (
 // past that the CLI owns the prompt and no channel exists to retract it, so the
 // composer is left alone and the message lands as an ordinary one.
 const handleCancelQueued = async (): Promise<QueuedMessage | null> => {
+  const fail = failUnlessLeft();
   if (!selectedSessionId) return null;
   const sessionId = selectedSessionId;
   try {
@@ -895,7 +997,7 @@ const handleCancelQueued = async (): Promise<QueuedMessage | null> => {
     }));
     return cancelled;
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return null;
   }
 };
@@ -904,11 +1006,12 @@ const handleCancelQueued = async (): Promise<QueuedMessage | null> => {
 // is not touched here — the abort produces a result event, and the backend's
 // machine reports the transition on `session_status` like any other ending.
 const handleInterrupt = async () => {
+  const fail = failUnlessLeft();
   if (!selectedSessionId) return;
   try {
     await invoke("interrupt_session", { sessionId: selectedSessionId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -920,11 +1023,12 @@ const handleInterrupt = async () => {
 // running task alone — a task is backgrounded to outlive its turn, so killing
 // one is its own ask.
 const handleStopTask = async (taskId: string) => {
+  const fail = failUnlessLeft();
   if (!selectedSessionId) return;
   try {
     await invoke("stop_task", { sessionId: selectedSessionId, taskId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -942,10 +1046,11 @@ const handleRespondPermission = async (
   requestId: string,
   optionId: string,
 ) => {
+  const fail = failUnlessLeft();
   try {
     await invoke("respond_permission", { sessionId, requestId, optionId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -954,10 +1059,11 @@ const handleAnswerQuestions = async (
   requestId: string,
   answers: Record<string, string>,
 ) => {
+  const fail = failUnlessLeft();
   try {
     await invoke("answer_questions", { sessionId, requestId, answers });
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -972,6 +1078,12 @@ const handleAnswerQuestions = async (
 const handleNewSession = () => {
   selectionRequestRef.current = null;
   setSelectedSessionId(null);
+  // The slot is one value for the whole app, so a failure left in it follows
+  // the reader out of the session it happened in. It reports the reader's own
+  // last action failing, and leaving a session is leaving that action behind —
+  // the bump is what keeps one still in flight from arriving after this.
+  navGen.current++;
+  setError(null);
   setHarnessState(prefs.harness);
   // Repaired against the list on screen, not taken as read. The effect below
   // only fires when the harness *changes*, so a stored model left over from the
@@ -987,12 +1099,24 @@ const handleNewSession = () => {
   //
   // `prefs.harness` and not the one on screen: this restores a session, which
   // carries its own agent.
+  //
+  // fx repairs per provider, like every other fx site. `usableModel` here fell
+  // to the unset sentinel whenever the remembered pick was not in the list on
+  // screen — and that is the ordinary state after a provider switch, since the
+  // reload repairs the on-screen pick through the raw setter and prefs keep
+  // naming the model of the provider left. Coming back from another fx session
+  // then drew "Select Model" with nothing to repair it: the harness had not
+  // changed, so no fetch followed.
   const ownList = modelsByHarness[prefs.harness] ?? [];
+  const remembered = rememberedModel(prefs.modelByHarness, prefs.harness);
   setModelId(
-    usableModel(ownList, rememberedModel(prefs.modelByHarness, prefs.harness), prefs.harness),
+    prefs.harness === "fx"
+      ? repairFxModel(ownList, remembered)
+      : usableModel(ownList, remembered, prefs.harness),
   );
   setEffortByModel(prefs.effortByModel);
   setPermissionModeState(prefs.permissionMode);
+  setFastState(prefs.fast);
   setUseWorktreeState(prefs.useWorktree);
   setBranch(branches?.current ?? null);
 };
@@ -1025,6 +1149,7 @@ const restoreSessionControls = (item: SessionIndexItem) => {
     setEffortByModel((prev) => ({ ...prev, [restored]: item.effort! }));
   }
   setPermissionModeState(item.permissionMode);
+  setFastState(item.fast);
 };
 
 const handleSelectSessionIndexItem = async (sessionId: string) => {
@@ -1039,6 +1164,14 @@ const handleSelectSessionIndexItem = async (sessionId: string) => {
   const previous = selectedSessionIdRef.current;
 
   setSelectedSessionId(sessionId);
+  // Cleared on the way in, never on the way out: the rollback below sets its
+  // own sentence *after* this, so a read that resolves to nothing still says
+  // so. See `handleNewSession` for why the slot has to be cleared at all.
+  navGen.current++;
+  setError(null);
+  // Taken *after* the bump, so this read's own failure still reports — and a
+  // later move retires it like any other action's.
+  const fail = failUnlessLeft();
 
   // Opening the session is answering the notice about it — an unread completion
   // is read, and a pending request is now on screen. Not the ready-to-merge
@@ -1105,7 +1238,7 @@ const handleSelectSessionIndexItem = async (sessionId: string) => {
     // deletion is the likely cause rather than the observed one.
     setError("Session not found.");
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 }
 
@@ -1123,6 +1256,7 @@ const handleSelectSessionIndexItem = async (sessionId: string) => {
 /// failed write must not leave the sidebar drawing a state the disk doesn't
 /// have. Nothing re-parents — detaching is one-way.
 const detachSession = async (sessionId: string) => {
+  const fail = failUnlessLeft();
   try {
     const updated = await invoke<SessionIndexItem | null>("detach_session", {
       sessionId,
@@ -1132,7 +1266,7 @@ const detachSession = async (sessionId: string) => {
       prev.map((i) => (i.sessionId === sessionId ? updated : i)),
     );
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -1145,6 +1279,7 @@ const setSessionFlags = async (
   sessionId: string,
   flags: { archived?: boolean; pinned?: boolean },
 ): Promise<boolean> => {
+  const fail = failUnlessLeft();
   try {
     const updated = await invoke<SessionIndexItem | null>("set_session_flags", {
       sessionId,
@@ -1192,7 +1327,7 @@ const setSessionFlags = async (
     if (updated.archived) evictSessions({ sessionId });
     return true;
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return false;
   }
 };
@@ -1248,10 +1383,11 @@ const applyIssues = (sessionId: string, issues: IssueRef[]) => {
 // Removes one. `key` is the tracker's own id from the row that was clicked; the
 // backend also accepts the human identifier, which is what the CLI passes.
 const unlinkIssue = async (sessionId: string, key: string) => {
+  const fail = failUnlessLeft();
   try {
     applyIssues(sessionId, await invoke<IssueRef[]>("unlink_issue", { sessionId, key }));
   } catch (e) {
-    setError(String(e));
+    fail(e);
   }
 };
 
@@ -1402,6 +1538,7 @@ const removeWorktree = (sessionId: string, origin: "asked" | "tidy" = "asked") =
 // snapshot it returns is the parent's copied log, so the new session opens
 // reading exactly like the one it came from.
 const forkSession = async (sessionId: string, worktree: boolean) => {
+  const fail = failUnlessLeft();
   const forkId = crypto.randomUUID();
 
   let snapshot: SessionSnapshot;
@@ -1412,7 +1549,7 @@ const forkSession = async (sessionId: string, worktree: boolean) => {
       worktree,
     });
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return;
   }
 
@@ -1428,6 +1565,9 @@ const forkSession = async (sessionId: string, worktree: boolean) => {
   // fork it is about to show.
   selectionRequestRef.current = snapshot.sessionId;
   setSelectedSessionId(snapshot.sessionId);
+  // A fork opens selected, so this is a move: an action still out on the
+  // parent must not report into the fork's composer.
+  navGen.current++;
   restoreSessionControls(snapshot);
 };
 
@@ -1439,10 +1579,11 @@ const forkSession = async (sessionId: string, worktree: boolean) => {
 // neighbour — the next session is not a guess worth making, and `handleNewSession`
 // is the one path that also restores the user's own defaults.
 const deleteSession = async (sessionId: string) => {
+  const fail = failUnlessLeft();
   try {
     await invoke<boolean>("delete_session", { sessionId });
   } catch (e) {
-    setError(String(e));
+    fail(e);
     return;
   }
 
@@ -1496,9 +1637,12 @@ useEffect(() => {
       // A model belongs to exactly one harness, so switching harness leaves the
       // pick naming something the new one cannot run. Repaired here, where the
       // real list has just landed, rather than guessed at when the toggle moved.
-      // fx repairs per provider, restoring that provider's last model.
+      // fx repairs per provider, restoring that provider's last model — see
+      // `landedFxModel` for the pick it must leave alone.
       setModelId((current) =>
-        harness === "fx" ? repairFxModel(list, current) : usableModel(list, current, harness),
+        harness === "fx"
+          ? landedFxModel(readFxModelCache(), list, current, readFxPicks())
+          : usableModel(list, current, harness),
       );
     })
     .finally(() => {
@@ -1535,12 +1679,13 @@ const reloadModels = () => setModelsGeneration((n) => n + 1);
 /// Nothing happens for a provider never visited (gateway on a cold install),
 /// which is the one case that still waits on the probe's loading state.
 const seedFxModels = (provider: string) => {
-  const cached = readFxModelCache()[provider];
-  if (!cached?.length) return;
-  setModelsByHarness((prev) => ({ ...prev, fx: cached }));
+  const cache = readFxModelCache();
+  const cached = cache[provider];
+  if (cached?.length) setModelsByHarness((prev) => ({ ...prev, fx: cached }));
   // Restore this provider's last model at once too, so the trigger and the
-  // list's own mark are right on the same frame the rows appear.
-  setModelId((current) => repairFxModel(cached, current));
+  // list's own mark are right on the same frame the rows appear — and with
+  // nothing cached, `seededFxModel` says why the pick still moves.
+  setModelId((current) => seededFxModel(cache, provider, current, readFxPicks()));
 };
 
 useEffect(() => {
@@ -1661,7 +1806,7 @@ useEffect(() => {
             const settled = agentEvent.payload.type === "user_message";
             return prev.map((s) =>
                 s.sessionId === agentEvent.sessionId
-                ? { ...s, events: [...(settled ? s.events.filter((e) => !isProvisional(e)) : s.events), agentEvent] }
+                ? { ...s, events: [...(settled ? retireOldestProvisional(s.events) : s.events), agentEvent] }
                 : s,
             );
             });
@@ -1722,6 +1867,25 @@ useEffect(() => {
             // start of every blank stretch, which is what the old "nothing has
             // rendered yet" rule could only approximate.
             if (agentEvent.payload.type === "model_request_started") {
+              setWorkingBySession((prev) => ({
+                ...prev,
+                [agentEvent.sessionId]: { tokens: 0 },
+              }));
+            }
+
+            // A prompt going out is the other start of a blank stretch, and
+            // the only one on fx: it mints `model_request_started` with the
+            // *first update it gets back*, so a queue flushed by Send now
+            // leaves the turn open and the screen dead until the model speaks.
+            // `handleSendMsg` writes the wait optimistically for a prompt the
+            // reader sent from the composer; this covers one the backend hands
+            // over — a flushed queue, a relayed `dray send`.
+            //
+            // The event is logged *before* the transport write, so it says the
+            // prompt is on its way rather than that a child took it. That is
+            // the right side to err on: a send that fails releases the turn,
+            // and a status off `in_progress` clears the wait below.
+            if (agentEvent.payload.type === "user_message") {
               setWorkingBySession((prev) => ({
                 ...prev,
                 [agentEvent.sessionId]: { tokens: 0 },
@@ -1814,9 +1978,16 @@ useEffect(() => {
             // can land while a background subagent is still running, so the
             // backend's status machine owns the call and reports it on the
             // `session_status` channel instead.
-            if (agentEvent.payload.type === "error") {
-              setError(agentEvent.payload.message);
-            }
+            //
+            // An `error` payload is deliberately **not** mirrored into the
+            // composer's slot. It belongs to the session that raised it, is
+            // persisted, and `EventRow` already draws it as a red row in that
+            // session's transcript — where the slot is one value for the whole
+            // app, so a mirrored copy followed the reader to every other
+            // session and to the new-task composer, outliving the conversation
+            // it was about. One decision for every harness: persisted errors
+            // live in the transcript, the slot reports the reader's own last
+            // action failing.
         } else {
             const payload = agentEvent.payload;
 
@@ -1841,11 +2012,26 @@ useEffect(() => {
                 // wait continues under a name it can finally be given. The
                 // counter restarts here — `usage_update` reports the block's own
                 // size, not a running session total.
-                setWorkingBySession((prev) =>
-                  payload.blockType.type === "thinking"
-                    ? { ...prev, [sessionId]: { tokens: 0 } }
-                    : { ...prev, [sessionId]: null },
-                );
+                //
+                // Except on fx, where the wait runs for the whole turn. Every
+                // other harness announces a model request within 30ms of each
+                // tool result *and* streams a tool call's arguments as a block
+                // of its own, so a cleared indicator is always replaced by
+                // something drawing. fx does neither: a tool call arrives whole
+                // with no `block_start`, so the turn's first text block cleared
+                // the indicator and nothing put it back until that tool
+                // finished — leaving the first tool call of every turn bare and
+                // every later one lit, which is one turn drawn two ways. So the
+                // turn itself is the wait here: opened with `TurnStarted`, and
+                // closed by `turn_completed` or by status leaving
+                // `in_progress`, which is what a stop comes back as.
+                if (agentEvent.harness !== "fx") {
+                  setWorkingBySession((prev) =>
+                    payload.blockType.type === "thinking"
+                      ? { ...prev, [sessionId]: { tokens: 0 } }
+                      : { ...prev, [sessionId]: null },
+                  );
+                }
 
                 // The block announces its kind up front — this is the only
                 // frame that knows thinking from text, since thinking deltas
@@ -2267,6 +2453,22 @@ useEffect(() => {
   };
 }, []);
 
+// A model list that has just learned something the composer is drawing wrong.
+//
+// fx is the one harness that emits it, and the one that has to: the effort
+// ladder is per *model*, and until a session runs on one nothing can say which
+// levels it takes — so the picker draws a guess by provider, offers effort on a
+// model that does no reasoning, and fx refuses it. The session's own
+// `configOptions` settle it, and this is how that answer reaches the menu
+// instead of waiting on a harness switch or a restart. Only fired when the
+// answer is news, so an ordinary send costs nothing.
+useEffect(() => {
+  const listenerPromise = listen("models_changed", () => reloadModels());
+  return () => {
+    listenerPromise.then((unlisten) => unlisten());
+  };
+}, []);
+
 // A brand-new session has no id until its first send, so nothing can be in flight.
 // The live map wins over the index item: it's the one the backend pushes to.
 const selectedStatus: SessionStatus = selectedSessionId
@@ -2351,6 +2553,12 @@ const paneState = (sessionId: string): PaneState => {
   };
 };
 
+// What the harness said about fast mode on the newest turn — drawn beside the
+// switch, never folded back into the composer's pick. `fast` is what was asked
+// for; this is what the CLI did with it, and the two disagreeing is the whole
+// point of drawing it.
+const fastNote = fastNotice(selectedSession?.events ?? []);
+
 // How full the model's context is. Derived from the log rather than tracked,
 // because both things that move it are already persisted there — a turn's own
 // occupancy, and what a compaction left behind.
@@ -2392,6 +2600,6 @@ const contextUsage: { used: number; max: number } | null = (() => {
   return used !== null && max !== null ? { used, max } : null;
 })();
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, models, refreshModels, reloadModels, seedFxModels, loadingModels, modelId, effort, permissionMode, roleId, setRoleId, setGlobalRoleId, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleStopTask, queuedMessages, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, setSessionRole, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, models, refreshModels, reloadModels, seedFxModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, roleId, setRoleId, setGlobalRoleId, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleStopTask, queuedMessages, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, setSessionRole, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, indexSide};
 
 }

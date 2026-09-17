@@ -86,6 +86,20 @@ pub struct SessionIndexItem {
     /// default rather than failing the whole index.
     #[serde(default)]
     pub permission_mode: ApprovalPolicy,
+    /// Whether the session runs at its harness's faster tier.
+    ///
+    /// **A bool and not an enum, deliberately.** Every harness with a fast mode
+    /// has exactly one of them — Claude Code's `fastMode` flag setting, Codex's
+    /// `priority` service tier, fx's `fast_mode` — and a two-valued switch is
+    /// the honest shape for all three. A variant is also what an older build
+    /// sharing `~/.dray` cannot spell, which fails the line and reads the whole
+    /// index as no sessions at all; `false` is what a bool degrades to there,
+    /// which is a session running at ordinary speed and nothing worse.
+    ///
+    /// `#[serde(default)]` for that same rule: an entry written before this
+    /// field reads as off rather than failing.
+    #[serde(default)]
+    pub fast: bool,
     /// Defaulted so index entries written before this field parse as `Idle`.
     #[serde(default)]
     pub status: SessionStatus,
@@ -520,6 +534,7 @@ impl SessionIndexItem {
         model: ModelId,
         effort: Option<Effort>,
         permission_mode: ApprovalPolicy,
+        fast: bool,
         parent_session_id: Option<&str>,
     ) -> Self {
         let now = now_rfc3339();
@@ -546,6 +561,7 @@ impl SessionIndexItem {
             // Never set in memory; `encode_effort` mints it on the way to disk.
             effort_above: None,
             permission_mode,
+            fast,
             status: SessionStatus::default(),
             issues: Vec::new(),
             fork_from: None,
@@ -606,6 +622,11 @@ impl SessionIndexItem {
             // Never set in memory; `encode_effort` mints it on the way to disk.
             effort_above: None,
             permission_mode: self.permission_mode,
+            // Inherited like the rest of how the agent runs. fx is the one that
+            // cannot honour it — its fast mode is stamped on the fx session at
+            // creation — but a fork there makes a *new* fx session, so the
+            // inherited value is the one it is created with.
+            fast: self.fast,
             status: SessionStatus::default(),
             // Inherited: a fork continues the same conversation, so it is
             // against the same work. Tagging one afterwards leaves the other
@@ -870,6 +891,7 @@ pub async fn touch_session_index_item(
     model: ModelId,
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
+    fast: bool,
 ) -> Result<()> {
     let _guard = INDEX_LOCK.lock().await;
 
@@ -891,6 +913,7 @@ pub async fn touch_session_index_item(
     }
     item.effort = effort;
     item.permission_mode = permission_mode;
+    item.fast = fast;
 
     write_session_index(&sessions).await
 }
@@ -1774,6 +1797,7 @@ mod tests {
             "model": "gpt56_sol",
             "effort": "xhigh",
             "permissionMode": "plan",
+            "fast": true,
             "status": "completed",
             "forkFrom": "0198c0de-dead-7000-8000-00000000cafe",
             "threadId": "thread_01JABCDEF",
@@ -2108,6 +2132,7 @@ mod tests {
                 ModelId::new("opus"),
                 Some(Effort::High),
                 ApprovalPolicy::Auto,
+                false,
                 None,
             );
 
@@ -2144,6 +2169,7 @@ mod tests {
             ModelId::new("opus"),
             Some(Effort::High),
             ApprovalPolicy::Auto,
+            false,
             None,
         );
         parent.archived = true;
@@ -2183,6 +2209,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             None,
         );
         parent.worktree_name = None;
@@ -2212,6 +2239,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             None,
         );
         // The name the CLI mints, which `new` already wrote into the field.
@@ -2237,6 +2265,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             None,
         );
         assert_eq!(session_branch(&plain, None).as_deref(), Some("feature"));
@@ -2270,6 +2299,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             Some("orchestrator"),
         );
         assert_eq!(spawned.parent_session_id.as_deref(), Some("orchestrator"));
@@ -2299,6 +2329,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             None,
         );
 
@@ -2444,6 +2475,7 @@ mod tests {
                 ModelId::new("opus"),
                 None,
                 ApprovalPolicy::Auto,
+                false,
                 None,
             );
             i.archived = archived;
@@ -2487,6 +2519,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             None,
         );
 
@@ -2536,6 +2569,7 @@ mod tests {
                 ModelId::new("opus"),
                 None,
                 ApprovalPolicy::Auto,
+                false,
                 None,
             )
         };
@@ -2581,6 +2615,7 @@ mod tests {
                 ModelId::new("opus"),
                 None,
                 ApprovalPolicy::Auto,
+                false,
                 None,
             )
         };
@@ -2668,6 +2703,7 @@ mod tests {
             ModelId::new("opus"),
             None,
             ApprovalPolicy::Auto,
+            false,
             None,
         )];
 
@@ -2692,6 +2728,7 @@ mod tests {
             ModelId::new("opus"),
             Some(Effort::High),
             ApprovalPolicy::Auto,
+            false,
             None,
         );
         let json = serde_json::to_value(SessionSnapshot {

@@ -263,7 +263,7 @@ label: string,
  * True when the app answered on its own — an unsupported request
  * subtype, or a shutdown clearing what it could not ask about.
  */
-automatic: boolean, } | { "type": "permission_denied", toolName: string, toolUseId: string, message: string, } | { "type": "hook", name: string, event: string, phase: HookPhase, exitCode: number | null, outcome: string | null, } | { "type": "model_request_started" } | { "type": "context_compaction_started" } | { "type": "api_retry", attempt: number, maxRetries: number, 
+automatic: boolean, } | { "type": "permission_denied", toolName: string, toolUseId: string, message: string, } | { "type": "fast_mode_notice", text: string, } | { "type": "hook", name: string, event: string, phase: HookPhase, exitCode: number | null, outcome: string | null, } | { "type": "model_request_started" } | { "type": "context_compaction_started" } | { "type": "api_retry", attempt: number, maxRetries: number, 
 /**
  * HTTP status, where the harness knew one. 529 (overloaded) and 500
  * are the only two observed.
@@ -490,6 +490,21 @@ export type ContextWindow = { usedTokens: number, maxTokens: number, };
 export type DeltaEvent = { "delta": "block_start", block: BlockRef, blockType: BlockType, } | { "delta": "text_delta", block: BlockRef, text: string, } | { "delta": "input_delta", block: BlockRef, partialJson: string, } | { "delta": "block_stop", block: BlockRef, };
 
 /**
+ * One row in the Files view's tree.
+ */
+export type DirEntry = { name: string, 
+/**
+ * Relative to the session's directory, `/`-joined. The key the tree caches
+ * its listings under and the one it expands on, so it is the whole of what
+ * a row has to carry back.
+ */
+path: string, isDir: boolean, 
+/**
+ * Dimmed rather than hidden, the way VS Code draws one.
+ */
+ignored: boolean, };
+
+/**
  * Progress for the settings tab's bar.
  *
  * Emitted rather than returned because a download outlives the dialog that
@@ -541,6 +556,20 @@ icon: string | null, };
  * "open in Ghostty" are different asks, and a flat list of both reads as one.
  */
 export type ExternalAppKind = "editor" | "terminal" | "files";
+
+/**
+ * What the viewer draws, or the sentence saying why it draws nothing.
+ *
+ * No `unknown` catch-all, unlike the persisted types: this never reaches disk,
+ * so an older build can never be asked to read a shape it has not heard of.
+ */
+export type FileBody = { "kind": "text", text: string, } | { "kind": "image", 
+/**
+ * A `data:` URL rather than a path: the asset protocol is scoped to
+ * the attachments directory and must stay scoped, so a file anywhere
+ * else has no URL the webview can fetch.
+ */
+dataUrl: string, };
 
 export type FileChange = "add" | "update" | "delete";
 
@@ -908,7 +937,17 @@ acceptsImages: boolean,
  * added. A reader who picks one from the submenu keeps it: the flag
  * decides where a row is *drawn*, never what may be run.
  */
-secondary: boolean, };
+secondary: boolean, 
+/**
+ * Whether this model has a fast mode to ask for.
+ *
+ * Per *model*, never per family, because both CLIs that have one answer it
+ * that way: Claude Code offers fast mode on Opus alone, and Codex reports
+ * `serviceTiers` row by row. A row wrongly marked here draws a switch that
+ * silently changes nothing — Codex accepts an unknown `serviceTier` with
+ * no error at all — so it follows the wire wherever the wire answers.
+ */
+supportsFast: boolean, };
 
 /**
  * What an index entry records for a session's model.
@@ -1379,6 +1418,21 @@ effort: Effort | null,
  */
 permissionMode: ApprovalPolicy, 
 /**
+ * Whether the session runs at its harness's faster tier.
+ *
+ * **A bool and not an enum, deliberately.** Every harness with a fast mode
+ * has exactly one of them — Claude Code's `fastMode` flag setting, Codex's
+ * `priority` service tier, fx's `fast_mode` — and a two-valued switch is
+ * the honest shape for all three. A variant is also what an older build
+ * sharing `~/.dray` cannot spell, which fails the line and reads the whole
+ * index as no sessions at all; `false` is what a bool degrades to there,
+ * which is a session running at ordinary speed and nothing worse.
+ *
+ * `#[serde(default)]` for that same rule: an entry written before this
+ * field reads as off rather than failing.
+ */
+fast: boolean, 
+/**
  * Defaulted so index entries written before this field parse as `Idle`.
  */
 status: SessionStatus, 
@@ -1487,6 +1541,21 @@ effort: Effort | null,
  * default rather than failing the whole index.
  */
 permissionMode: ApprovalPolicy, 
+/**
+ * Whether the session runs at its harness's faster tier.
+ *
+ * **A bool and not an enum, deliberately.** Every harness with a fast mode
+ * has exactly one of them — Claude Code's `fastMode` flag setting, Codex's
+ * `priority` service tier, fx's `fast_mode` — and a two-valued switch is
+ * the honest shape for all three. A variant is also what an older build
+ * sharing `~/.dray` cannot spell, which fails the line and reads the whole
+ * index as no sessions at all; `false` is what a bool degrades to there,
+ * which is a session running at ordinary speed and nothing worse.
+ *
+ * `#[serde(default)]` for that same rule: an entry written before this
+ * field reads as off rather than failing.
+ */
+fast: boolean, 
 /**
  * Defaulted so index entries written before this field parse as `Idle`.
  */
@@ -1632,6 +1701,32 @@ export type Subagent = { id: string,
  * Drives the collapsed subagent card's title.
  */
 label: string | null, };
+
+/**
+ * What the webview needs to speak to PostHog for itself.
+ *
+ * Handed over whole rather than looked up on the other side, and that is the
+ * whole of why this type exists: a frontend reading `analytics_enabled` for
+ * itself would be a second reader of consent, free to answer differently from
+ * this one — which is the shape DRA-199 was already caught by once. Here the
+ * answer to "may I", "as whom" and "where to" is one value, and its absence is
+ * the refusal.
+ */
+export type SurveyIdentity = { key: string, host: string, 
+/**
+ * The install id, so the SDK and this module are one person in PostHog
+ * rather than two. Bootstrapped on the other side, never `identify`d into
+ * existence — a person is already what the POSTs create.
+ */
+distinctId: string, 
+/**
+ * [`base_properties`], to be `$set` as **person** properties on the other
+ * side. Event properties are what this module sends and what surveys
+ * cannot target on, so without this the SDK arrives and the reason for
+ * wanting it — targeting a survey at a version or an OS — still does not
+ * work.
+ */
+personProperties: Record<string, string | number | boolean>, };
 
 export type ToolResult = { 
 /**

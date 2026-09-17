@@ -415,6 +415,9 @@ pub async fn init(
         model: model.map(|m| m.id.clone()).unwrap_or_default(),
         effort,
         permission_mode,
+        // omp has no fast mode to be on, and `Capabilities::fast_mode` says so,
+        // so nothing above ever asks this session to change it.
+        fast: false,
         events,
         seq,
         status,
@@ -892,6 +895,7 @@ mod tests {
             provider: provider.to_string(),
             accepts_images: true,
             secondary: false,
+            supports_fast: false,
         }
     }
 

@@ -10,6 +10,7 @@ import "./App.css";
 import Chat from "@/components/Chat";
 import ChangesPanel from "@/components/ChangesPanel";
 import ChangesView from "@/components/changes/ChangesView";
+import FilesView from "@/components/files/FilesView";
 import ChatInput from "@/components/ChatInput";
 import DiffWorkerPool from "@/components/DiffWorkerPool";
 import DocsPanel from "@/components/DocsPanel";
@@ -22,7 +23,16 @@ import IssuePanel from "@/components/IssuePanel";
 import IssuesView from "@/components/IssuesView";
 import PrPanel from "@/components/PrPanel";
 import BrowserPane from "@/components/browser/BrowserPane";
-import { clearOpenError, describePick, openInBrowser, setPickHandler, useBrowserTabs } from "@/lib/browser";
+import {
+  clearOpenError,
+  closeTab,
+  describePick,
+  openInBrowser,
+  setPendingTab,
+  setPickHandler,
+  useBrowserTabs,
+  usePendingTab,
+} from "@/lib/browser";
 import { setLinkOpener } from "@/lib/openLink";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useChanges } from "@/hooks/useChanges";
@@ -40,10 +50,12 @@ import RightPanel, {
   tabOrder,
   type PanelTab,
 } from "@/components/RightPanel";
+import { useChatColumnFloor } from "@/components/ResizeHandle";
 import Sidebar, {
   SEARCH_INPUT_ID,
   SidebarToggle,
   filterSessions,
+  sessionUnits,
   sortSessions,
 } from "@/components/Sidebar";
 import SplitView, { DragGhost, DropZone } from "@/components/SplitView";
@@ -52,6 +64,7 @@ import { DROP_ATTR, useSessionDrag, type DropTarget } from "@/lib/dragSession";
 import {
   closePane,
   dropLabel,
+  EMPTY_VIEW,
   GROUPS_KEY,
   groupName,
   members,
@@ -59,7 +72,6 @@ import {
   openBeside,
   paneOrder,
   pruneGroups,
-  stepUnits,
   type SplitGroup,
 } from "@/lib/groups";
 import ComposerToolbar from "@/components/composer/ComposerToolbar";
@@ -74,6 +86,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
 import { useCodeTheme } from "@/hooks/useCodeTheme";
 import { refreshActiveDoc, saveActiveDoc, useDocs } from "@/hooks/useDocs";
+import { closeFile, useOpenFiles } from "@/hooks/useOpenFiles";
 import { useFullscreen } from "@/hooks/useFullscreen";
 import { useGlass } from "@/hooks/useGlass";
 import { warmHighlighter } from "@/hooks/useHighlighter";
@@ -112,6 +125,8 @@ import { worktreeNoticeDetail } from "@/lib/worktree";
 import { buildTranscript } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
 
+const PANE_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+
 function App() {
   const {
     selectedSessionId,
@@ -132,6 +147,9 @@ function App() {
     setHarness,
     modelId,
     effort,
+    fast,
+    setFast,
+    fastNote,
     permissionMode,
     roleId,
     setRoleId,
@@ -558,6 +576,10 @@ function App() {
   // Selecting a member is what activates a group; the selected session is the
   // focused pane, so every control that serves one session keeps doing so.
   const activeGroup = groupOf(spaceGroups, selectedSessionId);
+  // One conversation keeps a readable floor whatever the panes beside it are
+  // dragged to; a split holds several deliberately small ones, so the same
+  // floor there would refuse the layout the reader asked for.
+  useChatColumnFloor(!activeGroup);
 
   // The pane's open flag and tab pick are held per session, like `viewTabs`
   // above and for the same reason: app-wide, a pane opened on one session's
@@ -665,7 +687,8 @@ function App() {
   // the grid for that session's single view.
   const dropSession = ({ sessionId: anchor, region }: DropTarget, dropped: string) => {
     if (!dropLabel(spaceGroups, anchor, dropped, region)) return;
-    setGroups((prev) => openBeside(prev, anchor, dropped, region, space));
+    // Nothing open, so the drop is the click: the session opens whole.
+    if (anchor !== EMPTY_VIEW) setGroups((prev) => openBeside(prev, anchor, dropped, region, space));
     void handleSelectSessionIndexItem(dropped);
   };
 
@@ -676,12 +699,14 @@ function App() {
     if (next) void handleSelectSessionIndexItem(next);
   };
 
-  // The single view's own drop zone; a grid's panes draw theirs.
+  // The single view's own drop zone; a grid's panes draw theirs. The empty
+  // column is one too, drawn whole: the drop opens the session, so there is
+  // no side to the zone.
   const drag = useSessionDrag();
   const singleDrop =
-    drag?.over && !activeGroup && drag.over.sessionId === selectedSessionId
+    drag?.over && !activeGroup && drag.over.sessionId === (selectedSessionId ?? EMPTY_VIEW)
       ? {
-          region: drag.over.region,
+          region: selectedSessionId ? drag.over.region : ("center" as const),
           label: dropLabel(spaceGroups, drag.over.sessionId, drag.sessionId, drag.over.region),
         }
       : null;
@@ -807,10 +832,15 @@ function App() {
   // Read here rather than in the panel, for the PR tab's reason: the row has to
   // know whether the tab exists before that tab has ever been drawn.
   const { docs, activePath: activeDocPath, opened: docsOpened } = useDocs(selectedSessionId);
+  // The counter brings the view forward; the active path is what ⌘W closes.
+  // Which files are open past that is the view's own business, where a doc's
+  // tab row has to exist in the panel before the panel is drawn.
+  const { opened: filesOpened, active: activeFile } = useOpenFiles(selectedSessionId);
   const hasDocsTab = docs.length > 0;
   const activeDoc = docs.find((doc) => doc.path === activeDocPath) ?? null;
 
   const browserTabs = useBrowserTabs(selectedSessionId);
+  const pendingBrowserTab = usePendingTab(selectedSessionId ?? "");
   const hasBrowserTabs = browserTabs && browserTabs.length > 0;
   // The main column's Browser view is the panel's browser expanded. Arriving
   // on it closes the pane, every time and whatever tab the pane was on: the
@@ -1037,8 +1067,21 @@ function App() {
   };
   const stepSession = (delta: number) =>
     stepThrough(ordered.map((i) => [i]), delta);
-  const stepGroup = (delta: number) =>
-    stepThrough(stepUnits(ordered, spaceGroups, (i) => i.sessionId), delta);
+  // Headings, not split groups: with no grid on screen the chord used to be
+  // ⌘⇧ under another name, stepping one row at a time and never reaching the
+  // next project the way its own label promised.
+  const units = useMemo(
+    () =>
+      sessionUnits(
+        searchedSessions,
+        projects,
+        showArchived ? undefined : { statusBySession, asking: askingSessions },
+        showArchived,
+        showArchived ? [] : spaceGroups,
+      ),
+    [searchedSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
+  );
+  const stepGroup = (delta: number) => stepThrough(units, delta);
 
   // A click on a markdown path in the transcript, which is the one route in.
   // Off the counter rather than off `docs.length`, since reopening a file that
@@ -1056,6 +1099,19 @@ function App() {
     setPanelTab("docs");
     setPanelOpen(true);
   }, [docsOpened, setPanelTab, setPanelOpen]);
+
+  // The same signal for the other half of a file link: a path that is not
+  // markdown opens in the Files view, which is a whole column rather than a
+  // pane, so this flips the view instead of opening one. A counter for the
+  // docs panel's reason — reopening a file already on screen leaves the list
+  // unchanged, so only a count of *clicks* can say the reader asked.
+  const lastFileOpened = useRef(filesOpened);
+  useEffect(() => {
+    if (filesOpened === lastFileOpened.current) return;
+    lastFileOpened.current = filesOpened;
+    if (!issuesOpen) setViewTab("files");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filesOpened]);
 
   // A link in the transcript opens as a new tab in the session's browser and
   // brings the pane up on it, unless the full view already has it. ⌘-click,
@@ -1370,7 +1426,7 @@ function App() {
   // a grid; the view tabs take ⌘⌥ below. Not ⌘⇧, which macOS spends on
   // screenshots for exactly these digits. Bound only while a grid is *on
   // screen*: with none ⌘1 has nothing to point at and must not eat the key,
-  // and under the Diff tab or the issues page ⌘⌥W would close a pane the
+  // and under the Diff tab or the issues page ⌘W would close a pane the
   // reader cannot see.
   const gridShown = !!activeGroup && !issuesOpen && viewTab === "chat";
   const paneIds = activeGroup ? paneOrder(activeGroup) : [];
@@ -1385,13 +1441,45 @@ function App() {
     void handleSelectSessionIndexItem(id);
     focusComposer();
   };
-  useHotkey("pane.1", () => focusPane(1), { enabled: gridShown });
-  useHotkey("pane.2", () => focusPane(2), { enabled: gridShown });
-  useHotkey("pane.3", () => focusPane(3), { enabled: gridShown });
-  useHotkey("pane.4", () => focusPane(4), { enabled: gridShown });
-  useHotkey("pane.close", () => selectedSessionId && closeSessionPane(selectedSessionId), {
-    enabled: gridShown,
-  });
+  // Nine digits, so a tenth pane has no chord — it still takes a click. A
+  // fixed list, so the hook count never moves between renders.
+  for (const n of PANE_DIGITS) useHotkey(`pane.${n}`, () => focusPane(n), { enabled: gridShown });
+  // ⌘W closes the innermost thing the main column has open, which is what it
+  // means in every editor and browser this app is read beside. The views are
+  // mutually exclusive, so the chain is an ordering rather than an
+  // arbitration — bar the last arm, which is the reader on Chat with the
+  // browser beside it in the panel and no grid to close a pane out of.
+  const closeBrowserTab = () => {
+    if (!selectedSessionId) return;
+    // The pending tab has no browser behind it, so it is dropped rather than
+    // closed — and it is what the reader is looking at while it is up.
+    if (pendingBrowserTab) return setPendingTab(selectedSessionId, false);
+    const open = browserTabs?.find((tab) => tab.active);
+    if (open) void closeTab(selectedSessionId, open.id);
+  };
+  // `viewTab` is per session and the issues page does not clear it, so a
+  // reader who opened Issues from the Files view still has `activeFile`
+  // naming a tab in a view nobody can see — and ⌘W there closed it silently.
+  // Every other arm already carries the guard: `fullBrowserOpen` and
+  // `gridShown` both hold `!issuesOpen`, and `panelShown` is the pane the
+  // page hides.
+  const fileShown = !issuesOpen && viewTab === "files" && !!activeFile;
+  const closeTabOrPane = () => {
+    if (!selectedSessionId) return;
+    if (fileShown && activeFile) return closeFile(selectedSessionId, activeFile);
+    if (fullBrowserOpen) return closeBrowserTab();
+    if (gridShown) return closeSessionPane(selectedSessionId);
+    if (panelShown && activeTab === "browser") closeBrowserTab();
+  };
+  // Bound only where it has something to close: `useHotkey` claims every chord
+  // it matches, and a ⌘W that eats the key and does nothing is worse than one
+  // the app never had.
+  const hasCloseTarget =
+    fileShown ||
+    ((fullBrowserOpen || (panelShown && activeTab === "browser")) &&
+      (pendingBrowserTab || !!hasBrowserTabs)) ||
+    gridShown;
+  useHotkey("tab.close", closeTabOrPane, { enabled: hasCloseTarget });
   // ⌘E for the right pane against ⌘B for the left.
   //
   // Bound to the raw toggle rather than to `handleTogglePanel`, deliberately:
@@ -1446,6 +1534,7 @@ function App() {
   useHotkey("view.chat", () => !issuesOpen && setViewTab("chat"));
   useHotkey("view.changes", () => !issuesOpen && setViewTab("changes"));
   useHotkey("view.browser", () => !issuesOpen && setViewTab("browser"));
+  useHotkey("view.files", () => !issuesOpen && setViewTab("files"));
   // ⌘, — every macOS app's preferences chord, and the only way into settings
   // while the sidebar is collapsed and its gear gone with it. Safe to take for
   // `useHotkey`'s usual pair of reasons: it claims the chord, and the app's
@@ -1519,6 +1608,7 @@ function App() {
       // The issues page fills the column, so the centred empty-composer state
       // is wrong there even with no session selected.
       centered={!selectedSession && !issuesOpen}
+      overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <Sidebar
           items={searchedSessions}
@@ -1575,7 +1665,11 @@ function App() {
       }
       header={
         <header
-          className="flex h-(--titlebar-h) shrink-0 items-center gap-2 px-3"
+          // `overflow-hidden` is the containment: whatever runs out of room in
+          // here must clip at the column's edge, never spill over the pane
+          // beside it. Every child below decides how it gives up width; this
+          // decides that it has to.
+          className="flex h-(--titlebar-h) shrink-0 items-center gap-2 overflow-hidden px-3"
           // `deep`, not bare: bare drags only on direct hits, so every label
           // inside this row was a dead strip in a titlebar that looks uniform.
           // Buttons still block on their own — Tauri stops walking up at any
@@ -1703,7 +1797,12 @@ function App() {
             cwd={selectedSession.cwd}
           >
             <TabBody active={activeTab === "changes"}>
-              <ChangesPanel cwd={selectedSession.cwd} baseline={baseline} {...changesData} />
+              <ChangesPanel
+                cwd={selectedSession.cwd}
+                baseline={baseline}
+                onOpenRepo={() => setViewTab("changes")}
+                {...changesData}
+              />
             </TabBody>
             <TabBody active={activeTab === "browser"}>
               <BrowserPane
@@ -1727,7 +1826,11 @@ function App() {
               />
             </TabBody>
             <TabBody active={hasPrTab && activeTab === "pr"}>
-              <PrPanel branch={prBranch} {...pullRequests} />
+              <PrPanel
+                branch={prBranch}
+                cwd={selectedSession?.cwd ?? ""}
+                {...pullRequests}
+              />
             </TabBody>
             <TabBody active={hasDocsTab && activeTab === "docs"}>
               <DocsPanel
@@ -1858,6 +1961,9 @@ function App() {
               models={models}
               modelId={modelId}
               effort={effort}
+              fast={fast}
+              onFastChange={setFast}
+              fastNote={fastNote}
               onModelChange={handleModelChange}
               onRefreshModels={refreshModels}
               onReloadModels={reloadModels}
@@ -1890,6 +1996,7 @@ function App() {
               onAttach={() => void pickAttachments(selectedSessionId)}
               contextUsage={contextUsage}
               isNewSession={!selectedSessionId}
+              busy={busy}
             />
           }
         />
@@ -1932,6 +2039,7 @@ function App() {
             onOpenSubagentPanel: openSubagentPanel,
             onRespondPermission: handleRespondPermission,
             onAnswerQuestions: handleAnswerQuestions,
+            onSendNow: handleInterrupt,
           }}
         />
       ) : (
@@ -1957,6 +2065,7 @@ function App() {
         compacting={compacting}
         apiRetry={apiRetry}
         queuedMessages={queuedMessages}
+        onSendNow={handleInterrupt}
         working={working}
         crowded={!collapsed && (panelShown || (issuesOpen && !!pickedIssue))}
         active={!issuesOpen && viewTab === "chat"}
@@ -1987,6 +2096,21 @@ function App() {
             active={fullBrowserOpen}
             mode="full"
             onCollapse={collapseBrowser}
+          />
+        </TabBody>
+      )}
+
+      {selectedSession && (
+        // Keyed by session so the expanded tree resets with it. The tab strip
+        // does not: its store is per session and outlives the remount, so what
+        // comes back is that session's own files.
+        <TabBody active={!issuesOpen && viewTab === "files"}>
+          <FilesView
+            key={selectedSession.sessionId}
+            sessionId={selectedSession.sessionId}
+            cwd={selectedSession.cwd}
+            active={!issuesOpen && viewTab === "files"}
+            revision={revision}
           />
         </TabBody>
       )}

@@ -212,6 +212,55 @@ fn basename(path: &str) -> String {
         .to_string()
 }
 
+/// Whether any remote here points at GitHub.
+///
+/// Asked in one place only: where `gh` is missing, which is the one state in
+/// which nothing else can answer a GitHub question at all. Any remote counts,
+/// not just `origin`, since a fork workflow leaves `origin` on the fork and the
+/// answer is the same either way.
+///
+/// Compared on the URL's **host**, never as a substring of the output: a
+/// remote *named* `github.com-mirror` pointing at somewhere else would pass a
+/// contains-check, and so would the host `github.com.example.net` — the trap
+/// `is_upload` documents on the tracker's own uploads. An enterprise host is
+/// not `github.com` and reads here as no GitHub remote, costing a missing
+/// install prompt to a reader already on a GitHub this app cannot name.
+pub async fn has_github_remote(cwd: &str) -> bool {
+    // `remote -v` is `<name>\t<url> (fetch)`, so the URL is the second field
+    // and the name is deliberately never looked at.
+    git(cwd, &["remote", "-v"]).await.is_some_and(|out| {
+        out.lines()
+            .filter_map(|line| line.split_whitespace().nth(1))
+            .any(|url| remote_host(url) == Some("github.com"))
+    })
+}
+
+/// The host out of a git remote URL, or `None` for a local path.
+///
+/// Hand-rolled rather than a URL parser because half of these are not URLs:
+/// `git@github.com:owner/repo.git` is scp syntax, which `url::Url` refuses
+/// outright. Everything else — `https://`, `ssh://`, `git://` — differs from it
+/// only in having a scheme to drop first.
+fn remote_host(url: &str) -> Option<&str> {
+    let after_scheme = match url.split_once("://") {
+        Some((_, rest)) => rest,
+        // No scheme leaves scp syntax as the only other form carrying a host,
+        // and its colon is what says so. Required rather than assumed, or a
+        // local path — `github.com/mirrors/repo` is a legal relative remote —
+        // hands its first segment back as a hostname. A colon *after* a slash
+        // is a path that merely holds one.
+        None => match url.split_once(':') {
+            Some((head, _)) if !head.contains('/') => url,
+            _ => return None,
+        },
+    };
+    // Any userinfo goes with it, `@` being what separates the two.
+    let authority = after_scheme.rsplit_once('@').map_or(after_scheme, |(_, host)| host);
+    // Whichever comes first ends the host: `/` on a URL path, `:` on a port or
+    // on scp syntax's own separator.
+    authority.split(['/', ':']).next().filter(|host| !host.is_empty())
+}
+
 /// The ref a `-w` worktree forks from. Mirrors the CLI's own resolution, which
 /// reads `origin/HEAD` and falls back through `origin/main` then `origin/master`
 /// — so the composer names the same commit the CLI will actually use.
@@ -1996,6 +2045,77 @@ mod tests {
         run(at, &["commit", "-qm", "init"]).await.unwrap();
 
         dir
+    }
+
+    /// The question asked where `gh` is missing, and the whole of what keeps a
+    /// machine without the CLI from growing a PR tab on every session: a repo
+    /// with no GitHub remote must answer no, and a remote that is not `origin`
+    /// must still answer yes.
+    #[tokio::test]
+    async fn a_github_remote_is_found_under_any_name() {
+        let dir = scratch_repo().await;
+        let at = dir.to_str().unwrap();
+
+        assert!(
+            !has_github_remote(at).await,
+            "a repo with no remote at all has no GitHub remote",
+        );
+
+        run(at, &["remote", "add", "origin", "https://gitlab.com/a/b.git"])
+            .await
+            .unwrap();
+        assert!(
+            !has_github_remote(at).await,
+            "somebody else's host is not GitHub",
+        );
+
+        // A remote whose *name* holds the host, pointing somewhere else: what a
+        // contains-check over `remote -v` cannot tell from the real thing.
+        run(at, &["remote", "add", "github.com-mirror", "https://example.test/a/b.git"])
+            .await
+            .unwrap();
+        assert!(
+            !has_github_remote(at).await,
+            "the name is not the host",
+        );
+
+        run(at, &["remote", "add", "upstream", "git@github.com:a/b.git"])
+            .await
+            .unwrap();
+        assert!(
+            has_github_remote(at).await,
+            "the ssh spelling counts, and so does a remote that isn't origin",
+        );
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// The host rule on its own, where a repo per case would be a repo per
+    /// line. The lookalikes are the point: each one passes a substring test.
+    #[test]
+    fn a_remote_url_answers_with_its_host_alone() {
+        for url in [
+            "https://github.com/a/b.git",
+            "git@github.com:a/b.git",
+            "ssh://git@github.com/a/b.git",
+            "git://github.com/a/b",
+            "https://token@github.com/a/b.git",
+        ] {
+            assert_eq!(remote_host(url), Some("github.com"), "{url}");
+        }
+
+        for url in [
+            "https://github.com.example.net/a/b.git",
+            "git@notgithub.com:a/b.git",
+            "https://gitlab.com/a/b.git",
+            "/srv/mirrors/github.com/a/b.git",
+            "../github.com/a/b.git",
+            // A legal relative remote, and the one local path that reads as a
+            // host: no scheme and no scp colon to say otherwise.
+            "github.com/mirrors/repo",
+        ] {
+            assert_ne!(remote_host(url), Some("github.com"), "{url}");
+        }
     }
 
     /// Adds a worktree the way Claude Code does — under `.claude/worktrees/`,

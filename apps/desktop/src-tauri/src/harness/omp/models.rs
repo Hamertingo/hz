@@ -170,6 +170,9 @@ fn row_to_model(row: &Value) -> Option<Model> {
         // like pi's, so it already has its own answer to "which few of these do
         // I want in front of me" and a second tier here would be a second one.
         secondary: false,
+        // No fast tier anywhere on omp's wire — `Capabilities::fast_mode` is
+        // `Unsupported` — so a row here never draws the switch.
+        supports_fast: false,
     })
 }
 

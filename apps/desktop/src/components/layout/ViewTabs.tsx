@@ -6,7 +6,7 @@ import type { ShortcutId } from "@/lib/shortcuts";
 /// Which view fills the main column. Set and order in one, unlike the right
 /// panel's tabs: none of these are conditional, so a Terminal view joins by
 /// being added here and given a body.
-export const VIEW_TABS = ["chat", "changes", "browser"] as const;
+export const VIEW_TABS = ["chat", "changes", "browser", "files"] as const;
 
 export type ViewTab = (typeof VIEW_TABS)[number];
 
@@ -14,6 +14,7 @@ const LABELS: Record<ViewTab, string> = {
   chat: "Chat",
   changes: "Diff",
   browser: "Browser",
+  files: "Files",
 };
 
 /// Per tab rather than by position, since a rebinding names the view and not
@@ -22,6 +23,7 @@ const VIEW_SHORTCUTS: Record<ViewTab, ShortcutId> = {
   chat: "view.chat",
   changes: "view.changes",
   browser: "view.browser",
+  files: "view.files",
 };
 
 /// The main column's tab row, drawn in the titlebar beside the session's name.
@@ -36,7 +38,11 @@ export default function ViewTabs({
   onChange: (tab: ViewTab) => void;
 }) {
   return (
-    <div className="flex items-center gap-0.5">
+    // Shrinks and clips rather than holding its width: the session name beside
+    // it gives up first, but past that four fixed labels are still wider than a
+    // narrow column, and a row that refuses to shrink pushes the panel toggle
+    // out of the column and draws it over the pane next door.
+    <div className="flex min-w-0 items-center gap-0.5 overflow-hidden">
       {VIEW_TABS.map((value) => (
         <Tooltip key={value}>
           <TooltipTrigger asChild>

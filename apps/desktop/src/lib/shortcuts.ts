@@ -37,7 +37,12 @@ export const SHORTCUTS = [
   { id: "pane.2", label: "Focus pane 2", group: "Sessions", chord: k("2") },
   { id: "pane.3", label: "Focus pane 3", group: "Sessions", chord: k("3") },
   { id: "pane.4", label: "Focus pane 4", group: "Sessions", chord: k("4") },
-  { id: "pane.close", label: "Close pane", group: "Sessions", chord: k("w", { alt: true }) },
+  { id: "pane.5", label: "Focus pane 5", group: "Sessions", chord: k("5") },
+  { id: "pane.6", label: "Focus pane 6", group: "Sessions", chord: k("6") },
+  { id: "pane.7", label: "Focus pane 7", group: "Sessions", chord: k("7") },
+  { id: "pane.8", label: "Focus pane 8", group: "Sessions", chord: k("8") },
+  { id: "pane.9", label: "Focus pane 9", group: "Sessions", chord: k("9") },
+  { id: "tab.close", label: "Close tab or pane", group: "Sessions", chord: k("w") },
 
   { id: "sidebar.toggle", label: "Toggle sidebar", group: "Panels and views", chord: k("b") },
   { id: "panel.toggle", label: "Toggle right panel", group: "Panels and views", chord: k("e") },
@@ -50,6 +55,7 @@ export const SHORTCUTS = [
   { id: "view.chat", label: "Chat view", group: "Panels and views", chord: k("1", { alt: true, code: "Digit1" }) },
   { id: "view.changes", label: "Changes view", group: "Panels and views", chord: k("2", { alt: true, code: "Digit2" }) },
   { id: "view.browser", label: "Browser view", group: "Panels and views", chord: k("3", { alt: true, code: "Digit3" }) },
+  { id: "view.files", label: "Files view", group: "Panels and views", chord: k("4", { alt: true, code: "Digit4" }) },
   { id: "chat.bottom", label: "Scroll chat to bottom", group: "Panels and views", chord: k("ArrowDown") },
   { id: "issues.open", label: "Open issues", group: "Panels and views", chord: k("i") },
   { id: "issues.search", label: "Search issues", group: "Panels and views", chord: k("f", { shift: true }) },
@@ -61,6 +67,7 @@ export const SHORTCUTS = [
   { id: "harness.next", label: "Next agent", group: "Composer", chord: k("a", { shift: true }) },
   { id: "worktree.toggle", label: "Toggle worktree", group: "Composer", chord: k("t", { shift: true }) },
   { id: "project.next", label: "Next project in picker", group: "Composer", chord: k("p", { shift: true }) },
+  { id: "queue.send", label: "Send queued prompts now", group: "Composer", chord: k("Enter") },
 
   { id: "notice.take", label: "Open the notification", group: "Notifications", chord: k("g") },
   { id: "notice.delete", label: "Delete worktree from notification", group: "Notifications", chord: k("d", { shift: true }) },
@@ -92,15 +99,17 @@ export function shortcutLabel(id: ShortcutId): string {
 
 /// Chords the platform already means something by, which the recorder refuses.
 ///
-/// ⌘Q reaches the menu bar before the webview and ⌘W is close-window in every
-/// Mac app, so a shortcut bound to either would either never fire or fire once
-/// and take the window with it. The editing set — select all, cut, copy,
-/// paste, undo, redo — is what every text field expects, and `useHotkey`
-/// claims a chord it matches, so binding one takes it out of the composer.
-/// Plain ⌘ only, apart from redo — ⌘⌥W closes a pane and is fine.
+/// ⌘Q reaches the menu bar before the webview, so a shortcut bound to it would
+/// never fire. The editing set — select all, cut, copy, paste, undo, redo — is
+/// what every text field expects, and `useHotkey` claims a chord it matches, so
+/// binding one takes it out of the composer. Plain ⌘ only, apart from redo.
+///
+/// **⌘W is not reserved**, though it is close-window in every other Mac app:
+/// this one has a single window and quitting is confirmed, so the Close Window
+/// item is left out of the menu (see `quit.rs`) and the key is the app's to
+/// spend on closing a tab or a pane.
 const RESERVED: Chord[] = [
   k("q"),
-  k("w"),
   k("a"),
   k("x"),
   k("c"),
@@ -171,6 +180,7 @@ const KEY_LABELS: Record<string, string> = {
   ArrowDown: "↓",
   ArrowLeft: "←",
   ArrowRight: "→",
+  Enter: "⏎",
   Escape: "Esc",
   " ": "Space",
   Backspace: "⌫",

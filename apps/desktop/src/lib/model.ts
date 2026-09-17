@@ -1,4 +1,4 @@
-import type { Harness, Model, ModelId } from "@/types/events";
+import type { Effort, Harness, Model, ModelId } from "@/types/events";
 
 /// The one spelling of "nothing here can name the model".
 ///
@@ -114,10 +114,95 @@ export function usableFxModel(
   return UNSET_MODEL;
 }
 
+/// The provider serving this model, from the lists fx has answered so far, or
+/// `undefined` where none of them names it. What lets a session's model say
+/// which provider it belongs to without a field on the index for it.
+export function fxProviderOf(cache: Record<string, Model[]>, id: ModelId): string | undefined {
+  if (isUnsetModel(id)) return undefined;
+  return Object.keys(cache).find((provider) => cache[provider].some((m) => m.id === id));
+}
+
+/// The fx list the composer draws: the one serving `picked`, where the cache
+/// knows it, else `active` — the list fx's global provider last answered.
+///
+/// fx's provider is one setting for the whole machine, and the composer used to
+/// draw its list from that alone — so switching provider in one session put the
+/// new provider's thumb and rows under every other fx session's picker, drew
+/// their models as bare ids, and let ⇧⇥ cycle them onto the wrong provider.
+/// The pick is per session and names its provider, so the list follows it.
+export function fxListFor(
+  cache: Record<string, Model[]>,
+  picked: ModelId,
+  active: Model[],
+): Model[] {
+  const own = fxProviderOf(cache, picked);
+  if (!own || own === active[0]?.provider) return active;
+  return cache[own] ?? active;
+}
+
+/// The pick once fx's global list lands. Kept where the cache names its
+/// provider — that is a session's own model, and the read may be landing after
+/// the reader moved onto it from the session whose switch asked for it — else
+/// repaired against the landed list as [`usableFxModel`] does.
+export function landedFxModel(
+  cache: Record<string, Model[]>,
+  landed: Model[],
+  current: ModelId,
+  picks: Record<string, ModelId>,
+): ModelId {
+  return fxProviderOf(cache, current) ? current : usableFxModel(landed, current, picks);
+}
+
+/// The pick the moment a provider is switched to: repaired against that
+/// provider's cached list, or with none cached its last pick — the pick still
+/// has to leave the old provider, or [`fxListFor`] keeps drawing the old
+/// provider's list and the switch reads as having done nothing.
+export function seededFxModel(
+  cache: Record<string, Model[]>,
+  provider: string,
+  current: ModelId,
+  picks: Record<string, ModelId>,
+): ModelId {
+  const cached = cache[provider];
+  if (!cached?.length) return picks[provider] ?? UNSET_MODEL;
+  return usableFxModel(cached, current, picks);
+}
+
+/// The effort a model will actually run at, given what the reader last picked
+/// for it.
+///
+/// A remembered pick outlives the answer that made it offerable, and fx is
+/// where that bites: its ladder is per model and only a live session can state
+/// it, so a level picked off the provider's guess can stop being on the list
+/// the moment a session reports the truth (DRA-221). Left unchecked the trigger
+/// names a level the menu beside it no longer offers, and the next send asks
+/// for it again — which is the state the reader complained about in the first
+/// place.
+///
+/// A model that takes no effort answers `null`, which is what hides the control
+/// entirely. Otherwise the first offered level of: the pick, the model's own
+/// default, the app's — [`usableModel`]'s own rule, that a pick which cannot be
+/// honoured falls to a *default* rather than to whatever happens to sit nearest
+/// it in the list. Only where none of the three is offered does the shape of
+/// the ladder decide, and then it is the **top** rung: the app default is
+/// already near the top, so a ladder missing it is a short one, and the top of
+/// a short ladder is closer to what was asked than its floor.
+export function usableEffort(
+  model: Model,
+  remembered: Effort | null,
+  fallback: Effort,
+): Effort | null {
+  if (model.efforts.length === 0) return null;
+  for (const wanted of [remembered, model.defaultEffort, fallback]) {
+    if (wanted && model.efforts.includes(wanted)) return wanted;
+  }
+  return model.efforts[model.efforts.length - 1];
+}
+
 /// The agents in the order the picker draws them, which is also the order ⌘⇧A
 /// steps through. One list: a chord visiting a harness the row cannot show, or
 /// skipping one it can, reads as the chord being broken.
-export const HARNESS_ORDER: Harness[] = ["claude_code", "codex", "fx", "pi", "omp"];
+export const HARNESS_ORDER: Harness[] = ["claude_code", "codex", "pi", "fx", "omp"];
 
 /// Where ⌘⇧A lands from `current`, wrapping. An unknown current steps onto the
 /// first, the same place the picker parks its thumb.

@@ -5,6 +5,7 @@ import EventRow from "@/components/chat/EventRow";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { compactTokens } from "@/lib/format";
+import { subagentBrief } from "@/lib/tools";
 import type { SubagentRun } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
 import type { AgentEvent, ToolResult } from "@/types/events";
@@ -82,20 +83,25 @@ export default function SubagentPanel({
 function hasBrief(spawn: AgentEvent): boolean {
   if (spawn.payload.type !== "tool_call_started") return false;
   const input = spawn.payload.input as Record<string, unknown> | null;
+  const prompt = input?.prompt;
+  if (typeof prompt === "string" && prompt.trim().length > 0) return true;
   // omp's `task` spawn briefs in `tasks[].task`, not `prompt` — Claude's word
   // for the same thing. Read either, so a spawn that briefed its agent draws
   // its brief whichever harness sent it.
-  const prompt = input?.prompt;
-  if (typeof prompt === "string" && prompt.trim().length > 0) return true;
   const tasks = input?.tasks;
-  return (
+  if (
     Array.isArray(tasks) &&
     tasks.some(
       (t) =>
         typeof (t as Record<string, unknown>)?.task === "string" &&
         ((t as Record<string, unknown>).task as string).trim().length > 0,
     )
-  );
+  ) {
+    return true;
+  }
+  // fx nests its brief a level down, and for an fx run this call is the whole
+  // account there is — without it every delegated run here opens onto nothing.
+  return subagentBrief(spawn.payload.input) !== null;
 }
 
 function RunRow({
@@ -136,6 +142,14 @@ function RunRow({
   // harnesses (omp) expose no per-task stop at all. Either way the button
   // would be one the CLI answers success to and nothing happens.
   const stoppable = live && !run.done && run.taskId !== null && canStop;
+
+  // The brief a harness nests rather than streams — fx's, and the whole of what
+  // it says about the child. Null everywhere else, where the spawning call's own
+  // row is what carries the prompt.
+  const brief =
+    run.spawn?.payload.type === "tool_call_started"
+      ? (subagentBrief(run.spawn.payload.input)?.task ?? null)
+      : null;
 
   // A run whose spawn carries no brief and which has filed no events of its own
   // expands onto an empty box. Events arrive as it works, so this flips back on
@@ -215,8 +229,19 @@ function RunRow({
               nothing. Expanded on arrival: it is what the reader opened the run
               for, and a second click to reach it reveals nothing they hadn't
               already asked for. */}
-          {run.spawn && hasBrief(run.spawn) && (
-            <EventRow event={run.spawn} resultByCallId={resultByCallId} openTool />
+          {/* A run whose whole account is the brief it was given draws that
+              brief, as text. The spawning call's own row would do it too, but
+              it comes with a caret of its own — a second thing to open inside
+              the pane the reader has just opened — and with a tool name and a
+              report beside it, where the row above is already the one and the
+              other is the agent's to relay. */}
+          {brief ? (
+            <p className="whitespace-pre-wrap text-ui text-sidebar-foreground">{brief}</p>
+          ) : (
+            run.spawn &&
+            hasBrief(run.spawn) && (
+              <EventRow event={run.spawn} resultByCallId={resultByCallId} openTool />
+            )
           )}
 
           {run.events.map((event) => (

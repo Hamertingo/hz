@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   closePane,
   dropLabel,
+  EMPTY_VIEW,
   members,
   openBeside,
   paneOrder,
   place,
   pruneGroups,
-  stepUnits,
   type SplitGroup,
 } from "@/lib/groups";
 
@@ -27,10 +27,14 @@ describe("place", () => {
     expect(place([["a"], ["b"]], "b", "c", "center")).toEqual([["a"], ["c"]]);
   });
 
-  it("refuses a third column, a third row, and a drop onto itself", () => {
-    expect(place([["a"], ["b"]], "a", "c", "left")).toBeNull();
-    expect(place([["a", "b"]], "a", "c", "bottom")).toBeNull();
+  it("grows past two columns and two rows", () => {
+    expect(place([["a"], ["b"]], "a", "c", "left")).toEqual([["c"], ["a"], ["b"]]);
+    expect(place([["a", "b"]], "a", "c", "bottom")).toEqual([["a", "c", "b"]]);
+  });
+
+  it("refuses a drop onto itself and an anchor outside the grid", () => {
     expect(place([["a"]], "a", "a", "right")).toBeNull();
+    expect(place([["a"]], "x", "b", "right")).toBeNull();
   });
 
   it("moves a session already in the grid rather than duplicating it", () => {
@@ -40,15 +44,20 @@ describe("place", () => {
 });
 
 describe("dropLabel", () => {
-  it("names each outcome and says nothing where there is no room", () => {
+  it("names each outcome and says nothing where nothing would happen", () => {
     const groups = [group(1, ["a", "b"], ["c"])];
     expect(dropLabel(groups, "x", "y", "right")).toBe("Open on the right");
     expect(dropLabel(groups, "x", "y", "center")).toBeNull();
     expect(dropLabel(groups, "c", "y", "center")).toBe("Replace");
     expect(dropLabel(groups, "c", "y", "top")).toBe("Open above");
-    expect(dropLabel(groups, "a", "y", "bottom")).toBeNull();
-    expect(dropLabel(groups, "a", "y", "left")).toBeNull();
+    expect(dropLabel(groups, "a", "y", "bottom")).toBe("Open below");
+    expect(dropLabel(groups, "a", "y", "left")).toBe("Open on the left");
     expect(dropLabel(groups, "x", "x", "right")).toBeNull();
+  });
+
+  it("opens whole on the empty view, whatever the region", () => {
+    expect(dropLabel([], EMPTY_VIEW, "y", "center")).toBe("Open");
+    expect(dropLabel([], EMPTY_VIEW, "y", "left")).toBe("Open");
   });
 });
 
@@ -85,10 +94,17 @@ describe("openBeside", () => {
     ]);
   });
 
-  it("refuses where there is no room", () => {
+  it("grows a full 2×2 rather than refusing", () => {
     const full = [group(1, ["a", "b"], ["c", "d"])];
-    expect(openBeside(full, "a", "e", "bottom", null)).toBe(full);
-    expect(openBeside(full, "a", "e", "left", null)).toBe(full);
+    expect(openBeside(full, "a", "e", "bottom", null)[0].columns).toEqual([
+      ["a", "e", "b"],
+      ["c", "d"],
+    ]);
+    expect(openBeside(full, "a", "e", "left", null)[0].columns).toEqual([
+      ["e"],
+      ["a", "b"],
+      ["c", "d"],
+    ]);
   });
 
   it("numbers past the highest id standing", () => {
@@ -117,14 +133,6 @@ describe("pruneGroups", () => {
   });
 });
 
-describe("stepUnits", () => {
-  it("folds a group's run into one step and leaves other rows single", () => {
-    const groups = [group(1, ["a"], ["b"]), group(2, ["c", "d"])];
-    const rows = ["a", "b", "c", "d", "e", "f"];
-    expect(stepUnits(rows, groups, (r) => r)).toEqual([["a", "b"], ["c", "d"], ["e"], ["f"]]);
-  });
-});
-
 describe("members", () => {
   it("reads left to right, top to bottom", () => {
     expect(members(group(1, ["a", "c"], ["b", "d"]))).toEqual(["a", "c", "b", "d"]);
@@ -132,12 +140,16 @@ describe("members", () => {
 });
 
 describe("paneOrder", () => {
-  it("runs clockwise from the top left", () => {
-    expect(paneOrder(group(1, ["a", "b"], ["c", "d"]))).toEqual(["a", "c", "d", "b"]);
+  it("reads row by row, left to right", () => {
+    expect(paneOrder(group(1, ["a", "b"], ["c", "d"]))).toEqual(["a", "c", "b", "d"]);
+    expect(paneOrder(group(1, ["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]))).toEqual([
+      "a", "d", "g", "b", "e", "h", "c", "f", "i",
+    ]);
   });
 
-  it("puts the lone right pane second and the bottom left third", () => {
+  it("skips a short column's missing rows", () => {
     expect(paneOrder(group(1, ["a", "b"], ["c"]))).toEqual(["a", "c", "b"]);
+    expect(paneOrder(group(1, ["a"], ["b", "c", "d"]))).toEqual(["a", "b", "c", "d"]);
   });
 
   it("reads top to bottom in one column and left to right in one row", () => {

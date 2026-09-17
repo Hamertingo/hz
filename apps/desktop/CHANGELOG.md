@@ -5,6 +5,210 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.6
+
+### Added
+
+- **The PR tab says how to turn pull requests on.** Without the GitHub
+  CLI the tab simply vanished, so nothing said that one install puts
+  pull requests on screen. It now stays, draws the command to run with
+  a copy button, and a terminal to paste it into.
+- **Dray can ask you a question in the app.** A short survey card may
+  appear for installs with usage reporting on; turning reporting off in
+  Settings turns it off too.
+
+## 0.20.5
+
+### Fixed
+
+- **An fx session keeps its own provider's models.** Switching provider
+  in one session moved the model list under every other fx session, and
+  could repair a session's model onto the provider it had just left.
+
+## 0.20.4
+
+### Fixed
+
+- **The effort control on an fx gateway model now matches what the
+  model takes.** Dray reads each model's levels from the gateway's own
+  catalog, so a model with no reasoning levels — grok-4.6,
+  claude-sonnet-4 — draws no effort control instead of offering four
+  the model refuses.
+
+## 0.20.3
+
+### Fixed
+
+- **No more stray chime at the end of an fx turn.** Naming an fx session
+  played fx's own completion sound, which landed where the first turn
+  finished and read as Dray having grown a sound per turn.
+- **A session that fails to get a title now says why.** The agent's own
+  reason was being thrown away as it was written.
+
+## 0.20.2
+
+### Fixed
+
+- **An fx turn ends when the answer does.** fx held every first reply
+  for several seconds while it wrote the session title, leaving the
+  working indicator spinning over finished work. Dray titles those
+  sessions itself now.
+
+## 0.20.1
+
+### Fixed
+
+- **The sidebar and the right panel can no longer be dragged over the
+  conversation.** Each now stops where the chat's own width begins,
+  whatever the window size and whatever the other pane is holding.
+- **A session header no longer overlaps itself** in a narrow column.
+- **The working indicator shows up when a queued prompt is handed
+  over**, instead of leaving the transcript looking dead until the
+  model spoke.
+
+### Changed
+
+- **The Changes panel says something useful when a turn changed
+  nothing**, with a way through to the Diff view.
+
+## 0.20.0
+
+### Added
+
+- **The sidebar and the right panel drag wider.** Both were fixed
+  widths; each now holds at its default mid-drag so you can find it
+  back by feel, and the separator works from the keyboard too.
+- **The split view takes more than four panes.** The 2x2 cap is gone —
+  the screen decides — and digits 1-9 reach panes row by row. Dropping
+  a session onto an empty main column opens it.
+- **⌘W closes the thing you are looking at**: the Files view's file,
+  the Browser's tab, a split pane, then the panel's browser.
+- **The file list hides**, leaving its filter row and the code pane.
+- **fx sessions change provider mid-conversation.** It used to be
+  creation-time only, and a session whose provider had moved
+  underneath it could not be opened at all.
+
+### Changed
+
+- **A large file opens instantly in the Files view.** An 8000-line
+  lockfile switched tabs in ~56ms where it took up to 900ms.
+- **The PR panel costs a fraction of your GitHub rate limit.** Reading
+  a branch used to spend 11 API points per poll, which two Dray windows
+  could drain in an hour and leave every agent's own `gh` call failing.
+  It is 2 now.
+
+### Fixed
+
+- **fx keeps its working indicator up for the whole turn**, instead of
+  going dark while the model wrote its first message or worked behind a
+  finished one.
+- A newly opened file tab scrolls into view rather than sitting off the
+  end of the strip.
+
+## 0.19.0
+
+### Added
+
+- **A Files tab beside Chat, Changes and Browser.** A folder tree with a
+  filter box, an editor's tab strip, and the same code renderer the diffs
+  use. A file link in the transcript opens here rather than leaving for an
+  external editor; ⌘-click still goes out there.
+- **fx takes your whole held queue as one turn.** A second sentence typed
+  while fx is working no longer waits out the answer to the first, and
+  **Now** (⌘⏎) under the newest bubble stops the wait and sends
+  immediately.
+
+### Changed
+
+- **Code colours ~6x faster.** A 2000-line diff took 5.8s to highlight and
+  now takes 0.9s.
+
+### Fixed
+
+- **A prompt sent to a resumed session shows up straight away**, instead of
+  sitting off screen for the seconds the agent takes to wake up.
+- ⌘⏎ no longer sends the draft by accident.
+
+## 0.18.5
+
+### Fixed
+
+- **A screenshot no longer disturbs the page you are looking at.** An agent
+  sizing one used to leave the browser pane letterboxed for the rest of the
+  session, and taking one visibly reflowed the page on screen. The size an
+  agent asks for is capture-only now, and the view hides behind a still of
+  the page for the shot.
+
+## 0.18.4
+
+### Added
+
+- **fx is told Dray's rules**, which it had no way to learn before —
+  `fx acp` has no system-prompt surface at all, so they ride the first
+  prompt of a new session and the transcript still shows what you
+  wrote.
+- **fx's remaining tool calls are drawn as work** rather than as wire
+  names: a fetched page reports what it fetched, a search names its
+  pattern instead of the directory it scoped, and a run of subagents
+  lists its tasks rather than collapsing into a count.
+
+### Fixed
+
+- **The browser pane stays on screen under menus and dialogs.** Any
+  dropdown anywhere left it a hole; now it only hides where something
+  actually lands on it, behind a picture of the page.
+- **An error stays in the session it came from.** One session's
+  failure used to follow you into every other session and the new-task
+  composer.
+- **A new fx chat keeps a model that matches its provider**, rather
+  than sitting at "Select Model" after a provider switch.
+- **fx is drawn last in the agent list**, and ⌘⇧A steps the same
+  order.
+
+## 0.18.3
+
+### Fixed
+
+- **fx sessions get the MCP servers from `~/.fx/mcp.json`.** `fx acp`
+  reads no config of its own, so a Dray fx session ran without the
+  tools the same machine's `fx` shell had. Sent on resume too. A
+  server Dray cannot authenticate is dropped rather than taking the
+  whole session with it, and tokens named by `bearer_token_env` are
+  read through the login shell, so a launch from the Dock resolves
+  them like a terminal does.
+- **⌘⌥↑/↓ steps projects**, which is what it always said it did — it
+  only moved by project where a split group existed, and otherwise
+  repeated ⌘⇧↑/↓.
+
+## 0.18.2
+
+### Added
+
+- **Fast mode**, a row in the model picker, on Claude Code, Codex and
+  fx. Each vendor charges for it differently, so the row carries their
+  own sentence about what it costs. Claude Code and Codex can be moved
+  in place; fx settles at creation. pi has none.
+- **`dray new --fast`** starts a spawned session on that tier. A
+  session inherits its parent's setting only within the same agent.
+- **Claude Code says when it refuses fast mode**, and that sentence is
+  drawn under the row rather than the switch sitting lit while the
+  turn runs at ordinary speed.
+
+### Fixed
+
+- **An fx session resumed after a provider switch keeps its own
+  provider**, rather than coming back on whatever fx points at now and
+  failing the turn with nothing on screen saying why.
+- **An fx model that refuses the effort it was left on now opens.**
+  The level is dropped, the prompt still sends, and the transcript
+  names the levels that model does take.
+- **fx's fast tiers are read off the gateway's own list**, so the
+  toggle is offered where it works and the duplicate `-fast` rows stay
+  out of the picker.
+- **Switching fx provider leaves `~/.fx/settings.json` at the
+  permissions it found**, where it used to hand the file back
+  world-readable on every switch.
+
 ## 0.18.1
 
 ### Added

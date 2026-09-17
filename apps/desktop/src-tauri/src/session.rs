@@ -8,9 +8,10 @@ use crate::{
     harness::{
         claude_code::{
             self,
-            control::{ControlLine, ControlRequest},
+            control::{ControlLine, ControlRequest, FlagSettings},
             permissions::{answer_response, decision_response, PendingPermissions, Reply},
         },
+        FastMode,
     },
     issues::{self, IssueRef},
     models::{find_model, resolve_effort, runs_on, Effort, Model, ModelId},
@@ -422,6 +423,10 @@ impl SessionManager {
         model: ModelId,
         effort: Option<Effort>,
         permission_mode: ApprovalPolicy,
+        // The composer's fast-mode pick. Where a harness cannot honour it this
+        // is clamped rather than obeyed — see `fast` below — so what reaches
+        // the index is always what the child was actually told.
+        fast: bool,
         cwd: &str,
         // Recorded, not acted on: the picker checks the branch out when the
         // user picks it, so by here the tree is already on it.
@@ -499,6 +504,31 @@ impl SessionManager {
         let effort = model_spec
             .as_ref()
             .and_then(|spec| resolve_effort(spec, effort));
+
+        // Clamped to what this harness *and this model* have a route to, and
+        // clamped **here** so the index records what the child was told rather
+        // than what was asked for. A `true` sitting on an entry that cannot
+        // honour it is not a cosmetic lie: it draws a lit switch over a session
+        // running at ordinary speed, and `dray new` hands it down to every
+        // same-harness child the session spawns.
+        //
+        // Both halves are needed and the composer is not one of them. It runs
+        // the same narrowing in `fastFor`, but `dray new --fast --model haiku`
+        // never goes near it — the orchestration socket reaches this function
+        // directly, which is the whole reason the rule is restated on this side.
+        //
+        // `None` means no model was named at all, since a model that *is* named
+        // and cannot run here already bailed above. fx is the one harness where
+        // that is ordinary and still fast: it applies fast mode per model itself
+        // and publishes no list of which, so "let fx decide" is as able to run
+        // fast as any named model. `standsWithNoModel` in `fastMode.ts` is the
+        // same reading, stated there because neither side can call the other.
+        let fast = fast
+            && harness.caps().fast_mode.offered()
+            && model_spec.as_ref().map_or(
+                harness.caps().fast_mode == FastMode::AtCreation,
+                |spec| spec.supports_fast,
+            );
 
         // Resolved once for every path below — created, live, queued and
         // resumed alike — so a `#DRA-53` means the same thing whichever one the
@@ -611,6 +641,7 @@ impl SessionManager {
                 model,
                 effort,
                 permission_mode,
+                fast,
                 parent_session_id,
             );
             // Written with the entry rather than linked after it: the row
@@ -661,6 +692,7 @@ impl SessionManager {
                     "model": item.model.as_str(),
                     "effort": item.effort,
                     "permission_mode": item.permission_mode,
+                    "fast": item.fast,
                     "worktree": item.worktree_name.is_some(),
                     "spawned": item.parent_session_id.is_some(),
                 }),
@@ -705,6 +737,7 @@ impl SessionManager {
                 model_spec.as_ref(),
                 effort,
                 permission_mode,
+                fast,
                 spawn_cwd,
                 &session_cwd,
                 spawn_worktree,
@@ -796,6 +829,13 @@ impl SessionManager {
             (s.effort != effort && !caps.applies_effort_in_place)
                 || (s.model != model && !caps.applies_model_in_place)
                 || (s.permission_mode != permission_mode && !caps.applies_permission_in_place)
+                // Only the harness whose fast mode rides the spawn. `InPlace`
+                // is applied below without replacing anything, and `AtCreation`
+                // is fx — where a respawn would *not* move it, since a resumed
+                // fx session carries the stamp it was created with, so killing
+                // the child would cost the reader a running conversation and
+                // change nothing at all.
+                || (s.fast != fast && caps.fast_mode == FastMode::OnSpawn)
         });
 
         if respawn_needed(auth_failed, turn_in_flight, busy, settings_changed) {
@@ -840,14 +880,19 @@ impl SessionManager {
         if let Some(s) = sessions_guard.get_mut(session_id) {
             // Before the send, so the index reflects intent even if writing to
             // the child fails — the prompt event is persisted ahead of stdin too.
-            touch_session_index_item(session_id, model.clone(), effort, permission_mode).await?;
+            touch_session_index_item(session_id, model.clone(), effort, permission_mode, fast).await?;
 
             // A model call is open, so this prompt is held rather than sent, and
-            // none of the live controls below fire with it. `set_model` and
-            // `set_permission_mode` were verified switching an *idle* child;
-            // what they do to a turn mid-flight is unknown, and a queued prompt
-            // is not worth finding out on. The index above has the user's pick
-            // either way, so the next idle send applies it.
+            // none of the live controls below fire with it — `set_model`,
+            // `set_permission_mode` and `set_fast` alike. The first two were
+            // verified switching an *idle* child; what any of them do to a turn
+            // mid-flight is unknown, and a queued prompt is not worth finding
+            // out on. The index above has the user's pick either way, so the
+            // next idle send applies it.
+            //
+            // The cost is stated under _Known issues_ and is the same for all
+            // three: the pick is on screen and in the index from here, while the
+            // prompt this queue delivers still runs under the old one.
             //
             // Gated on the turn, not on `busy`: a session holding a background
             // task reads busy with its main thread idle, and queueing there left
@@ -932,16 +977,81 @@ impl SessionManager {
                 // decide" has nothing to switch to, and the session stays on
                 // whatever it is running, which is what the unset pick means.
                 match model_spec.as_ref() {
-                    Some(spec) => s.set_model(spec).await?,
+                    Some(spec) => {
+                        if let Err(err) = s.set_model(spec, app).await {
+                            // The send still fails — the reader asked for a
+                            // model they are not getting, and their prompt is
+                            // better kept in the composer than run on another
+                            // one. What must not survive it is the optimistic
+                            // touch above: fx moves the provider ahead of a
+                            // cross-provider model, so a refusal here can leave
+                            // the child on a model neither side picked, and an
+                            // index still naming the asked-for one sends every
+                            // later prompt back into the same refusal.
+                            // `set_model` has already adopted what fx answered.
+                            //
+                            // **Every field is the session's own here, which is
+                            // what makes this different from the effort arm
+                            // below.** That one records `s.effort` beside the
+                            // *requested* mode and fast, because the blocks
+                            // applying those still run after it. This returns,
+                            // so none of them do — the child is on none of what
+                            // was asked for, and an index naming any of it
+                            // would be describing a session that does not
+                            // exist.
+                            touch_session_index_item(
+                                session_id,
+                                s.model.clone(),
+                                s.effort,
+                                s.permission_mode,
+                                s.fast,
+                            )
+                            .await?;
+                            return Err(err);
+                        }
+                    }
                     None if model.is_unset() => {}
                     None => bail!("no model to switch the session to"),
                 }
             }
             if caps.applies_effort_in_place && s.effort != effort {
-                s.set_effort(effort).await?;
+                // A declined effort must not take the prompt down with it. fx
+                // refuses one on a model that does no reasoning, and losing the
+                // message over a level is a far worse answer than running the
+                // turn on fx's own default and saying so — which is the whole
+                // of DRA-221: the refusal used to reach the reader as a raw
+                // `-32602` where it reached them at all, with the index and the
+                // picker both left naming a level the session was not on.
+                if let Err(err) = s.set_effort(effort, app).await {
+                    report_session_error(
+                        session_id,
+                        s.harness,
+                        &format!("{err:#}"),
+                        &s.seq,
+                        &s.events,
+                        app,
+                    )
+                    .await;
+                    // Written back over the optimistic touch above, so the row
+                    // and `dray ls` name the effort that is running rather than
+                    // the one that was asked for. Every other field is still
+                    // the pick: fast mode is applied below this block, so
+                    // recording the child's current value here would drop it.
+                    touch_session_index_item(
+                        session_id,
+                        model.clone(),
+                        s.effort,
+                        permission_mode,
+                        fast,
+                    )
+                    .await?;
+                }
             }
             if caps.applies_permission_in_place && s.permission_mode != permission_mode {
                 s.set_permission_mode(permission_mode).await?;
+            }
+            if caps.fast_mode == FastMode::InPlace && s.fast != fast {
+                s.set_fast(fast).await?;
             }
 
             // Last thing before the prompt goes down the pipe: the child is idle
@@ -956,7 +1066,7 @@ impl SessionManager {
             });
         }
 
-        touch_session_index_item(session_id, model, effort, permission_mode).await?;
+        touch_session_index_item(session_id, model, effort, permission_mode, fast).await?;
 
         // A fork that hasn't spawned yet. The app's half happened when the user
         // asked for it — log copied, entry written — and this is the spawn that
@@ -1032,6 +1142,7 @@ impl SessionManager {
             model_spec.as_ref(),
             effort,
             permission_mode,
+            fast,
             &spawn_cwd,
             &session_cwd,
             pending_worktree.as_deref(),
@@ -1459,6 +1570,11 @@ pub struct Session {
     pub model: ModelId,
     pub effort: Option<Effort>,
     pub permission_mode: ApprovalPolicy,
+    /// What the child was last told about fast mode — the spawn's flag for
+    /// Claude Code and Codex, and for fx the value stamped onto its session,
+    /// which nothing can move after. Compared against the composer's pick to
+    /// decide whether anything has to happen at all.
+    pub fast: bool,
     pub events: Arc<Mutex<Vec<AgentEvent>>>,
     pub seq: Arc<AtomicU64>,
     /// Shared with the stdout task: sends flip it here, `result` and
@@ -1484,6 +1600,7 @@ impl Session {
         model: Option<&Model>,
         effort: Option<Effort>,
         permission_mode: ApprovalPolicy,
+        fast: bool,
         cwd: &str,
         // The session's own tree, for the turn-end snapshot. Differs from `cwd`
         // on a worktree creation, where the child spawns at the project root.
@@ -1500,6 +1617,7 @@ impl Session {
                     model.context("a Claude Code session needs a model")?,
                     effort,
                     permission_mode,
+                    fast,
                     cwd,
                     session_cwd,
                     worktree_name,
@@ -1529,6 +1647,7 @@ impl Session {
                     model.context("a Codex session needs a model")?,
                     effort,
                     permission_mode,
+                    fast,
                     cwd,
                     session_cwd,
                     is_new_session,
@@ -1586,6 +1705,7 @@ impl Session {
                     model,
                     effort,
                     permission_mode,
+                    fast,
                     cwd,
                     session_cwd,
                     is_new_session,
@@ -1655,6 +1775,7 @@ impl Session {
             baseline,
             false,
             crate::harness::pi::Delivery::WhenIdle,
+            true,
             from,
             &self.seq,
             &self.events,
@@ -1772,6 +1893,7 @@ impl Session {
             None,
             false,
             crate::harness::pi::Delivery::Steer,
+            true,
             from,
             &self.seq,
             &self.events,
@@ -1779,6 +1901,7 @@ impl Session {
             app,
         )
         .await
+        .map(|_| ())
     }
 
     /// Holds a prompt and immediately hands it over, for the case where a tool
@@ -1812,9 +1935,24 @@ impl Session {
     /// reply after this arrives from the new model, so no respawn is needed.
     /// There is no `set_effort` counterpart — the CLI rejects that subtype, and
     /// an `effort` field on this request is accepted but ignored.
-    pub async fn set_model(&mut self, model: &Model) -> Result<()> {
+    pub async fn set_model(&mut self, model: &Model, app: &AppHandle) -> Result<()> {
         if let Transport::Fx(session) = &self.stdin {
-            crate::harness::fx::set_model(session, model).await?;
+            // `app` reaches fx alone, and for one reason: its reply restates
+            // the new model's effort ladder, which the composer's picker has to
+            // be told about or it keeps offering the old model's levels.
+            let outcome = crate::harness::fx::set_model(session, model, app).await;
+            // **What the child is on, not what was asked for, and the refusal
+            // path is the whole reason.** A cross-provider switch moves the
+            // provider first, and fx answers that by putting the session on the
+            // *new provider's* own remembered model — so a model call refused
+            // after it leaves the child somewhere neither side chose. Adopting
+            // fx's own answer is what stops this struct, the index and the
+            // child naming three different models, which is a session whose
+            // every later send retries the same refusal.
+            if let Some(landed) = crate::harness::fx::landed_model(session) {
+                self.model = landed;
+            }
+            outcome?;
             self.model = model.id.clone();
             return Ok(());
         }
@@ -1829,18 +1967,43 @@ impl Session {
         Ok(())
     }
 
+    /// Moves a running child on or off its harness's faster tier — Claude Code
+    /// alone, whose `apply_flag_settings` carries the same `flagSettings` layer
+    /// `--settings` fills at spawn.
+    ///
+    /// `Capabilities::fast_mode` is what keeps the other three off this path:
+    /// Codex's rides its spawn, fx's is stamped on its session at creation, and
+    /// pi has none. The recorded value moves only once the write has, so a
+    /// failed control leaves the session describing what the child is still on.
+    pub async fn set_fast(&mut self, fast: bool) -> Result<()> {
+        write_line(
+            self.stdin.lines()?,
+            &ControlLine::new(ControlRequest::ApplyFlagSettings {
+                settings: FlagSettings { fast_mode: fast },
+            }),
+        )
+        .await?;
+        self.fast = fast;
+
+        Ok(())
+    }
+
     /// Switches the effort of a running child — fx alone, whose ACP session
     /// takes it as a config option. Every other harness respawns for one, and
     /// `caps().applies_effort_in_place` is what keeps them off this path.
     ///
     /// `None` is fx's own `auto`, which nothing here can spell back onto the
     /// wire, so it is recorded and left to the next respawn.
-    pub async fn set_effort(&mut self, effort: Option<Effort>) -> Result<()> {
+    pub async fn set_effort(&mut self, effort: Option<Effort>, app: &AppHandle) -> Result<()> {
         let Transport::Fx(session) = &self.stdin else {
             bail!("this harness has no in-place effort switch");
         };
         if let Some(effort) = effort {
-            crate::harness::fx::set_effort(session, effort).await?;
+            // `app` is here for the same reason `set_model` has it: fx accepting
+            // the level is what proves the active model takes it, and the
+            // picker is drawn from a list that cannot otherwise learn so.
+            let config = crate::harness::fx::set_effort(session, effort).await?;
+            crate::harness::fx::note_effort(session, &config, effort, app);
         }
         self.effort = effort;
 
@@ -2219,18 +2382,28 @@ async fn deliver_prompt(
     // Already resolved against the tracker by the caller. Appended to the text
     // the child is given, so the transcript keeps showing exactly what the
     // model was told — the same rule a non-image attachment's `@path` follows.
+    //
+    // fx is the one exception, and it is deliberate: it has no system-prompt
+    // surface, so [`crate::harness::fx::start_turn`] appends Dray's rules to
+    // the wire text alone and the transcript shows strictly less than the
+    // model was told. Nothing else may take that liberty.
     issues: &[IssueRef],
     baseline: Option<String>,
     queued: bool,
     // Where this lands on a harness that can take a prompt into a turn already
     // running. Ignored by every other transport, which has one way in.
     delivery: crate::harness::pi::Delivery,
+    // `false` logs the prompt and hands its prepared text back without sending
+    // it — [`flush_fx`] alone, which logs every held message as its own bubble
+    // and then opens **one** turn with the lot, fx taking one prompt per turn.
+    // No other transport is written to answer it, and none passes it.
+    send: bool,
     from: Option<MessageSender>,
     seq: &Arc<AtomicU64>,
     events: &Arc<Mutex<Vec<AgentEvent>>>,
     transport: &Transport,
     app: &AppHandle,
-) -> Result<()> {
+) -> Result<String> {
     let seq = seq.fetch_add(1, Relaxed);
 
     // Ahead of the event, because it is what decides the event's own text:
@@ -2246,7 +2419,7 @@ async fn deliver_prompt(
     // that only grows. Failing after it leaves a bubble with no turn behind it,
     // and the retry the error invites draws the reader's sentence twice.
     let codex = match transport {
-        Transport::Rpc(thread) => {
+        Transport::Rpc(thread) if send => {
             Some((thread, crate::harness::codex::turn_input(thread, &text).await?))
         }
         _ => None,
@@ -2292,31 +2465,40 @@ async fn deliver_prompt(
 
     append_session_event(session_id, agent_event).await?;
 
+    // Logged, not sent: the caller holds the text and opens the turn itself.
+    if !send {
+        return Ok(text);
+    }
+
     // Codex takes a prompt as a request that opens a turn, so the write is the
     // send rather than a line the child picks up on its own schedule. Images
     // ride a different shape there and are not wired yet; the text still goes.
     // Its input was built above, where a failure could still be a no-op.
     if let Some((thread, input)) = codex {
-        return crate::harness::codex::start_turn(thread, input).await;
+        crate::harness::codex::start_turn(thread, input).await?;
+        return Ok(text);
     }
     // pi takes a prompt as a command whose answer says it was accepted, so the
     // write is the send rather than a line the child picks up on its own
     // schedule.
     if let Transport::Pi(client) = transport {
-        return crate::harness::pi::send_prompt(client, &text, delivery, &prepared.images).await;
+        crate::harness::pi::send_prompt(client, &text, delivery, &prepared.images).await?;
+        return Ok(text);
     }
     // omp answers the same way, and one thing is narrower here: no
     // `streamingBehavior` is ever named, because this transport does not steer.
     // See `omp.rs` — the field is required while a turn runs, so a mid-turn
     // prompt would be refused, and Dray never sends one there.
     if let Transport::Omp(client) = transport {
-        return crate::harness::omp::send_prompt(client, &text, &prepared.images).await;
+        crate::harness::omp::send_prompt(client, &text, &prepared.images).await?;
+        return Ok(text);
     }
     // fx takes a prompt as a request that blocks for the turn, so the write
     // is the send and the reader settles the answer. Images not wired: the
     // Codex provider answered `refused` to one on capture.
     if let Transport::Fx(session) = transport {
-        return crate::harness::fx::start_turn(session, &text).await;
+        crate::harness::fx::start_turn(session, &text).await?;
+        return Ok(text);
     }
     let stdin = transport.lines()?;
 
@@ -2344,7 +2526,8 @@ async fn deliver_prompt(
     };
 
     let line = json!({"type":"user","message":{"role":"user","content": content}});
-    write_line(stdin, &line).await
+    write_line(stdin, &line).await?;
+    Ok(text)
 }
 
 /// The handles a read loop needs once its harness has stopped being relevant.
@@ -2634,24 +2817,31 @@ pub async fn flush_queued(
     }
 }
 
-/// The fx flush: one prompt per turn, and the release symmetric to the
-/// reservation `ingest` makes.
+/// The fx flush: the **whole** queue as one turn, and the release symmetric to
+/// the reservation `ingest` makes.
+///
+/// fx takes one prompt per turn — `session/prompt` blocks for the turn and a
+/// second one written meanwhile takes over the id the read loop settles on — so
+/// draining one message per boundary made a reader's second sentence wait out a
+/// whole turn answering their first. Every held message is still its own bubble
+/// and its own line in the log; what they share is the turn they open.
 ///
 /// The empty-check and the release of the reservation are done **while holding
 /// both status and queued** — the crux, symmetric to `fx_queue_if_in_flight`
 /// on the send side. Release the queue lock before marking the turn Completed
 /// and a send can enqueue in the gap, leaving a prompt with no turn to flush
-/// it. Holding both, a send either lands its message before the empty-check
-/// (drained here, or reserved for the next turn) or reads the released
-/// Completed after and delivers directly.
+/// it. Holding both, a send either lands its message before the take (drained
+/// here, or reserved for the next turn) or reads the released Completed after
+/// and delivers directly.
 ///
-/// A message that fails to send starts no turn and so no flush to reach the
-/// next, hence the loop: keep taking until one is delivered or the queue is
-/// empty. Locks are dropped across each delivery, so a cancel or a send can
-/// move the queue between attempts — which the next iteration re-reads.
+/// A batch that fails to reach the child starts no turn and so no flush to
+/// reach the next, hence the loop: keep taking until something is delivered or
+/// the queue is empty under both locks. Locks are dropped across each attempt,
+/// so a cancel or a send can move the queue between them — which the next round
+/// re-reads.
 ///
-/// Order is status→queued, as everywhere; nothing holds queued while awaiting
-/// status, so no deadlock.
+/// Order is status -> queued, as everywhere; nothing holds queued while
+/// awaiting status, so no deadlock.
 async fn flush_fx(
     session_id: &str,
     harness: Harness,
@@ -2663,48 +2853,80 @@ async fn flush_fx(
     app: &AppHandle,
 ) {
     loop {
-        let message = {
+        let batch: Vec<QueuedMessage> = {
             let mut tracker = status.lock().await;
             let mut held = queued.lock().await;
-            match held.is_empty() {
-                // Nothing to hand over: the whole queue failed to send, or a
-                // cancel emptied it. Give the reserved turn back under both
-                // locks, or the session hangs `InProgress` on a prompt no child
-                // holds — and a send racing this either queued before the check
-                // (so it is not empty) or reads Completed after and delivers.
-                true => {
-                    let released = tracker.release_reserved_turn();
-                    drop(held);
-                    drop(tracker);
-                    if let Some(next) = released {
-                        publish_status(session_id, next, app).await;
-                    }
-                    return;
+            let batch = std::mem::take(&mut *held);
+            // Nothing to hand over: the whole queue failed to send, or a cancel
+            // emptied it. Give the reserved turn back under both locks, or the
+            // session hangs `InProgress` on a prompt no child holds — and a send
+            // racing this either queued before the take (so it is in the batch)
+            // or reads Completed after and delivers.
+            if batch.is_empty() {
+                let released = tracker.release_reserved_turn();
+                drop(held);
+                drop(tracker);
+                if let Some(next) = released {
+                    publish_status(session_id, next, app).await;
                 }
-                false => held.remove(0),
+                return;
             }
+            batch
         };
 
-        // Delivered outside the locks — attachment prep, the log write and
-        // `start_turn` all await. On success the reservation stands as
-        // `InProgress` and the turn is the delivered prompt's; on failure
-        // `deliver_batch` reports it and the loop takes the next.
-        let mut delivered = 0;
-        deliver_batch(
-            vec![message],
-            session_id,
-            harness,
-            seq,
-            events,
-            transport,
-            app,
-            &mut delivered,
-        )
-        .await;
-
-        if delivered > 0 {
-            return;
+        // Logged outside the locks — attachment prep and the log write both
+        // await. Each message mints its own `user_message`, so the transcript
+        // draws what the reader typed, separately, in the order they typed it.
+        // The text comes back prepared — a non-image attachment is an `@path` on
+        // it by now — which is what may be joined.
+        let mut texts = Vec::new();
+        for message in batch {
+            match deliver_prompt(
+                session_id,
+                harness,
+                &message.text,
+                &message.attachment_paths,
+                &message.issues,
+                // No baseline, for `deliver_batch`'s reason.
+                None,
+                true,
+                crate::harness::pi::Delivery::WhenIdle,
+                false,
+                message.from,
+                seq,
+                events,
+                transport,
+                app,
+            )
+            .await
+            {
+                Ok(text) => texts.push(text),
+                Err(err) => {
+                    eprintln!("[queued flush err] {err}");
+                    report_send_failure(session_id, harness, &err.to_string(), seq, events, app)
+                        .await;
+                }
+            }
         }
+
+        // One prompt, blank-line separated, because one is all fx takes. On
+        // success the reservation stands as `InProgress` and the turn is this
+        // batch's; on failure every message is already on screen and in the log,
+        // so the sentence saying why is the only thing still owing.
+        if let (false, Transport::Fx(session)) = (texts.is_empty(), transport) {
+            match crate::harness::fx::start_turn(session, &texts.join("\n\n")).await {
+                Ok(()) => return,
+                Err(err) => {
+                    eprintln!("[queued flush err] {err}");
+                    report_send_failure(session_id, harness, &err.to_string(), seq, events, app)
+                        .await;
+                }
+            }
+        }
+
+        // Nothing reached the child, so nothing will flush whatever queued
+        // behind this. Round again: the reservation is only given back where the
+        // queue is empty under both locks.
     }
 }
 
@@ -2735,6 +2957,7 @@ async fn deliver_batch(
             true,
             // A flush runs at a boundary, so there is no turn to steer into.
             crate::harness::pi::Delivery::WhenIdle,
+            true,
             message.from,
             seq,
             events,
@@ -2743,7 +2966,7 @@ async fn deliver_batch(
         )
         .await
         {
-            Ok(()) => *delivered += 1,
+            Ok(_) => *delivered += 1,
             Err(err) => {
                 eprintln!("[queued flush err] {err}");
                 // Drawn, not only logged. The prompt is already on screen and in
@@ -2773,6 +2996,25 @@ async fn report_send_failure(
     events: &Arc<Mutex<Vec<AgentEvent>>>,
     app: &AppHandle,
 ) {
+    let message = format!("This message could not be sent: {message}");
+    report_session_error(session_id, harness, &message, seq, events, app).await;
+}
+
+/// Files a sentence about the session itself — not about a turn — as a
+/// non-fatal error row, emitted and persisted like any other event.
+///
+/// For what went wrong *around* the conversation rather than in it: a prompt
+/// that never reached the child, a setting the harness declined. Non-fatal
+/// because the session is intact either way, and the reader needs the sentence
+/// far more than the turn needs to be marked failed.
+pub(crate) async fn report_session_error(
+    session_id: &str,
+    harness: Harness,
+    message: &str,
+    seq: &Arc<AtomicU64>,
+    events: &Arc<Mutex<Vec<AgentEvent>>>,
+    app: &AppHandle,
+) {
     let agent_event = AgentEvent {
         id: Uuid::now_v7().to_string(),
         session_id: session_id.to_string(),
@@ -2783,18 +3025,18 @@ async fn report_send_failure(
         subagent: None,
         payload: AgentEventPayload::Error {
             source: ErrorSource::Process,
-            message: format!("This message could not be sent: {message}"),
+            message: message.to_string(),
             fatal: false,
         },
         raw: None,
     };
 
     if let Err(err) = app.emit("agent_event", &agent_event) {
-        eprintln!("[queued flush emit err] {err}");
+        eprintln!("[session error emit err] {err}");
     }
     events.lock().await.push(agent_event.clone());
     if let Err(err) = append_session_event(session_id, agent_event).await {
-        eprintln!("[queued flush log err] {err}");
+        eprintln!("[session error log err] {err}");
     }
 }
 

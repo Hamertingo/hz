@@ -33,6 +33,13 @@ type ComposerToolbarProps = {
   models: Model[];
   modelId: ModelId;
   effort: Effort | null;
+  /// Whether the session runs at its agent's faster tier. Sits beside the model
+  /// rather than in a control of its own: it is per *model* on both agents that
+  /// have one, so the picker that names the model is where it belongs.
+  fast: boolean;
+  onFastChange: (fast: boolean) => void;
+  /// What the harness said about fast mode last turn, if it said anything.
+  fastNote: string | null;
   onModelChange: (modelId: ModelId, effort: Effort | null) => void;
   onRefreshModels: () => void;
   onReloadModels: () => void;
@@ -97,6 +104,11 @@ type ComposerToolbarProps = {
   /// Where the session runs is fixed at creation, so the last three controls
   /// only exist before one starts.
   isNewSession: boolean;
+
+  /// Whether this session's turn is in flight. Only the fx provider switch
+  /// reads it — it is the one control here that moves the child on the click
+  /// rather than at the next send.
+  busy: boolean;
 };
 
 /// The composer's control row. Model and permission change a running session in
@@ -110,6 +122,9 @@ export default function ComposerToolbar({
   models,
   modelId,
   effort,
+  fast,
+  fastNote,
+  onFastChange,
   onModelChange,
   onRefreshModels,
   onReloadModels,
@@ -140,6 +155,7 @@ export default function ComposerToolbar({
   onAttach,
   contextUsage,
   isNewSession,
+  busy,
 }: ComposerToolbarProps) {
   return (
     <div className="flex min-w-0 items-center gap-0.5 px-1">
@@ -171,6 +187,11 @@ export default function ComposerToolbar({
         models={models}
         modelId={modelId}
         effort={effort}
+        fast={fast}
+        fastNote={fastNote}
+        onFastChange={onFastChange}
+        isNewSession={isNewSession}
+        busy={busy}
         onChange={onModelChange}
         onRefreshModels={onRefreshModels}
         onReloadModels={onReloadModels}

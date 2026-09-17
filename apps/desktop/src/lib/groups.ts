@@ -3,11 +3,6 @@
 /// work.
 export const GROUPS_KEY = "ade.splitGroups";
 
-/// A grid is at most two columns of at most two panes — four transcripts, and
-/// past that a pane is too narrow to read one in.
-const MAX_COLUMNS = 2;
-const MAX_ROWS = 2;
-
 export type SplitGroup = {
   /// Names the group — "Group 3" — and survives other groups dissolving.
   id: number;
@@ -25,17 +20,23 @@ export type Region = "center" | "top" | "bottom" | "left" | "right";
 
 export const groupName = (group: { id: number }) => `Group ${group.id}`;
 
+/// The drop anchor of the empty main column — no session open. A drop there
+/// opens the session whole; there is nothing to sit beside.
+export const EMPTY_VIEW = "";
+
 /// Grid order: left to right, top to bottom. The sidebar's run reads the same.
 export const members = (group: SplitGroup): string[] => group.columns.flat();
 
-/// What the ⌘ digits walk: clockwise from the top left — the top row left to
-/// right, then the bottom row right to left. `members`' reading order puts ⌘2
-/// *under* ⌘1 in a 2×2, where the eye walks round the grid rather than down a
-/// column.
-export const paneOrder = (group: SplitGroup): string[] => [
-  ...group.columns.map((c) => c[0]),
-  ...[...group.columns].reverse().flatMap((c) => c.slice(1)),
-];
+/// What the ⌘ digits walk and the pane headers number: row by row, each left
+/// to right. `members`' column order puts ⌘2 *under* ⌘1 in a 2×2, where the
+/// eye reads across. Rows, not a clockwise walk — that only means something
+/// with two of them, and the grid can hold any number now.
+export const paneOrder = (group: Pick<SplitGroup, "columns">): string[] => {
+  const rows = Math.max(0, ...group.columns.map((c) => c.length));
+  return Array.from({ length: rows }, (_, r) =>
+    group.columns.flatMap((c) => (r < c.length ? [c[r]] : [])),
+  ).flat();
+};
 
 export function groupOf(
   groups: SplitGroup[],
@@ -54,9 +55,10 @@ function without(columns: string[][], sessionId: string): string[][] {
 }
 
 /// The columns with `dropped` landed on `anchor`'s pane at `region`, or `null`
-/// where there is no room. A session already in the grid is *moved*: taken
-/// out first, then placed, so dragging a pane's row onto another pane
-/// rearranges rather than duplicates.
+/// where the anchor is not in the grid. No cap on rows or columns: how many
+/// transcripts fit is the reader's screen's question, not this file's. A
+/// session already in the grid is *moved*: taken out first, then placed, so
+/// dragging a pane's row onto another pane rearranges rather than duplicates.
 export function place(
   columns: string[][],
   anchor: string,
@@ -77,14 +79,12 @@ export function place(
       );
     case "top":
     case "bottom": {
-      if (col.length >= MAX_ROWS) return null;
       const next = [...col];
       next.splice(region === "top" ? ri : ri + 1, 0, dropped);
       return cols.map((c, i) => (i === ci ? next : c));
     }
     case "left":
     case "right": {
-      if (cols.length >= MAX_COLUMNS) return null;
       const next = [...cols];
       next.splice(region === "left" ? ci : ci + 1, 0, [dropped]);
       return next;
@@ -109,6 +109,7 @@ export function dropLabel(
   dropped: string,
   region: Region,
 ): string | null {
+  if (anchor === EMPTY_VIEW) return "Open";
   const target = groupOf(groups, anchor);
   // Replacing a single view is opening the session, which a click already
   // does — so it is no drop at all.
@@ -148,21 +149,6 @@ export function openBeside(
   }
   const id = Math.max(0, ...rest.map((g) => g.id)) + 1;
   return [...rest, { id, columns, space }];
-}
-
-/// The sidebar's order with each group's run folded into one step, for a chord
-/// that walks groups rather than rows. Only *consecutive* members fold — a
-/// group's run is drawn together, so that is every member — and a row in no
-/// group is a step of its own.
-export function stepUnits<T>(rows: T[], groups: SplitGroup[], id: (row: T) => string): T[][] {
-  const units: T[][] = [];
-  const unitOf = (row: T) => groupOf(groups, id(row))?.id ?? id(row);
-  for (const row of rows) {
-    const last = units[units.length - 1];
-    if (last && unitOf(last[0]) === unitOf(row)) last.push(row);
-    else units.push([row]);
-  }
-  return units;
 }
 
 /// Takes one session out of its group. A group left with one member is no

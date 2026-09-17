@@ -98,6 +98,7 @@ async fn send_msg(
     model: ModelId,
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
+    fast: bool,
     cwd: &str,
     branch: Option<&str>,
     use_worktree: bool,
@@ -140,6 +141,7 @@ async fn send_msg(
             model,
             effort,
             permission_mode,
+            fast,
             cwd,
             branch,
             use_worktree,
@@ -333,6 +335,18 @@ async fn set_analytics_enabled(enabled: bool) -> Result<settings::SettingsView, 
     .await?;
 
     Ok(settings_view().await)
+}
+
+/// What the webview needs to run PostHog for itself, or `None` where it may not.
+///
+/// Surveys are drawn by `posthog-js` and by nothing else, so the SDK is the one
+/// thing here the Rust POST cannot stand in for. `None` is the refusal and the
+/// frontend initialises nothing on it — see [`analytics::identity`] for why the
+/// answer is one value rather than a consent flag the other side pairs with a
+/// lookup of its own.
+#[tauri::command]
+async fn analytics_identity() -> Option<analytics::SurveyIdentity> {
+    analytics::identity().await
 }
 
 /// Reports a feature whose only chokepoint is in the frontend.
@@ -694,11 +708,15 @@ pub fn run() {
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_layout,
             #[cfg(all(feature = "cef", target_os = "macos"))]
+            cef::browser_shutter_ready,
+            #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_zoom,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_devtools,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_pick,
+            #[cfg(all(feature = "cef", target_os = "macos"))]
+            cef::automation::browser_snapshot,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             chromium::chromium_status,
             #[cfg(all(feature = "cef", target_os = "macos"))]
@@ -708,11 +726,14 @@ pub fn run() {
             local_servers::list_local_servers,
             get_settings,
             set_analytics_enabled,
+            analytics_identity,
             track_feature,
             track_active_day,
             list_slash_commands,
             files::warm_file_index,
             files::search_files,
+            files::list_dir,
+            files::read_file,
             store::list_session_index_items,
             store::get_session_by_id,
             projects::list_projects,
@@ -765,6 +786,7 @@ pub fn run() {
             github::delete_branch,
             github::reopen_pr,
             github::mark_pr_ready,
+            github::recheck_gh,
             quit::confirm_quit,
             quit::dismiss_quit,
             docs::read_doc,

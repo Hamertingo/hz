@@ -30,6 +30,14 @@ static CONSOLE: Mutex<Option<HashMap<i32, Vec<(bool, String)>>>> = Mutex::new(No
 /// The size `set viewport`/`set device` asked for, per session. Only
 /// `screenshot` reads it: the widget stays the pane's size and the page is
 /// laid out at this size for the capture alone.
+///
+/// It used to ride an event into the pane's own viewport store as well, so
+/// the device bar would show what the agent set — and that store is what
+/// puts the stage into device-preview layout, centred and padded inside the
+/// pane. So an agent sizing one capture left the reader's page letterboxed
+/// for the rest of the session, with the bar that explains it closed and
+/// nothing clearing it (DRA-233). The override below is what sizes a
+/// capture; shrinking the widget was never part of it.
 static VIEWPORT: Mutex<Option<HashMap<String, (u32, u32)>>> = Mutex::new(None);
 /// A laptop, since nearly everything looked at through here is a page built
 /// for one; the pane itself is a third of a window and lays a page out at
@@ -40,6 +48,44 @@ const DEFAULT_VIEWPORT: (u32, u32) = (1440, 900);
 /// not serialized. ponytail: one lock app-wide, per-tab if captures ever
 /// queue behind each other.
 static CAPTURING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// The pane saying it has the page covered, so the reflow the capture needs
+/// happens behind a still rather than on screen. Waited on rather than
+/// guessed at: the cover is a page snapshot, an image decode and a layout
+/// call, which is a few hundred milliseconds on a good day and not a number
+/// worth hardcoding.
+///
+/// **An ack names the shot it is for, and a bare `Notify` was not enough.**
+/// One shot can be acked twice — the pane answers at once when it has
+/// nothing to cover, and the hide it asked for answers again when it lands
+/// — so the extra notification sat as a stored permit and released the
+/// *next* shot before its own still was painted, showing exactly the reflow
+/// this hides. `SHUTTER_ACK` carries how far the pane has got, the `Notify`
+/// only wakes the waiter to look, and a shot sleeps until the number
+/// reaches its own. A late ack from a finished shot is then a number too
+/// small to release anything.
+static SHUTTER_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+/// The newest shot's number, minted per capture.
+static SHUTTER_SHOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The newest shot the pane has answered for. Monotonic, so a repeated ack
+/// for one shot is the same answer twice rather than a second one.
+static SHUTTER_ACK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// True from the shutter opening until the override goes on — the window in
+/// which the page still reads the way the reader sees it, and the one thing
+/// that lets the pane's cover picture past `CAPTURING`.
+static SHUTTER_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How long to wait for that. A pane with no browser on screen answers at
+/// once; this is for one that never answers at all, where giving up and
+/// shooting anyway is exactly what the verb did before it covered anything.
+const SHUTTER: Duration = Duration::from_millis(700);
+/// One repaint's worth of time, spent at all three edges of a shot, each
+/// one a frame where the wrong thing would otherwise be on screen: after
+/// the view is hidden, since hiding lands on the window's next frame and
+/// the override must not paint into one still holding it; after the
+/// override goes on, or the shot catches the layout half-moved; and after
+/// it comes off, or the view is handed back still showing the size it was
+/// photographed at, which is this whole dance's own reflow arriving at the
+/// end instead of the start.
+const SETTLE: Duration = Duration::from_millis(150);
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
@@ -637,11 +683,35 @@ async fn perform(session: &str, action: BrowserAction) -> Answer {
             let tab = active_tab(session)?;
             let (w, h) = screenshot_size(session);
             let held = CAPTURING.lock().await;
+            // Numbered before the event goes out, so an ack cannot name a
+            // shot that does not exist yet; `await_shutter` reads the mark
+            // before it waits, so one arriving early is not missed either.
+            let shot = SHUTTER_SHOT.fetch_add(1, AtomicOrdering::AcqRel) + 1;
+            SHUTTER_OPEN.store(true, AtomicOrdering::Release);
+            emit_shooting(session, true, shot);
+            await_shutter(shot).await;
+            // The hide has run, but a hidden view leaves the window on its
+            // next frame — so the page is given one before it is asked to
+            // reflow into a widget that may still be composited.
+            tokio::time::sleep(SETTLE).await;
+            // Closed before the override, never after: past here the page
+            // stops being the one on screen, so a cover taken from it would
+            // be a picture of the very reflow being hidden.
+            SHUTTER_OPEN.store(false, AtomicOrdering::Release);
             let bytes = capture(tab, w, h, full).await;
             // Cleared on the failing path too, or one timed-out capture leaves
             // the tab laid out at a width nobody asked for and every later
-            // verb reads a page that isn't the one on screen.
+            // verb reads a page that isn't the one on screen. The shutter
+            // closes there for the same reason: a capture that failed must
+            // not leave the pane holding the camera card for good.
             let _ = cdp(tab, "Emulation.clearDeviceMetricsOverride", json!({})).await;
+            // The page is back to the pane's size but has not painted it
+            // yet, and handing the view over inside that window puts the
+            // capture's layout on screen for a frame — the reflow, arriving
+            // at the end. The still is holding the pane meanwhile, so this
+            // costs nothing anybody can see.
+            tokio::time::sleep(SETTLE).await;
+            emit_shooting(session, false, shot);
             drop(held);
             let bytes = bytes?;
             let path = match path {
@@ -699,7 +769,6 @@ async fn perform(session: &str, action: BrowserAction) -> Answer {
         BrowserAction::SetViewport { width, height } => {
             active_tab(session)?;
             remember_viewport(session, width, height);
-            emit_viewport(session, "custom", width, height);
             ok(format!("viewport {width}×{height}"))
         }
         BrowserAction::SetDevice { name } => {
@@ -712,7 +781,6 @@ async fn perform(session: &str, action: BrowserAction) -> Answer {
                     format!("no device {name:?}; one of {names}")
                 })?;
             remember_viewport(session, *w, *h);
-            emit_viewport(session, &label.to_lowercase().replace(' ', "-"), *w, *h);
             ok(format!("{label} {w}×{h}"))
         }
     }
@@ -746,7 +814,7 @@ async fn capture(tab: i32, w: u32, h: u32, full: bool) -> Result<Vec<u8>, String
     .await?;
     // A page that reflows paints a frame or two later; capturing inside that
     // window catches the layout half-moved.
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    tokio::time::sleep(SETTLE).await;
     let mut params = json!({ "format": "png" });
     if full {
         let size = eval(tab, "({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight })").await?;
@@ -758,6 +826,55 @@ async fn capture(tab: i32, w: u32, h: u32, full: bool) -> Result<Vec<u8>, String
     base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| format!("bad image data: {e}"))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShootingEvent {
+    session_id: String,
+    shooting: bool,
+    /// Which shot, so the pane's ack can name it back. See `SHUTTER_READY`.
+    shot: u64,
+}
+
+/// Lets the shot numbered `shot` through. See `browser_shutter_ready`.
+/// `fetch_max`, so an ack that arrives after a later shot has been answered
+/// for cannot walk the mark backwards, and `notify_waiters` rather than
+/// `notify_one`, which would leave a permit behind for a shot nobody has
+/// taken yet — the bug this numbering exists to close.
+pub fn shutter_ready(shot: u64) {
+    SHUTTER_ACK.fetch_max(shot, AtomicOrdering::Release);
+    SHUTTER_READY.notify_waiters();
+}
+
+/// Waits until the pane has answered for `shot`, or `SHUTTER` passes. The
+/// registration is re-made around every check, or an ack landing between
+/// reading the mark and awaiting would be missed and the shot would sit out
+/// the whole timeout.
+async fn await_shutter(shot: u64) {
+    let _ = tokio::time::timeout(SHUTTER, async {
+        loop {
+            let mut waiting = Box::pin(SHUTTER_READY.notified());
+            waiting.as_mut().enable();
+            if SHUTTER_ACK.load(AtomicOrdering::Acquire) >= shot {
+                return;
+            }
+            waiting.await;
+        }
+    })
+    .await;
+}
+
+/// Opens and closes the pane's shutter. The capture lays the page out at
+/// the asked-for size, and the widget the reader is watching is the one
+/// doing it — so the pane hides the view and draws a camera card for the
+/// length of the shot, rather than showing a page reflowing to a size
+/// nobody asked to look at.
+fn emit_shooting(session: &str, shooting: bool, shot: u64) {
+    if let Some(app) = APP.get() {
+        let _ = app
+            .emit("browser_shooting", ShootingEvent { session_id: session.into(), shooting, shot });
+    }
 }
 
 /// Truncating write that refuses a symlink at the leaf, so a link planted
@@ -804,26 +921,6 @@ async fn screenshot_path(session: &str, given: &str) -> Result<PathBuf, String> 
         return Err(format!("{} is a symlink", path.display()));
     }
     Ok(path)
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ViewportEvent {
-    session_id: String,
-    preset: String,
-    width: u32,
-    height: u32,
-}
-
-/// The device bar is the pane's, so a size set from here rides an event
-/// into the same store the bar writes.
-fn emit_viewport(session: &str, preset: &str, width: u32, height: u32) {
-    if let Some(app) = APP.get() {
-        let _ = app.emit(
-            "browser_viewport",
-            ViewportEvent { session_id: session.into(), preset: preset.into(), width, height },
-        );
-    }
 }
 
 /// `keyDown`/`keyUp` for a key name with optional modifier prefixes. Named
@@ -1003,6 +1100,53 @@ const HELPERS_JS: &str = r#"
     return document.title + ' — ' + location.href + '\n' + lines.join('\n');
   };
 "#;
+
+/// The active tab as the pane sees it, for drawing in its place while the
+/// native view is hidden under a modal. No metrics override: the picture
+/// must match the widget's own size, or it is drawn stretched. The view
+/// hides only once this lands, so the whole cost is a modal opening late
+/// over the page: one CSS pixel per image pixel (a quarter of retina) and
+/// a fast JPEG, since the picture lives as long as a menu is open. An
+/// agent's sized screenshot holding `CAPTURING` would hand back a
+/// phone-wide page, so this waits for it — briefly, since the pane gives
+/// up on the answer at 400ms and a full-page capture can run for seconds;
+/// past that the pane hides over nothing, as it did before. The tab is read
+/// after the wait, so the picture is of the tab up when it is taken.
+#[tauri::command]
+pub async fn browser_snapshot(session_id: String) -> Result<String, String> {
+    // Not while the shutter is open, and that exception is the whole reason
+    // a shot can be covered by the page rather than by a blank. The lock is
+    // held for the length of a shot, so a cover asked for inside one would
+    // be refused — and the cover is what the shot hides behind. Safe
+    // precisely there: the shutter opens *before* the override goes on, so
+    // the page this reads is the one the reader is looking at.
+    let _held = if SHUTTER_OPEN.load(AtomicOrdering::Acquire) {
+        None
+    } else {
+        Some(
+            tokio::time::timeout(Duration::from_millis(300), CAPTURING.lock())
+                .await
+                .map_err(|_| "a screenshot is in progress")?,
+        )
+    };
+    let tab = active_tab(&session_id)?;
+    // `innerWidth`, not the layout viewport's `clientWidth`: that one stops
+    // at the scrollbar, and a picture a scrollbar short of the view is
+    // stretched across it. The clip is in page coordinates, hence the
+    // scroll offset from the metrics.
+    let size = eval(tab, "({ w: innerWidth, h: innerHeight })").await?;
+    let metrics = cdp(tab, "Page.getLayoutMetrics", json!({})).await?;
+    let vp = &metrics["cssVisualViewport"];
+    let clip = json!({
+        "x": vp["pageX"], "y": vp["pageY"],
+        "width": size["w"], "height": size["h"],
+        "scale": 1,
+    });
+    let params = json!({ "format": "jpeg", "quality": 60, "optimizeForSpeed": true, "clip": clip });
+    let reply = cdp(tab, "Page.captureScreenshot", params).await?;
+    let data = reply["data"].as_str().ok_or("no image came back")?;
+    Ok(format!("data:image/jpeg;base64,{data}"))
+}
 
 #[cfg(test)]
 mod tests {

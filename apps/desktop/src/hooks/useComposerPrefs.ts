@@ -18,6 +18,7 @@ const SEED: ComposerPrefs = {
   useWorktree: false,
   roleDefault: null,
   roleByProject: {},
+  fast: false,
 };
 
 /// Effort is a property of the model, not of the picker: switching to Sonnet must
@@ -45,6 +46,15 @@ type ComposerPrefs = {
   /// resolution rule lives.
   roleDefault: string | null;
   roleByProject: Record<string, string | null>;
+  /// Whether a new session starts at its agent's faster, dearer tier.
+  ///
+  /// **One value, not one per model.** Effort is keyed by model because the
+  /// ladders differ and a level means different things on each; fast mode means
+  /// one thing everywhere it exists, and somebody who wants their work fast
+  /// wants it fast on whatever they switch to. Where the model or the agent has
+  /// no faster tier the pick is simply not honoured — `fastFor` answers that at
+  /// the send — rather than being forgotten and having to be made again.
+  fast: boolean;
 };
 
 /// The sticky half of the composer. Every control the user can change writes here,

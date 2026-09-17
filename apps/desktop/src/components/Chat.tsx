@@ -72,6 +72,7 @@ type ChatProps = {
   /// yet. Rendered here rather than built from the log, because a held prompt is
   /// deliberately unpersisted until it is delivered.
   queuedMessages?: QueuedPrompt[];
+  onSendNow?: () => void;
   /// Both side panes are open, so the pane is at its narrowest and the rail sits
   /// close to the text. Passed in rather than measured here: the shell owns those
   /// two toggles, and the rail overlays the transcript at every width anyway — so
@@ -160,6 +161,7 @@ export default function Chat({
   compacting = false,
   apiRetry = null,
   queuedMessages = [],
+  onSendNow,
   crowded = false,
   rail = true,
   active = true,
@@ -267,6 +269,16 @@ export default function Chat({
   //
   // Gated on what is drawn, not on what is pending, so the indicator can't slip
   // into a lingering card's window and undo the quiet it buys.
+  // On fx the orb rides *beside* the preview instead of standing in for it.
+  // Nothing closes an fx block until the next update arrives, so a message that
+  // finished streaming sits there looking finished while the model works on in
+  // silence — the reader watches a complete sentence and a dead screen, then
+  // two tool calls land at once. Every other harness earns the suppression: its
+  // preview is still growing, or a tool block has opened with arguments
+  // streaming into it, so something on screen is moving. fx's is not, and there
+  // is no way to tell its stalled preview from its slow one.
+  const orbRidesPreview = session?.harness === "fx";
+
   const waitingTurn =
     busy &&
     working &&
@@ -275,7 +287,7 @@ export default function Chat({
     cards.length === 0 &&
     lastTurn &&
     !lastTurn.completed &&
-    !streamingAny
+    (!streamingAny || orbRidesPreview)
       ? lastTurn
       : null;
 
@@ -559,29 +571,35 @@ export default function Chat({
                   editsByCallId={editsByCallId}
                   onOpenSubagent={onOpenSubagent}
                   onOpenSession={onOpenSession}
-                  // Both cover the wait for output, and never at once —
-                  // `waitingTurn` requires no streaming text. Inside the block so
-                  // they sit at the gap the committed event will occupy, rather
-                  // than the wider one between turns: the preview belongs to this
-                  // turn, not after it.
+                  // Both cover the wait for output, and on every harness but fx
+                  // never at once — `waitingTurn` requires no streaming text
+                  // there. Inside the block so they sit at the gap the committed
+                  // event will occupy, rather than the wider one between turns:
+                  // the preview belongs to this turn, not after it. Where both
+                  // draw, the orb goes under the preview, which is where the
+                  // reader is already looking and where it sits on its own.
                   footer={
-                    turn === waitingTurn ? (
-                      <WorkingIndicator tokens={working?.tokens ?? 0} />
-                    ) : turn !== streamingTurn ? (
-                      undefined
-                    ) : streamingThinking ? (
-                      // The same component the committed `reasoning` event renders
-                      // with, in its `streaming` presentation — the multi-line
-                      // preview keeps growing live; it collapses to one line once
-                      // committed.
-                      <Reasoning text={streamingThinking} encrypted={false} streaming />
-                    ) : streamingTool ? (
-                      // Must come before the text arm: a tool block leaves
-                      // `streamingText` empty, so falling through would render an
-                      // empty message where the row belongs.
-                      <StreamingToolCall {...streamingTool} />
-                    ) : (
-                      <AssistantMessage text={streamingText} streaming />
+                    turn !== streamingTurn && turn !== waitingTurn ? undefined : (
+                      <>
+                        {turn === streamingTurn &&
+                          (streamingThinking ? (
+                            // The same component the committed `reasoning` event
+                            // renders with, in its `streaming` presentation — the
+                            // multi-line preview keeps growing live; it collapses
+                            // to one line once committed.
+                            <Reasoning text={streamingThinking} encrypted={false} streaming />
+                          ) : streamingTool ? (
+                            // Must come before the text arm: a tool block leaves
+                            // `streamingText` empty, so falling through would
+                            // render an empty message where the row belongs.
+                            <StreamingToolCall {...streamingTool} />
+                          ) : (
+                            <AssistantMessage text={streamingText} streaming />
+                          ))}
+                        {turn === waitingTurn && (
+                          <WorkingIndicator tokens={working?.tokens ?? 0} />
+                        )}
+                      </>
                     )
                   }
                 />
@@ -617,7 +635,20 @@ export default function Chat({
               ),
             )}
 
-            <QueuedMessages messages={queuedMessages} />
+            {/* fx alone: it takes one prompt per turn, so a held message waits
+                out the whole turn on screen. Every other harness hands its queue
+                over at the next tool boundary, seconds away, where stopping the
+                turn to save that wait costs more than the wait.
+
+                Gated on `active` as well, which in a split is the focused pane
+                and on screen. `onSendNow` interrupts the *selected* session, so
+                an unfocused pane's button would stop somebody else's turn — and
+                the chord rides the same prop, so four mounted transcripts would
+                otherwise bind it four times. */}
+            <QueuedMessages
+              messages={queuedMessages}
+              onSendNow={session.harness === "fx" && active ? onSendNow : undefined}
+            />
 
             {backgroundTaskCount > 0 && (
               <BackgroundTasksIndicator

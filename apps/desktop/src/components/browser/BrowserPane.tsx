@@ -33,12 +33,15 @@ import {
   setPendingTab,
   useOpenError,
   setViewport,
+  snapshotPainted,
+  useBrowserSnapshot,
   useBrowserTabs,
   useChromium,
   usePendingTab,
   usePicking,
   useViewport,
   VIEWPORT_PRESETS,
+  type Snapshot as BrowserSnapshot,
   type BrowserTab,
   type LocalServer,
   type Viewport,
@@ -91,6 +94,7 @@ export default function BrowserPane({
   const pending = usePendingTab(sessionId);
   const current = pending ? null : (tabs.find((t) => t.active) ?? null);
   const viewport = useViewport(sessionId);
+  const snapshot = useBrowserSnapshot(sessionId);
   const [deviceBar, setDeviceBar] = useState(false);
   const key = useId();
   const stageRef = useRef<HTMLDivElement>(null);
@@ -168,15 +172,46 @@ export default function BrowserPane({
           // is a native view, and a DOM scroll container cannot clip it.
           <div
             ref={frameRef}
-            className="shrink-0 rounded-sm shadow-[0_0_0_1px_var(--border)]"
+            className="relative shrink-0 rounded-sm shadow-[0_0_0_1px_var(--border)]"
             style={{
               width: `min(${viewport.width}px, 100%)`,
               height: `min(${viewport.height}px, 100%)`,
             }}
-          />
-        ) : null}
+          >
+            <Snapshot of={snapshot} />
+          </div>
+        ) : (
+          <Snapshot of={snapshot} />
+        )}
       </div>
     </div>
+  );
+}
+
+/// Stands in for the native view while a modal has it hidden, and while a
+/// shot is under way. Fills the same rect the view did, so the capture
+/// lands with no scaling.
+///
+/// **A shot draws this and nothing else.** A scrim and a camera sat over it
+/// for a while, and they were the only thing anybody could see: the still
+/// is the page, pixel for pixel, so freezing it is invisible by
+/// construction and anything drawn on top is a flash where there was none.
+/// A screenshot is not an event the reader has to be told about — they
+/// asked for it, and the file lands in the transcript.
+function Snapshot({ of }: { of: BrowserSnapshot | null }) {
+  if (!of?.url) return null;
+  return (
+    <img
+      src={of.url}
+      alt=""
+      className="absolute inset-0 h-full w-full"
+      onLoad={(e) => {
+        void e.currentTarget
+          .decode()
+          .catch(() => undefined)
+          .then(() => snapshotPainted(of));
+      }}
+    />
   );
 }
 
