@@ -5,6 +5,18 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.6
+
+### Added
+
+- **The PR tab says how to turn pull requests on.** Without the GitHub
+  CLI the tab simply vanished, so nothing said that one install puts
+  pull requests on screen. It now stays, draws the command to run with
+  a copy button, and a terminal to paste it into.
+- **Dray can ask you a question in the app.** A short survey card may
+  appear for installs with usage reporting on; turning reporting off in
+  Settings turns it off too.
+
 ## 0.20.5
 
 ### Fixed
