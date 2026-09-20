@@ -10,6 +10,7 @@ import {
   Palette,
   Plug,
   Server,
+  Timer,
   type LucideIcon,
 } from "lucide-react";
 
@@ -60,10 +61,12 @@ import {
   pickFileOpener,
 } from "@/lib/openWith";
 import ProviderSettings from "@/components/settings/ProviderSettings";
+import AutomationsSettings from "@/components/settings/AutomationsSettings";
 import ShortcutsSettings from "@/components/settings/ShortcutsSettings";
 import SpacesSettings from "@/components/settings/SpacesSettings";
 import TranscriptionSettings from "@/components/settings/TranscriptionSettings";
 import { useTranscriptionSettings } from "@/hooks/useTranscription";
+import { useAutomations } from "@/hooks/useAutomations";
 import { IS_MAC } from "@/lib/platform";
 import { hasLightMode, THEMES, type ThemeMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -162,6 +165,7 @@ export default function SettingsDialog({
 }) {
   const { settings, setAnalyticsEnabled } = useAppSettings(open);
   const transcription = useTranscriptionSettings(open);
+  const automations = useAutomations(open);
   // Both reads are owned here rather than by the sections that draw them, and
   // that is only so they can start when this dialog opens: a body is built when
   // the reader reaches its tab, so a read living there left the tab blank for as
@@ -259,6 +263,17 @@ export default function SettingsDialog({
                 onSelectModel={transcription.selectModel}
                 onSelectDevice={transcription.selectDevice}
                 onSetMute={transcription.setMute}
+              />
+            ),
+            automations: (
+              <AutomationsSettings
+                automations={automations.automations}
+                models={models}
+                projects={projects}
+                error={automations.error}
+                onCreate={automations.create}
+                onRemove={automations.remove}
+                onSetEnabled={automations.setEnabled}
               />
             ),
             sourceControl: <SourceControlSettings {...sourceControl} />,
@@ -1330,6 +1345,10 @@ const SETTINGS_TABS = [
   "appearance",
   "spaces",
   "transcription",
+  // After the two setup screens and before the connections: an automation is
+  // something a reader turns on once they know what they want repeated, which is
+  // later than either of those and earlier than wiring a tracker up.
+  "automations",
   // Beside Integrations rather than inside it: both are "things that leave the
   // machine", and this one is what the pull-request screens run on. It is the
   // only place that can answer why they will not load.
@@ -1354,6 +1373,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   shortcuts: "Shortcuts",
   spaces: "Spaces",
   transcription: "Transcription",
+  automations: "Automations",
   sourceControl: "Source control",
   integrations: "Integrations",
   about: "About",
@@ -1495,6 +1515,7 @@ const SECTION_ICONS: Record<SettingsTab, LucideIcon> = {
   appearance: Palette,
   spaces: Layers,
   transcription: Mic,
+  automations: Timer,
   sourceControl: GitBranch,
   integrations: Plug,
   shortcuts: Keyboard,

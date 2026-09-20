@@ -4,10 +4,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { tracked } from "@/lib/slow";
 import type { PrListItem, PrListState, PrUnavailable } from "@/types/events";
 
-/// How long a listing is trusted. The same window the panel's own read uses, and
-/// for the same reason: `gh` costs the better part of a second, and a reader
-/// stepping between the page and a session should not pay for it twice.
-const FRESH_MS = 30_000;
+/// How long a listing is trusted before the page asks again.
+///
+/// **An hour, and that is the point of reading at launch.** `gh` costs the better
+/// part of a second and the page reads one listing per repository, so the shell
+/// makes that read when the app opens — and a window measured in seconds would
+/// make the reader pay for it again the moment they arrived. The trade is stated:
+/// a listing left on screen overnight is asked for again rather than believed,
+/// and `Refresh` is the way to ask sooner. A write invalidates regardless, and
+/// the sidebar's own marks poll on their own clock, so a pull request that
+/// changed still shows up there before anybody presses anything.
+const FRESH_MS = 60 * 60_000;
 
 type Page = { items: PrListItem[]; viewer: string | null };
 type Cached = Page & { at: number };
@@ -106,11 +113,23 @@ export function usePrList(
             // is stale by construction — the search box types faster than `gh`.
             if (latest.get(page) !== seq) return;
             cache.set(page, { ...answer, at: Date.now() });
+            // **A failure is let go the moment a read succeeds.** Kept, it
+            // outlives the blip that caused it, and `merged` checks failures
+            // *before* the cache — so a repository that answered a second ago
+            // would still be counted as one that never did, and the page would
+            // stay on "could not be read" until relaunch.
+            failed.delete(page);
           } catch (e) {
             if (latest.get(page) !== seq) return;
             // Kept as a failure per repository rather than thrown: one repo this
             // `gh` cannot answer for must not take the others off the screen.
-            cache.set(page, { items: [], viewer: null, at: Date.now() });
+            //
+            // **And nothing is cached.** An empty answer written here is *fresh*
+            // for the whole window, so the failure would be believed until it
+            // ran out and no read would be attempted in the meantime — a
+            // transient timeout turned into a minute, or an hour, of "no
+            // repository here". `failed` is what stops a respawn; there is no
+            // answer to serve, so none is written.
             failed.set(page, e);
           }
         }),
@@ -141,6 +160,56 @@ export function usePrList(
   };
 }
 
+/// The one state worth reading before anybody asks for it.
+///
+/// **The state a reader switches to is the one they wait on**, because the page
+/// reads a listing per repository and a listing is a `gh` spawn. `open` — the
+/// default, and what the inbox's own merged list reads — is fetched by the shell
+/// at launch; `all` is the one they pick next, and it is fetched here so the
+/// switch is a filter over rows that are already in hand. The other two are
+/// left alone deliberately: a launch that reads four states per repository is
+/// four spawns per repository, and `merged` or `closed` reached first still
+/// waits, which is the trade this makes rather than hiding.
+const PREFETCH_STATE: PrListState = "all";
+
+/// Reads the state above for every repository, into the same cache the page
+/// reads, and returns before any of it lands.
+///
+/// Called once from the shell, so the page does not have to be visited for the
+/// work to have happened — `Refresh` is then the only thing that ever waits, and
+/// it says so while it does.
+export async function prefetchPrList(cwds: string[]): Promise<void> {
+  const now = Date.now();
+  await Promise.all(
+    cwds.map(async (cwd) => {
+      const key = pageKey(cwd, PREFETCH_STATE, "");
+      const hit = cache.get(key);
+      if (hit && now - hit.at < FRESH_MS) return;
+
+      const seq = (latest.get(key) ?? 0) + 1;
+      latest.set(key, seq);
+
+      try {
+        const answer = await invoke<Page>("list_pull_requests", {
+          cwd,
+          state: PREFETCH_STATE,
+          search: null,
+        });
+        // A newer read for this key has already answered, so this one is stale
+        // by construction — the same guard the page's own read makes.
+        if (latest.get(key) !== seq) return;
+        cache.set(key, { ...answer, at: Date.now() });
+        failed.delete(key);
+      } catch (e) {
+        if (latest.get(key) !== seq) return;
+        // The failure alone, for `read`'s reason: an empty answer cached here
+        // would be trusted for the whole window and this would never ask again.
+        failed.set(key, e);
+      }
+    }),
+  );
+}
+
 /// The rows from every repository's cached answer, already merged and ordered.
 ///
 /// A repository with no answer contributes nothing rather than an error: the page
@@ -158,10 +227,10 @@ function merged(cwds: string[], state: PrListState, query: string): State {
     const key = pageKey(cwd, state, query);
 
     // **A failure is checked before the cache, and that ordering is the whole
-    // of it.** A read that threw also caches an empty answer — that is what
-    // stops it spawning `gh` again on every render — so looking the cache up
-    // first counted the repository as one that had answered, `misses` stayed at
-    // zero, and the sentence below the rows could not draw at all.
+    // of it.** A stored failure outranks whatever the cache holds for that key:
+    // the entry it *does* hold is the last good answer, and looking that up
+    // first counted the repository as one that had answered — `misses` stayed at
+    // zero and the sentence below the rows could not draw at all.
     if (failed.has(key)) {
       // **A directory that is not a GitHub repository is not a failed read.**
       // A project is a directory, and one of them being a scratch folder — or a
@@ -228,7 +297,13 @@ function basename(path: string): string {
 /// over, and this is the sentence under the rows that a reader actually reads.
 /// The kind is spelled out for the same reason: `no_cli` is a slug and "no cli"
 /// is a phrase.
-function describe(e: unknown): string {
+/// The one sentence a failed repository contributes, from the refusal rather
+/// than from its `String`.
+///
+/// Exported because the runs list makes the same sentence out of the same
+/// refusals, an earlier copy of this file used `String(e)` and printed
+/// `[object Object]` under the rows.
+export function describe(e: unknown): string {
   const refusal = asUnavailable(e);
   return refusal.kind === "other" ? refusal.detail : refusal.kind.replace(/_/g, " ");
 }

@@ -36,10 +36,16 @@ export const ISSUE_LIST_LIMIT = 100;
 /// whole phrase gets typed before the answer is wanted.
 const DEBOUNCE_MS = 300;
 
-/// How long an answer counts as fresh. Leaving the page and coming back inside
-/// this window paints from the cache without a round trip, which is the trip
-/// this page exists to make — pick an issue, go work, come back.
-const FRESH_MS = 60_000;
+/// How long an answer counts as fresh. Leaving the page and coming back paints
+/// from the cache without a round trip, which is the trip this page exists to
+/// make — pick an issue, go work, come back.
+///
+/// **An hour, on the same reasoning the pull request listing uses.** The shell
+/// reads both halves when the app opens, so a window measured in seconds would
+/// spend that read for nothing and make the reader wait on arrival anyway;
+/// `Refresh` and `forgetIssues` — which any write and any connection change
+/// calls — are the two ways an answer is thrown away sooner.
+const FRESH_MS = 60 * 60_000;
 
 /// Answers per query, kept across mounts.
 ///
@@ -243,9 +249,9 @@ function patched<T extends { state: IssueState; priority: IssuePriority }>(
 /// then the new one again once the reconcile lands.
 ///
 /// It was tempting to read the stamp as "when the tracker last told us", which
-/// this is not — but `FRESH_MS` is a minute, so on any list older than that the
-/// race is not a race at all, it happens every time. Stamped, nothing goes out
-/// until the write says so.
+/// this is not — it is "when we last repainted", and it is deliberately *fresh*
+/// so nothing goes out until the write says so. A window that has since grown to
+/// an hour only widens that guard; the reconcile is what reads the truth back.
 ///
 /// **Everything is matched on the stable id, bodies included** — the identifier
 /// is a cache *slot*, never an identity. One issue can occupy two slots at once

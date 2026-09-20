@@ -2630,6 +2630,21 @@ export type TrackerAccount = { tracker: IssueTracker, userId: string, userName: 
  */
 export type TranscribeOutcome = { "kind": "text", "value": string } | { "kind": "needsModel", "value": { audioPath: string | null, } } | { "kind": "noAudio" } | { "kind": "empty" } | { "kind": "failed", "value": { message: string, audioPath: string | null, } };
 
+export type TranscriptMatch = { sessionId: string, 
+/**
+ * The session's title, so a row draws without a second read.
+ */
+title: string, 
+/**
+ * Position in that session's log — the ordering key, and what a reader
+ * would need to be taken to the sentence.
+ */
+seq: number, 
+/**
+ * The words around the hit, elided at both ends where they were cut.
+ */
+snippet: string, };
+
 /**
  * One downloadable model.
  *
@@ -2824,6 +2839,108 @@ defaultBranch: string | null,
  * over-offering costs a wasted click and under-offering hides the action.
  */
 aheadOfBase: number | null, };
+
+/**
+ * One job in a run, and how far it got.
+ */
+export type WorkflowJob = { id: number, 
+/**
+ * The job's key in the workflow file, which is also what GitHub's own page
+ * heads the block with (`build`, `release`).
+ */
+name: string, status: string, conclusion: string | null, 
+/**
+ * When a runner picked it up. **Not a proxy for "it ran"** — a job skipped
+ * by its own `if:` carries a stamp here too, and its empty step list is what
+ * says it did nothing.
+ */
+startedAt: string | null, completedAt: string | null, 
+/**
+ * **Empty is a fact, not a gap.** A job skipped by an `if:` has no steps at
+ * all, and a list that drew it as "no steps reported" would be guessing at
+ * which of the two it was.
+ */
+steps: Array<WorkflowStep>, };
+
+/**
+ * One workflow run, as the Actions row draws it.
+ *
+ * **A row's worth and no more.** Which step failed, what artifact it left and
+ * how long each job took are all one `gh run view` away, and a page that read
+ * them for thirty runs would be thirty spawns for facts nobody scrolls past —
+ * the same bargain [`PrListItem`] makes against [`PullRequest`].
+ *
+ * `status` and `conclusion` ride GitHub's own words rather than a fold, because
+ * there is nothing to fold: one run has one of each, and the mapping to a glyph
+ * and a colour is the frontend's — the split [`PrListItem::state`] makes.
+ */
+export type WorkflowRun = { 
+/**
+ * GitHub's own id for the run: what a re-run or a cancel would address, and
+ * what the row is keyed by. Not the number, which is unique only within its
+ * workflow.
+ */
+id: number, 
+/**
+ * The run's number within its workflow — the `#70` GitHub's own page shows.
+ */
+number: number, 
+/**
+ * Which attempt this is. A re-run increments it, so `2` is a run that failed
+ * once and was asked again; drawn only above one.
+ */
+attempt: number, 
+/**
+ * The workflow's name as the repository declares it (`Release`, `Warm
+ * cache`).
+ */
+workflow: string, 
+/**
+ * What the run is about: the commit subject it was started for, or the
+ * workflow's own name for a run GitHub starts on its own behalf
+ * (`pages build and deployment`).
+ */
+title: string, branch: string, sha: string, 
+/**
+ * What asked for it — `push`, `pull_request`, `workflow_dispatch`,
+ * `schedule`, or `dynamic` for GitHub's own.
+ */
+event: string, 
+/**
+ * `queued`, `in_progress`, `completed`, as GitHub spells them.
+ */
+status: string, 
+/**
+ * `success`, `failure`, `cancelled`, `skipped`, `timed_out`… and `None`
+ * while the run has not finished, which is not the same fact as a
+ * conclusion nobody has given.
+ */
+conclusion: string | null, createdAt: string, 
+/**
+ * When a runner picked it up. `None` while it is still queued, which is the
+ * whole difference between waiting for a machine and running on one.
+ */
+startedAt: string | null, 
+/**
+ * When it last moved — the end of the run, for one that has finished.
+ */
+updatedAt: string, url: string, };
+
+/**
+ * Everything `gh run view` knows about one run, which is a row plus its jobs.
+ *
+ * **One extra spawn, and only for the run the reader asked about.** Which step
+ * failed is the question a red row raises, and the answer is a job list the
+ * listing does not carry: thirty of those would be thirty `gh run view` calls
+ * for a pane that shows one.
+ */
+export type WorkflowRunDetail = { run: WorkflowRun, jobs: Array<WorkflowJob>, };
+
+/**
+ * One step of a job. Steps are not addressable — nothing re-runs or cancels one
+ * — so this is the number the run's own page shows, and nothing else.
+ */
+export type WorkflowStep = { number: number, name: string, status: string, conclusion: string | null, startedAt: string | null, completedAt: string | null, };
 
 /**
  * What removing this worktree would cost, read once so the dialog and the

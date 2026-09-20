@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckCheck, ChevronDown, CircleDashed, CircleDot, GitBranchPlus, GitPullRequest, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
+import { Check, CheckCheck, ChevronDown, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
 
 import PrStateIcon, { prStateLabel } from "@/components/PrStateIcon";
@@ -94,24 +94,22 @@ type SidebarProps = {
   /// The reader has made a group at some point, so the drag needs no teaching.
   splitLearned: boolean;
   onNewSession: () => void;
-  /// Opens the plugins page in the main column, on the same terms as the two
+  /// Opens the plugins page in the main column, on the same terms as the row
   /// below: not a session, so the selection does not move and coming back lands
   /// on the session that was open before.
   onOpenPlugins: () => void;
-  /// Opens the issues page in the main column. It is not a session, so it does
-  /// not move the selection — coming back from it lands on the session that was
-  /// open before.
-  onOpenIssues: () => void;
-  onOpenPrs: () => void;
-  /// The plugins page is the thing on screen, on the same terms as the two below.
+  /// The one list across both trackers, and the only row the two pages that own
+  /// an issue or a pull request have — they are reached from a row inside it,
+  /// never from here. Not a session, so it does not move the selection: coming
+  /// back from it lands on the session that was open before.
+  onOpenInbox: () => void;
+  /// The plugins page is the thing on screen, on the same terms as the row below.
   pluginsOpen: boolean;
-  /// The issues page is the thing on screen, so the row draws as the current
-  /// one. Read here rather than derived from the selection, which the page
-  /// deliberately leaves alone.
-  issuesOpen: boolean;
-  /// The pull-requests page, on the same terms: what is on screen, not what is
-  /// selected.
-  prsOpen: boolean;
+  /// **The inbox, or one of the two pages it launches into.** They are one
+  /// destination as far as this column is concerned, and the row has to stay lit
+  /// across all three: a reader who has just opened an issue from the inbox sees
+  /// no other mark saying where they are, and this is also the way back.
+  inboxActive: boolean;
   onSetFlags: (
     sessionId: string,
     flags: { archived?: boolean; pinned?: boolean },
@@ -851,10 +849,8 @@ export default function Sidebar({
   onNewSession,
   onOpenPlugins,
   pluginsOpen,
-  onOpenIssues,
-  onOpenPrs,
-  issuesOpen,
-  prsOpen,
+  onOpenInbox,
+  inboxActive,
   onSetFlags,
   onFork,
   onDelete,
@@ -1053,12 +1049,12 @@ export default function Sidebar({
           <ShortcutKeys ids={["session.new"]} className="ml-auto" />
         </Button>
 
-        {/* Above Issues, which is where it was asked for and where it reads as
-            what the agent brings with it rather than as one more list of work.
-            Drawn whether or not the agent has Skills to show: the page's own
-            empty state is where that is said, and a row that appears only once
-            there is something behind it can only be found by people who did not
-            need it — the bargain the two lists below make. */}
+        {/* Above the inbox, which is where it was asked for and where it reads
+            as what the agent brings with it rather than as one more list of
+            work. Drawn whether or not the agent has Skills to show: the page's
+            own empty state is where that is said, and a row that appears only
+            once there is something behind it can only be found by people who did
+            not need it — the bargain the inbox row below makes. */}
         <Button
           variant="ghost"
           size="sm"
@@ -1071,37 +1067,22 @@ export default function Sidebar({
           <ShortcutKeys ids={["plugins.open"]} className="ml-auto" />
         </Button>
 
-        {/* Under New Task, because it is the other way a task starts — an
-            issue is a task somebody already wrote down. Drawn whether or not a
-            tracker is connected: the page's own empty state is where connecting
-            is offered, and a row that only appears once you have found the
-            settings dialog can only be found by people who did not need it. */}
+        {/* The one list across both trackers, and the question a reader opens
+            this column with: what wants me, now. A launcher rather than a third
+            workplace — a row goes to the page that owns it — so **it is the only
+            row either of those pages has**. Their own rows stood here once, and
+            a reader who went straight to Issues never saw the list that answers
+            both trackers at once. */}
         <Button
           variant="ghost"
           size="sm"
-          onClick={onOpenIssues}
-          data-active={issuesOpen || undefined}
+          onClick={onOpenInbox}
+          data-active={inboxActive || undefined}
           className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground"
         >
-          <CircleDot />
-          Issues
-          <ShortcutKeys ids={["issues.open"]} className="ml-auto" />
-        </Button>
-
-        {/* And the other list a reader comes here for. The session's own tab
-            answers "where did this branch's work land"; this answers "what is
-            open in this repository", which is the question when the branch in
-            front of them has no pull request at all. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onOpenPrs}
-          data-active={prsOpen || undefined}
-          className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground"
-        >
-          <GitPullRequest />
-          Pull requests
-          <ShortcutKeys ids={["prs.open"]} className="ml-auto" />
+          <Inbox />
+          Inbox
+          <ShortcutKeys ids={["inbox.open"]} className="ml-auto" />
         </Button>
 
         {/* The button *becomes* the field, on the same row at the same height:

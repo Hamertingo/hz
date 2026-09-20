@@ -18,6 +18,7 @@ macro_rules! fail {
 
 pub mod analytics;
 mod automations;
+pub mod search;
 pub mod apps;
 pub mod attachments;
 pub mod binpath;
@@ -1070,6 +1071,7 @@ pub fn run() {
             automations::create_automation,
             automations::delete_automation,
             automations::set_automation_enabled,
+            search::search_transcripts,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_open,
             #[cfg(all(feature = "cef", target_os = "macos"))]
@@ -1173,6 +1175,9 @@ pub fn run() {
             github::prs_for_branch,
             github::pr_marks,
             github::list_pull_requests,
+            github::list_workflow_runs,
+            github::get_workflow_run,
+            github::rerun_workflow,
             github::merge_pr,
             github::delete_branch,
             github::reopen_pr,

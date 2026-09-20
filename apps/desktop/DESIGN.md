@@ -197,6 +197,46 @@ Glyph sit **beside rail, ahead of title**, and take **no room when absent** — 
 
 **Table cell wrap `anywhere`, and that fix belong to [Markdown](src/components/chat/Markdown.tsx) not to panel.** Streamdown table = `w-full` under `overflow-x-auto` wrapper, so cell that can't break set table's width: one file path in bot's "Files Changed" table pushed every other column off pane. `anywhere` not `break-word` — only `anywhere` shrink cell's *min-content* width, which what auto layout measure. Header cell need its `whitespace-nowrap` lifted first, or rule dead there. Cell also `align-top`. Wrapper keep own scroll for table genuinely wide.
 
+## The inbox
+
+**A source row with marks and counts, and it is the plugins page's own row.** Ghost buttons whose active one takes `--sidebar-selected`, a count in a smaller tabular face, and no track — a well with a thumb is for a *mode* inside one surface, where this is a place to go. What is new here is only the mark: a logo is the one thing that says *which* half of a two-tracker list you are in before the word is read, and everywhere else in the app the host is deliberately unsaid. The counts belong on this row for the plugins page's reason — it is the only row on screen under all three lists — and they are read in **one** place, by the shell, or the same row would say three different things on three screens.
+
+**The merged row is the pull-requests row, widened.** Two lines, the same card, the same `--surface-selected` hover, the same dot-separated meta line and the same hover-revealed external link, because a reader who has read one of these lists has read the other. What differs is what the first line's right edge holds: the pull-requests page puts a *verdict* there (a glyph for an approval, a word for a change request) and the inbox puts the one thing that made the row worth drawing — a chip, tinted with `--destructive` or `--accent-add` on a hairline, never filled. It is the only coloured thing on a row, and most rows wear none.
+
+**A row says nothing where there is nothing to say.** A draft's own glyph, an issue's state glyph and an open pull request nobody has to act on all leave a bare right edge — the pull-requests list's "review required is the absence of a verdict" rule, one field over. So does an issue that is merely assigned: its state is already the glyph at the row's left, and a word repeating it spends the scarcest strip on the row. Checks still running are the sidebar's own dashed arc at its own 3s turn, one fact in one shape across the app.
+
+**A note replaces the empty sentence rather than sitting over one.** A tracker that could not be read says nothing about whether work is in flight, so "Nothing is in flight" under a banner naming the failure is a claim that banner has just contradicted. A narrowing with nothing left in it is a third sentence again — "Nothing matches that." — because an empty list and an emptied list send the reader to different places.
+
+**Both states are drawn from the real row's own boxes.** The waiting placeholders are its title bar and its meta bar, ragged, in `em` against `text-ui`, so the rows land in the space the wait already took; the empty state is the list's own glyph above one centred sentence, muted a step below it so the words are still what is read.
+
+## Actions
+
+**The sub-tab row is the inbox's own row, one rung down.** `TabButton` again, with the counts the two reads give it — the pull requests on screen and the runs behind the other tab — because it is the same question the source row asks and there is exactly one control in this app that asks it. Two rows of the same shape stacked is not repetition that reads as noise: the top one is *which tracker*, the second *which of that tracker's two lists*, and the counts are what keep them apart.
+
+**A run in flight spins the sidebar's own dashed arc; a verdict is a filled dot.** One fact wears one glyph across the app, so "something is going" is the arc the marks and the session's checks already use, at its own 3s turn — dimmed while the run is only queued, which is the difference between waiting for a machine and running on one. A finished run is filled and green or red; a cancelled or skipped one is a **ring**, because "finished without a verdict" and "passed" must not look the same at a glance. The word beside it carries the meaning, as it does everywhere here.
+
+**The workflow is muted and the title is not.** A row answers "which workflow" once and "what was this for" every time: the workflow is a word the reader already knows from looking, where the commit subject is new information each row. So the muted end of the line leads and the medium weight follows it.
+
+**Two durations, and which one a row wears is whether it is still going.** A finished run takes `formatDuration`'s tenth of a second under a minute, because that is where 2.3s and 2.8s differ; a live one takes `formatElapsed`'s whole seconds, because it is redrawn on every poll and a tenth would only ever be noise. The line the number sits on is the same right edge the reason and the timestamp hold in every other list.
+
+**The pane is opened by the row, and it is the pane rather than a dialog.** Which step failed is read *against* the list it came from — the run above it, the branch below it — and a dialog would take both off the screen for a question that is answered by looking at them. One run at a time, where the pull request strip holds several: a run is read at one moment and answered once, so a pick replaces rather than adds.
+
+**The facts are chips, and the label is an icon.** Branch, commit, trigger, when — they are *looked up* one at a time, so they want to be separable at a glance rather than read in order. A labelled column spends a third of a pane that can be 320px wide on words an icon says in twelve pixels, and then truncates the values it kept the room for. The word the icon stands for rides the chip's tooltip, so nothing is lost to a reader who cannot see it.
+
+**The verdict is a word in a pill; the house style is a word in a colour.** Everywhere else in this app a state is coloured text. Here it is the one thing on the pane a reader opened the pane for, so it takes a fill and a hairline — the same shape the inbox's reason chip wears, for the same reason: it is the only coloured thing on the surface.
+
+**The waterfall is positioned, not laid out.** Each segment carries `left` and `width` as percentages on an absolutely positioned element. A flex row of widths with a `margin-left` per step *looks* equivalent and is not: a margin in a flex row adds to where the item before it **ended**, so per-step offsets compound — four steps pushed the fifth past the end of the bar and flex shrank all five to nothing, which renders as a bar that is simply empty. Position is a coordinate here, which is the one thing a waterfall is.
+
+**Passing is drawn under the failures, never beside them in weight.** A fourteen-step job is mostly green; at full strength that green drowns the one red segment the reader opened the pane for, so green rides at 60% and the track is `--surface-well` rather than a second colour.
+
+**A step's `Run ` prefix comes off, and only on the row.** GitHub labels a step `Run <command>` — and `Post Run <command>` for the teardown an action leaves — because in the workflow file it *is* a `run:`. On a row it is part of speech rather than information, and it is the same on every second line of a real job. **Display only**: the tooltip carries the name whole, so a reader copying it gets the repository's own words.
+
+**A failure is not filed with the passes.** The list's groups are In flight, Failed and Finished rather than live and finished: the question CI is opened with is "did what I pushed pass", and the answer is a red row — so the failures are gathered where the eye lands instead of being sorted chronologically among thirty green ones. `Finished` is then what is left, which is the shape of the answer rather than a bin.
+
+**Every step is drawn, and a skipped one is muted rather than timed.** The steps around a failure are what tell a change from a runner — a setup that took forty minutes, a step the workflow skipped — so a list holding only the red one hides the evidence the reader opened the pane for. A skipped step gets no duration at all: it carries a start and an end like any other, so measuring it would print `0s` on every row nobody ran, which reads as a measurement rather than the absence of one.
+
+**Steps hang off a rule one step in.** The nesting the pull request pane's review threads use, for the same reason: an indent alone leaves them looking like siblings of the job above.
+
 ## The pull-requests list
 
 **Two lines, and the split is the sort.** Title on the first, with the three facts about the *change* beside it — the verdict on it, whether CI is still going, its size — because those are what the reader is choosing between. Who wrote it, which branch it came from and when it moved drop to the second: context for a row already chosen, and on the first line they compete with the titles.

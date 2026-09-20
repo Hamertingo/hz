@@ -7,7 +7,9 @@ import type { ShortcutId } from "@/lib/shortcuts";
 /// looks like it worked and did nothing is the one failure a palette must not
 /// have. Every row here is something the shell can actually do right now.
 export type PaletteItem = {
-  kind: "action" | "session" | "project" | "space";
+  /// `match` is a sentence found inside a session's log rather than a place to
+  /// go: the reader typed a word they remember and the row is where it was said.
+  kind: "action" | "session" | "project" | "space" | "match";
   /// Unique across the list — a session id, a project path, a shortcut id.
   id: string;
   label: string;
@@ -27,6 +29,9 @@ const KIND_LABEL: Record<PaletteItem["kind"], string> = {
   session: "session",
   project: "project",
   space: "space",
+  // "message" rather than "match": the row is a sentence somebody wrote, and
+  // this is the word the reader has for it.
+  match: "message",
 };
 
 export function kindLabel(kind: PaletteItem["kind"]): string {

@@ -43,8 +43,11 @@ import { LabelChip, LabelDot } from "@/components/LabelChip";
 import PrPanel from "@/components/PrPanel";
 import PrStateIcon from "@/components/PrStateIcon";
 import Tab from "@/components/Tab";
+import RunsView from "@/components/RunsView";
+import { TabButton, TabRow } from "@/components/TabRow";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { prKey, usePrList, type PrRow } from "@/hooks/usePrList";
+import { useWorkflowRuns, type RunRow } from "@/hooks/useWorkflowRuns";
 import { usePullRequest } from "@/hooks/usePullRequest";
 import { loginAvatar } from "@/lib/avatar";
 import { relativeTime } from "@/lib/format";
@@ -99,13 +102,21 @@ import type { PrListItem, PrListState, PrUnavailable } from "@/types/events";
 /// more than one is listed — two checkouts of one project each have their own
 /// `feature` branch, so a title alone cannot say which one a row is.
 export default function PrsView({
+  tabs,
   cwds,
   active,
   picked,
   onPick,
   onClose,
   refreshRef,
+  pickedRun,
+  onPickRun,
 }: {
+  /// The inbox's source row, drawn at the top of this page rather than only on
+  /// the inbox: all three wear it, so a reader switches between them without
+  /// going back through the sidebar. Taken as a node, the seam `RightPanel` uses
+  /// for its own tab strip — the row is the shell's, its place is this page's.
+  tabs?: ReactNode;
   /// The repositories to list, in the order the app knows them.
   cwds: string[];
   active: boolean;
@@ -119,13 +130,58 @@ export default function PrsView({
   /// reason: the page owns the read and the rest of the app only presses a
   /// button.
   refreshRef?: MutableRefObject<(() => void) | null>;
+  /// The run whose detail the right pane is showing, and the pick that sets it.
+  /// Held by `App` for the pane's reason: the pane is drawn beside this page,
+  /// so a pick this page kept to itself could not open it.
+  pickedRun: RunRow | null;
+  onPickRun: (run: RunRow | null) => void;
 }) {
   const [filters, setFilters] = useState<PrFilters>(DEFAULT_FILTERS);
+
+  /// **Two lists, one page, and the sub-tab is which of them has the frame.**
+  /// Pull requests is where the page opens and the reason it exists; Actions is
+  /// the same repository's CI, which is the other question a branch raises.
+  const [section, setSection] = useState<"prs" | "actions">("prs");
+  /// Which branch the runs are asked about. `null` is all of them, and it is the
+  /// one facet that reaches the host: `gh run list --branch` is server-side.
+  const [runBranch, setRunBranch] = useState<string | null>(null);
+
+  /// **Read while either sub-tab is up, not only while Actions is.** The count on
+  /// the row comes out of it, and a count meaning "not read yet" is worse than no
+  /// count at all; it also makes pressing the tab instant, since the read the
+  /// reader is about to want has already been made. One `gh run list` per
+  /// repository, trusted for a minute and polled only while something is in
+  /// flight — see [useWorkflowRuns](../hooks/useWorkflowRuns.ts).
+  const runs = useWorkflowRuns(cwds, active, runBranch);
   const { items, viewer, error, failed, loading, refresh, invalidate } = usePrList(
     cwds,
-    active,
+    // Paused while the runs are the body on screen: a listing nobody is looking
+    // at is a spawn per keystroke elsewhere, and the rows stay drawn from the
+    // cache either way.
+    active && section === "prs",
     filters.state,
     filters.query,
+  );
+
+  /// The row both bodies draw, with the counts the two reads give it.
+  const subTabs = (
+    <TabRow>
+      <TabButton
+        active={section === "prs"}
+        label="Pull requests"
+        count={items.length}
+        onClick={() => {
+          setSection("prs");
+          onPickRun(null);
+        }}
+      />
+      <TabButton
+        active={section === "actions"}
+        label="Actions"
+        count={runs.runs.length}
+        onClick={() => setSection("actions")}
+      />
+    </TabRow>
   );
 
   const rows = useMemo(
@@ -145,7 +201,9 @@ export default function PrsView({
 
   // Published rather than called: the reader's ⌘R reaches the page through this,
   // and so does a write made in the pane beside it.
-  if (refreshRef) refreshRef.current = invalidate;
+  // ⌘R reaches whichever body is up: one chord, and the page is what knows
+  // which of the two the reader is looking at.
+  if (refreshRef) refreshRef.current = section === "actions" ? runs.refresh : invalidate;
 
   // **"No GitHub repository here" is a state, not a failure.** The red line is
   // for reads that went wrong; a project that is a scratch folder, or a
@@ -154,12 +212,19 @@ export default function PrsView({
   // unattached case uses, with the path named so the reader knows which project
   // it means.
   if (!cwds.length || error?.kind === "no_remote") {
+    // The source row is drawn even here: it is how the reader leaves, and a
+    // state with nothing to press would be the one screen with no way off it.
     return (
-      <Empty>
-        {error?.kind === "no_remote"
-          ? unavailable(error, cwds[0])
-          : "Attach a project with a GitHub remote to see its pull requests here."}
-      </Empty>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="flex shrink-0 flex-col gap-2.5 border-b border-border px-4 py-3">
+          {tabs}
+        </header>
+        <Empty>
+          {error?.kind === "no_remote"
+            ? prUnavailableText(error, cwds[0])
+            : "Attach a project with a GitHub remote to see its pull requests here."}
+        </Empty>
+      </div>
     );
   }
 
@@ -168,9 +233,11 @@ export default function PrsView({
   // under the reader costs more than the second it takes to answer.
   const firstRead = loading && !rows.length;
 
-  return (
+  const pullRequests = (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 flex-col gap-2.5 border-b border-border px-4 py-3">
+        {tabs}
+        {subTabs}
         <div className="flex items-center gap-2">
           <h2 className="text-ui font-medium">Pull requests</h2>
           <span className="min-w-0 truncate text-ui text-muted-foreground">
@@ -252,7 +319,7 @@ export default function PrsView({
         {error && (
           <div className="mx-1 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-ui text-destructive">
             <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-            <span className="min-w-0">{unavailable(error, cwds[0])}</span>
+            <span className="min-w-0">{prUnavailableText(error, cwds[0])}</span>
           </div>
         )}
 
@@ -318,6 +385,34 @@ export default function PrsView({
       <span className="sr-only" role="status">
         {items.length} pull requests
       </span>
+    </div>
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* **Hidden, not unmounted, both ways.** Switching sub-tabs costs neither
+          body its scroll position or its filters, the bargain every hidden body
+          in this app makes — and only the one on screen reads, so the other's
+          hooks are paused rather than unmounted. */}
+      <div className={cn("flex min-h-0 flex-1 flex-col", section === "actions" && "hidden")}>
+        {pullRequests}
+      </div>
+      <div className={cn("flex min-h-0 flex-1 flex-col", section !== "actions" && "hidden")}>
+        <RunsView
+          tabs={
+            <>
+              {tabs}
+              {subTabs}
+            </>
+          }
+          cwds={cwds}
+          runs={runs}
+          branch={runBranch}
+          onBranch={setRunBranch}
+          picked={pickedRun}
+          onPick={onPickRun}
+        />
+      </div>
     </div>
   );
 }
@@ -404,7 +499,12 @@ export function PrDetail({
 /// all, so "this repository has no GitHub remote" was said about a folder that
 /// is not one — with every repository inside it having exactly the remote the
 /// sentence denied. Naming the path is what makes the difference visible.
-function unavailable(error: PrUnavailable, cwd: string): string {
+///
+/// Exported for the inbox, whose pull request half is this same read: a machine
+/// with no `gh` would otherwise say "Nothing is in flight" about a list that was
+/// never read. The setup pane this page draws for that case stays here — an
+/// install is not something a one-line list can offer.
+export function prUnavailableText(error: PrUnavailable, cwd: string): string {
   switch (error.kind) {
     case "no_cli":
       return "GitHub CLI (gh) is not installed. Run `brew install gh`, then Refresh.";
@@ -681,7 +781,11 @@ function Counts({ added, removed }: { added: number; removed: number }) {
 /// `Children.toArray` drops the nullish entries and keys what remains, which a
 /// plain array walk would not do for a single child or a fragment — and
 /// `{multiRepo && …}` is exactly the false case it has to swallow.
-function MetaLine({ children, className }: { children: ReactNode; className?: string }) {
+///
+/// Exported because the inbox draws a meta line from two trackers and it has to
+/// be the same one: two copies part on the separator rule above the first time a
+/// segment gains a condition.
+export function MetaLine({ children, className }: { children: ReactNode; className?: string }) {
   const segments = Children.toArray(children);
   return (
     <span className={cn("flex min-w-0 items-center gap-1.5", className)}>

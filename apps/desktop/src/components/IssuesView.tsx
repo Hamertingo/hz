@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MutableRefObject, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useState, type MutableRefObject, type ReactNode, type SyntheticEvent } from "react";
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronRight, Plus, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
@@ -61,7 +61,7 @@ const LINEAR_MCP_URL = "https://linear.app/docs/mcp";
 /// is the difference between a sentence to act on and one to stare at. Anything
 /// unrecognised falls back to the tracker's own words rather than a shrug of
 /// our own.
-function unavailableText(unavailable: IssueUnavailable): string {
+export function unavailableText(unavailable: IssueUnavailable): string {
   switch (unavailable.kind) {
     case "unauthorized":
       return "Linear rejected the saved key. Disconnect it in Settings, then paste a new one.";
@@ -97,6 +97,7 @@ const SETTLED_KINDS: { key: IssueStateKind; label: string }[] = [
 /// people, its conversation — is still the tracker's to edit, and ⌘-clicking a
 /// row is the shortcut there.
 export default function IssuesView({
+  tabs,
   active,
   connected,
   onConnect,
@@ -107,6 +108,10 @@ export default function IssuesView({
   onWorkOn,
   refreshRef,
 }: {
+  /// The inbox's source row, drawn at the top of this page rather than only on
+  /// the inbox — the same seam [PrsView](./PrsView.tsx) takes, and drawn here
+  /// rather than there because this page owns where its own top edge is.
+  tabs?: ReactNode;
   /// The page is the thing on screen. Hidden pages do not read, for the reason
   /// the right panel's own `active` exists.
   active: boolean;
@@ -165,12 +170,33 @@ export default function IssuesView({
   const settledGroups = useMemo(() => groupIssues(settled.issues), [settled.issues]);
 
   if (!connected) {
-    return <Connect onConnect={onConnect} busy={connecting} error={connectError} />;
+    // The row is drawn above the ask as well as above the list: it is how the
+    // reader leaves, and a setup state with nothing to press would be the one
+    // screen in the app with no way off it.
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {/* The same header frame the list below draws — the row, the line under
+            it, and the same measure — so the setup state is the page rather than
+            a form that fell out of it. */}
+        {tabs && (
+          <header className="flex shrink-0 flex-col gap-2.5 border-b border-border px-4 py-3">
+            {tabs}
+          </header>
+        )}
+        <ConnectLinear onConnect={onConnect} busy={connecting} error={connectError} />
+      </div>
+    );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pt-3">
+      {/* **One header, two rows, and the line under both** — the frame the inbox
+          and the pull-requests page draw, for the reason they draw it: the source
+          row is navigation and the chips below it narrow *this* page, and a rule
+          between the two would separate things that belong together. */}
+      <header className="flex shrink-0 flex-col gap-2.5 border-b border-border px-4 py-3">
+        {tabs}
+        <div className="flex items-center gap-1.5">
         {SCOPES.map((scope) => (
           // Chips rather than a menu, because these are the two questions worth
           // one press: what is mine to do, and what did I ask for. Everything
@@ -216,43 +242,44 @@ export default function IssuesView({
         </Tooltip>
       </div>
 
-      {/* No fill and no border. A search box is the one control here that is
-          always in the same place, so it needs no edge to be found — and a
-          filled field above a borderless list draws a box round the least
-          interesting third of the page. The glyph does the work the border
-          was doing: it says "type here" without enclosing anything. */}
-      <div className="group flex h-11 shrink-0 items-center gap-2 px-3">
-        <Search className="size-4 shrink-0 text-muted-foreground" />
-        <Input
-          id={ISSUE_SEARCH_INPUT_ID}
-          value={query.text ?? ""}
-          placeholder="Search issues"
-          spellCheck={false}
-          // `dark:bg-transparent` as well as `bg-transparent`: the base input
-          // carries `dark:bg-input/30`, which is the more specific rule and
-          // wins — so the plain override read as removed here while leaving a
-          // fill on screen.
-          className="h-full rounded-none border-0 bg-transparent p-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
-          onChange={(e) => set({ text: e.currentTarget.value || null })}
-          // Escape drops the query, the sidebar's rule. It does *not* blur:
-          // this field is always drawn, so there is nothing to close and a
-          // caret left where it was is a second search ready to be typed.
-          onKeyDown={(e) => {
-            if (e.key !== "Escape" || !query.text) return;
-            e.preventDefault();
-            set({ text: null });
-          }}
-        />
+        {/* No fill and no border. A search box is the one control here that is
+            always in the same place, so it needs no edge to be found — and a
+            filled field above a borderless list draws a box round the least
+            interesting third of the page. The glyph does the work the border
+            was doing: it says "type here" without enclosing anything. */}
+        <div className="group flex h-11 shrink-0 items-center gap-2">
+          <Search className="size-4 shrink-0 text-muted-foreground" />
+          <Input
+            id={ISSUE_SEARCH_INPUT_ID}
+            value={query.text ?? ""}
+            placeholder="Search issues"
+            spellCheck={false}
+            // `dark:bg-transparent` as well as `bg-transparent`: the base input
+            // carries `dark:bg-input/30`, which is the more specific rule and
+            // wins — so the plain override read as removed here while leaving a
+            // fill on screen.
+            className="h-full rounded-none border-0 bg-transparent p-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
+            onChange={(e) => set({ text: e.currentTarget.value || null })}
+            // Escape drops the query, the sidebar's rule. It does *not* blur:
+            // this field is always drawn, so there is nothing to close and a
+            // caret left where it was is a second search ready to be typed.
+            onKeyDown={(e) => {
+              if (e.key !== "Escape" || !query.text) return;
+              e.preventDefault();
+              set({ text: null });
+            }}
+          />
 
-        {/* The slot names whichever key does something here, and which one that
-            is turns on focus alone — the sidebar's rule, and the two fields
-            should not need learning twice. Escape reaches this input and
-            nothing else; ⌘⇧F is what brings focus back to a field left holding
-            a query. Esc is withheld over an empty field, the one state neither
-            key has anything to do in. */}
-        {query.text && <Kbd className="hidden group-focus-within:inline-flex">Esc</Kbd>}
-        <ShortcutKeys ids={["issues.search"]} className="group-focus-within:hidden" />
-      </div>
+          {/* The slot names whichever key does something here, and which one that
+              is turns on focus alone — the sidebar's rule, and the two fields
+              should not need learning twice. Escape reaches this input and
+              nothing else; ⌘⇧F is what brings focus back to a field left holding
+              a query. Esc is withheld over an empty field, the one state neither
+              key has anything to do in. */}
+            {query.text && <Kbd className="hidden group-focus-within:inline-flex">Esc</Kbd>}
+            <ShortcutKeys ids={["issues.search"]} className="group-focus-within:hidden" />
+        </div>
+      </header>
 
       {/* Under the header rather than over the rows: a failed refresh leaves
           what was already read on screen, and this says the answer is stale. */}
@@ -339,10 +366,16 @@ export default function IssuesView({
   );
 }
 
-/// The page with nothing connected, and the key field is *here* rather than a
-/// trip to settings — this is the surface that has nothing to show without one,
-/// so this is where the thing that fixes it belongs.
-function Connect({
+/// Where a tracker key goes in, and what it does and does not give the agent.
+///
+/// **The field is here rather than a trip to settings**: this is the surface
+/// with nothing to show without a key, so the thing that fixes it belongs on it.
+///
+/// Exported for the inbox's Linear tab, which is now the other way into this:
+/// both surfaces ask for the same thing in the same words, and a second copy of
+/// a form that takes a credential is a second place for the sentence explaining
+/// it to drift.
+export function ConnectLinear({
   onConnect,
   busy,
   error,

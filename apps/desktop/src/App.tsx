@@ -22,9 +22,15 @@ import RenderErrorBoundary from "@/components/RenderErrorBoundary";
 import SettingsDialog, { type SettingsTab } from "@/components/SettingsDialog";
 import SlowRequestToast from "@/components/SlowRequestToast";
 import WorktreeDialog, { type WorktreePrompt } from "@/components/WorktreeDialog";
+import InboxTabs, { type InboxPage } from "@/components/InboxTabs";
+import { prefetchPrList } from "@/hooks/usePrList";
+import type { RunRow } from "@/hooks/useWorkflowRuns";
+import { useInbox } from "@/hooks/useInbox";
+import InboxView from "@/components/InboxView";
 import IssuePanel from "@/components/IssuePanel";
 import IssuesView from "@/components/IssuesView";
 import PluginsView, { SkillDetail as PluginSkillDetail } from "@/components/PluginsView";
+import RunDetail from "@/components/RunDetail";
 import AgentForm from "@/components/plugins/AgentForm";
 import McpForm from "@/components/plugins/McpForm";
 import PrsView, { PrDetail, PrTabs } from "@/components/PrsView";
@@ -114,6 +120,7 @@ import type {
   AgentEvent,
   Issue,
   SessionIndexItem,
+  TranscriptMatch,
   WorktreeDisposition,
 } from "@/types/events";
 import { useRecorder } from "@/hooks/useTranscription";
@@ -163,7 +170,7 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 /// **The set, so `none` is spelled once and every page is spelled once.** Reading
 /// a page off this is what stops a question about pages being answered by a list
 /// written out again at each site — see the state's own note.
-type MainPage = "none" | "issues" | "prs" | "plugins";
+type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins";
 
 function App() {
   const {
@@ -373,6 +380,7 @@ function App() {
   // goes and comes back from, with the session they were in still there when they
   // do. That is why none of this moves the selection.
   const [page, setPage] = useState<MainPage>("none");
+  const inboxOpen = page === "inbox";
   const issuesOpen = page === "issues";
   const prsOpen = page === "prs";
   const pluginsOpen = page === "plugins";
@@ -421,6 +429,29 @@ function App() {
 
     return out;
   }, [spaceProjects, selectedSession?.cwd, repoPath, targetPath]);
+
+  /// The two reads the inbox is made of, started here rather than on arrival.
+  ///
+  /// **The shell owns them because the counts on the source row do.** That row is
+  /// drawn by three surfaces, and a number read in three places is three answers
+  /// — so `App` reads both halves once and hands the same rows and the same
+  /// numbers to whichever of the three is up.
+  const inbox = useInbox(prsCwds);
+
+  // `all` is the state a reader reaches for next, and the one they wait on: one
+  // `gh` per repository, fired at launch so that page is a filter over rows
+  // already in hand by the time anybody presses it. Fire and forget — nothing
+  // draws its answer until that state is actually asked for.
+  //
+  // Keyed on the joined paths, because the memo above hands back a fresh array
+  // whenever its own inputs move: the *set* of repositories is what this cares
+  // about, the same reason the pages key their own reads on a joined string.
+  const prsCwdsKey = prsCwds.join("\n");
+  useEffect(() => {
+    void prefetchPrList(prsCwds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prsCwdsKey]);
+
   /// **The pull requests the pane is holding, in the order they were opened.**
   /// Held here so the list and the pane cannot disagree about which one is
   /// showing — the same split the issues page makes, and the reason `pickedIssue`
@@ -433,6 +464,13 @@ function App() {
   /// that reads — see `PrDetail`.
   const [openedPrs, setOpenedPrs] = useState<PrRow[]>([]);
   const [activePrKey, setActivePrKey] = useState<string | null>(null);
+
+  /// **The run the Actions pane is showing, and it is one at a time.** Unlike a
+  /// pull request — several of which stay open as tabs, because comparing two
+  /// attempts at one fix is the ordinary reason to want both — a run is read at
+  /// one moment and answered once: which step failed. Held by `App` because the
+  /// pane is drawn beside the page, so a pick the page kept could not open it.
+  const [pickedRun, setPickedRun] = useState<RunRow | null>(null);
 
   /// The tab on screen, or `null` where the pane is empty. Derived rather than
   /// held, so a key that no longer names an open tab can never be selected.
@@ -522,6 +560,46 @@ function App() {
 
   // The palette, on the same terms: opened to do one thing and closed again.
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  /// What the reader has typed into the palette, and what searching every kept
+  /// log for it answered.
+  ///
+  /// `App` owns the query rather than the palette because the rows for a hit come
+  /// from a read — and a read over every session this app has kept belongs
+  /// somewhere that can debounce it and throw away an answer that arrived late.
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [messageHits, setMessageHits] = useState<TranscriptMatch[]>([]);
+  /// Which search is allowed to write. A keystroke issues a walk over every log,
+  /// and an answer to the *previous* query landing after this one would file its
+  /// rows against words the reader has since changed.
+  const searchGen = useRef(0);
+
+  useEffect(() => {
+    const query = paletteQuery.trim();
+    // Two characters before any read: one letter matches most of a life's work
+    // and costs the whole walk to say so.
+    if (!paletteOpen || query.length < 2) {
+      searchGen.current += 1;
+      setMessageHits([]);
+      return;
+    }
+
+    const gen = ++searchGen.current;
+    const timer = setTimeout(() => {
+      void invoke<TranscriptMatch[]>("search_transcripts", { query })
+        .then((found) => {
+          if (searchGen.current === gen) setMessageHits(found);
+        })
+        .catch(() => {
+          // A search that could not run is a search with no results, never an
+          // error over the list: the palette still reaches everything else, and
+          // a sentence about the failure would be between the reader and that.
+          if (searchGen.current === gen) setMessageHits([]);
+        });
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [paletteQuery, paletteOpen]);
 
   // Which tab the *next* open lands on. Reset to Appearance as settings close,
   // so a mic press that sent the reader to Transcription does not leave every
@@ -1459,6 +1537,11 @@ function App() {
   //
   // `useCallback` because the palette's row table is memoized on its inputs, and
   // fresh closures there would rebuild it on every render.
+  /// The one page that spans both trackers, so it is opened before either of
+  /// the two it launches into — and it takes no selection, like the rest.
+  const openInbox = useCallback(() => {
+    setPage("inbox");
+  }, []);
   const openIssues = useCallback(() => {
     setPage("issues");
   }, []);
@@ -1468,6 +1551,14 @@ function App() {
   const openPlugins = useCallback(() => {
     setPage("plugins");
   }, []);
+
+  /// One way to press any of the three, and drawn by all three surfaces.
+  ///
+  /// The tab is not a local swap of which rows a list holds — it is *the page
+  /// changing*, and the two pages it changes to carry their own search, sort,
+  /// filters, refresh and detail pane. `counts` comes from the shell's own read
+  /// of both halves, so the same row says the same numbers wherever it is drawn.
+  const selectInboxPage = useCallback((next: InboxPage) => setPage(next), []);
 
   /// Moves the whole window to another space. The screen catches up in the
   /// effect below, which answers for every way membership can change and not
@@ -1961,6 +2052,21 @@ function App() {
       });
     }
 
+    // What searching the logs answered, under the sessions they belong to. The
+    // rows above are places to go; these are things that were said, and the
+    // reader who typed a word they remember is after the second.
+    for (const hit of messageHits) {
+      rows.push({
+        kind: "match",
+        // Session *and* position: two hits in one session are two rows, and the
+        // session id alone would collide.
+        id: `${hit.sessionId}:${hit.seq}`,
+        label: hit.title,
+        detail: hit.snippet,
+        run: () => goToSession(() => void handleSelectSessionIndexItem(hit.sessionId)),
+      });
+    }
+
     for (const project of projects) {
       rows.push({
         kind: "project",
@@ -2005,6 +2111,7 @@ function App() {
           togglePanel();
         },
       },
+      { id: "inbox.open", label: "Open inbox", run: openInbox },
       { id: "issues.open", label: "Open issues", run: openIssues },
       { id: "prs.open", label: "Open pull requests", run: openPrs },
       { id: "plugins.open", label: "Open plugins", run: openPlugins },
@@ -2050,6 +2157,7 @@ function App() {
     toggleSidebar,
     togglePanel,
     changeSpace,
+    openInbox,
     openIssues,
     openPrs,
     openPlugins,
@@ -2058,6 +2166,7 @@ function App() {
     showPanelTab,
     panelWide,
     togglePanelWide,
+    messageHits,
   ]);
 
   const fullscreen = useFullscreen();
@@ -2138,10 +2247,12 @@ function App() {
           }
           onOpenPlugins={openPlugins}
           pluginsOpen={pluginsOpen}
-          onOpenIssues={openIssues}
-          issuesOpen={issuesOpen}
-          onOpenPrs={openPrs}
-          prsOpen={prsOpen}
+          onOpenInbox={openInbox}
+          // All three: the inbox and the two pages it launches into are one
+          // destination in this column, and the two have no row of their own.
+          // Lit on the inbox alone, a reader who opened an issue from it would
+          // see nothing saying where they are or how to get back.
+          inboxActive={inboxOpen || issuesOpen || prsOpen}
           onDetach={detachSession}
           onSetFlags={handleSetSessionFlags}
           onFork={forkSession}
@@ -2178,7 +2289,9 @@ function App() {
             // its session, and the focused one's repeated up here read as a
             // second line of the same row.
             standIn={
-              issuesOpen
+              inboxOpen
+                ? "Inbox"
+                : issuesOpen
                 ? "Issues"
                 : prsOpen
                   ? "Pull requests"
@@ -2203,9 +2316,14 @@ function App() {
                 // and it was missing here: the only toggle on this page was the
                 // *session's*, which a reader pointed at the detail beside it —
                 // and whose press closed the whole page instead.
-                activePrKey && (
+                (pickedRun || activePrKey) && (
                   <PanelToggle
-                    onToggle={() => closePr(activePrKey)}
+                    // Innermost first, the order the pages' own toggles take: the
+                    // run, then the pull request tab behind it.
+                    onToggle={() => {
+                      if (pickedRun) setPickedRun(null);
+                      else if (activePrKey) closePr(activePrKey);
+                    }}
                     open
                     changes={false}
                   />
@@ -2281,6 +2399,36 @@ function App() {
                   onChat={chatWithAgent}
                 />
               )}
+            </TabBody>
+          </RightPanel>
+        ) : prsOpen && pickedRun ? (
+          // **The run's own pane, and it takes the frame whole.** A strip of the
+          // reader's pull requests beside a run would be a second list at the
+          // top of a pane that is answering one question, and the way back is
+          // the row they clicked.
+          <RightPanel
+            open
+            heading="Run"
+            // **A word rather than a tab row, and the id is the page's.** This
+            // pane belongs to the pull-requests page — the Actions sub-tab is
+            // that page's own — so it keeps that page's tab id and overrides the
+            // word, the bargain the issues pane makes with `heading="Details"`.
+            tab="pr"
+            onTabChange={() => {}}
+            refresh={{ onRefresh: () => prsRefreshRef.current?.(), loading: false }}
+          >
+            <TabBody active>
+              <RunDetail
+                // Keyed on the run, so the pick resets a read, a scroll and an
+                // open error rather than carrying them onto the next one.
+                key={`${pickedRun.cwd}#${pickedRun.id}`}
+                run={pickedRun}
+                active={prsOpen}
+                // The page re-reads: a re-run changes the row's state, and a
+                // list still calling it failed would be this pane contradicted
+                // two inches away.
+                onChanged={() => prsRefreshRef.current?.()}
+              />
             </TabBody>
           </RightPanel>
         ) : prsOpen ? (
@@ -2687,17 +2835,21 @@ function App() {
           back, which is the trip this page exists to make. */}
       <TabBody active={prsOpen}>
         <PrsView
+          tabs={<InboxTabs current="prs" counts={inbox.counts} onSelect={selectInboxPage} />}
           cwds={prsCwds}
           active={prsOpen}
           picked={activePr}
           onPick={openPr}
           onClose={() => setPage("none")}
           refreshRef={prsRefreshRef}
+          pickedRun={pickedRun}
+          onPickRun={setPickedRun}
         />
       </TabBody>
 
       <TabBody active={issuesOpen}>
         <IssuesView
+          tabs={<InboxTabs current="issues" counts={inbox.counts} onSelect={selectInboxPage} />}
           active={issuesOpen}
           picked={pickedIssue?.identifier ?? null}
           onPick={setPickedIssue}
@@ -2707,6 +2859,28 @@ function App() {
           onConnect={integrations.connect}
           connecting={integrations.busy}
           connectError={integrations.error}
+        />
+      </TabBody>
+
+      {/* Ahead of the two it draws from: it is the question neither of them can
+          answer alone, and a row click goes to whichever owns the item. */}
+      <TabBody active={inboxOpen}>
+        <InboxView
+          tabs={<InboxTabs current="inbox" counts={inbox.counts} onSelect={selectInboxPage} />}
+          items={inbox.items}
+          notes={inbox.notes}
+          reading={inbox.reading}
+          multiRepo={inbox.multiRepo}
+          refreshing={inbox.refreshing}
+          onRefresh={inbox.refresh}
+          // A row click goes to whichever page owns the item, with it open: this
+          // list reads both trackers, and neither of the two can be acted on from
+          // here. The tab row above is how the reader comes back.
+          onOpen={(item) =>
+            item.kind === "pr"
+              ? (setPage("prs"), openPr(item.row))
+              : (setPage("issues"), setPickedIssue(item.row))
+          }
         />
       </TabBody>
 
@@ -2796,7 +2970,18 @@ function App() {
       onDeleteWorktree={(id) => removeWorktree(id)}
     />
     <SlowRequestToast />
-    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
+    <CommandPalette
+      open={paletteOpen}
+      onOpenChange={(open) => {
+        setPaletteOpen(open);
+        // The box is a fresh question every time — the palette clears its own
+        // copy on the way in, and this one has to go with it or the next open
+        // searches words the reader has already forgotten typing.
+        if (!open) setPaletteQuery("");
+      }}
+      items={paletteItems}
+      onQueryChange={setPaletteQuery}
+    />
     <DragGhost />
     <QuitDialog />
     <LinkDialog />

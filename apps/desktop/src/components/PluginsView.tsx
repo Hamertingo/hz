@@ -18,6 +18,7 @@ import {
 } from "react";
 
 import AgentAvatar from "@/components/plugins/AgentAvatar";
+import { TabButton, TabRow } from "@/components/TabRow";
 import { Button } from "@/components/ui/button";
 import Spinner from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -145,27 +146,28 @@ export default function PluginsView({
           {/* Three words rather than a menu: there are three sections and the
               reader needs to know all of them exist. The counts are here rather
               than beside each list because this is the only row on screen under
-              all three. */}
-          <div className="flex items-center gap-0.5">
-            <SectionButton
+              all three — the same bargain the inbox's source row makes, with the
+              same control. */}
+          <TabRow>
+            <TabButton
               active={section === "skills"}
               label="Skills"
               count={roster.length}
               onClick={() => setSection("skills")}
             />
-            <SectionButton
+            <TabButton
               active={section === "mcp"}
               label="MCP servers"
               count={mcp.servers?.length ?? 0}
               onClick={() => setSection("mcp")}
             />
-            <SectionButton
+            <TabButton
               active={section === "agents"}
               label="Agents"
               count={agents.agents?.length ?? 0}
               onClick={() => setSection("agents")}
             />
-          </div>
+          </TabRow>
 
           <Button variant="ghost" size="sm" onClick={onClose} className="ml-auto cursor-pointer">
             Close
@@ -274,38 +276,6 @@ export default function PluginsView({
         )}
       </div>
     </div>
-  );
-}
-
-/// One word of the section switch, with the count of what is behind it.
-///
-/// The count is here and nowhere else under both sections: a list that is empty for
-/// a reason, or longer than it looks, says so on the control that would show it.
-function SectionButton({
-  active,
-  label,
-  count,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  count: number;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "cursor-pointer gap-1.5",
-        active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground",
-      )}
-    >
-      {label}
-      <span className="text-xs tabular-nums opacity-70">{count}</span>
-    </Button>
   );
 }
 

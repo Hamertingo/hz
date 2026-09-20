@@ -79,6 +79,7 @@ export const SHORTCUTS = [
   { id: "view.browser", label: "Browser view", group: "Panels and views", chord: k("2", { alt: true, code: "Digit2" }) },
   { id: "view.files", label: "Files view", group: "Panels and views", chord: k("3", { alt: true, code: "Digit3" }) },
   { id: "chat.bottom", label: "Scroll chat to bottom", group: "Panels and views", chord: k("ArrowDown") },
+  { id: "inbox.open", label: "Open inbox", group: "Panels and views", chord: k("i", { shift: true }) },
   { id: "issues.open", label: "Open issues", group: "Panels and views", chord: k("i") },
   { id: "prs.open", label: "Open pull requests", group: "Panels and views", chord: k("l", { shift: true }) },
   // Not ⌘⇧P, which is the one that reads like the name and already belongs to

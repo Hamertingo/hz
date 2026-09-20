@@ -22,10 +22,16 @@ export default function CommandPalette({
   open,
   onOpenChange,
   items,
+  onQueryChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: PaletteItem[];
+  /// Every keystroke, for a caller that has to go and look something up. The
+  /// rows above cannot answer a question about the *contents* of a session —
+  /// that is a read over every log the app has kept, and it belongs to whoever
+  /// can debounce it.
+  onQueryChange?: (query: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -81,8 +87,11 @@ export default function CommandPalette({
           <input
             autoFocus
             value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-            placeholder="Search sessions, projects and actions — or type > for actions"
+            onChange={(e) => {
+              setQuery(e.currentTarget.value);
+              onQueryChange?.(e.currentTarget.value);
+            }}
+            placeholder="Search sessions, messages, projects and actions — or type > for actions"
             aria-label="Command palette"
             className="min-w-0 flex-1 bg-transparent text-chat outline-none placeholder:text-muted-foreground"
             onKeyDown={(e) => {
