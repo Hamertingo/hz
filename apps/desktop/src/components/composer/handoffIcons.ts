@@ -1,4 +1,4 @@
-import { GitCommitHorizontal, GitPullRequest, Play } from "lucide-react";
+import { GitCommitHorizontal, GitPullRequest } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import type { HandoffAction } from "@/lib/handoff";
@@ -11,5 +11,4 @@ import type { HandoffAction } from "@/lib/handoff";
 export const HANDOFF_ICONS: Record<HandoffAction["id"], LucideIcon> = {
   commit: GitCommitHorizontal,
   pr: GitPullRequest,
-  runServer: Play,
 };

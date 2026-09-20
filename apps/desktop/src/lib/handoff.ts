@@ -1,13 +1,6 @@
 import type { WorkStatus } from "@/types/events";
 
-const RUN_SERVER_PROMPT = "start the dev server in the background";
-
 /// One thing the reader can hand the session, as a button.
-///
-/// Mostly that is handing work *back* — commit it, propose it — but `runServer`
-/// starts work instead, and it sits here because the bargain is the same one: a
-/// click is a prompt the reader did not have to type. A second home for that
-/// bargain would be the same button in two places.
 ///
 /// **Every one of these is a prompt**, sent verbatim as if typed, and that is
 /// the design: the agent writes the commit message with the context it just
@@ -26,7 +19,7 @@ const RUN_SERVER_PROMPT = "start the dev server in the background";
 /// machinery for one button in a row with no room for it. `create a PR` pushes
 /// on the way, and a bare push is a sentence anyone can type.
 export type HandoffAction = {
-  id: "commit" | "pr" | "runServer";
+  id: "commit" | "pr";
   label: string;
   /// Sent verbatim as if it were typed. Deliberately as short as the button —
   /// the model knows how to commit, and whether the branch has an upstream,
@@ -56,40 +49,18 @@ function canOpenPr(status: WorkStatus): boolean {
 
 /// Which buttons the composer's action row draws, in the order they are drawn.
 ///
-/// Empty means no session — with one, Run server alone keeps the row standing.
+/// Empty is the ordinary answer on a settled checkout, and empty is what hides
+/// the row — a clean tree on a branch that already has its pull request has
+/// nothing to offer.
 ///
 /// `hasPr` comes from the sidebar's own per-repo read rather than from git:
 /// once a pull request exists, the panel is where it is acted on, and a second
 /// "Create PR" button would open a duplicate.
-///
-/// Run server is the exception to all of it: it wants a session and nothing
-/// else, so it survives both refusals below and is the one action offered
-/// unconditionally. Being parked behind the sliver is what makes that bearable.
-/// Nothing tracks whether a server is already up — the cheap signal,
-/// `tasksBySession`, answers "some background task is live" and not "this
-/// project's server is up", so gating on it would hide the button through an
-/// unrelated `Monitor` run, and a real answer is the config-and-detection
-/// feature that was deliberately dropped. On permanent display the button asks
-/// a question it cannot answer; behind the sliver only someone who went looking
-/// sees it, and going looking is wanting it.
-///
-/// The cost, accepted: with a session open the row never hides, so the empty
-/// return below is near-dead and the composer permanently carries the reserve.
 export function handoffActions(
   status: WorkStatus | null,
   hasPr: boolean,
-  hasSession = false,
 ): HandoffAction[] {
-  // Built ahead of the git checks rather than beside them, because running a
-  // server needs no repository to run in. Vague about which server — the agent
-  // reads the repo — but "in the background" is load-bearing: without it the
-  // CLI runs `pnpm dev` in a foreground Bash, which times out and takes the
-  // server down with it.
-  const run: HandoffAction[] = hasSession
-    ? [{ id: "runServer", label: "Run server", prompt: RUN_SERVER_PROMPT }]
-    : [];
-
-  if (!status || status.branch === null) return run;
+  if (!status || status.branch === null) return [];
 
   // Two git actions, in the order the work moves: commit it, then propose it.
   //
@@ -99,7 +70,8 @@ export function handoffActions(
   // `absolute w-fit`, bound by nothing, so a row too wide does not clip: it
   // draws over the panel beside it. Five labelled buttons came to ~523px and
   // four to ~411px, both over. Commit & push, Draft PR and Push went for that,
-  // leaving ~289px.
+  // and a third action — Run server — followed them, leaving these two with
+  // room to spare.
   //
   // None of them put anything out of reach. Commit & push is two clicks a turn
   // apart, since committing is what leaves a clean tree behind. A draft and a
@@ -115,7 +87,5 @@ export function handoffActions(
     actions.push({ id: "pr", label: "Create PR", prompt: "create a PR" });
   }
 
-  // Last, never first. Commit sits where the eye lands, and a third kind of
-  // action at the head displaces the thing most often wanted.
-  return [...actions, ...run];
+  return actions;
 }

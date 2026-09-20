@@ -472,9 +472,8 @@ function App() {
   //
   // Background work is deliberately absent. A dev server outlives every turn by
   // design, so holding this band for it would keep the handoff peek away for the
-  // rest of the session — and Run server is exactly what a reader wants while a
-  // server is up. It already has a home: the transcript's own background notice,
-  // which says how many are outstanding wherever the reader is scrolled.
+  // rest of the session. It already has a home: the transcript's own background
+  // notice, which says how many are outstanding wherever the reader is scrolled.
   const liveRuns = useMemo(() => {
     if (!busy) return [];
     let lastPrompt = -1;
@@ -1932,7 +1931,7 @@ function App() {
           handoff={
             stripShown ? null : (
               <HandoffRow
-                actions={handoffActions(workStatus, sessionHasPr, !!selectedSessionId)}
+                actions={handoffActions(workStatus, sessionHasPr)}
                 // Straight out as a prompt, exactly as if it had been typed. A
                 // turn already running queues it, like any other send.
                 onSend={(prompt) => void handleSendMsg(prompt)}

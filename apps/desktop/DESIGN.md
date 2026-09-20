@@ -125,9 +125,9 @@ Black card was tried first, on reasoning that white veil over light page is invi
 
 ## The band above the composer
 
-**One thing lives there at a time.** While a turn is in flight the band is the **follow-up strip** — this turn's subagent runs and its plan. The moment the turn closes it is the **handoff peek** (Commit, Create PR, Run server) again. They never both draw, and that is not tidiness: they want the same 4px, and the peek only reads as *tucked behind* the composer when the composer is what it tucks behind. A slice of button top sitting above a strip is neither, and read as debris glued to the strip's corner.
+**One thing lives there at a time.** While a turn is in flight the band is the **follow-up strip** — this turn's subagent runs and its plan. The moment the turn closes it is the **handoff peek** (Commit, Create PR) again. They never both draw, and that is not tidiness: they want the same 4px, and the peek only reads as *tucked behind* the composer when the composer is what it tucks behind. A slice of button top sitting above a strip is neither, and read as debris glued to the strip's corner.
 
-**The strip = this turn, never background work.** A dev server outlive every turn by design, so holding the band for it would keep the peek away for the whole session — and Run server = exactly what reader want while server up. Background work already have a home: the transcript's own notice, which say how many outstanding wherever reader scrolled.
+**The strip = this turn, never background work.** A dev server outlive every turn by design, so holding the band for it would keep the peek away for the whole session. Background work already have a home: the transcript's own notice, which say how many outstanding wherever reader scrolled.
 
 **The strip carry a surface**, `bg-composer` + the same blur every floating thing takes — it hover over transcript that scroll under it, where a card's flat veil would let the text read through the rows. Rows name three runs at most and fold the rest into one that open the panel: past three the list stop being a status line and start being the panel.
 
@@ -207,11 +207,11 @@ Glyph sit **beside rail, ahead of title**, and take **no room when absent** — 
 
 **Hover zone and thing it move = separate element, and have to be.** With one element, box travel with buttons — so cursor that opened row sit on its edge moment it open, row shut under it and reopen, forever. Zone stay put (`-top-7 pt-7`, turning 4px target into 32px one); only inner row translate, and it translate *within* zone, so cursor never outside it. `w-fit` keep that invisible box off rest of transcript's bottom edge, where full-width strip would swallow click and text selection.
 
-**Row order = order work move in**: Commit, Create PR, Run server. `px-3` on reserve match card's own inner padding.
+**Row order = order work move in**: Commit, Create PR. `px-3` on reserve match card's own inner padding.
 
-**Row have a width, and that what set the count.** Composer `max-w-3xl` but shrink with its column, so right panel open leave it near 415px — 391px inside padding. Five labelled `size="sm"` button = ~523px, and zone `absolute w-fit` bound by nothing, so overflow don't clip: it draw **over right panel**. Four ran over too (~411px). So **Commit & push, Draft PR and Push all dropped**, leaving ~289px with room to spare. None put anything out of reach — committing leave clean tree, draft and bare push both = sentence in composer like every other button here already is, and Create PR push on the way regardless. Wrap rejected: zone's `-top-7 pt-7` cover exactly one row height, so second line open *outside* hover zone and row flicker shut. Icon-only rejected too — save ~108px and still overrun.
+**Row have a width, and that what set the count.** Composer `max-w-3xl` but shrink with its column, so right panel open leave it near 415px — 391px inside padding. Five labelled `size="sm"` button = ~523px, and zone `absolute w-fit` bound by nothing, so overflow don't clip: it draw **over right panel**. Four ran over too (~411px). So **Commit & push, Draft PR and Push all dropped**, and **Run server follow them**, leaving these two with room to spare. None put anything out of reach — committing leave clean tree, draft and bare push both = sentence in composer like every other button here already is, and Create PR push on the way regardless. Wrap rejected: zone's `-top-7 pt-7` cover exactly one row height, so second line open *outside* hover zone and row flicker shut. Icon-only rejected too — save ~108px and still overrun.
 
-Read that as the row's standing budget: **three button**. Fourth want re-measuring, not eyeballing.
+Read that as the row's standing budget: **two button**. Third want re-measuring, not eyeballing.
 
 **Three fact, each a bug obvious version have:**
 

@@ -3,28 +3,21 @@ import { HANDOFF_ICONS } from "@/components/composer/handoffIcons";
 import { trackFeature } from "@/lib/analytics";
 import type { HandoffAction } from "@/lib/handoff";
 
-/// The row of canned prompts, parked behind the composer. Mostly they hand work
-/// back — "I'm done, take it from here" — and one, Run server, starts work
-/// instead. The name predates that second kind and is kept anyway: churning
-/// `HandoffRow`, `handoffActions` and `HandoffAction` through five files buys
-/// nothing this comment cannot say.
+/// The row of canned prompts, parked behind the composer — handing work back:
+/// "I'm done, take it from here".
 ///
 /// Every button here **sends a prompt** — it is the reader typing "commit"
 /// without typing it. No confirm dialog and no error surface: the agent writes
 /// the message with the context it already has, and whatever goes wrong is
 /// reported in the transcript like any other tool failure. Which buttons exist
 /// when is [handoffActions]' rule, and it is contextual — no commit offer on a
-/// clean tree, no pull request from the branch the work lands on. Run server is
-/// the one exception to that: it wants a session and nothing else.
+/// clean tree, no pull request from the branch the work lands on. So a settled
+/// checkout draws nothing at all, and that is the ordinary answer.
 ///
 /// It hides rather than sits, and that shape is the point. A turn that touched
 /// a file is most turns, so a row drawn on "there are changes" is a row drawn
 /// always — which is what makes every other tool's commit button noise. And the
-/// reverse of that: finishing a turn is not the same as wanting to commit. The
-/// hiding is also what lets one action be offered unconditionally, since a
-/// button nobody sees until they go looking is only ever seen by someone who
-/// wants it — at the cost that with a session open the row is never empty, so
-/// the reserve below is now permanent.
+/// reverse of that: finishing a turn is not the same as wanting to commit.
 ///
 /// **A clip, not the composer occluding it.** The row lives in a window pinned
 /// to the card's top edge, 4px tall closed and 32px open, and the buttons sit at
@@ -64,13 +57,11 @@ export default function HandoffRow({
 }: {
   actions: HandoffAction[];
   onSend: (prompt: string) => void;
-  /// No session to send into. Nothing fires, but the reserve still stands — its
-  /// absence would move the composer.
+  /// No session to send into, so nothing here fires.
   disabled?: boolean;
 }) {
-  // Near-dead now Run server is unconditional — only the new-task composer,
-  // with no session to send into, reaches it. Kept because the reserve has to
-  // go with the row: a sliver standing over nothing would open onto nothing.
+  // The ordinary answer on a settled checkout, and why the row carries no
+  // reserve of its own: a sliver standing over nothing opens onto nothing.
   if (actions.length === 0) return null;
 
   return (

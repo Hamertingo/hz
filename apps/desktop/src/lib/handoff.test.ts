@@ -33,8 +33,8 @@ describe("handoffActions", () => {
 
   // The row has a width: the composer shrinks with its column, and the zone
   // that draws these is bound by nothing, so a row too wide draws over the
-  // panel beside it rather than clipping. Three is what fits.
-  it("never draws more than three buttons", () => {
+  // panel beside it rather than clipping. Two is every action there is.
+  it("never draws more than two buttons", () => {
     for (const over of [
       { dirty: 1 },
       { ahead: 2 },
@@ -42,7 +42,7 @@ describe("handoffActions", () => {
       { dirty: 9, ahead: 9, upstream: null, aheadOfBase: null },
       {},
     ]) {
-      expect(ids(status(over), false, true).length).toBeLessThanOrEqual(3);
+      expect(ids(status(over), false).length).toBeLessThanOrEqual(2);
     }
   });
 
@@ -51,7 +51,7 @@ describe("handoffActions", () => {
   // push is a sentence in the composer.
   it("offers no push at all", () => {
     for (const over of [{ ahead: 3 }, { upstream: null }, { ahead: 3, dirty: 1 }]) {
-      expect(ids(status(over), false, true)).not.toContain("push");
+      expect(ids(status(over), false)).not.toContain("push");
     }
   });
 
@@ -96,9 +96,7 @@ describe("handoffActions", () => {
   // Nothing here reads `ahead` or `upstream` any more — those two only ever
   // answered "is there anything to push", and the row no longer asks.
   it("ignores the push counts entirely", () => {
-    expect(ids(status({ ahead: 3, upstream: null }), true, true)).toEqual([
-      "runServer",
-    ]);
+    expect(ids(status({ ahead: 3, upstream: null }), true)).toEqual([]);
   });
 
   // Every action asks the agent. Push was the one that ran git itself, and it
@@ -106,8 +104,8 @@ describe("handoffActions", () => {
   // gone with the button.
   it("makes every action a prompt", () => {
     const all = [
-      ...handoffActions(status({ dirty: 1 }), false, true),
-      ...handoffActions(status({ ahead: 1 }), false, true),
+      ...handoffActions(status({ dirty: 1 }), false),
+      ...handoffActions(status({ ahead: 1 }), false),
     ];
     expect(all.length).toBeGreaterThan(0);
     for (const action of all) {
@@ -118,39 +116,10 @@ describe("handoffActions", () => {
 
   // Short enough to be what the reader would have typed. A longer prompt is a
   // spec competing with the repo's own instructions about commit messages.
-  //
-  // `hasSession` is true so the row is the whole row, and `runServer` is then
-  // skipped by name rather than dodged by leaving it out: the clause that makes
-  // it longer — "in the background" — is the one clause it cannot lose, since
-  // without it the CLI runs the server in a foreground Bash that times out.
   it("keeps the prompts to a few words", () => {
-    for (const action of handoffActions(status({ dirty: 1 }), false, true)) {
-      if (action.id === "runServer") {
-        expect(action.prompt).toContain("in the background");
-        continue;
-      }
+    for (const action of handoffActions(status({ dirty: 1 }), false)) {
       expect(action.prompt.split(" ").length).toBeLessThanOrEqual(5);
     }
-  });
-
-  // Last, never first: Commit sits where the eye lands, and a third kind of
-  // action at the head displaces the thing most often wanted.
-  it("puts run server last in the row", () => {
-    expect(ids(status({ dirty: 1 }), false, true)).toEqual(["commit", "pr", "runServer"]);
-  });
-
-  // Running a server needs no repository, so it outlives every refusal above —
-  // including the two that make the row empty.
-  it("offers run server where git offers nothing", () => {
-    expect(ids(status({ branch: null }), false, true)).toEqual(["runServer"]);
-    expect(ids(null, false, true)).toEqual(["runServer"]);
-    expect(ids(status({ branch: "main" }), false, true)).toEqual(["runServer"]);
-  });
-
-  // A prompt needs somewhere to land, and the new-task composer has no session.
-  it("offers no run server without a session", () => {
-    expect(ids(status({ dirty: 1 }), false)).not.toContain("runServer");
-    expect(ids(null, false)).toEqual([]);
   });
 
   // Every id needs a glyph in `HandoffRow`'s map, and a duplicate id in one row
