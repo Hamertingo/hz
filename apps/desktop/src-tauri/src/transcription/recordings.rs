@@ -190,8 +190,10 @@ fn decode(bytes: &[u8]) -> Result<Vec<f32>> {
             // looking for orphans at startup.
             let end = (body + len).min(bytes.len());
             return Ok(bytes[body..end]
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|[lo, hi]| i16::from_le_bytes([*lo, *hi]) as f32 / i16::MAX as f32)
                 .collect());
         }
 
