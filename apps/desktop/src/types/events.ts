@@ -27,6 +27,33 @@ loginCommand: string,
 loginHint: string | null, };
 
 /**
+ * One Agent with its stored prompt — the read a form opens on.
+ *
+ * **The prompt rides this read and never the listing.** A roster carrying every
+ * prompt would be whole documents for a screen drawing names.
+ */
+export type AgentDetail = { agent: PluginAgent, systemPrompt: string | null, persona: string | null, };
+
+/**
+ * What the form writes down.
+ *
+ * **Absent means "leave it as stored".** One shape serves a creation and a
+ * rewrite, so a screen that only changed the prompt cannot blank the
+ * description by not mentioning it.
+ */
+export type AgentDraft = { name: string | null, displayName: string | null, description: string | null, avatar: string | null, systemPrompt: string | null, persona: string | null, 
+/**
+ * The model the Agent runs on, as a source-qualified key.
+ *
+ * **Not decoration: the store will not save an Agent without a resolvable
+ * model.** An Agent that inherits the runtime default is resolved through
+ * that default's context window, and where the catalog carries no physical
+ * limit for it the write is refused outright. Left empty, the create fills
+ * it from the machine's own default — see [`create_agent`].
+ */
+model: string | null, };
+
+/**
  * One normalized event: an envelope (who, when, what order, which conversation)
  * wrapping a [`payload`](Self::payload) (what happened).
  */
@@ -322,28 +349,33 @@ linearAccount: TrackerAccount | null,
 transcription: TranscriptionSettings, 
 /**
  * The composer's sticky row: which agent, the model picked on each, effort
- * per model, permission stance, worktree and role defaults, fast mode.
+ * per model, permission stance, worktree, the Agent a new chat runs as, and
+ * fast mode.
  *
  * Stored verbatim, and every field of it is listed where it means
  * something — `ComposerPrefs` in `src/hooks/useComposerPrefs.ts`.
  */
 composerPrefs: JsonValue | null, 
 /**
- * The models the reader keeps in their rotation, in their own order — or
- * `None`, which means **every model the agent serves**. A fact about the
- * reader rather than about a session, so it is stored with them instead of on
- * an index entry a session could be handed away with.
+ * The models the reader has switched **off** — or `None`, which means they
+ * have switched none off. A fact about the reader rather than about a
+ * session, so it is stored with them instead of on an index entry a session
+ * could be handed away with.
  *
- * **Not carried over from `starredModels`, and that is deliberate.** The
- * field this replaces held a *shortlist*: the few models a reader had picked
- * out of a list the picker otherwise drew in full. The meaning is now the
- * opposite — everything is in the rotation unless it is switched off — so a
- * shortlist read here would leave a reader who had chosen two models with
- * exactly two rows switched on under a heading that says everything is.
- * Absent is the honest reading of a file that build wrote, and it costs the
- * reader a pick they can make again in one click.
+ * **The list is the hidden half, and that direction is what a new model
+ * depends on.** A provider being connected adds rows the reader has never
+ * seen; storing what is *kept* would leave every one of them off, which
+ * reads as a model the agent serves and the app refuses to offer. Storing
+ * what is hidden means a model nobody has decided about is shown.
+ *
+ * **Not carried over from `modelRotation`, and that is deliberate.** That
+ * field held the *kept* half, so reading it here would invert it: a reader
+ * who had kept two models would hide the very two they named. Named by
+ * wire id (`m:<provider>:<model>:v:<variant>`) rather than by model name,
+ * which is the one spelling both the picker and the settings screen already
+ * hold — see `Model.id`.
  */
-modelRotation: Array<string> | null, 
+hiddenModels: Array<string> | null, 
 /**
  * The reader's rebindings, keyed by shortcut id. Only overrides, so a
  * default that changes in a later build still reaches everyone who never
@@ -608,6 +640,57 @@ compaction: string | null,
 components: Array<ContextComponent>, };
 
 export type ContextWindow = { usedTokens: number, maxTokens: number, };
+
+/**
+ * One child the agent delegated to.
+ *
+ * Every field but the status is optional, because the agent fills what it knows
+ * and a row this build cannot name is still a row the reader is owed: an
+ * unnamed child that is *running* is worth more on screen than nothing.
+ */
+export type DelegatedMember = { 
+/**
+ * The child Session's own id — mcode's, never this app's. It is what the
+ * roster is keyed by and what correlates nothing in the transcript.
+ */
+sessionId: string, parentSessionId: string, 
+/**
+ * The agent it runs as — `explore`, `worker`, `verifier` or a custom name.
+ */
+agentName: string | null, 
+/**
+ * The short title the spawning call gave it, where it named one.
+ */
+task: string | null, 
+/**
+ * `queued`, `running`, `completed`, `failed`, `stopped` or `unknown` — the
+ * agent's own vocabulary, carried verbatim so a word added later draws as
+ * itself rather than as nothing.
+ */
+status: string, 
+/**
+ * The background task this child belongs to, where it is a background one.
+ * The only handle that ever correlates a roster row to a tool call.
+ */
+backgroundTaskId: string | null, errorMessage: string | null, };
+
+/**
+ * The roster, shaped for the webview.
+ *
+ * Carries *this* app's session id rather than the wire's, so the frontend
+ * routes it into the session it already holds — mcode's own id lives on the
+ * index entry and nowhere the listener reads.
+ */
+export type DelegationEvent = { sessionId: string, members: Array<DelegatedMember>, };
+
+/**
+ * What a stop did, counted.
+ *
+ * Three numbers rather than the agent's four id lists: the reader's question is
+ * whether the work stopped, and a list of child session ids is a fact nothing
+ * on screen can draw.
+ */
+export type DelegationStop = { stopped: number, active: number, failed: number, };
 
 /**
  * Incremental content for a block.
@@ -1020,6 +1103,18 @@ export type IssueTracker = "linear";
 export type IssueUnavailable = { "kind": "not_connected" } | { "kind": "unauthorized" } | { "kind": "offline", "detail": string } | { "kind": "other", "detail": string };
 
 /**
+ * How a server talks, as the form on the other side spells it.
+ *
+ * **Flat, with the fields of both transports.** The form switches between them
+ * and the fields follow it, so the shape it holds is one object with both; the
+ * agent narrows this to its own union — a stdio server has no `url` — at the
+ * boundary that owns that rule. Kept flat here too rather than mirrored as a Rust
+ * enum: an enum would make this app the second place the rule lives, and two
+ * copies of it is one copy that can be wrong.
+ */
+export type McpConfig = { transport: string, command: string | null, args: Array<string> | null, env: { [key in string]: string } | null, url: string | null, headers: { [key in string]: string } | null, timeoutMs: number | null, description: string | null, };
+
+/**
  * Shared with the harness parsers rather than duplicated — the wire shape
  * matches, so they deserialize straight into this.
  */
@@ -1028,6 +1123,39 @@ export type McpServer = { name: string,
  * Free-form: `connected`, `pending`, `needs-auth` observed, set undocumented.
  */
 status: string, };
+
+/**
+ * One server with its whole configuration — the read the edit form opens on.
+ */
+export type McpServerDetail = { name: string, enabled: boolean, config: McpConfig, };
+
+/**
+ * What a connection test answered.
+ *
+ * **`success: false` with a code rather than an error.** A server that saves
+ * cleanly and cannot be reached is the ordinary failure here, and the code is what
+ * tells "the command is not installed" from "the handshake failed" — two different
+ * things for the reader to go and do.
+ */
+export type McpTestResult = { success: boolean, toolCount: number | null, 
+/**
+ * What the server offers, empty on a failure.
+ *
+ * **Already in the agent's hand when it counted them**, so this is not a second
+ * connection — it is the same answer with the list kept instead of thrown away.
+ * Defaulted, because a failure has no tools to speak of and should read as none
+ * rather than as a reply this build could not parse.
+ */
+tools: Array<McpTool>, errorCode: string | null, errorMessage: string | null, };
+
+/**
+ * One tool a server offers.
+ *
+ * The name and the sentence the server wrote about it, and **not** its input
+ * schema: a schema per tool is a payload nothing drawing a list reads, and the
+ * reader who wants one is asking the agent, not this screen.
+ */
+export type McpTool = { name: string, description: string | null, };
 
 /**
  * How to land it. The three GitHub offers; the flag each maps to is `gh`'s.
@@ -1225,6 +1353,104 @@ behavior: PermissionBehavior, };
  */
 export type PermissionOptionKind = "once" | "always_rule" | "always_directory" | "switch_mode" | "deny";
 
+/**
+ * One Agent this machine holds — a definition a Session is started *under*.
+ *
+ * **Not a Session and not a subagent.** Three are built in (`explore`,
+ * `worker`, `verifier`) and the reader may write their own; a `task` call names
+ * one in its `agent_name`, which is why a screen for them belongs beside the
+ * Tools the agent can reach.
+ */
+export type PluginAgent = { 
+/**
+ * The store's own key for it, and what a write addresses.
+ */
+name: string, 
+/**
+ * What the row is called on screen — the agent's own label where it has one.
+ */
+displayName: string, description: string | null, 
+/**
+ * A built-in portrait marker (`mavis-agent-avatar://default/v1/N`) or an
+ * image, as stored. The frontend decides which of the two it is drawing.
+ */
+avatar: string | null, 
+/**
+ * The role it plays, in the agent's own words.
+ */
+agentRole: string, 
+/**
+ * Where it came from — `builtin`, `manual`, and whatever the agent adds
+ * later. Carried verbatim rather than mapped onto an enum of ours, for the
+ * reason [`PluginSkill::source_kind`] gives.
+ */
+creationSource: string, 
+/**
+ * Whether the agent ships it. Derived here from `creation_source` so the
+ * screen files built-ins apart without keeping its own list of names — a
+ * role added after this build files itself correctly.
+ */
+builtin: boolean, };
+
+/**
+ * One MCP server this machine has written down, as a row.
+ *
+ * **The reader's own store, not what a session can reach.** The agent keeps two
+ * MCP lists: the other one is what a *session* can reach — built-ins, the
+ * project's own file, the session's own set — and a server switched off is not in
+ * it at all. A screen with switches in it needs this one, because otherwise
+ * switching a server off would take its own row away.
+ *
+ * **No configuration rides here.** `env` and `headers` hold credentials, and a
+ * listing drawn to show names has no business carrying every secret on the
+ * machine — [`McpServerDetail`] is the one read that does, and it is asked for one
+ * server at a time.
+ */
+export type PluginMcpServer = { name: string, enabled: boolean, 
+/**
+ * The agent's own word for how it talks: `stdio`, `http`, `streamable-http` or
+ * `sse`. Carried verbatim rather than mapped onto an enum of ours, for the
+ * reason [`PluginSkill::source_kind`] gives — a transport added after this
+ * build should draw as itself.
+ */
+transport: string, description: string | null, 
+/**
+ * The command for a stdio server, or the URL for a remote one — and never the
+ * arguments, the environment or the headers.
+ */
+endpoint: string | null, };
+
+/**
+ * One Skill.
+ */
+export type PluginSkill = { 
+/**
+ * The registry's own name for it, and what a switch is addressed to.
+ */
+name: string, 
+/**
+ * What the row is called on screen — the agent's own label where it has one.
+ */
+displayName: string, description: string, 
+/**
+ * Whether the model is told about it. **A Skill switched off keeps its row**,
+ * which is the whole reason this screen can switch one back on.
+ */
+enabled: boolean, 
+/**
+ * Where it came from, in the agent's own words — `user`, `builtin-global`,
+ * `builtin-agent`. Carried verbatim rather than mapped onto an enum of ours,
+ * for the reason [`ContextComponent`](crate::context::ContextComponent)
+ * gives: a kind added after this build should draw as itself rather than as
+ * nothing.
+ */
+sourceKind: string | null, 
+/**
+ * The registry's own key for it. Handed back on a switch so a Skill renamed
+ * between the read and the press still moves the right one.
+ */
+locationUri: string | null, };
+
 export type PrCheck = { name: string, state: CheckState, 
 /**
  * Where the log lives. `None` for a check that reports no link.
@@ -1287,6 +1513,53 @@ replies: Array<PrComment>,
  * root, which is every timeline row.
  */
 threadId: string | null, };
+
+/**
+ * One commit on the branch, cut down to what a row draws.
+ *
+ * Not the same shape as the commits panel's `Commit`, which reads a working
+ * tree's history with `git` and carries a full body and tree. This is
+ * GitHub's, reached with `gh`, and the pane wants a line per commit.
+ */
+export type PrCommit = { 
+/**
+ * The full sha, which is what the row's own link would need.
+ */
+oid: string, 
+/**
+ * GitHub's own abbreviation, so the row shows the length GitHub shows.
+ */
+shortOid: string, 
+/**
+ * The first line of the message and only the first — a full body here
+ * would be one commit's essay among a list of one-liners.
+ */
+headline: string, committedAt: string, 
+/**
+ * The name git was configured with, which is the only thing a commit
+ * *always* has. Attribution to an account is below, and can be missing.
+ */
+author: string, 
+/**
+ * The account GitHub credits it to, where it can attribute one — an email
+ * that matches no account resolves to the name alone.
+ */
+login: string | null, avatar: string | null, };
+
+/**
+ * One file a pull request touches.
+ */
+export type PrFile = { 
+/**
+ * Repo-relative, the way every path in this app is.
+ */
+path: string, additions: number, deletions: number, 
+/**
+ * `ADDED`, `MODIFIED`, `DELETED`, `RENAMED` or `COPIED`, GitHub's own
+ * word, carried through untranslated — the panel draws a glyph for the
+ * three it knows and nothing for the rest.
+ */
+changeType: string, };
 
 /**
  * One label, as a row draws it: the name, and the colour so the dot beside it
@@ -1428,9 +1701,9 @@ export type Preferences = {
  */
 composerPrefs: JsonValue | null, 
 /**
- * See [`AppSettings::model_rotation`].
+ * See [`AppSettings::hidden_models`].
  */
-modelRotation: Array<string> | null, 
+hiddenModels: Array<string> | null, 
 /**
  * See [`AppSettings::shortcuts`].
  */
@@ -1473,7 +1746,7 @@ spaces: Array<string> | null, };
  * exist is an error rather than a field that silently writes nothing, and so
  * that the value each one carries is typed where it is declared.
  */
-export type PreferencesPatch = { "field": "composerPrefs", "value": JsonValue | null } | { "field": "modelRotation", "value": Array<string> | null } | { "field": "shortcuts", "value": JsonValue | null } | { "field": "updateChannel", "value": UpdateChannel | null } | { "field": "openWith", "value": string | null } | { "field": "openFileWith", "value": string | null } | { "field": "runInTerminal", "value": string | null } | { "field": "space", "value": string | null } | { "field": "spaces", "value": Array<string> | null };
+export type PreferencesPatch = { "field": "composerPrefs", "value": JsonValue | null } | { "field": "hiddenModels", "value": Array<string> | null } | { "field": "shortcuts", "value": JsonValue | null } | { "field": "updateChannel", "value": UpdateChannel | null } | { "field": "openWith", "value": string | null } | { "field": "openFileWith", "value": string | null } | { "field": "runInTerminal", "value": string | null } | { "field": "space", "value": string | null } | { "field": "spaces", "value": Array<string> | null };
 
 /**
  * A directory the user attached, and the root a session runs in. Distinct from
@@ -1525,7 +1798,26 @@ readOnly: boolean,
  * **A bool, never the key**: the CLI reports whether one is stored, and
  * the app neither reads nor holds the secret after handing it over.
  */
-hasApiKey: boolean, models: Array<ProviderModel>, };
+hasApiKey: boolean, 
+/**
+ * The gateway's URL, as the agent itself reports it. Drawn on the
+ * connected row so a reader can tell two entries apart without opening
+ * anything, and absent on a provider the agent has no URL for.
+ */
+baseUrl?: string | null, 
+/**
+ * Which wire it speaks — `openai-completions`, `anthropic-messages` or
+ * `openai-responses`. The same fact the connect row states before the key
+ * is typed, read back off what was actually written.
+ */
+apiFormat?: string | null, 
+/**
+ * **Masked by the CLI, and never by this app.** `sk-q****CXTE` is the
+ * agent's own redaction of the key it holds; the secret itself does not
+ * cross back, and this is here for the one thing four characters can
+ * answer — whether the key on this row is the one just pasted.
+ */
+maskedApiKey?: string | null, models: Array<ProviderModel>, };
 
 /**
  * One row of a provider's `models` — **an object, not an id.**
@@ -1565,6 +1857,11 @@ selected: boolean, };
  * fields nobody is meant to touch invite touching.
  */
 export type ProviderPreset = { 
+/**
+ * A stable slug for the gateway, and the only thing the view keys its
+ * mark off. Not the name, because the name is copy and copy moves.
+ */
+id: string, 
 /**
  * What the reader sees, and what the CLI `name`s the provider.
  */
@@ -1622,6 +1919,34 @@ mergeStateStatus: string,
  * repo requires no review, which `gh` reports as an empty string.
  */
 reviewDecision: string | null, checks: Array<PrCheck>, 
+/**
+ * What the author wrote, as markdown. Empty is ordinary — plenty of pull
+ * requests are a title and a diff.
+ *
+ * Rendered now, having been deliberately left out when the pane was a list
+ * of *states*: it is the longest thing here and it pushed the checks below
+ * the fold. Read against the sections around it — the files, the commits —
+ * it is the one part of a pull request that says why any of it changed,
+ * and the pane has somewhere to put it.
+ */
+body: string, 
+/**
+ * What the repository has filed it under, with their colours.
+ */
+labels: Array<PrLabel>, 
+/**
+ * Every file the change touches, with its own line counts.
+ *
+ * `changedFiles` is the count and this is the list, so the header can say
+ * "12 files" while the section draws them. Capped at a hundred by the
+ * query — past that the section says so rather than pretending.
+ */
+files: Array<PrFile>, 
+/**
+ * The commits on the branch, newest last — GitHub's own order, which is
+ * how the reviewer above them reads them.
+ */
+commits: Array<PrCommit>, 
 /**
  * Comments, reviews and inline threads in one list, oldest first — the
  * order GitHub reads them in, and the only order in which a bot's reply to
@@ -1762,26 +2087,6 @@ dirty: number, };
 export type ReviewVerdict = "approve" | "request_changes" | "comment";
 
 /**
- * One responsibility, and the instructions that carry it.
- */
-export type Role = { id: string, name: string, 
-/**
- * Free markdown, sent to the harness verbatim. It is the whole feature —
- * everything else here is bookkeeping around getting this string in front
- * of a model.
- */
-instructions: string, 
-/**
- * `None` is global. `Some(path)` is the project the role belongs to, and
- * the role applies to a session **at or under** that path.
- *
- * `#[serde(default)]` is load-bearing the way every field on a
- * whole-file-rewritten store is: a role written before the field existed
- * must still parse, and a role that fails to parse is *every* role gone.
- */
-projectPath: string | null, };
-
-/**
  * What a save did. `Stale` is not an error: the file moved under the reader,
  * so their text is still in the editor and theirs to force through.
  */
@@ -1920,18 +2225,6 @@ issues: Array<IssueRef>,
  */
 parentSessionId: string | null, 
 /**
- * The role this agent carries, if any. See [`crate::roles`].
- *
- * An **id**, never a copy of the instructions. That is what makes an edit
- * to a role reach every agent already carrying it — the text is read at
- * spawn, so there is nothing to go stale.
- *
- * `#[serde(default)]` for the reason every field on this struct has it: the
- * index is rewritten whole, so an entry written before the field existed
- * failing to parse is *every session* gone.
- */
-roleId: string | null, 
-/**
  * The newest context reading the agent has given for this session, with the
  * moment it was taken.
  *
@@ -2064,18 +2357,6 @@ issues: Array<IssueRef>,
  */
 parentSessionId: string | null, 
 /**
- * The role this agent carries, if any. See [`crate::roles`].
- *
- * An **id**, never a copy of the instructions. That is what makes an edit
- * to a role reach every agent already carrying it — the text is read at
- * spawn, so there is nothing to go stale.
- *
- * `#[serde(default)]` for the reason every field on this struct has it: the
- * index is rewritten whole, so an entry written before the field existed
- * failing to parse is *every session* gone.
- */
-roleId: string | null, 
-/**
  * The newest context reading the agent has given for this session, with the
  * moment it was taken.
  *
@@ -2148,6 +2429,30 @@ export type SettingsView = {
  * Effective, not stored — the environment is already folded in.
  */
 analyticsEnabled: boolean, analyticsLocked: boolean, };
+
+/**
+ * The roster as the screen reads it.
+ */
+export type SkillRoster = { skills: Array<PluginSkill>, 
+/**
+ * Whether the agent holds more than it answered with.
+ */
+hasMore: boolean, };
+
+/**
+ * What a switch did.
+ */
+export type SkillToggle = { name: string, 
+/**
+ * The state that was asked for.
+ */
+enabled: boolean, 
+/**
+ * **Not the same thing as `enabled`.** The registry answers nothing for a
+ * Skill it does not recognise, and a screen that read the flag for the
+ * outcome would draw a switch that moved over a Skill nobody changed.
+ */
+applied: boolean, };
 
 /**
  * One row of the composer's slash menu.

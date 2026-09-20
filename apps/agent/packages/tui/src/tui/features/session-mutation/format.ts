@@ -1,4 +1,4 @@
-import { formatProductTime } from '@mavis/shared/product-time';
+import { formatProductTime } from '@hz/shared/product-time';
 import type { TuiSessionInputSummary } from '../../../runtime/port.js';
 import { sessionMutationLocale, sessionMutationTemplate, sessionMutationText } from './copy.js';
 

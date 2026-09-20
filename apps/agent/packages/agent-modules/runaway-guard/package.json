@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/runaway-guard",
+  "name": "@hz/runaway-guard",
   "version": "0.1.0",
   "private": true,
   "description": "Turn-local structured observation and bounded reminder policy for Mavis agents.",
@@ -12,7 +12,7 @@
     }
   },
   "dependencies": {
-    "@mavis/agent-core": "workspace:^"
+    "@hz/agent-core": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^20",

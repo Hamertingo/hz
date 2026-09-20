@@ -23,7 +23,7 @@
  * Oversized responses are later truncated to the token budget by `withToolResultTruncation`.
  */
 
-import type { ToolResult } from '@mavis/agent-core/tools';
+import type { ToolResult } from '@hz/agent-core/tools';
 
 import type { MatrixExecutor as MatrixExecutorBase, MatrixToolContext } from './types.js';
 import { MATRIX_TOOL_TIMEOUTS } from './tool-defs.js';

@@ -25,7 +25,7 @@ not change the upstream baseline digest. Validate the exact imported baseline in
 
 ```bash
 node packages/tui/scripts/verify-tui-engine-baseline.mjs --upstream-root /path/to/pi/packages/tui/src
-pnpm --filter @minimax/code exec tsc --noEmit --pretty false
+pnpm --filter @hz/code exec tsc --noEmit --pretty false
 ```
 
 For future syncs, compare:

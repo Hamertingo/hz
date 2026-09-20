@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/browser-core",
+  "name": "@hz/browser-core",
   "version": "0.2.1",
   "description": "Provider-neutral Browser Core shared by Electron and native headless Chrome.",
   "type": "module",

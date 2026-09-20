@@ -16,8 +16,7 @@ const SEED: ComposerPrefs = {
   effortByModel: {},
   permissionMode: "auto",
   useWorktree: false,
-  roleDefault: null,
-  roleByProject: {},
+  agentName: null,
   fast: false,
 };
 
@@ -40,12 +39,19 @@ export type ComposerPrefs = {
   effortByModel: EffortByModel;
   permissionMode: ApprovalPolicy;
   useWorktree: boolean;
-  /// The responsibility a new session starts under: the global default, and the
-  /// per-project overrides. Written through `writeDefaultRole` and read through
-  /// `resolveDefaultRole` in [roles.ts](../lib/roles.ts), which is where the
-  /// resolution rule lives.
-  roleDefault: string | null;
-  roleByProject: Record<string, string | null>;
+  /// The Agent a new session runs *as*, or `null` for the runtime's own default.
+  ///
+  /// **Sticky, and one value rather than one per project.** An Agent is a stored
+  /// prompt and identity, not a workspace fact, so somebody who wants their
+  /// changelog agent wants it wherever they are — a per-project map would be a
+  /// second thing to keep and the composer's project picker is already there for
+  /// anyone who wants a different one.
+  ///
+  /// Read at two moments, and both matter: the park is opened under it (see
+  /// `prepare_session`), and the send names it on a creation. Changing it after a
+  /// park refuses that park rather than reconciling it, because an Agent is
+  /// composed into a session when the session is made.
+  agentName: string | null;
   /// Whether a new session starts at its agent's faster, dearer tier.
   ///
   /// **One value, not one per model.** Effort is keyed by model because the

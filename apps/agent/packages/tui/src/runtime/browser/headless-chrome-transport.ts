@@ -12,7 +12,7 @@ import type {
   BrowserTransportCommandOptions,
   BrowserTransportEvent,
   BrowserTransportEventListener,
-} from '@mavis/browser-core';
+} from '@hz/browser-core';
 import { CdpConnection } from './headless-cdp-connection.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 900 };

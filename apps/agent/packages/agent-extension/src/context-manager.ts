@@ -1,5 +1,5 @@
 /**
- * `contextManagerExtension`: Installs `ContextManager` through the `@mavis/agent-runtime` extension
+ * `contextManagerExtension`: Installs `ContextManager` through the `@hz/agent-runtime` extension
  * SPI, letting hosts mount it with `createAgentRuntime({ base: [contextManagerExtension(mgr)] })`
  * instead of manually assigning `hooks.beforeLlmCallHook = [manager.beforeLlmCall]`.
  *
@@ -19,8 +19,8 @@ import type {
   PiBeforeLlmCallHookDecision,
   PiBeforeLlmCallHookInput,
   PiHistoryChangedHookInput,
-} from '@mavis/agent-runtime';
-import type { ContextManager } from '@mavis/context-manager';
+} from '@hz/agent-runtime';
+import type { ContextManager } from '@hz/context-manager';
 
 /**
  * Optional side-effect observer for the extension. Host compaction ownership can wrap

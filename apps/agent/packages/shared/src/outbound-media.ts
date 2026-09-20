@@ -25,7 +25,7 @@
  * (see `im-text-sanitize.ts`) stays as the failure fallback for surfaces that
  * cannot deliver media out-of-band; it is intentionally left untouched.
  *
- * MUST NOT import from `@mavis/ui` (package-cycle direction is ui → shared).
+ * MUST NOT import from `@hz/ui` (package-cycle direction is ui → shared).
  */
 
 import { normalizeNestedFilePathMediaSources } from './asset-markup/deliver-assets.js';
@@ -74,7 +74,7 @@ function decodeAssetMarkupText(value: string): string {
 /**
  * Reduce a path/src to its basename: strip query/fragment, split on `/` or
  * `\`, take the last non-empty segment. Mirrors the intent of the UI's
- * `getPreviewFileName`, but kept local so `@mavis/shared` stays UI-free.
+ * `getPreviewFileName`, but kept local so `@hz/shared` stays UI-free.
  */
 function basename(path: string): string | undefined {
   const stripped = path.split('?')[0]?.split('#')[0] ?? '';

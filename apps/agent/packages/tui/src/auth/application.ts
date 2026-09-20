@@ -1,11 +1,11 @@
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 import type {
   AuthStatusSnapshot,
   DeviceAuthorizationPrompt,
   LoginOptions,
   LoginResult,
   LogoutResult,
-} from '@mavis/oauth-core';
+} from '@hz/oauth-core';
 
 import type {
   McodeBusinessEventMap,

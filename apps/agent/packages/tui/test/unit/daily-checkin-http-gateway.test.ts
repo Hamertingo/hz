@@ -6,7 +6,7 @@ import {
   SigninPanelScene,
   type ClaimSigninData,
   type SigninPanel,
-} from '@mavis/shared/daily-signin';
+} from '@hz/shared/daily-signin';
 import { TuiDailyCheckinHttpGateway } from '../../src/checkin/http-gateway.js';
 
 function panel(status = SigninDayStatus.Claimable): SigninPanel {

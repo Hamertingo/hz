@@ -3,7 +3,7 @@ import type {
   BeforeToolCallHandler,
   StepEndHandler,
   TurnAssemblyCtx,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 import {
   createRunawayGuard,
   type RunawayGuardOptions,
@@ -12,7 +12,7 @@ import {
   type RunawayGuardTurnSummary,
   type RunawayGuardVerifiedProgressRead,
   type RunawayGuardVerifiedToolProgress,
-} from '@mavis/runaway-guard';
+} from '@hz/runaway-guard';
 
 // Keep the existing adapter API stable for hosts and offline Bench consumers.
 export {
@@ -33,7 +33,7 @@ export {
   type RunawayGuardTurnSummary,
   type RunawayGuardReminderObservation,
   type RunawayGuardControllerDecision,
-} from '@mavis/runaway-guard';
+} from '@hz/runaway-guard';
 
 export interface RunawayGuardShadowExtensionOptions extends Omit<
   RunawayGuardOptions,

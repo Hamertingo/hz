@@ -1,5 +1,5 @@
 /**
- * `@mavis/background-task` —— shared background task domain.
+ * `@hz/background-task` —— shared background task domain.
  *
  * This package is IO-free by design. It defines the cross-runtime task
  * vocabulary, lifecycle contracts, state helpers, and small in-memory

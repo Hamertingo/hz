@@ -2,7 +2,7 @@ import {
   collectFetchedWebSources,
   collectWebSourceCitations,
   type ContextualWebCitation,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 import type { ToolSourceAdapterInput, ToolSourceReference } from './source-reference.js';
 import {
   escapeMarkdownLabel,

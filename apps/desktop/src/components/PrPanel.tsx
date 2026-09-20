@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 
 import Avatar from "@/components/Avatar";
+import FileIcon from "@/components/FileIcon";
+import { LabelChip } from "@/components/LabelChip";
 import OpenInButton from "@/components/OpenInButton";
 import PrStateIcon from "@/components/PrStateIcon";
 import { Markdown } from "@/components/chat/Markdown";
@@ -27,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { usePullRequest, PrAction } from "@/hooks/usePullRequest";
+import { loginAvatar } from "@/lib/avatar";
 import { relativeTime } from "@/lib/format";
 import { TERMINAL_OPENER } from "@/lib/openWith";
 import {
@@ -405,6 +408,17 @@ function PrRow({
 
       {open && (
         <div className="flex flex-col gap-4 pb-3">
+          {/* What the repository filed it under, under the title it is filed
+              beside. Nothing when there is nothing: an empty strip here would
+              be a row of chrome for a fact this PR does not have. */}
+          {pr.labels.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 px-3">
+              {pr.labels.map((label) => (
+                <LabelChip key={label.name} name={label.name} color={label.color} />
+              ))}
+            </div>
+          )}
+
           {/* Nothing left to say about a merged PR's *readiness*: it has no base
               worth naming once the work is on it, and the header already carries
               the merge glyph. The word "Merged" alone was a whole row repeating
@@ -439,6 +453,78 @@ function PrRow({
               <p className="px-3 py-1 text-ui text-muted-foreground">No checks on this branch.</p>
             )}
           </Section>
+
+          {/* **What it is, then what it changed, then what was said.** The
+              order the reader asks in: the checks above say whether it *can*
+              land, and these say what landing it would mean. */}
+          {pr.body.trim() && (
+            <Section title="Description">
+              <div className="px-3 text-chat text-sidebar-foreground">
+                <Markdown>{pr.body}</Markdown>
+              </div>
+            </Section>
+          )}
+
+          {pr.files.length > 0 && (
+            <Section title="Files" count={pr.changedFiles}>
+              <ul className="flex flex-col">
+                {pr.files.map((file) => (
+                  <li key={file.path} className="flex items-center gap-2 px-3 py-0.5 text-ui">
+                    <FileIcon path={file.path} className="size-3.5 shrink-0" />
+                    {/* The whole path in one truncating span, which is what the
+                        right panel's rows do — the file *name* winning the
+                        truncation is the repo view's rule, and it is the wrong
+                        one here: this list is read for which directory a change
+                        landed in as much as for the file. */}
+                    <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
+                      {file.path}
+                    </span>
+                    <Counts added={file.additions} removed={file.deletions} />
+                  </li>
+                ))}
+              </ul>
+              {/* The query asks for a hundred; past that the section says so
+                  rather than quietly stopping at a round number. */}
+              {pr.changedFiles > pr.files.length && (
+                <p className="px-3 pt-1 text-ui text-muted-foreground">
+                  …and {pr.changedFiles - pr.files.length} more.
+                </p>
+              )}
+            </Section>
+          )}
+
+          {pr.commits.length > 0 && (
+            <Section title="Commits" count={pr.commits.length}>
+              <ul className="flex flex-col">
+                {pr.commits.map((commit) => (
+                  // The whole row opens the commit, for the reason a check row
+                  // opens its log: it is one fact with one destination, and a
+                  // twelve-character sha inside it is the harder thing to hit.
+                  <li key={commit.oid}>
+                    <button
+                      type="button"
+                      onClick={() => void openUrl(`${pr.url}/commits/${commit.oid}`)}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-0.5 text-left text-ui"
+                    >
+                      <Avatar
+                        src={commit.avatar ?? loginAvatar(commit.login ?? "")}
+                        name={commit.author || commit.login || "?"}
+                      />
+                      <span className="shrink-0 font-mono text-muted-foreground">
+                        {commit.shortOid}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
+                        {commit.headline}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {relativeTime(commit.committedAt)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
 
           <Section title="Comments" count={pr.comments.length || undefined}>
             {pr.comments.length ? (

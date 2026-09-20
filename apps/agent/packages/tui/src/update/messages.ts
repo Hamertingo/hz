@@ -1,4 +1,4 @@
-import { translateRuntimeText } from '@mavis/shared/runtime-i18n';
+import { translateRuntimeText } from '@hz/shared/runtime-i18n';
 
 export function mcodePrefixActivationScheduledMessage(
   _environment: NodeJS.ProcessEnv = process.env,

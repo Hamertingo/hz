@@ -1,4 +1,4 @@
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import { LocalCodeReviewToolDef, type LocalCodeReviewToolInput } from './builtin-defs.js';
 import type { LocalCodeReviewAdapter, LocalRuntimeToolContext } from './types.js';

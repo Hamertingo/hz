@@ -3,7 +3,7 @@ import type {
   AgentExtension,
   StepEndHandler,
   TurnAssemblyCtx,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 
 export interface TerminalRecoveryObservation {
   readonly sessionId: string;

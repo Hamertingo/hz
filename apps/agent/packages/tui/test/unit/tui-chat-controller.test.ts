@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { SendMessageReq } from '@mavis/local-runtime-v2/cli-service';
+import type { SendMessageReq } from '@hz/local-runtime-v2/cli-service';
 import { TuiFailure } from '../../src/failure.js';
 import {
   TuiChatController as ProductionTuiChatController,

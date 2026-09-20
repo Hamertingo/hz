@@ -24,8 +24,11 @@ import SlowRequestToast from "@/components/SlowRequestToast";
 import WorktreeDialog, { type WorktreePrompt } from "@/components/WorktreeDialog";
 import IssuePanel from "@/components/IssuePanel";
 import IssuesView from "@/components/IssuesView";
-import PrsView, { PrDetail } from "@/components/PrsView";
-import type { PrRow } from "@/hooks/usePrList";
+import PluginsView, { SkillDetail as PluginSkillDetail } from "@/components/PluginsView";
+import AgentForm from "@/components/plugins/AgentForm";
+import McpForm from "@/components/plugins/McpForm";
+import PrsView, { PrDetail, PrTabs } from "@/components/PrsView";
+import { prKey, type PrRow } from "@/hooks/usePrList";
 import PrPanel from "@/components/PrPanel";
 import BrowserPane from "@/components/browser/BrowserPane";
 import {
@@ -90,7 +93,7 @@ import DictateControl from "@/components/composer/DictateControl";
 import AppShell from "@/components/layout/AppShell";
 import SessionHeader from "@/components/layout/SessionHeader";
 import { nextEffort } from "@/components/composer/ModelSelector";
-import { cycledModels, rowModel } from "@/lib/modelRotation";
+import { cycledModels, rowModel } from "@/lib/modelVisibility";
 import ViewTabs, { type ViewTab } from "@/components/layout/ViewTabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
@@ -124,6 +127,7 @@ import { authFailedTurn } from "@/lib/auth";
 import { basename } from "@/lib/format";
 import { focusComposer } from "@/lib/composerFocus";
 import { changeRange, turnChangedTree } from "@/lib/changes";
+import { agentPickOf, hasPick, mcpPickOf, pickedSkillOf, sectionTab, type PluginsTab } from "@/lib/plugins";
 import { prBadgeCount, sessionBranch } from "@/lib/pr";
 import { playCelebration } from "@/lib/sound";
 import {
@@ -147,6 +151,13 @@ const PANE_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 /// new array each time would be a new prop identity on every event.
 const EMPTY_EVENTS: AgentEvent[] = [];
 
+/// The main-column pages, and the one value that says which is up.
+///
+/// **The set, so `none` is spelled once and every page is spelled once.** Reading
+/// a page off this is what stops a question about pages being answered by a list
+/// written out again at each site — see the state's own note.
+type MainPage = "none" | "issues" | "prs" | "plugins";
+
 function App() {
   const {
     selectedSessionId,
@@ -169,9 +180,8 @@ function App() {
     setFast,
     fastNote,
     permissionMode,
-    roleId,
-    setRoleId,
-    setGlobalRoleId,
+    agentName,
+    setAgentName,
     projects,
     projectPath,
     repos,
@@ -185,6 +195,9 @@ function App() {
     busy,
     backgroundTasks,
     liveTaskIds,
+    delegations,
+    refreshDelegations,
+    stopDelegations,
     compacting,
     apiRetry,
     working,
@@ -300,17 +313,30 @@ function App() {
   // the app onto a repo view for every session would be wrong more often than
   // right.
   const [viewTabs, setViewTabs] = useState<Record<string, ViewTab>>({});
-  // Whether the issues page is what the main column is showing. Not a session
-  // and not a per-session tab, so it is neither in `viewTabs` nor in the
-  // selection: it is a place the reader goes and comes back from, and the
-  // session they were in is still there when they do.
-  const [issuesOpen, setIssuesOpen] = useState(false);
-
-  // The pull-requests page, on the same terms: a place the reader goes and comes
-  // back from, with the session they were in still there when they do. Its own
-  // page rather than a tab, because the question is about the *repository* and
-  // the session's tab is about one branch of it.
-  const [prsOpen, setPrsOpen] = useState(false);
+  // **One value, not a flag per page.**
+  //
+  // The main column shows one page at a time and the pages are a fixed set, so the
+  // state is *which one* and the three flags below are read off it. They used to
+  // be three `useState(false)`s kept in step by hand, and every question about
+  // "is a page up" had to name all three: the composer's own guard named two, so
+  // the third page arrived with the composer still drawn under it — and the same
+  // list had to be remembered again at the reset key, in each opener and in ⌘W's
+  // guard. A set that can only be spelled once cannot be half-remembered.
+  //
+  // A page is not a session and not a per-session tab: it is a place the reader
+  // goes and comes back from, with the session they were in still there when they
+  // do. That is why none of this moves the selection.
+  const [page, setPage] = useState<MainPage>("none");
+  const issuesOpen = page === "issues";
+  const prsOpen = page === "prs";
+  const pluginsOpen = page === "plugins";
+  /// What the Plugins page is listing, and what its pane is showing with it.
+  ///
+  /// **One value for both**, because the pane draws the thing its own section
+  /// lists — so a Skill held in one place and a section in another is a pane
+  /// describing something that is not on the page. `pickedSkillOf`, `mcpPickOf` and
+  /// `hasPick` are the only questions asked of it.
+  const [pluginsTab, setPluginsTab] = useState<PluginsTab>(() => sectionTab("skills"));
   /// **The repository the page lists, which is the session's own checkout.** A
   /// listing is one `gh` call per repository, and the question the page answers
   /// is about the code in front of the reader — the sidebar's marks can span
@@ -359,17 +385,17 @@ function App() {
   /// request while its predecessor is still worth looking at, is the ordinary
   /// reason to want both. `activePrKey` is the tab on screen and the only one
   /// that reads — see `PrDetail`.
-  const [openPrs, setOpenPrs] = useState<PrRow[]>([]);
+  const [openedPrs, setOpenedPrs] = useState<PrRow[]>([]);
   const [activePrKey, setActivePrKey] = useState<string | null>(null);
 
   /// The tab on screen, or `null` where the pane is empty. Derived rather than
   /// held, so a key that no longer names an open tab can never be selected.
-  const activePr = openPrs.find((pr) => prKey(pr) === activePrKey) ?? null;
+  const activePr = openedPrs.find((pr) => prKey(pr) === activePrKey) ?? null;
 
   /// Opens a pull request, or brings the tab it already has to the front.
   const openPr = (pr: PrRow) => {
     const key = prKey(pr);
-    setOpenPrs((prev) => (prev.some((open) => prKey(open) === key) ? prev : [...prev, pr]));
+    setOpenedPrs((prev) => (prev.some((open) => prKey(open) === key) ? prev : [...prev, pr]));
     setActivePrKey(key);
   };
 
@@ -378,11 +404,11 @@ function App() {
   /// strip takes, so a closed tab lands the reader where they were rather than
   /// nowhere.
   const closePr = (key: string) => {
-    const at = openPrs.findIndex((pr) => prKey(pr) === key);
+    const at = openedPrs.findIndex((pr) => prKey(pr) === key);
     if (at === -1) return;
 
-    const next = openPrs.filter((_, i) => i !== at);
-    setOpenPrs(next);
+    const next = openedPrs.filter((_, i) => i !== at);
+    setOpenedPrs(next);
     if (activePrKey !== key) return;
 
     const neighbour = next[at - 1] ?? next[at] ?? null;
@@ -399,6 +425,12 @@ function App() {
   /// the whole app every time that handle is re-made would be a render per
   /// keystroke in the page's search box.
   const issuesRefreshRef = useRef<(() => void) | null>(null);
+
+  /// The plugins page's own refresh, so ⌘R can reach it. A ref for the reason the
+  /// two above are: the page owns the read — which here can cost the agent child's
+  /// first boot — and hands its handle up rather than being re-rendered to receive
+  /// one.
+  const pluginsRefreshRef = useRef<(() => void) | null>(null);
 
   /// The issue the pane is showing while the issues page has the column.
   ///
@@ -754,16 +786,14 @@ function App() {
     [selectedSessionId],
   );
 
-  /// Whether one of the two main-column pages is up.
+  /// Whether one of the main-column pages is up.
   ///
   /// A page fills the column the session's own views live in — Chat, Diff,
-  /// Browser, Files — so every one of those asks *this* and not `issuesOpen`.
-  /// Stated as one flag because it was written per page: the pull-requests page
-  /// arrived without it, and the column drew the page *and* the chat, one above
-  /// the other, which is the same stacking the two pages do to each other when
-  /// both flags are up. The openers keep them mutually exclusive; this is the
-  /// question that has to be asked of either.
-  const pageOpen = issuesOpen || prsOpen;
+  /// Browser, Files — so every one of those asks *this* and not a named page.
+  /// Read off the one value the pages are held in, so it cannot be a list that
+  /// was written out again and came up short: it was, and the composer drew under
+  /// a page for it.
+  const pageOpen = page !== "none";
 
   /// Whether the right pane is actually on screen, as against whether the
   /// reader has asked for it.
@@ -985,7 +1015,11 @@ function App() {
 
   // A live background task counts even where no run is built for it yet, or the
   // chat's background-tasks indicator offers a tab that isn't in the row.
-  const hasSubagentsTab = subagents.length > 0 || backgroundTasks.length > 0;
+  // The roster counts as much as the runs do: a child that is running before its
+  // spawning call lands in the log is still work the reader can open and stop, and
+  // a tab that appeared a beat later would be one they had already looked for.
+  const hasSubagentsTab =
+    subagents.length > 0 || backgroundTasks.length > 0 || delegations.length > 0;
 
   // Read off the session's own log rather than off `busy`: a plan outlives the
   // turn that wrote it, and the tab is what the strip hands the finished one to.
@@ -1021,6 +1055,11 @@ function App() {
   const openSubagentPanel = () => {
     setPanelTab("subagents");
     setPanelOpen(true);
+    // **The roster is live-only, so opening the pane is when it is read.** A push
+    // covers every move while the child is up; this covers the pane opened after
+    // the last one — a session reopened, or a tab switched back to long after the
+    // last child finished.
+    if (selectedSessionId) void refreshDelegations(selectedSessionId);
   };
 
   const openSubagent = (id: string) => {
@@ -1128,7 +1167,14 @@ function App() {
     }
     if (prsOpen) {
       if (activePrKey) closePr(activePrKey);
-      else setPrsOpen(false);
+      else setPage("none");
+      return true;
+    }
+    if (pluginsOpen) {
+      // The detail first, then the page: innermost first, the order the two arms
+      // above take.
+      if (hasPick(pluginsTab)) setPluginsTab(sectionTab(pluginsTab.section));
+      else setPage("none");
       return true;
     }
     return false;
@@ -1335,29 +1381,30 @@ function App() {
   }, [selectedSessionId, hasBrowserTabs, fullBrowserOpen, setPanelTab, setPanelOpen]);
 
   // Every way of arriving at a session, so none of them can forget to leave the
-  // issues page. The two sidebar buttons closed it and the chords beside them
-  // did not, which made ⌘N and ⌘⇧↑/↓ look inert: they moved the selection under
-  // a column still full of issues, and the change only showed up on the way
-  // back. The page itself is left as it was — its filters and its scroll come
-  // back with it — so this is a navigation, not a dismissal.
+  // pages. The two sidebar buttons closed one and the chords beside them did not,
+  // which made ⌘N and ⌘⇧↑/↓ look inert: they moved the selection under a column
+  // still full of issues, and the change only showed up on the way back. A page is
+  // left as it was — its filters and its scroll come back with it — so this is a
+  // navigation, not a dismissal.
   const goToSession = (go: () => void) => {
-    setIssuesOpen(false);
-    setPrsOpen(false);
+    setPage("none");
     go();
   };
 
-  // The two pages share the main column, so opening one is what closes the
-  // other: with both flags up the column drew one page above the other and the
-  // sidebar lit two rows. `useCallback` because the palette's row table is
-  // memoized on its inputs, and fresh closures there would rebuild it on every
-  // render — neither depends on anything but the setters.
+  // The pages share the main column, and **one value is what keeps them exclusive**
+  // — there is no pair of flags left to get out of step, and no arm here that has
+  // to remember to clear the others.
+  //
+  // `useCallback` because the palette's row table is memoized on its inputs, and
+  // fresh closures there would rebuild it on every render.
   const openIssues = useCallback(() => {
-    setPrsOpen(false);
-    setIssuesOpen(true);
+    setPage("issues");
   }, []);
   const openPrs = useCallback(() => {
-    setIssuesOpen(false);
-    setPrsOpen(true);
+    setPage("prs");
+  }, []);
+  const openPlugins = useCallback(() => {
+    setPage("plugins");
   }, []);
 
   /// Moves the whole window to another space. The screen catches up in the
@@ -1499,6 +1546,18 @@ function App() {
   const workOnIssue = (issue: { identifier: string; title: string }) => {
     goToSession(handleNewSession);
     appendToDraft(null, issueTag(issue.identifier, issue.title));
+  };
+
+  /// Starts a new chat *as* an Agent, from the Agents screen.
+  ///
+  /// **It sets the composer's own pick rather than sending anything.** The Agent
+  /// a session runs as is chosen at creation and cannot be changed afterwards, so
+  /// the honest handoff is to arrive at the composer with that Agent already
+  /// picked — the reader adds the work, chooses the project and presses Enter,
+  /// and the picker on the row shows what they are about to start.
+  const chatWithAgent = (name: string) => {
+    setAgentName(name);
+    goToSession(handleNewSession);
   };
 
   /// Writes a session's settled or pinned flag and takes the sidebar wherever
@@ -1644,6 +1703,11 @@ function App() {
   // own bodies all hold `!pageOpen`, and `panelShown` is the pane a page hides.
   const fileShown = !pageOpen && viewTab === "files" && !!activeFile;
   const closeTabOrPane = () => {
+    // **First, and ahead of the session guard below.** The pull-requests page's
+    // tabs are the reader's pull requests rather than a session's views, so no
+    // other arm can see them — and every one of those needs a session, which
+    // this does not.
+    if (prsOpen && activePrKey) return closePr(activePrKey);
     if (!selectedSessionId) return;
     if (fileShown && activeFile) return closeFile(selectedSessionId, activeFile);
     if (fullBrowserOpen) return closeBrowserTab();
@@ -1654,6 +1718,7 @@ function App() {
   // it matches, and a ⌘W that eats the key and does nothing is worse than one
   // the app never had.
   const hasCloseTarget =
+    (prsOpen && !!activePrKey) ||
     fileShown ||
     ((fullBrowserOpen || (panelShown && activeTab === "browser")) &&
       (pendingBrowserTab || !!hasBrowserTabs)) ||
@@ -1695,6 +1760,7 @@ function App() {
       return issuesRefreshRef.current?.();
     }
     if (prsOpen) return prsRefreshRef.current?.();
+    if (pluginsOpen) return pluginsRefreshRef.current?.();
     if (panelShown) panelRefresh?.onRefresh();
   });
   // ⌘S writes the doc on screen. Unregistered rather than a no-op off that tab:
@@ -1747,11 +1813,11 @@ function App() {
   // so a wrong landing is one more press away from right. Leaves each model's
   // own remembered effort alone, same as picking it from the menu.
   //
-  // `cycledModels` is the reader's stars plus the model the session is on, and
-  // that short list — not the picker's whole one — is what the chord can afford:
-  // the menu draws every model a provider serves, 37 of them here, where 37
-  // presses to nowhere is not a shortcut. A star is the reader naming the models
-  // they switch between, and the stars lead the menu, so the cycle is its top.
+  // `cycledModels` is what the picker draws plus the model the session is on.
+  // The menu draws every model the providers serve — 37 of them here — so the
+  // chord is only worth having because the reader can shorten it: switching a
+  // model off in settings takes it out of both, and what is left is the list
+  // they actually switch between.
   //
   // One press is one **model**, whatever the wire spent on it: a model with
   // variants is one row and one stop, and landing on one leaves the variant it
@@ -1785,6 +1851,10 @@ function App() {
   // ⌘⇧L, free and next to ⌘I by meaning rather than by letter: the two lists the
   // reader goes to when the branch in front of them has nothing to say.
   useHotkey("prs.open", openPrs);
+  // ⌘⇧U, which nothing else here claims: ⌘⇧P is the chord that reads like the
+  // name and belongs to `project.next`, and the row this opens is the third of
+  // the lists the reader leaves a session for.
+  useHotkey("plugins.open", openPlugins);
   // ⌘K, which nothing else here claims. A toggle, so the chord that opened the
   // box closes it — the same reasoning settings follows.
   useHotkey("palette.open", () => setPaletteOpen((open) => !open));
@@ -1846,15 +1916,19 @@ function App() {
       {
         id: "panel.toggle",
         label: "Toggle the panel",
-        // The issues-page guard, repeated the way the chord repeats it: that
-        // page hides the pane, so the press lands somewhere else entirely.
+        // The same function the chord takes, rather than a copy of its rule: a
+        // page hides the pane, so the press would land somewhere else entirely.
+        // Written out here it was a list of pages that had already gone stale —
+        // it named issues and not pull requests, and the plugins page would have
+        // been a third thing to remember.
         run: () => {
-          if (issuesOpen) return setPickedIssue(null);
+          if (closePagePane()) return;
           togglePanel();
         },
       },
       { id: "issues.open", label: "Open issues", run: openIssues },
       { id: "prs.open", label: "Open pull requests", run: openPrs },
+      { id: "plugins.open", label: "Open plugins", run: openPlugins },
       { id: "settings", label: "Settings", run: () => setSettingsOpen(true) },
     ];
 
@@ -1877,7 +1951,13 @@ function App() {
     projects,
     spaces,
     space,
-    issuesOpen,
+    // Everything `closePagePane` reads, which the panel row now calls. The row
+    // used to spell the guard out itself and needed none of these — and could not
+    // be stale — but sharing the rule is worth naming what it depends on: a row
+    // built from an old pick would close the wrong thing, or nothing.
+    pickedIssue,
+    pluginsTab,
+    activePrKey,
     selectedSessionId,
     handleSelectSessionIndexItem,
     handleSelectProject,
@@ -1887,6 +1967,7 @@ function App() {
     changeSpace,
     openIssues,
     openPrs,
+    openPlugins,
     pageOpen,
     prsCwds,
   ]);
@@ -1942,6 +2023,8 @@ function App() {
               handleNewSession();
             })
           }
+          onOpenPlugins={openPlugins}
+          pluginsOpen={pluginsOpen}
           onOpenIssues={openIssues}
           issuesOpen={issuesOpen}
           onOpenPrs={openPrs}
@@ -1997,7 +2080,17 @@ function App() {
             // The group's name over a grid: each pane's header already names
             // its session, and the focused one's repeated up here read as a
             // second line of the same row.
-            standIn={issuesOpen ? "Issues" : prsOpen ? "Pull requests" : activeGroup ? groupName(activeGroup) : null}
+            standIn={
+              issuesOpen
+                ? "Issues"
+                : prsOpen
+                  ? "Pull requests"
+                  : pluginsOpen
+                    ? "Plugins"
+                    : activeGroup
+                      ? groupName(activeGroup)
+                      : null
+            }
             className="flex-1"
           />
 
@@ -2022,7 +2115,18 @@ function App() {
                     changes={false}
                   />
                 )
-              : selectedSession && (
+              : pluginsOpen
+                ? // The page's own, for the reason the two above draw one: a row on
+                  // this page is the only thing that can open the pane, so the
+                  // toggle is the way back out of it.
+                  hasPick(pluginsTab) && (
+                    <PanelToggle
+                      onToggle={() => setPluginsTab(sectionTab(pluginsTab.section))}
+                      open
+                      changes={false}
+                    />
+                  )
+                : selectedSession && (
                   <PanelToggle
                     onToggle={handleTogglePanel}
                     open={panelOpen}
@@ -2038,10 +2142,66 @@ function App() {
         // page that is an issue and never a session — which is the whole reason
         // the session's pane is hidden there: left up, it went on describing
         // changes and a pull request belonging to work the reader had left.
-        prsOpen ? (
+        pluginsOpen ? (
           <RightPanel
-            open={!!pickedPr}
-            heading="Pull request"
+            open={hasPick(pluginsTab)}
+            // The word follows the section: this pane is about a Skill under one,
+            // a server under the next and an Agent under the third, and a heading
+            // naming the wrong one is the pane describing something that is not on
+            // the page.
+            heading={
+              pluginsTab.section === "skills"
+                ? "Skill"
+                : pluginsTab.section === "mcp"
+                  ? "MCP server"
+                  : "Agent"
+            }
+            // The tab id does not follow it — a heading is what is drawn, and two
+            // ids for one pane would be two things `PANEL_TABS` has to keep.
+            tab="skill"
+            onTabChange={() => {}}
+          >
+            <TabBody active>
+              {pluginsTab.section === "skills" ? (
+                <PluginSkillDetail skill={pickedSkillOf(pluginsTab)} />
+              ) : pluginsTab.section === "mcp" ? (
+                <McpForm
+                  pick={mcpPickOf(pluginsTab)}
+                  onClose={() => setPluginsTab(sectionTab("mcp"))}
+                  // A new server has no row to have been picked, so the pane moves
+                  // onto what was just created rather than staying on a blank form.
+                  onSaved={(name) =>
+                    setPluginsTab({ section: "mcp", pick: { mode: "server", name } })
+                  }
+                />
+              ) : (
+                <AgentForm
+                  pick={agentPickOf(pluginsTab)}
+                  onClose={() => setPluginsTab(sectionTab("agents"))}
+                  // The same bargain the server form makes: creation has no row to
+                  // have been picked, so the pane moves onto what was just written.
+                  onSaved={(name) =>
+                    setPluginsTab({ section: "agents", pick: { mode: "agent", name } })
+                  }
+                  onChat={chatWithAgent}
+                />
+              )}
+            </TabBody>
+          </RightPanel>
+        ) : prsOpen ? (
+          <RightPanel
+            open={openedPrs.length > 0}
+            // The pane's tabs are the reader's pull requests rather than this
+            // session's views, so the page brings the strip and the frame keeps
+            // everything around it — see `RightPanel`'s `tabs`.
+            tabs={
+              <PrTabs
+                open={openedPrs}
+                active={activePrKey}
+                onActivate={openPr}
+                onClose={(pr) => closePr(prKey(pr))}
+              />
+            }
             tab="pr"
             onTabChange={() => {}}
             // The page's own listing is re-read as well as this pane: a merge
@@ -2055,16 +2215,23 @@ function App() {
               loading: false,
             }}
           >
-            <TabBody active>
-              <PrDetail
-                picked={pickedPr}
-                active={prsOpen}
-                onChanged={() => {
-                  prMarks.refresh();
-                  prsRefreshRef.current?.();
-                }}
-              />
-            </TabBody>
+            {/* **Every open tab stays mounted, and only one reads.** `PrDetail`
+                hands `active` to `usePullRequest`, which pauses its read while
+                it is false — the same bargain the session's own tabs make, so
+                ten open pull requests cost one `gh` call and ten kept scroll
+                positions rather than ten calls a second. */}
+            {openedPrs.map((pr) => (
+              <TabBody key={prKey(pr)} active={prKey(pr) === activePrKey}>
+                <PrDetail
+                  picked={pr}
+                  active={prsOpen && prKey(pr) === activePrKey}
+                  onChanged={() => {
+                    prMarks.refresh();
+                    prsRefreshRef.current?.();
+                  }}
+                />
+              </TabBody>
+            ))}
           </RightPanel>
         ) : issuesOpen ? (
           <RightPanel
@@ -2159,6 +2326,10 @@ function App() {
                 selectedId={selectedSubagentId}
                 resultByCallId={resultByCallId}
                 onSelect={setSelectedSubagentId}
+                members={delegations}
+                onStopAll={
+                  selectedSessionId ? () => stopDelegations(selectedSessionId) : undefined
+                }
               />
             </TabBody>
             <TabBody active={hasPrTab && activeTab === "pr"}>
@@ -2187,13 +2358,17 @@ function App() {
       }
       footer={
         // Only under the transcript it writes into. The other views are not
-        // conversations, and a composer under them would send into a session
-        // the reader can't see — including the pull-requests page, which is
-        // about a repository rather than about anything being written. Safe to
-        // unmount: the draft, the attachments and the fan-out set are
-        // module-level stores precisely because the composer already unmounts
-        // crossing the empty state.
-        issuesOpen || prsOpen || (selectedSession && viewTab !== "chat") ? null : (
+        // conversations, and a composer under them would send into a session the
+        // reader cannot see.
+        //
+        // **`pageOpen`, never a list of the pages.** Every page hides the composer
+        // for the same reason, and a list written out here is a list that comes up
+        // short: this one named the issues and pull-request pages and not the
+        // plugins one, so that page shipped with a composer under it — offering to
+        // send into a session the reader had left. Safe to unmount: the draft, the
+        // attachments and the fan-out set are module-level stores precisely
+        // because the composer already unmounts crossing the empty state.
+        pageOpen || (selectedSession && viewTab !== "chat") ? null : (
         <ChatInput
           onSend={handleSendMsg}
           commands={slashCommands}
@@ -2344,10 +2519,8 @@ function App() {
                 pendingBranch && runCheckout(pendingBranch, stash)
               }
               onCancelBranchSwitch={() => setPendingBranch(null)}
-              roleId={roleId}
-              onRoleChange={setRoleId}
-              onRoleGlobal={setGlobalRoleId}
-              roleOfferPath={targetPath}
+              agentName={agentName}
+              onAgentChange={setAgentName}
               useWorktree={useWorktree}
               onToggleWorktree={() => setUseWorktree((v) => !v)}
               onAttach={() => void pickAttachments(selectedSessionId)}
@@ -2369,7 +2542,7 @@ function App() {
           is showing, so a caught error clears when the reader moves to another
           session or another tab instead of latching until a reload. */}
       <RenderErrorBoundary
-        resetKey={`${viewTab}:${selectedSessionId ?? ""}:${issuesOpen ? "issues" : prsOpen ? "prs" : ""}`}
+        resetKey={`${viewTab}:${selectedSessionId ?? ""}:${page}`}
         subject="view"
       >
       {/* Hidden rather than unmounted, like everything else in this column:
@@ -2379,9 +2552,9 @@ function App() {
         <PrsView
           cwds={prsCwds}
           active={prsOpen}
-          picked={pickedPr}
-          onPick={setPickedPr}
-          onClose={() => setPrsOpen(false)}
+          picked={activePr}
+          onPick={openPr}
+          onClose={() => setPage("none")}
           refreshRef={prsRefreshRef}
         />
       </TabBody>
@@ -2397,6 +2570,16 @@ function App() {
           onConnect={integrations.connect}
           connecting={integrations.busy}
           connectError={integrations.error}
+        />
+      </TabBody>
+
+      <TabBody active={pluginsOpen}>
+        <PluginsView
+          active={pluginsOpen}
+          tab={pluginsTab}
+          onTab={setPluginsTab}
+          onClose={() => setPage("none")}
+          refreshRef={pluginsRefreshRef}
         />
       </TabBody>
 
@@ -2549,7 +2732,11 @@ function App() {
       updateChannel={updateChannel}
       onUpdateChannelChange={setUpdateChannel}
       // A provider changed, so the picker's list is stale — the agent is what
-      // answers it, and it just answered something else.
+      // answers it, and it just answered something else. The settings screen's
+      // model switches are drawn from that same list, which is why it is handed
+      // down rather than read again there.
+      models={models}
+      loadingModels={loadingModels}
       onProvidersChanged={() => void refreshModels()}
     />
     <WorktreeDialog

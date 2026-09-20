@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/config",
+  "name": "@hz/config",
   "version": "0.2.1",
   "type": "module",
   "types": "./src/index.ts",
@@ -26,7 +26,7 @@
     }
   },
   "dependencies": {
-    "@mavis/shared": "workspace:^",
+    "@hz/shared": "workspace:^",
     "js-yaml": "^4",
     "proper-lockfile": "^4"
   },

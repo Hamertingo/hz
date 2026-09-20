@@ -1,11 +1,11 @@
 /**
- * `@mavis/agent-core/tools` —— tool protocol types, `defineRuntimeTool`, and
+ * `@hz/agent-core/tools` —— tool protocol types, `defineRuntimeTool`, and
  * decorated-class `bindTool` / `toRuntimeTool` helpers.
  *
  * Usage:
  *
  * ```ts
- * import { defineRuntimeTool } from '@mavis/agent-core/tools';
+ * import { defineRuntimeTool } from '@hz/agent-core/tools';
  * import { Type } from '@sinclair/typebox';
  *
  * const CloudBashTool = defineRuntimeTool({

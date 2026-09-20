@@ -22,7 +22,7 @@ import {
   normalizeTuiRuntimeEvent,
   type RawTuiRuntimeEvent,
 } from "../../src/runtime/event-normalizer.js";
-import type { SendMessageReq } from "@mavis/local-runtime-v2/cli-service";
+import type { SendMessageReq } from "@hz/local-runtime-v2/cli-service";
 import type { TuiObservability } from "../../src/observability/local-observability.js";
 import type { McodeAuthProgress } from "../../src/auth/application.js";
 import { formatTuiShortcut } from "../../src/tui/shell/shortcut-labels.js";
@@ -1846,7 +1846,7 @@ describe("createTuiApp", () => {
     await app.ready;
     app.start();
     const rendered = app.tui.render(80).join("\n");
-    expect(rendered).not.toContain("Starting MiniMax Code");
+    expect(rendered).not.toContain("Starting Hz Agent");
     expect(rendered).not.toContain("Loading session");
     await app.stop();
   });
@@ -2632,7 +2632,7 @@ describe("createTuiApp", () => {
     expect(conversation).toContain("Say hello");
     expect(conversation).toContain("Hello from the Agent");
     expect(terminal.started).toBe(true);
-    expect(terminal.title).toBe("Minimax Code");
+    expect(terminal.title).toBe("Hz Agent");
     expect(runtime.createSession).toHaveBeenCalledWith({
       workspaceDir: "/workspace",
     });
@@ -2705,7 +2705,7 @@ describe("createTuiApp", () => {
 
     await vi.waitFor(() => expect(terminal.title).toBe(sessionTitle));
     await app.submit("/status");
-    expect(terminal.titleUpdates).toEqual(["Minimax Code", sessionTitle]);
+    expect(terminal.titleUpdates).toEqual(["Hz Agent", sessionTitle]);
 
     await app.stop();
   });

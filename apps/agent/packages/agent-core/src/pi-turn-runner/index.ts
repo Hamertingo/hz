@@ -1,5 +1,5 @@
 /**
- * `@mavis/agent-core/pi-turn-runner` — assemble pi-coding-agent for a
+ * `@hz/agent-core/pi-turn-runner` — assemble pi-coding-agent for a
  * Mavis session and bridge its event stream into canonical
  * `RuntimeEvent`s.
  *

@@ -12,7 +12,7 @@ import {
   type ConfigureImLoggerOptions,
   type ConfigureLocalRuntimeLoggingOptions,
   type LocalRuntimeLogger,
-} from '@mavis/local-runtime-v2/logging';
+} from '@hz/local-runtime-v2/logging';
 
 type ConsoleMethod = 'log' | 'info' | 'warn' | 'error' | 'debug' | 'trace';
 type RuntimeLogLevel = 'info' | 'warn' | 'error';

@@ -1,4 +1,4 @@
-import type { GlobalThreadGoal } from '@mavis/shared/global-events';
+import type { GlobalThreadGoal } from '@hz/shared/global-events';
 import type { TuiAttachment } from '../../types/invocation.js';
 import type { TuiRuntimeAccessContext } from './access-context.js';
 

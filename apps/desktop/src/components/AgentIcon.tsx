@@ -1,18 +1,16 @@
 import { cn } from "@/lib/utils";
 import type { Harness } from "@/types/events";
 
-/// Every agent's own mark, drawn wherever a session's harness is named.
+/// The agent's own mark, drawn wherever a session's harness is named.
 ///
-/// `currentColor` for [`LinearIcon`](./LinearIcon.tsx)'s reason: these sit in a
-/// row of muted chrome, and a saturated logo would be the loudest thing on a
-/// surface whose job is to be quiet. It also lets one selected icon go
-/// `text-foreground` while the other stays muted, which is the whole of how the
-/// picker shows which agent is on.
-/// MiniMax Code's mark — a monogram, because the vendor's own art is not in
-/// this repository and a brand glyph traced from memory is worse than none.
-/// Drawn in `currentColor` like the marks this file used to hold, so it sits in
-/// a row of muted chrome rather than shouting over it.
-function MiniMaxIcon({ className }: { className?: string }) {
+/// **A monogram of its name, and that is not a placeholder.** The agent is this
+/// app's own build, so there is no vendor mark to carry and no second one to
+/// tell it apart from; a glyph traced from somebody's brand would be claiming an
+/// identity that is not that brand's to give. `Hz` is what it is called.
+///
+/// `currentColor`, so it sits in a row of muted chrome rather than shouting over
+/// it — the same reason [`LinearIcon`](./LinearIcon.tsx) does.
+function HzAgentIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -21,11 +19,12 @@ function MiniMaxIcon({ className }: { className?: string }) {
       stroke="currentColor"
       strokeWidth="1.75"
       strokeLinecap="round"
+      strokeLinejoin="round"
       role="img"
-      aria-label="MiniMax Code"
+      aria-label="Hz Agent"
     >
-      <path d="M4 17V8l4 5 4-5v9" />
-      <path d="M16 17V8m0 5h4v4" />
+      <path d="M4 8v9M4 12.5h5M9 8v9" />
+      <path d="M15 8h5l-5 9h5" />
     </svg>
   );
 }
@@ -45,5 +44,5 @@ export default function AgentIcon({
   // as any other corner of muted chrome.
   void harness;
   void brand;
-  return <MiniMaxIcon className={className} />;
+  return <HzAgentIcon className={className} />;
 }

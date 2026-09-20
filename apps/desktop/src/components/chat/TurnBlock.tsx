@@ -84,7 +84,8 @@ const NO_ROWS: ReactNode[] = [];
 const NO_SEGMENTS: TurnSegment[] = [];
 
 /// One turn: the user's prompt, a collapsed summary of the work, and the final
-/// answer. Expanding reveals the intermediate steps.
+/// answer. Expanding reveals the intermediate steps — **as ordinary rows**, with
+/// no rule down their left. See the note at the segments.
 ///
 /// Memoised, and it is the prop identity that does it — `turn`, the four `Map`s
 /// and the two callbacks all keep theirs across a streaming turn's renders, so a
@@ -127,10 +128,6 @@ function TurnBlock({
     () => (collapsible ? segmentWork(turn) : NO_SEGMENTS),
     [collapsible, turn],
   );
-  // The last message lives in the last segment, so opening that segment is what
-  // puts it on screen twice if `finalText` keeps rendering.
-  const lastOpen = collapsible && !!openSegments[segments.length - 1];
-
   // A fresh object per render defeats the `memo` on `UserMessage` — which is the
   // row doing the most work of any of them, since it highlights a prompt's
   // mentions, paths and markdown on every pass.
@@ -162,12 +159,21 @@ function TurnBlock({
             // reasoning block is. `working` is false by construction — this path
             // only runs once the turn has closed — so the header draws settled
             // and the body stays where the reader left it.
+            //
+            // **`framed={false}`, so the rows draw as ordinary chat.** The trace
+            // body hangs behind a left rule and an indent, which is what makes a
+            // run of tool calls read as one piece of work rather than as a list —
+            // and it is the wrong shape for the turn's own steps, where the reader
+            // is looking at the conversation rather than at a fold of it. The
+            // folds *inside* keep theirs: `Thought` and `Ran 6 tools` are what the
+            // rule is for.
             return (
               <Fragment key={i}>
                 <AgentTrace
                   active={segmentLabel(seg)}
                   done={segmentLabel(seg)}
                   working={false}
+                  framed={false}
                   open={seg.rows > 0 ? open : undefined}
                   onToggle={
                     seg.rows > 0
@@ -204,10 +210,13 @@ function TurnBlock({
             );
           })}
 
-      {/* Collapsed, this stands in for the turn's last message; with the last
-          segment open, that message already rendered above, so it would be a
-          duplicate. */}
-      {!lastOpen && collapsible && turn.finalText && <AssistantMessage text={turn.finalText} />}
+      {/* **The answer, and it is not inside anything.** `finalText` is the turn's
+          last message — see `groupTurns`, which takes that row out of the work so
+          this is the only copy of it. Opening a summary therefore reveals the
+          work and leaves the ending exactly where the reader left it; the version
+          that swallowed the answer into the trace left a finished turn with no
+          end on screen. */}
+      {turn.finalText && <AssistantMessage text={turn.finalText} />}
 
       <TurnFooter prompt={turn.prompt} completed={turn.completed} text={turn.finalText} />
 

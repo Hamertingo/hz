@@ -19,7 +19,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { extname } from 'node:path';
 
-import type { ToolResult } from '@mavis/agent-core/tools';
+import type { ToolResult } from '@hz/agent-core/tools';
 import { isSupportedNativeVideoMime } from './multimodal-attachments.js';
 
 export interface ReadVideoCapabilities {

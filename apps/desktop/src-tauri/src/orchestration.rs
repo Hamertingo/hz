@@ -386,10 +386,11 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
                 // one.
                 worktree_name: None,
                 base_ref: base_ref.as_deref(),
-                // `hz new` names no role: the caller is an agent, the skill
-                // decides whether to inherit one, and the flag surface has no
-                // `--role` to carry it today.
-                role_id: None,
+                // `hz new` names no Agent: a spawned session runs as the
+                // runtime's default, which is the one the caller itself is on.
+                // Naming another is a product decision about delegation, and the
+                // CLI has no `--agent` to carry it today.
+                agent_name: None,
                 is_new_session: true,
                 parent_session_id: create.parent_session_id.as_deref(),
                 // The creating session is this one's *parent*, which the sidebar
@@ -640,9 +641,9 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
                 worktree_name: None,
                 base_ref: None,
                 // A relayed message must not reconfigure the session it arrives
-                // at, and a role is a creation-time property besides. The target
-                // is already running, so this is ignored either way.
-                role_id: None,
+                // at, and the Agent is a creation-time property besides. The
+                // target is already running, so this is ignored either way.
+                agent_name: None,
                 is_new_session: false,
                 parent_session_id: None,
                 from,

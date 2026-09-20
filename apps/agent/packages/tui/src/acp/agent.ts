@@ -19,7 +19,7 @@ import type {
 import { buildTuiMessageParts } from '../runtime/stream-events.js';
 import type { TuiMessage, TuiStreamEvent } from '../runtime/stream-events.js';
 import type { TuiAcpRuntime } from './runtime.js';
-import { executeTuiAcpCommand, TUI_ACP_AVAILABLE_COMMANDS } from './commands.js';
+import { executeTuiAcpCommand, tuiAcpAvailableCommands } from './commands.js';
 import {
   ACP_CONFIG_MODEL,
   ACP_CONFIG_PERMISSION_MODE,
@@ -422,15 +422,15 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
               {
                 type: 'terminal' as const,
                 id: AUTH_METHOD_ID,
-                name: 'Sign in to MiniMax Code',
+                name: 'Sign in to Hz Agent',
                 args: ['login'],
               },
             ],
           }
         : {}),
       agentInfo: {
-        name: 'minimax-code',
-        title: 'MiniMax Code',
+        name: 'hz-agent',
+        title: 'Hz Agent',
         version: options.version,
       },
       _meta: {
@@ -517,9 +517,11 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
         await assertAuthenticated(options.runtime);
         assertLifecycleActive(context.signal);
         const mcpServers = mapClientMcpServers(params.mcpServers);
+        const agentName = readAgentName(params._meta);
         session = await options.runtime.createSession({
           workspaceDir: params.cwd,
           ...(mcpServers.length > 0 ? { mcpServers } : {}),
+          ...(agentName ? { agentName } : {}),
         });
         const provisionalToken = Symbol(session.sessionId);
         let resolveProvisional!: () => void;
@@ -547,7 +549,12 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
           );
         }
         sessions.set(session.sessionId, attachment);
-        advertiseAvailableCommands(context.client, session.sessionId);
+        advertiseAvailableCommands(
+          context.client,
+          session.sessionId,
+          options.runtime,
+          session.agentName,
+        );
         delivered = true;
         settleProvisional();
         return { sessionId: session.sessionId, ...control };
@@ -674,7 +681,12 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
             retireAttachmentPlans(result.session.sessionId, existing, context.client);
           }
           sessions.set(result.session.sessionId, active);
-          advertiseAvailableCommands(context.client, result.session.sessionId);
+          advertiseAvailableCommands(
+            context.client,
+            result.session.sessionId,
+            options.runtime,
+            result.session.agentName,
+          );
           return { sessionId: result.session.sessionId, ...control };
         } catch (error) {
           if (!existing) {
@@ -778,7 +790,12 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
               isCurrentAttachment(sessions, context.params.sessionId, attachment, requestSignal),
             );
             assertLifecycleActive(requestSignal);
-            advertiseAvailableCommands(context.client, context.params.sessionId);
+            advertiseAvailableCommands(
+              context.client,
+              context.params.sessionId,
+              options.runtime,
+              attachment.session.agentName,
+            );
             const control = await getTuiAcpSessionControlState(options.runtime, attachment.session);
             assertLifecycleActive(requestSignal);
             return control;
@@ -841,7 +858,12 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
               },
             );
             runtimeSessionId = active.session.sessionId;
-            advertiseAvailableCommands(context.client, context.params.sessionId);
+            advertiseAvailableCommands(
+              context.client,
+              context.params.sessionId,
+              options.runtime,
+              active.session.agentName,
+            );
             const control = await getTuiAcpSessionControlState(options.runtime, active.session);
             assertLifecycleActive(requestSignal);
             return control;
@@ -921,7 +943,7 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
       if (typeof params.value !== 'string') {
         throw acp.RequestError.invalidParams(
           undefined,
-          'MiniMax Code ACP configuration options are select controls.',
+          'Hz Agent ACP configuration options are select controls.',
         );
       }
 
@@ -1169,8 +1191,8 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
       throw acp.RequestError.internalError(
         undefined,
         result.error
-          ? `MiniMax Code Runtime failed: ${result.error}`
-          : 'MiniMax Code Runtime failed.',
+          ? `Hz Agent Runtime failed: ${result.error}`
+          : 'Hz Agent Runtime failed.',
       );
     } finally {
       context.signal.removeEventListener('abort', cancel);
@@ -1655,7 +1677,7 @@ function assertNoAdditionalDirectories(directories: readonly string[] | undefine
   if (!directories?.length) return;
   throw acp.RequestError.invalidParams(
     undefined,
-    'Additional directories are not supported by MiniMax Code ACP.',
+    'Additional directories are not supported by Hz Agent ACP.',
   );
 }
 
@@ -1807,16 +1829,43 @@ function mapClientMcpServers(servers: readonly acp.McpServer[]): readonly TuiSes
   });
 }
 
-function advertiseAvailableCommands(client: acp.AgentContext, sessionId: string): void {
+/// The Agent a new Session should run *as*, where the client names one.
+///
+/// **`_meta`, because a top-level field would be dropped.** ACP's
+/// `NewSessionRequest` declares four keys and the SDK validates with a stripping
+/// object, so anything else a client sends never reaches this handler — `_meta` is
+/// the one slot the schema leaves open, and the same place this build's own
+/// extension capabilities ride on the way out.
+///
+/// Absent means the runtime's own default agent, which is what every other caller
+/// gets and what a client that names nothing is asking for.
+function readAgentName(meta: unknown): string | undefined {
+  if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) return undefined;
+  const value = (meta as Record<string, unknown>)['minimax-code/agent'];
+  if (typeof value !== 'string') return undefined;
+  const name = value.trim();
+  return name.length > 0 ? name : undefined;
+}
+
+function advertiseAvailableCommands(
+  client: acp.AgentContext,
+  sessionId: string,
+  runtime: Pick<TuiAcpRuntime, 'listSkills'>,
+  agentName?: string,
+): void {
+  // **Read once, and both notifications carry the same answer.** The second
+  // exists for a client that was not listening on the first frame, not to ask
+  // the runtime again — and listing the reader's Skills is a filesystem read
+  // that has no business happening twice for one session.
+  const commands = tuiAcpAvailableCommands(runtime, agentName);
   const notify = () => {
-    void client
-      .notify(acp.methods.client.session.update, {
-        sessionId,
-        update: {
-          sessionUpdate: 'available_commands_update',
-          availableCommands: [...TUI_ACP_AVAILABLE_COMMANDS],
-        },
-      })
+    void commands
+      .then((availableCommands) =>
+        client.notify(acp.methods.client.session.update, {
+          sessionId,
+          update: { sessionUpdate: 'available_commands_update', availableCommands },
+        }),
+      )
       .catch(() => undefined);
   };
 
@@ -2032,8 +2081,8 @@ async function followQuestionnaireContinuations(options: {
         throw acp.RequestError.internalError(
           undefined,
           transition.message
-            ? `MiniMax Code Runtime continuation failed: ${transition.message}`
-            : 'MiniMax Code Runtime continuation failed.',
+            ? `Hz Agent Runtime continuation failed: ${transition.message}`
+            : 'Hz Agent Runtime continuation failed.',
         );
       }
 
@@ -2058,7 +2107,7 @@ async function followQuestionnaireContinuations(options: {
     if (error instanceof acp.RequestError) throw error;
     throw acp.RequestError.internalError(
       undefined,
-      `MiniMax Code Runtime continuation failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Hz Agent Runtime continuation failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

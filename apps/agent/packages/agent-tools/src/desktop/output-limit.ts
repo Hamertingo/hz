@@ -1,4 +1,4 @@
-import type { ToolResult, ToolResultContent } from '@mavis/agent-core/tools';
+import type { ToolResult, ToolResultContent } from '@hz/agent-core/tools';
 
 export const DESKTOP_GREP_CONTENT_MAX_BYTES = 16 * 1024;
 export const DESKTOP_READ_TEXT_MAX_BYTES = 24 * 1024;

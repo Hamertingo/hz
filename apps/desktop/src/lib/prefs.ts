@@ -29,7 +29,7 @@ import type { ModelId, Preferences, PreferencesPatch, UpdateChannel } from "@/ty
 /// only place the two sides meet.
 const FIELDS = {
   "hz.composerPrefs": "composerPrefs",
-  "hz.modelRotation": "modelRotation",
+  "hz.hiddenModels": "hiddenModels",
   "hz.shortcuts": "shortcuts",
   "hz.updateChannel": "updateChannel",
   "hz.openWith": "openWith",
@@ -51,9 +51,10 @@ export type DurableKey = keyof typeof FIELDS;
 /// so no call site casts.
 export type PreferenceValues = {
   "hz.composerPrefs": ComposerPrefs;
-  // `null` is "never chosen", and it means *every* model — see `modelRotation`
-  // in `lib/modelRotation.ts`. The Rust side stores it as an absent field.
-  "hz.modelRotation": ModelId[] | null;
+  // The models switched **off** — `null` is "none hidden", so a model nobody has
+  // decided about is shown. See `HIDDEN_MODELS_KEY` in
+  // `lib/modelVisibility.ts`, which says why the direction is that one.
+  "hz.hiddenModels": ModelId[] | null;
   "hz.shortcuts": Partial<Record<ShortcutId, Chord>>;
   "hz.updateChannel": UpdateChannel;
   "hz.openWith": string | null;

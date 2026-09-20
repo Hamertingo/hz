@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { RuntimeTool, ToolResultContent } from '@mavis/agent-core/tools';
+import type { RuntimeTool, ToolResultContent } from '@hz/agent-core/tools';
 import type { TSchema } from '@sinclair/typebox';
 import type { MatrixMediaClient, MatrixToolContext } from '../cloud/matrix-tools/index.js';
 import {

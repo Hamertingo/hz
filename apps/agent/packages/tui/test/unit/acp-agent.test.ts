@@ -266,7 +266,7 @@ function createRuntime(
   };
 }
 
-describe('MiniMax Code ACP agent', () => {
+describe('Hz Agent ACP agent', () => {
   it('advertises and executes native help and model commands without starting an Agent turn', async () => {
     const { runtime, sendMessage, listModels, selectModel } = createRuntime([], {
       models: [
@@ -428,6 +428,78 @@ describe('MiniMax Code ACP agent', () => {
         },
       ]),
     );
+  });
+
+  /**
+   * **A Skill is advertised, and the advertisement is where a reader finds it.**
+   * The table this replaces carried the built-in commands alone, so an ACP
+   * client — which draws exactly what the agent publishes — offered no Skills
+   * while the terminal's own composer offered seventeen.
+   *
+   * The name is the whole invocation: `/code-review` is sent as a prompt, the
+   * catalog in the system prompt says which Skill that names, and the `skill`
+   * tool loads the SKILL.md. Nothing here expands anything, which is why the
+   * row is all this update owes the client.
+   */
+  it('advertises the reader\u2019s Skills beside the built-in commands', async () => {
+    const { runtime, listSkills } = createRuntime([], {
+      skills: {
+        skills: [
+          { name: 'code-review', description: 'Review local changes for defects' },
+          // Named after a built-in, so it is dropped rather than shadowing one.
+          { name: 'compact', description: 'Not the built-in' },
+          { name: 'disabled-skill', enabled: false },
+        ],
+      },
+    });
+    const updates: acp.SessionNotification[] = [];
+    const agent = createTuiAcpAgent({ runtime, version: '1.2.3' });
+    const client = acp
+      .client({ name: 'zed' })
+      .onNotification(acp.methods.client.session.update, ({ params }) => updates.push(params));
+
+    await client.connectWith(agent, async (connection) => {
+      await connection.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      await connection.request(acp.methods.agent.session.new, {
+        cwd: '/workspace',
+        mcpServers: [],
+      });
+
+      await vi.waitFor(() =>
+        expect(updates).toContainEqual({
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: expect.arrayContaining([
+              { name: 'help', description: 'Show available commands' },
+              {
+                name: 'code-review',
+                description: '[Skill] Review local changes for defects',
+                input: { hint: '[instructions]' },
+              },
+            ]),
+          },
+        }),
+      );
+    });
+
+    expect(listSkills).toHaveBeenCalled();
+
+    const advertised = updates.flatMap((notification) =>
+      notification.update.sessionUpdate === 'available_commands_update'
+        ? notification.update.availableCommands
+        : [],
+    );
+    expect(advertised.map((command) => command.name)).toEqual(
+      expect.arrayContaining(['help', 'code-review']),
+    );
+    // One row per name: the Skill that collides with a built-in is dropped, and
+    // so is the one the reader switched off.
+    expect(advertised.filter((command) => command.name === 'compact')).toHaveLength(1);
+    expect(advertised.map((command) => command.name)).not.toContain('disabled-skill');
   });
 
   it('compacts the Runtime session and reports unchanged conversations locally', async () => {
@@ -962,11 +1034,11 @@ describe('MiniMax Code ACP agent', () => {
           {
             type: 'terminal',
             id: 'minimax-code-login',
-            name: 'Sign in to MiniMax Code',
+            name: 'Sign in to Hz Agent',
             args: ['login'],
           },
         ],
-        agentInfo: { name: 'minimax-code', title: 'MiniMax Code', version: '1.2.3' },
+        agentInfo: { name: 'hz-agent', title: 'Hz Agent', version: '1.2.3' },
         _meta: {
           'minimax-code/extensions': {
             version: 1,
@@ -2042,7 +2114,7 @@ describe('MiniMax Code ACP agent', () => {
           {
             type: 'terminal',
             id: 'minimax-code-login',
-            name: 'Sign in to MiniMax Code',
+            name: 'Sign in to Hz Agent',
             args: ['login'],
           },
         ]);
@@ -5981,7 +6053,7 @@ describe('MiniMax Code ACP agent', () => {
           additionalDirectories: ['/other'],
           mcpServers: [],
         }),
-      ).rejects.toThrow('Additional directories are not supported by MiniMax Code ACP');
+      ).rejects.toThrow('Additional directories are not supported by Hz Agent ACP');
     });
 
     expect(createSession).not.toHaveBeenCalled();

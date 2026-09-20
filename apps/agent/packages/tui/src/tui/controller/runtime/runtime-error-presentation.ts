@@ -1,4 +1,4 @@
-import { LLM_ERROR_CODES } from '@mavis/shared/llm-error-classifier';
+import { LLM_ERROR_CODES } from '@hz/shared/llm-error-classifier';
 import { tuiErrorDiagnostic } from '../../../user-facing-failure.js';
 
 const AUTH_ERROR_CODES = new Set<number>([401, LLM_ERROR_CODES.LLM_AUTH_ERROR]);

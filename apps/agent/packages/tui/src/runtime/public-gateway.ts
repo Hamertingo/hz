@@ -5,7 +5,7 @@ import {
   getRuntimeRegion,
   type MavisBuildEnv,
   type MavisRegion,
-} from '@mavis/config';
+} from '@hz/config';
 
 const PUBLIC_GATEWAY_ORIGINS: Readonly<
   Record<MavisRegion, Readonly<Record<MavisBuildEnv, string>>>

@@ -7,7 +7,7 @@ import type {
   GlobalThreadGoal,
   GlobalThreadGoalStatusReason,
   GlobalThreadGoalWaitReason,
-} from '@mavis/shared/global-events';
+} from '@hz/shared/global-events';
 
 export interface RawTuiRuntimeEvent {
   type: string;

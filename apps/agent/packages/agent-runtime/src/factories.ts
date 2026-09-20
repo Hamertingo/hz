@@ -5,7 +5,7 @@
  * The design document §4.3 table lists eight extensions (`permission / context-manager / memory /
  * system-reminder / mcp-disclosure / desktop-tools / skills / internal-tool-handlers`).
  * Module-to-SPI adapters for `context-manager / system-reminder / permission / skills` are exported
- * centrally by `@mavis/agent-extension`. Thin wrappers for host-only behavior such as
+ * centrally by `@hz/agent-extension`. Thin wrappers for host-only behavior such as
  * `mcp-disclosure / desktop-tools / internal-tool-handlers / memory / output-review-preface` can
  * use these generic factories around existing host helpers such as `hookService.beforeToolCall` /
  * `mcpDisclosureOptions`, without a separate module-level factory for each host-only module.

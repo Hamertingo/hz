@@ -5,7 +5,7 @@ import type {
   CliService,
   ConversationSteerInput,
   ConversationSteerResult,
-} from "@mavis/local-runtime-v2/cli-service";
+} from "@hz/local-runtime-v2/cli-service";
 import { MINIMAX_CODE_DEFAULT_AGENT_NAME } from "../product-context.js";
 import { TuiEventAccess } from "./adapters/event-access.js";
 import { TuiRuntimeAccessContext } from "./adapters/access-context.js";
@@ -27,6 +27,9 @@ import type {
   TuiAccountStatus,
   TuiAccountStatusOptions,
   TuiActiveRunSnapshot,
+  TuiAgent,
+  TuiAgentDetail,
+  TuiAgentDraft,
   TuiBackgroundTask,
   TuiCompactionResult,
   TuiDelegationSnapshot,
@@ -37,7 +40,11 @@ import type {
   TuiEditMessageInput,
   TuiEditMessageResult,
   TuiInstructionSource,
+  TuiConfiguredMcpConfig,
+  TuiConfiguredMcpServer,
+  TuiConfiguredMcpServerDetail,
   TuiMcpServer,
+  TuiMcpTestResult,
   TuiProjectMcpPreview,
   TuiMessagePage,
   TuiMessagePageInput,
@@ -407,7 +414,7 @@ export class TuiRuntimeAdapter implements TuiRuntime {
     sessionId?: string;
   }): Promise<TuiFeedbackPreview> {
     if (!this.feedback)
-      throw new Error("MiniMax Code feedback is unavailable.");
+      throw new Error("Hz Agent feedback is unavailable.");
     return this.feedback.prepare(input);
   }
   submitFeedback(
@@ -415,7 +422,7 @@ export class TuiRuntimeAdapter implements TuiRuntime {
     options?: TuiFeedbackSubmitOptions,
   ): Promise<TuiFeedbackReceipt> {
     if (!this.feedback)
-      return Promise.reject(new Error("MiniMax Code feedback is unavailable."));
+      return Promise.reject(new Error("Hz Agent feedback is unavailable."));
     return this.feedback.submit(draftId, options);
   }
   cancelFeedback(draftId: string): Promise<boolean> {
@@ -535,6 +542,38 @@ export class TuiRuntimeAdapter implements TuiRuntime {
   listSkills(agentName?: string, keyword?: string): Promise<TuiSkillList> {
     return this.productAccess.listSkills(agentName, keyword);
   }
+  listAllSkills(agentName?: string): Promise<TuiSkillList> {
+    return this.productAccess.listAllSkills(agentName);
+  }
+  readSkill(skillName: string, locationUri?: string): Promise<string | undefined> {
+    return this.productAccess.readSkill(skillName, locationUri);
+  }
+  setSkillEnabled(
+    skillName: string,
+    enabled: boolean,
+    locationUri?: string,
+  ): Promise<boolean> {
+    return this.productAccess.setSkillEnabled(skillName, enabled, locationUri);
+  }
+  listAgents(input?: {
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<readonly TuiAgent[]> {
+    return this.productAccess.listAgents(input);
+  }
+  getAgent(name: string): Promise<TuiAgentDetail | undefined> {
+    return this.productAccess.getAgent(name);
+  }
+  createAgent(input: TuiAgentDraft): Promise<TuiAgentDetail> {
+    return this.productAccess.createAgent(input);
+  }
+  updateAgent(name: string, input: TuiAgentDraft): Promise<TuiAgentDetail> {
+    return this.productAccess.updateAgent(name, input);
+  }
+  deleteAgent(name: string): Promise<boolean> {
+    return this.productAccess.deleteAgent(name);
+  }
   inspectProjectMcp(
     sessionId: string,
   ): Promise<TuiProjectMcpPreview | undefined> {
@@ -545,6 +584,38 @@ export class TuiRuntimeAdapter implements TuiRuntime {
     sessionId?: string,
   ): Promise<TuiMcpServer[]> {
     return this.productAccess.listMcpServers(keyword, sessionId);
+  }
+  listConfiguredMcpServers(keyword?: string): Promise<TuiConfiguredMcpServer[]> {
+    return this.productAccess.listConfiguredMcpServers(keyword);
+  }
+  getConfiguredMcpServer(
+    name: string,
+  ): Promise<TuiConfiguredMcpServerDetail | undefined> {
+    return this.productAccess.getConfiguredMcpServer(name);
+  }
+  createConfiguredMcpServer(
+    name: string,
+    config: TuiConfiguredMcpConfig,
+  ): Promise<TuiConfiguredMcpServerDetail> {
+    return this.productAccess.createConfiguredMcpServer(name, config);
+  }
+  updateConfiguredMcpServer(
+    name: string,
+    config: TuiConfiguredMcpConfig,
+  ): Promise<TuiConfiguredMcpServerDetail> {
+    return this.productAccess.updateConfiguredMcpServer(name, config);
+  }
+  deleteConfiguredMcpServer(name: string): Promise<boolean> {
+    return this.productAccess.deleteConfiguredMcpServer(name);
+  }
+  setConfiguredMcpServerEnabled(
+    name: string,
+    enabled: boolean,
+  ): Promise<TuiConfiguredMcpServer> {
+    return this.productAccess.setConfiguredMcpServerEnabled(name, enabled);
+  }
+  testConfiguredMcpServer(name: string): Promise<TuiMcpTestResult> {
+    return this.productAccess.testConfiguredMcpServer(name);
   }
   listInstalledPlugins(
     input?: Parameters<TuiPluginAccess["listInstalledPlugins"]>[0],

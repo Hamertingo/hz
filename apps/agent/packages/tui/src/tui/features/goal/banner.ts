@@ -1,5 +1,5 @@
 import type { ChalkInstance } from 'chalk';
-import type { GlobalThreadGoal } from '@mavis/shared/global-events';
+import type { GlobalThreadGoal } from '@hz/shared/global-events';
 import { formatTuiDuration } from '../../rendering/duration.js';
 import type { Component } from '../../rendering/component.js';
 import { sanitizeTerminalText } from '../../rendering/terminal-text.js';

@@ -4,7 +4,7 @@ import {
   type PendingPermissionItem,
   type QuestionnaireRequestView,
   type QueuedMessageItemView,
-} from '@mavis/local-runtime-v2/cli-service';
+} from '@hz/local-runtime-v2/cli-service';
 import type {
   EnqueueTuiMessageOptions,
   TuiPendingPermission,

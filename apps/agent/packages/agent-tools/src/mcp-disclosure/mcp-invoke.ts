@@ -4,7 +4,7 @@ import {
   defineRuntimeTool,
   type RuntimeTool,
   type ToolExecutionContext,
-} from '@mavis/agent-core/tools';
+} from '@hz/agent-core/tools';
 
 export interface McpInvokeReferenceTarget {
   readonly tool: RuntimeTool;

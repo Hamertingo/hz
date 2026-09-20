@@ -4,7 +4,7 @@ import {
   type ModelContextAssemblyCtx,
   PromptSnapshotInvalidError,
   type ToolExecutionContext,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 import { Type } from '@sinclair/typebox';
 
 export const PLAN_MODE_GUIDANCE = `<plan-mode-guidance>

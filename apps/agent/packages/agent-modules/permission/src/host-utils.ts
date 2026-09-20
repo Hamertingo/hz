@@ -209,7 +209,7 @@ export interface PermissionCoreConfig {
  * Config view the permission subsystem reads from the host's runtime config.
  *
  * agent-core stays pure: it declares exactly the fields permission code needs
- * rather than importing the full `@mavis/config` Config (which would violate
+ * rather than importing the full `@hz/config` Config (which would violate
  * the agent-core package boundary — agent-core may only depend on protocol /
  * shared). The host (local-runtime / daemon) supplies a config object that
  * structurally satisfies this view; `getRuntimeConfig()` is typed as the narrow
@@ -247,7 +247,7 @@ export interface PermissionRuntimeConfigProvider {
 const fallbackRuntimeConfigProvider: PermissionRuntimeConfigProvider = {
   getConfig: () => {
     throw new Error(
-      '[@mavis/permission] No runtimeConfigProvider registered. Hosts must call ' +
+      '[@hz/permission] No runtimeConfigProvider registered. Hosts must call ' +
         'configurePermissionHost({ runtimeConfigProvider }) before permission checks run.',
     );
   },

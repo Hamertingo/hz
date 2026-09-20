@@ -1,4 +1,4 @@
-import type { IPluginCapabilityProvenance } from '@mavis/protocol';
+import type { IPluginCapabilityProvenance } from '@hz/protocol';
 import type {
   RuntimeTool,
   ToolCallProvenanceResolutionInput,

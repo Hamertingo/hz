@@ -7,7 +7,7 @@
  * point is `ParseDeliverAssetsOptions.cloudDrivePathDetection`, which replaces
  * the UI's direct `CLOUD_LOGIC` read (the UI wrapper binds it).
  *
- * MUST NOT import from `@mavis/ui` — dependency direction is ui → shared.
+ * MUST NOT import from `@hz/ui` — dependency direction is ui → shared.
  */
 import { isImageAsset } from '../media-asset-meta.js';
 import { isDataUrl, parseDataUrlSource } from './data-url.js';

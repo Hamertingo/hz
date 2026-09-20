@@ -4,7 +4,7 @@
  * videos must send them in one batch rather than loop over calls. No artifact files are downloaded.
  */
 
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import type { MatrixMediaClient, MatrixPathScope, MatrixToolContext } from '../types.js';
 import { callMatrixTool, type MatrixExecutor } from '../client.js';

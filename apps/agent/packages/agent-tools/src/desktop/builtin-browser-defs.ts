@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 
-import type { ToolDefinition } from '@mavis/agent-core/tools';
+import type { ToolDefinition } from '@hz/agent-core/tools';
 
 const BrowserTargetProps = {} as const;
 

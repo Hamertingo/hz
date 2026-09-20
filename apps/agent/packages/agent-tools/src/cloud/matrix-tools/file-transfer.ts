@@ -18,7 +18,7 @@
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import type { ToolResult } from '@mavis/agent-core/tools';
+import type { ToolResult } from '@hz/agent-core/tools';
 
 import type { MatrixMediaClient, MatrixUploadOptions } from './types.js';
 import { readMatrixMediaErrorKind } from './types.js';

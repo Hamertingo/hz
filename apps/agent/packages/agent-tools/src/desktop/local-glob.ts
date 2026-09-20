@@ -14,7 +14,7 @@
  * truncates results, a notice suggests sorting to retain more relevant entries.
  */
 
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import { realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';

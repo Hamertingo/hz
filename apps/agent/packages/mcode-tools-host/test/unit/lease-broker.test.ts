@@ -2,7 +2,7 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { createNodeAuthLeaseClient } from '@mavis/oauth-lease-protocol';
+import { createNodeAuthLeaseClient } from '@hz/oauth-lease-protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startMcodeToolsAuthLeaseBroker } from '../../src/lease-broker.js';

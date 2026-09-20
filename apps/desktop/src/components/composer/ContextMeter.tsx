@@ -72,12 +72,28 @@ export default function ContextMeter({
   const [note, setNote] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
 
+  /// Whether the agent has counted anything yet.
+  ///
+  /// **A window of zero is not a full window.** It is a conversation nothing has
+  /// run in, and every figure below would otherwise be drawn as a measurement —
+  /// `0 / 0 tokens`, a confident `0%` — of something nobody has measured. The
+  /// meter is drawn from the first frame regardless, so this is the state it
+  /// opens in rather than a reason not to draw it.
+  const counted = max > 0;
+
   // A window can be exceeded on paper — the count includes the reply, which is
   // written after the prompt was admitted — and an arc past 100% wraps back to
   // looking empty.
-  const fraction = max > 0 ? Math.min(used / max, 1) : 0;
+  const fraction = counted ? Math.min(used / max, 1) : 0;
   const percent = Math.round(fraction * 100);
   const tight = fraction >= TIGHT;
+
+  /// Why there is no number, in the words of what the reader is waiting for.
+  /// The two reasons are different states and each gets its own sentence: no
+  /// session to ask, or a session whose turn has not run yet.
+  const uncounted = sessionId
+    ? "The agent counts this session's context as its turns run."
+    : "The agent counts the context once this session has started.";
 
   /// When a kept reading was taken: a clock time for today, a date beyond it —
   /// the two never collide in shape, and neither claims a precision the other
@@ -198,7 +214,7 @@ export default function ContextMeter({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label={`Context ${percent}% full`}
+              aria-label={counted ? `Context ${percent}% full` : "Context not counted yet"}
               className="flex shrink-0 items-center gap-1 px-1.5 text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
             >
               <svg
@@ -240,7 +256,9 @@ export default function ContextMeter({
         </TooltipTrigger>
 
         <TooltipContent>
-          {compactTokens(used)} / {compactTokens(max)} · {percent}% used
+          {counted
+            ? `${compactTokens(used)} / ${compactTokens(max)} · ${percent}% used`
+            : "Context not counted yet"}
         </TooltipContent>
       </Tooltip>
 
@@ -255,8 +273,16 @@ export default function ContextMeter({
                   tight && "text-destructive",
                 )}
               >
-                {percent}
-                <span className="pl-0.5 text-ui font-normal text-muted-foreground/70">%</span>
+                {counted ? (
+                  <>
+                    {percent}
+                    <span className="pl-0.5 text-ui font-normal text-muted-foreground/70">%</span>
+                  </>
+                ) : (
+                  // An em dash, not a zero: this is "nothing measured", and a
+                  // digit here is a measurement of something.
+                  <span className="text-muted-foreground">—</span>
+                )}
               </span>
               {/* A plain button, not a menu item: Radix closes the menu on a
                   selected item, and a refresh that shut the panel would be a
@@ -292,7 +318,9 @@ export default function ContextMeter({
           </div>
 
           <p className="mt-2 text-ui text-muted-foreground tabular-nums">
-            {compactTokens(used)} / {compactTokens(max)} tokens
+            {counted
+              ? `${compactTokens(used)} / ${compactTokens(max)} tokens`
+              : "No reading yet"}
           </p>
         </div>
 
@@ -325,7 +353,9 @@ export default function ContextMeter({
           </ul>
         ) : (
           <div className="border-t border-border px-4 py-3">
-            <p className="text-ui text-muted-foreground">{note ?? "Asking the agent…"}</p>
+            <p className="text-ui text-muted-foreground">
+              {!counted && !note ? uncounted : (note ?? "Asking the agent…")}
+            </p>
             {estimated.length > 0 && (
               <>
                 <p className="pt-2 pb-1 text-ui text-muted-foreground/70">

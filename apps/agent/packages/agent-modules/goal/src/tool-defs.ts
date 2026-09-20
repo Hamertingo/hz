@@ -15,7 +15,7 @@
 
 import { Type, type Static } from '@sinclair/typebox';
 
-import type { ToolDefinition } from '@mavis/agent-core/tools';
+import type { ToolDefinition } from '@hz/agent-core/tools';
 
 // ─── create_goal ───────────────────────────────────────────────────────
 

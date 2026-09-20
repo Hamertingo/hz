@@ -15,7 +15,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
-import type { IRuntimeEvent } from '@mavis/protocol';
+import type { IRuntimeEvent } from '@hz/protocol';
 import type {
   RuntimeTool,
   ToolCallProvenanceResolver,

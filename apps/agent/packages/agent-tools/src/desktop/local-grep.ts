@@ -17,7 +17,7 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import {
   DEFAULT_GREP_OUTPUT_MODE,

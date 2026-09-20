@@ -36,9 +36,12 @@ pub struct SlashCommand {
 
 /// The CLI's own command list, shaped for the picker.
 ///
-/// Pure, so a capture can pin it without a child: `mcode` sends a name and a
-/// description and nothing else — no argument hint, no aliases — and the two
-/// empty fields are how the row says so.
+/// Pure, so a capture can pin it without a child.
+///
+/// **The hint is read and the aliases are not**, and that is the wire's shape
+/// rather than a choice: ACP's `AvailableCommand` carries a name, a description
+/// and an `input`, and the input's only kind carries a `hint`. `aliases` stays
+/// empty because nothing states one — it is here for the harness that does.
 pub fn from_commands(commands: &[Command]) -> Vec<SlashCommand> {
     commands
         .iter()
@@ -46,7 +49,11 @@ pub fn from_commands(commands: &[Command]) -> Vec<SlashCommand> {
         .map(|command| SlashCommand {
             name: command.name.clone(),
             description: command.description.clone().unwrap_or_default(),
-            argument_hint: String::new(),
+            argument_hint: command
+                .input
+                .as_ref()
+                .map(|input| input.hint.clone())
+                .unwrap_or_default(),
             aliases: Vec::new(),
         })
         .collect()
@@ -88,8 +95,10 @@ mod tests {
     }
 
     /// Every command mcode publishes becomes a row, in the order it sent them —
-    /// and the two fields it does not send are empty strings rather than
-    /// invented hints.
+    /// **with the argument hint the agent states**, which is the half this used
+    /// to drop: the capture has carried `input.hint` all along, so the picker
+    /// drew `/model` as a bare word while the terminal drew
+    /// `/model [provider/model[#variant]]`.
     #[test]
     fn the_published_list_becomes_menu_rows() {
         let rows = from_commands(&captured());
@@ -102,7 +111,11 @@ mod tests {
                 "compact"
             ]
         );
-        assert!(rows.iter().all(|r| r.argument_hint.is_empty()));
+        assert_eq!(rows[2].argument_hint, "[provider/model[#variant]]");
+        assert_eq!(rows[6].argument_hint, "[filter]");
+        // A command that takes nothing says nothing, rather than the empty
+        // braces the wire omits.
+        assert_eq!(rows[0].argument_hint, "");
         assert!(rows.iter().all(|r| r.aliases.is_empty()));
         assert!(!rows[0].description.is_empty(), "help carries its sentence");
     }
@@ -115,6 +128,7 @@ mod tests {
             Command {
                 name: "compact".to_string(),
                 description: Some("Shrink the conversation".to_string()),
+                input: None,
             },
             Command::default(),
         ]);

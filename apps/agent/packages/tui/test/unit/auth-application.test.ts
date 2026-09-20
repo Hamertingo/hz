@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { LogoutResult } from '@mavis/oauth-core';
+import type { LogoutResult } from '@hz/oauth-core';
 
 import { createLocalAuthFixture } from '../../../oauth-core/test/helpers/local-auth.js';
 

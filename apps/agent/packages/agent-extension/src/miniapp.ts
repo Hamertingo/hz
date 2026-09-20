@@ -2,7 +2,7 @@ import {
   defineRuntimeTool,
   type AgentExtension,
   type ModelContextAssemblyCtx,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 

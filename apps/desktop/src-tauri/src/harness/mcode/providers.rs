@@ -53,6 +53,22 @@ pub struct Provider {
     /// the app neither reads nor holds the secret after handing it over.
     #[serde(default)]
     pub has_api_key: bool,
+    /// The gateway's URL, as the agent itself reports it. Drawn on the
+    /// connected row so a reader can tell two entries apart without opening
+    /// anything, and absent on a provider the agent has no URL for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// Which wire it speaks — `openai-completions`, `anthropic-messages` or
+    /// `openai-responses`. The same fact the connect row states before the key
+    /// is typed, read back off what was actually written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
+    /// **Masked by the CLI, and never by this app.** `sk-q****CXTE` is the
+    /// agent's own redaction of the key it holds; the secret itself does not
+    /// cross back, and this is here for the one thing four characters can
+    /// answer — whether the key on this row is the one just pasted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub masked_api_key: Option<String>,
     pub models: Vec<ProviderModel>,
 }
 
@@ -131,6 +147,9 @@ pub struct NewProvider {
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderPreset {
+    /// A stable slug for the gateway, and the only thing the view keys its
+    /// mark off. Not the name, because the name is copy and copy moves.
+    pub id: String,
     /// What the reader sees, and what the CLI `name`s the provider.
     pub name: String,
     pub base_url: String,
@@ -146,33 +165,27 @@ pub struct ProviderPreset {
     pub note: String,
 }
 
-/// The presets this build offers, in the order the form draws them.
+/// The gateways this build offers, in the order the view draws them.
 ///
-/// **Command Code is two entries, and that is the API's shape rather than a
-/// choice.** Its provider API answers one model list for all of them, and each
-/// row names the routes that serve it: Claude is `/v1/messages` only, everything
-/// else is `/v1/chat/completions` and mostly `/v1/responses` too, and a model
-/// sent to the wrong one is a `400`. `mcode` takes one `--api-format` for the
-/// whole provider — its `provider add` has no per-model route — so the split has
-/// to be two providers, one wire each. [`read_model_ids`] then keeps discovery
-/// from registering the other wire's models under the one being configured.
+/// **One row each, and `--api-format` is why.** A gateway serves one wire per
+/// provider, and a model sent to the wrong one is a `400` — so a gateway that
+/// answers on more than one would need a provider per wire, which is two rows
+/// for one key. Command Code is that gateway: Claude answers on `/v1/messages`
+/// alone and everything else on `/v1/chat/completions`. This build registers it
+/// on the OpenAI wire, the one that serves the most models, so its Claude models
+/// are simply not among the ids [`read_model_ids`] lets through.
 pub fn presets() -> Vec<ProviderPreset> {
     vec![
         ProviderPreset {
+            id: "command-code".to_string(),
             name: "Command Code".to_string(),
             base_url: "https://api.commandcode.ai/provider/v1".to_string(),
             api_format: "openai-completions".to_string(),
             models: Vec::new(),
-            note: "GPT, Gemini and the open models. Claude is the entry below — this API serves those on the Anthropic wire alone.".to_string(),
+            note: "One key for GPT, Gemini and the open models. hz fetches the list it serves.".to_string(),
         },
         ProviderPreset {
-            name: "Command Code Claude".to_string(),
-            base_url: "https://api.commandcode.ai/provider/v1".to_string(),
-            api_format: "anthropic-messages".to_string(),
-            models: Vec::new(),
-            note: "The same key's Claude models, on the wire they answer — /chat/completions refuses them.".to_string(),
-        },
-        ProviderPreset {
+            id: "opencode-go".to_string(),
             name: "OpenCode Go".to_string(),
             base_url: "https://opencode.ai/zen/go/v1".to_string(),
             api_format: "openai-completions".to_string(),
@@ -337,6 +350,41 @@ async fn set_default_model(listed: &[Provider], name: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The model this machine runs by default, as the agent's own config states it.
+///
+/// **The one model a definition may safely name.** It is the source-qualified key
+/// the runtime would fall back to anyway, so an Agent written with it behaves like
+/// an Agent with no model — except that it is *stated*, which is what the store's
+/// model gate needs. An Agent that inherits the runtime default is resolved
+/// through that default's context window, and where the catalog carries no
+/// physical limit for it — every BYOK provider's — the store refuses the write
+/// outright: "contextWindow from runtime-default requires a catalog physical
+/// limit".
+///
+/// `None` for a config with no top-level line, which is a fresh install with no
+/// provider connected yet.
+pub async fn default_model() -> Result<Option<String>> {
+    let path = config_path().await?;
+    let text = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("couldn't read {}", path.display()))?;
+    Ok(read_default_model(&text))
+}
+
+/// The top-level `defaultModel` line's value, or `None`.
+///
+/// **Top level only.** A connected provider carries its own indented
+/// `defaultModel:`, and that one is a provider's own setting rather than the
+/// machine's choice — reading it would name a model the runtime never falls back
+/// to. Same rule [`with_default_model`] writes by.
+fn read_default_model(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("defaultModel:"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 /// The agent's config, inside hz's own data directory for it.
@@ -767,12 +815,12 @@ mod tests {
 
     /// The list Command Code answers with, as it stood when this was written.
     ///
-    /// **The endpoint is public**, so the two preset wires are pinned against
-    /// the real thing rather than against a hand-written guess: what must not
-    /// drift is that Claude stays off the OpenAI entry and everything else stays
-    /// off the Anthropic one.
+    /// **The endpoint is public**, so the narrow rule is pinned against the real
+    /// thing rather than against a hand-written guess: the preset registers this
+    /// gateway on the OpenAI wire, and its Claude models — which answer on
+    /// `/messages` alone — must not be among the ids that discovery keeps.
     #[test]
-    fn the_command_code_list_splits_the_way_the_two_presets_say() {
+    fn a_two_wire_gateway_keeps_its_claude_models_off_the_openai_wire() {
         let payload = serde_json::json!({
             "object": "list",
             "data": [
@@ -924,7 +972,8 @@ mod tests {
     /// The two entries the CLI reports for its own account are dropped, and
     /// nothing else is.
     #[test]
-    fn only_the_agents_own_account_entries_are_dropped() {        let row = |kind: &str| Provider {
+    fn only_the_agents_own_account_entries_are_dropped() {
+        let row = |kind: &str| Provider {
             provider_id: "id".into(),
             name: "name".into(),
             kind: kind.into(),
@@ -932,6 +981,9 @@ mod tests {
             enabled: true,
             read_only: false,
             has_api_key: false,
+            base_url: None,
+            api_format: None,
+            masked_api_key: None,
             models: Vec::new(),
         };
 
@@ -963,5 +1015,23 @@ mod tests {
         // A file the agent never wrote the key into gets one, rather than the
         // write silently doing nothing.
         assert_eq!(with_default_model("logLevel: info\n", "p/m"), "logLevel: info\ndefaultModel: p/m\n");
+    }
+
+    /// **The read is top level only**, and it is the same rule the write follows:
+    /// a connected provider carries its own indented `defaultModel:`, which is
+    /// that provider's setting and not the model the runtime falls back to.
+    ///
+    /// This matters because the value is written onto a new Agent's definition,
+    /// where naming the wrong one is a model the harness never resolves.
+    #[test]
+    fn the_machines_default_model_is_read_off_the_top_level_line() {
+        let text = "logLevel: info\ndefaultModel: custom_provider:go/minimax-m3\n\ncustom_provider:\n  go:\n    defaultModel: hands off\n";
+        assert_eq!(
+            read_default_model(text).as_deref(),
+            Some("custom_provider:go/minimax-m3")
+        );
+
+        assert_eq!(read_default_model("logLevel: info\n"), None);
+        assert_eq!(read_default_model("defaultModel:   \n"), None);
     }
 }

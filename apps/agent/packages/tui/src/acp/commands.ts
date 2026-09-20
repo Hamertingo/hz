@@ -1,6 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk';
 
 import { TUI_COMMAND_DESCRIPTORS } from '../application/command-descriptors.js';
+import { buildTuiSkillCommands } from '../tui/commands/skill-commands.js';
 import type { TuiModel } from '../runtime/port.js';
 import type { TuiAcpRuntime } from './runtime.js';
 
@@ -47,6 +48,55 @@ export type TuiAcpCommandResult =
       readonly handled: true;
       readonly output: string;
     };
+
+/**
+ * Every command this agent advertises to an ACP client.
+ *
+ * **The built-ins are a table and the Skills are not**, which is why this is a
+ * function where the advertisement used to spread the table: a Skill belongs to
+ * the reader and changes while the app runs, so it is read per session the way
+ * the TUI's own composer reads it — through the same
+ * [`buildTuiSkillCommands`](../tui/commands/skill-commands.ts), so the terminal
+ * and the wire can never offer different Skills.
+ *
+ * **A Skill is advertised because the name is the whole invocation.** Prompting
+ * `/code-review` is how it runs: this runtime contributes the Skills catalog to
+ * the system prompt and defines the `skill` tool that loads the SKILL.md, so a
+ * client that draws the row and sends the word has done its whole half.
+ *
+ * A listing this runtime refuses leaves the built-ins advertised rather than
+ * costing the whole update — an empty menu is a worse answer than a short one.
+ */
+export async function tuiAcpAvailableCommands(
+  runtime: Pick<TuiAcpRuntime, 'listSkills'>,
+  agentName?: string,
+): Promise<acp.AvailableCommand[]> {
+  const builtins: acp.AvailableCommand[] = TUI_ACP_AVAILABLE_COMMANDS.map((command) => ({
+    name: command.name,
+    description: command.description,
+    // Only some of the table's rows take an argument, so the hint is narrowed
+    // rather than read off every arm of the union.
+    ...('input' in command ? { input: command.input } : {}),
+  }));
+
+  let skills;
+  try {
+    skills = buildTuiSkillCommands(await runtime.listSkills(agentName));
+  } catch {
+    return builtins;
+  }
+
+  return [
+    ...builtins,
+    ...skills.map(
+      (command): acp.AvailableCommand => ({
+        name: command.name,
+        description: command.description,
+        ...(command.argumentHint ? { input: { hint: command.argumentHint } } : {}),
+      }),
+    ),
+  ];
+}
 
 export async function executeTuiAcpCommand(options: {
   readonly runtime: Pick<
@@ -161,7 +211,7 @@ export async function executeTuiAcpCommand(options: {
   if (!selected) {
     throw acp.RequestError.invalidParams(
       undefined,
-      `MiniMax Code Runtime rejected model selection ${formatModelSelection(selection)}.`,
+      `Hz Agent Runtime rejected model selection ${formatModelSelection(selection)}.`,
     );
   }
   return { handled: true, output: `Model selected: ${formatModelSelection(selection)}` };

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { retryWindowsFileSystemOperation } from '@mavis/shared';
+import { retryWindowsFileSystemOperation } from '@hz/shared';
 
 import {
   clearLocalRuntimeAuthContextFile,
@@ -10,7 +10,7 @@ import {
   writeLocalRuntimeAuthContext,
   type LocalRuntimeAuthContextSnapshot,
   type MavisBuildEnv,
-} from '@mavis/config';
+} from '@hz/config';
 import type { CliAuthScope } from './types.js';
 import {
   clearCliAccountIdentity,

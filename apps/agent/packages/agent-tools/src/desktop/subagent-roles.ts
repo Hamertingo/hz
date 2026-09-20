@@ -1,1 +1,1 @@
-export * from '@mavis/shared/subagent-roles';
+export * from '@hz/shared/subagent-roles';

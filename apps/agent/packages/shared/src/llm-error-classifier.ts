@@ -610,7 +610,7 @@ export function classifyLLMError(err: unknown): LLMErrorReason {
 /**
  * Best-effort extraction of `statusCode` from an unknown thrown value. We
  * read the field directly so this module stays free of the `ai` package
- * dependency (which `@mavis/shared` cannot import — it would pull the
+ * dependency (which `@hz/shared` cannot import — it would pull the
  * Vercel AI SDK into the plugin bundle).
  */
 function extractAPICallErrorStatus(err: unknown): number | undefined {

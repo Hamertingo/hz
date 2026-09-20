@@ -45,9 +45,9 @@ pub mod issues;
 pub mod models;
 pub mod notifications;
 pub mod orchestration;
+pub mod plugins;
 pub mod projects;
 pub mod quit;
-pub mod roles;
 pub mod session;
 pub mod settings;
 pub mod store;
@@ -115,10 +115,11 @@ async fn send_msg(
     branch: Option<&str>,
     use_worktree: bool,
     worktree_name: Option<&str>,
-    // The responsibility the composer picked for this session, or `None`.
-    // Applied only when a session is created — an existing one already carries
-    // whatever role it was given, and `send_msg` ignores it otherwise.
-    role_id: Option<String>,
+    // The Agent the composer picked for a new session, or `None` for the
+    // runtime's own default. Applied only when a session is created — an
+    // existing one already runs as whatever it was made with, and `send_msg`
+    // ignores it otherwise.
+    agent_name: Option<String>,
     is_new_session: bool,
     // The webview's own clock at the press, which is the only witness to it:
     // a cold session's first prompt waits out the child's whole boot before it
@@ -170,7 +171,7 @@ async fn send_msg(
                 // already hides the branch list in worktree mode because `-w`
                 // would not honour it.
                 base_ref: None,
-                role_id: role_id.as_deref(),
+                agent_name: agent_name.as_deref(),
                 is_new_session,
                 // The composer never has a parent, and its prompts are the
                 // user's own; only the orchestration socket sets either.
@@ -333,6 +334,11 @@ async fn refresh_models() {
 /// record — and `send_msg` spawns its own child when nothing is parked. So a
 /// reader who types and closes the composer leaves a process to be reaped, not
 /// a session; and a failure here costs a few seconds rather than the send.
+///
+/// **The Agent rides this, not only the send.** A park completes the handshake and
+/// the `session/new`, and the Agent is composed into a session at that moment — so
+/// a park made under one Agent cannot be adopted by a send asking for another, and
+/// `mcode::init` refuses the mismatch and pays a spawn.
 #[tauri::command]
 async fn prepare_session(
     session_id: String,
@@ -340,6 +346,7 @@ async fn prepare_session(
     model: ModelId,
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
+    agent_name: Option<String>,
     app: AppHandle,
 ) -> Result<(), String> {
     // The same resolution the send does, so a park is opened on the model the
@@ -356,6 +363,7 @@ async fn prepare_session(
         spec.as_ref(),
         effort,
         permission_mode,
+        agent_name.as_deref(),
         &app,
     )
     .await
@@ -646,6 +654,192 @@ async fn context_snapshot(
     manager.context_snapshot(&session_id).await
 }
 
+/// The agent's own roster of the subagents this session started.
+///
+/// **Live only, and read on the session's own child.** The agent pushes the same
+/// shape as `subagent_delegations` whenever the roster moves, so this is for a
+/// pane opened after the last push rather than the ordinary path. Nothing here
+/// reaches a log: a member names a child session no restart survives.
+#[tauri::command]
+async fn session_delegations(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Vec<crate::harness::mcode::delegation::DelegatedMember>, String> {
+    manager.delegations(&session_id).await
+}
+
+/// Stops every subagent this session's root started, together.
+///
+/// The only stop there is: mcode publishes no per-task handle over ACP, so a
+/// narrower one is not something this app is declining to offer.
+#[tauri::command]
+async fn stop_session_delegations(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<crate::harness::mcode::delegation::DelegationStop, String> {
+    manager.stop_delegations(&session_id).await
+}
+
+/// Every Skill the agent holds, the switched-off ones included.
+///
+/// **A management read, not the runtime one.** The list the *model* is told about
+/// leaves out a Skill that is switched off, so a screen built on it could switch
+/// one off and then have no row left to switch it back on. The child this is asked
+/// through is the one [`plugins`] keeps — that module says why it is kept rather
+/// than opened per press.
+#[tauri::command]
+async fn list_plugin_skills() -> Result<crate::plugins::SkillRoster, String> {
+    crate::plugins::skills().await.map_err(|e| format!("{e:#}"))
+}
+
+/// Switches one Skill, answering whether the registry took it.
+#[tauri::command]
+async fn set_plugin_skill_enabled(
+    name: String,
+    enabled: bool,
+    location_uri: Option<String>,
+) -> Result<crate::plugins::SkillToggle, String> {
+    crate::plugins::set_skill_enabled(name, enabled, location_uri)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// One Skill's own text, or `None` for one the registry cannot find.
+#[tauri::command]
+async fn read_plugin_skill(
+    name: String,
+    location_uri: Option<String>,
+) -> Result<Option<String>, String> {
+    crate::plugins::read_skill(name, location_uri)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Every Agent this machine holds, the built-in roles included.
+///
+/// **A definition, not a Session.** An Agent is what a Session is started
+/// *under*; the roster says nothing about what is running, which the delegation
+/// events answer instead. Read through the child [`plugins`] keeps, the same one
+/// the Skill and MCP screens ask.
+#[tauri::command]
+async fn list_plugin_agents() -> Result<Vec<crate::plugins::PluginAgent>, String> {
+    crate::plugins::agents().await.map_err(|e| format!("{e:#}"))
+}
+
+/// One Agent with its stored prompt, or `None` for one that is gone.
+#[tauri::command]
+async fn get_plugin_agent(name: String) -> Result<Option<crate::plugins::AgentDetail>, String> {
+    crate::plugins::agent(name)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Writes a new Agent down, or refuses in the agent's own words.
+#[tauri::command]
+async fn create_plugin_agent(
+    draft: crate::plugins::AgentDraft,
+) -> Result<crate::plugins::AgentDetail, String> {
+    crate::plugins::create_agent(draft)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Rewrites an Agent's identity and prompt.
+#[tauri::command]
+async fn update_plugin_agent(
+    name: String,
+    draft: crate::plugins::AgentDraft,
+) -> Result<crate::plugins::AgentDetail, String> {
+    crate::plugins::update_agent(name, draft)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Removes an Agent definition, answering whether the store took it.
+#[tauri::command]
+async fn delete_plugin_agent(name: String) -> Result<bool, String> {
+    crate::plugins::delete_agent(name)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Every MCP server this machine has written down, the switched-off ones included.
+///
+/// **The reader's own store, not what a session can reach.** The agent's other MCP
+/// list is what a *session* can reach, and a server switched off is absent from it
+/// — so a screen built on that one could switch a server off and never see it again
+/// to switch it back on.
+///
+/// The read carries **no configuration**: `env` and `headers` are credentials, and
+/// they arrive only through [`get_plugin_mcp_server`], one server at a time.
+#[tauri::command]
+async fn list_plugin_mcp_servers(
+    keyword: Option<String>,
+) -> Result<Vec<crate::plugins::PluginMcpServer>, String> {
+    crate::plugins::mcp_servers(keyword)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// One server's whole configuration, or `None` for one that is gone.
+#[tauri::command]
+async fn get_plugin_mcp_server(
+    name: String,
+) -> Result<Option<crate::plugins::McpServerDetail>, String> {
+    crate::plugins::mcp_server(name)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Writes a server down. Refusals arrive in the agent's own words — a duplicate
+/// name, a missing command, a transport that does not take these fields.
+#[tauri::command]
+async fn create_plugin_mcp_server(
+    name: String,
+    config: crate::plugins::McpConfig,
+) -> Result<crate::plugins::McpServerDetail, String> {
+    crate::plugins::create_mcp_server(name, config)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Rewrites a server that is already written down.
+#[tauri::command]
+async fn update_plugin_mcp_server(
+    name: String,
+    config: crate::plugins::McpConfig,
+) -> Result<crate::plugins::McpServerDetail, String> {
+    crate::plugins::update_mcp_server(name, config)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn delete_plugin_mcp_server(name: String) -> Result<bool, String> {
+    crate::plugins::delete_mcp_server(name)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn set_plugin_mcp_server_enabled(
+    name: String,
+    enabled: bool,
+) -> Result<crate::plugins::PluginMcpServer, String> {
+    crate::plugins::set_mcp_server_enabled(name, enabled)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Connects once and answers what happened — apart from saving, because an entry
+/// can be written down cleanly and still be unreachable.
+#[tauri::command]
+async fn test_plugin_mcp_server(name: String) -> Result<crate::plugins::McpTestResult, String> {
+    crate::plugins::test_mcp_server(name)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 /// Stops the in-flight turn without killing the session — the CLI aborts its
 /// tools and streaming, ends the turn, and stays alive for the next prompt.
 #[tauri::command]
@@ -895,11 +1089,6 @@ pub fn run() {
             git::log_branch_commits,
             work_status,
             store::set_session_flags,
-            roles::save_role,
-            roles::delete_role,
-            roles::list_roles,
-            roles::all_roles,
-            store::set_session_role,
             store::detach_session,
             delete_session,
             fork_session,
@@ -908,6 +1097,23 @@ pub fn run() {
             mark_session_idle,
             interrupt_session,
             context_snapshot,
+            session_delegations,
+            stop_session_delegations,
+            list_plugin_skills,
+            set_plugin_skill_enabled,
+            read_plugin_skill,
+            list_plugin_mcp_servers,
+            get_plugin_mcp_server,
+            create_plugin_mcp_server,
+            update_plugin_mcp_server,
+            delete_plugin_mcp_server,
+            set_plugin_mcp_server_enabled,
+            test_plugin_mcp_server,
+            list_plugin_agents,
+            get_plugin_agent,
+            create_plugin_agent,
+            update_plugin_agent,
+            delete_plugin_agent,
             cancel_queued,
             steer_queued,
             respond_permission,
@@ -971,6 +1177,12 @@ pub fn run() {
             // kill still gets past this — see `Known issues`.
             if matches!(event, tauri::RunEvent::Exit) {
                 transcription::audio::restore_other_audio();
+                // The Plugins screen's child is nobody's session and outlives no
+                // app: a quit that left it running would leave an agent process
+                // the reader can neither see nor reach. Synchronous for the same
+                // reason the restore above is — there is no executor left to
+                // await the polite close on, and the process ends below.
+                plugins::close_now();
                 // Tao ends the process with `process::exit`, which runs the C
                 // atexit chain — and ggml-metal's global device registry frees
                 // its Metal residency sets there, after the Metal runtime is

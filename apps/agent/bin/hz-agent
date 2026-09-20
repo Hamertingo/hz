@@ -4,22 +4,35 @@
 # hz ships the CLI it runs rather than borrowing one off the reader's PATH, so
 # there is nothing to install before the app works. Two ways to run, in order:
 #
-# 1. **From this tree**, once its dependencies exist — `npm install --omit=dev`
-#    here, with the install-script approval the CLI's own error message spells
-#    out, because one of them is a native SQLite binding npm blocks by default.
-#    That is the setup for *working on the agent*, not for running the app.
+# 1. **This tree**, once its dependencies exist — `pnpm install` here, with the
+#    install-script approval the CLI's own error message spells out, because one
+#    of them is a native SQLite binding npm blocks by default. **This is the
+#    build the app runs whenever it is present**, because a change made here is
+#    a change to the agent and a launcher that preferred the staged copy would
+#    quietly discard every one of them.
 # 2. **From the tree staged for the bundle**, which `scripts/vendor-mcode.sh`
-#    installs with the CLI and its runtime and which is what a release ships.
-#    Reached whenever this tree has no `node_modules` — the ordinary state on a
-#    machine that only wants the app to work.
+#    builds and which is what a release ships. Reached when this tree has no
+#    `node_modules` — the ordinary state on a machine that only wants the app to
+#    work, since the agent's dependencies are several hundred packages.
 #
 # usage: apps/agent/bin/mcode acp
 set -e
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 STAGED="$HERE/../desktop/src-tauri/resources/mcode/bin/mcode"
 
-if [ -d "$HERE/node_modules" ] && [ ! -x "$STAGED" ]; then
-  exec node "$HERE/dist/cli.js" "$@"
+# **The node that installed this tree, not whichever one is on PATH.** A native
+# module is built for a single ABI — `better-sqlite3` is one — and `PATH` under
+# a bundled `.app` is launchd's, which finds whatever the machine happens to have
+# installed rather than the one that built the module. See `scripts/pin-node.mjs`.
+node_bin=""
+if [ -r "$HERE/.node-runtime" ]; then
+  read -r node_bin < "$HERE/.node-runtime" || true
+  [ -x "$node_bin" ] || node_bin=""
+fi
+[ -n "$node_bin" ] || node_bin=node
+
+if [ -d "$HERE/node_modules" ] && [ -f "$HERE/dist/cli.js" ]; then
+  exec "$node_bin" "$HERE/dist/cli.js" "$@"
 fi
 
 if [ -x "$STAGED" ]; then

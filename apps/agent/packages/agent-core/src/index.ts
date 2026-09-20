@@ -1,5 +1,5 @@
 /**
- * `@mavis/agent-core`
+ * `@hz/agent-core`
  * -------------------
  *
  * Pure TypeScript core for Mavis agent-loop contracts.
@@ -18,17 +18,17 @@
 
 export * from './protocol/index.js';
 export * from './prompt-read.js';
-export { collectFetchedWebSources } from '@mavis/shared/fetched-web-sources';
-export { shellSourceStages } from '@mavis/shared/shell-source-stages';
-export { collapseAdjacentDuplicateFileCitations } from '@mavis/shared/file-source-citation';
+export { collectFetchedWebSources } from '@hz/shared/fetched-web-sources';
+export { shellSourceStages } from '@hz/shared/shell-source-stages';
+export { collapseAdjacentDuplicateFileCitations } from '@hz/shared/file-source-citation';
 export {
   collectWebSourceCitations,
   collectUsedWebEvidenceIds,
   type ContextualWebCitation,
-} from '@mavis/shared';
+} from '@hz/shared';
 export {
   buildToolCallCitationId,
   compactToolCallCitationKey,
   findUniqueSingleSubstitutionCitationAlias,
   resolveKnownCitationAlias,
-} from '@mavis/shared/source-citation-id';
+} from '@hz/shared/source-citation-id';

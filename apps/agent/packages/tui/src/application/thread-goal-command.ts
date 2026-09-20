@@ -33,7 +33,7 @@ export const TUI_THREAD_GOAL_COMMAND_HELP =
  * (U+3000–U+30FF), CJK ideographs (U+4E00–U+9FFF), full/half-width forms
  * (U+FF00–U+FFEF) and the horizontal ellipsis. Deliberately an ALLOWLIST —
  * ASCII punctuation is not a boundary, so technical text keeps its tail.
- * Mirrors the Desktop parser in `@mavis/ui` `lib/thread-goal-slash.ts`.
+ * Mirrors the Desktop parser in `@hz/ui` `lib/thread-goal-slash.ts`.
  */
 const RELAXED_BOUNDARY = '[\\s\\u2026\\u3000-\\u30FF\\u4E00-\\u9FFF\\uFF00-\\uFFEF]';
 const LEADING_BUDGET_RE = new RegExp(`^budget=([A-Za-z0-9.]+)(?=$|${RELAXED_BOUNDARY})`, 'iu');

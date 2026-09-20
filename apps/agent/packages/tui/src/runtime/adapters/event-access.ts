@@ -1,4 +1,4 @@
-import type { CliService } from '@mavis/local-runtime-v2/cli-service';
+import type { CliService } from '@hz/local-runtime-v2/cli-service';
 import type { TuiRuntimeEvent } from '../../types/runtime-events.js';
 import { normalizeTuiRuntimeEvent } from '../event-normalizer.js';
 import { noopTuiObservability, type TuiObservability } from '../../observability/index.js';

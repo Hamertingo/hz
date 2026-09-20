@@ -1,25 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Search, Sliders } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Check, RefreshCw, Search } from "lucide-react";
 import AgentIcon from "@/components/AgentIcon";
 import ModelMark from "@/components/ModelMark";
-import ModelLibraryDialog from "@/components/composer/ModelLibraryDialog";
 import { useFanOutModels, toggleFanOutModel, clearFanOut } from "@/hooks/useModelFanOut";
 import { canFanOut, isFanOut } from "@/lib/fanOut";
 import { modelDisplayName } from "@/lib/modelBrand";
 import { usePreference } from "@/lib/prefs";
+import { knownProviderNames, providerLabel, subscribeProviderNames } from "@/lib/providerNames";
 import { cn } from "@/lib/utils";
 import {
   byProvider,
   discoveredList,
+  HIDDEN_MODELS_KEY,
+  hiddenSet,
   matchingRows,
   type ModelRow,
   rowModel,
   rowOf,
-  MODEL_ROTATION_KEY,
-  modelRotation,
-  topLevel,
   underMore,
-} from "@/lib/modelRotation";
+  visibleRows,
+} from "@/lib/modelVisibility";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -159,26 +159,26 @@ export default function ModelSelector({
   // Controlled so a click on a submenu trigger can close the whole menu; Radix
   // otherwise keeps the parent open for the submenu it just opened on hover.
   const [open, setOpen] = useState(false);
-  const [libraryOpen, setLibraryOpen] = useState(false);
   const [query, setQuery] = useState("");
   // What a shift-click builds: one session and one worktree per model, all sent
   // by the same press. Empty is the ordinary case.
   const fanOut = useFanOutModels(sessionId);
   const searchRef = useRef<HTMLInputElement>(null);
-  // One copy, held here and handed down: the dialog and the menu both read it,
-  // and handing it down is what keeps them drawing the same rotation.
-  const [chosenRotation, setChosenRotation] = usePreference(MODEL_ROTATION_KEY, null);
-  // Resolved before anything reads it: nothing stored means every model, so a
-  // fresh install opens the library with every switch on and ⇧Tab cycling what
-  // the menu draws.
-  const rotation = useMemo(() => modelRotation(models, chosenRotation), [models, chosenRotation]);
-
-  // Every model the harness serves, the reader's rotation leading — see
-  // [`topLevel`]. Shared with Shift+Tab, which cycles the kept models plus the
-  // model the session is on: a chord landing on a model the menu never offered
-  // is the bug the sharing prevents, and a model with variants is one step
-  // there for the same reason it is one row here.
-  const rows = useMemo(() => topLevel(models, rotation, harness), [models, rotation, harness]);
+  // Every model the harness serves except the ones switched off, which is the
+  // whole of what the settings screen's switches decide. **Nothing is reordered
+  // here** — the agent's own order is what the reader has been reading, and a
+  // model they switch back on returns to where it was rather than to the top.
+  // Read-only here: the switch lives on the provider's own card in settings, and
+  // a second control for it in a menu would be a second place to decide one
+  // thing.
+  const [hidden] = usePreference(HIDDEN_MODELS_KEY, null);
+  const hiddenIds = useMemo(() => hiddenSet(hidden), [hidden]);
+  // What a provider is called, where settings has read `provider list` this run.
+  const names = useSyncExternalStore(subscribeProviderNames, knownProviderNames);
+  const rows = useMemo(
+    () => visibleRows(models, hiddenIds, harness),
+    [models, hiddenIds, harness],
+  );
   const searched = useMemo(() => matchingRows(rows, query), [rows, query]);
   const more = useMemo(
     () => matchingRows(underMore(models, harness), query),
@@ -531,7 +531,7 @@ export default function ModelSelector({
           ? providerGroups.map((group) => (
               <div key={group.provider}>
                 <p className="px-2 pt-1.5 pb-0.5 text-ui text-muted-foreground">
-                  {group.provider}
+                  {providerLabel(group.provider, names)}
                 </p>
                 {group.rows.map(modelRow)}
               </div>
@@ -629,39 +629,24 @@ export default function ModelSelector({
 
         {/* No rule above it. The row is already a different shape to the models
             over it — muted, and the one thing in the menu carrying a glyph — so
-            a line there drew a box round the difference rather than making it.
+            a line there would draw a box round the difference rather than make
+            it.
 
-            The editor for the reader's stars, and the only thing it is for:
-            every model here is pickable whether or not it is in the rotation, and
-            the rotation is what leads the menu and what Shift+Tab cycles. A list of three
-            models needs no such editor, which is why a written one has none. */}
+            **The list is a read, so it goes stale.** It is the agent's answer for
+            the account and providers this machine is configured with, and that
+            changes the moment a provider is connected or a key replaced — both
+            of which happen one screen away, which is why the ask belongs here and
+            not only beside the switches that decide what it draws. */}
         {discoveredList(harness) && (
           <DropdownMenuItem
             className="cursor-pointer gap-2 text-ui text-muted-foreground"
-            onSelect={() => setLibraryOpen(true)}
+            onSelect={() => onRefreshModels?.()}
           >
-            <Sliders className="size-3.5" />
-            Star models…
+            <RefreshCw className={cn("size-3.5", loadingModels && "animate-spin")} />
+            Refresh models
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
-
-      <ModelLibraryDialog
-        open={libraryOpen}
-        // Opening the library closed the menu (it opens from a menu item), so
-        // closing it drops the reader back with nothing open — one star to set
-        // and they have to reopen the picker to actually pick. Reopen the menu
-        // on close, where the rotation is now leading.
-        onOpenChange={(next) => {
-          setLibraryOpen(next);
-          if (!next) setOpen(true);
-        }}
-        models={models}
-        rotation={rotation}
-        onRotationChange={setChosenRotation}
-        onRefresh={() => onRefreshModels?.()}
-        loading={loadingModels}
-      />
     </DropdownMenu>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GlobalThreadGoal } from "@mavis/shared/global-events";
+import type { GlobalThreadGoal } from "@hz/shared/global-events";
 import { createTuiChalk } from "../../src/tui/theme/runtime.js";
 import {
   TuiGoalBanner,

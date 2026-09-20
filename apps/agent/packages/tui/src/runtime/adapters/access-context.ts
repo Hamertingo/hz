@@ -1,4 +1,4 @@
-import type { CliService } from '@mavis/local-runtime-v2/cli-service';
+import type { CliService } from '@hz/local-runtime-v2/cli-service';
 import {
   noopTuiObservability,
   type TuiObservability,

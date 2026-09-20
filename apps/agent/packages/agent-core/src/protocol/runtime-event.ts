@@ -1,5 +1,5 @@
 /**
- * Runtime event surface — bridges `@mavis/protocol`'s thrift-generated
+ * Runtime event surface — bridges `@hz/protocol`'s thrift-generated
  * shapes into the names agent-core internals use.
  *
  * The protocol package was regenerated from a thrift IDL via
@@ -43,7 +43,7 @@ import type {
   IRuntimeEvent,
   IRuntimeStopReason,
   IRuntimeUsage,
-} from '@mavis/protocol';
+} from '@hz/protocol';
 
 // ── Legacy-name aliases for agent-core internal use ───────────────────
 //
@@ -62,7 +62,7 @@ export type {
   IRuntimeEventPayload,
   IRuntimeStopReason,
   IRuntimeUsage,
-} from '@mavis/protocol';
+} from '@hz/protocol';
 
 export {
   RuntimeActionType,
@@ -70,9 +70,9 @@ export {
   RuntimeEventStatus,
   RuntimeEventType,
   RuntimeStopReasonType,
-} from '@mavis/protocol';
+} from '@hz/protocol';
 
-export { RUNTIME_EVENT_SCHEMA } from '@mavis/protocol';
+export { RUNTIME_EVENT_SCHEMA } from '@hz/protocol';
 
 export type RuntimeEvent = IRuntimeEvent;
 export type RuntimeAction = IRuntimeAction;

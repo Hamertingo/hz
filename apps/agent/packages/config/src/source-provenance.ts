@@ -1,4 +1,4 @@
-import { resolveSourceProvenanceEnabled } from '@mavis/shared/source-provenance';
+import { resolveSourceProvenanceEnabled } from '@hz/shared/source-provenance';
 
 /** Local product ownership is supplied by the host, never inferred from env. */
 export function isLocalSourceProvenanceEnabled(

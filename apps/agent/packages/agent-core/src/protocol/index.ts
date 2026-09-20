@@ -7,7 +7,7 @@
  * - `agent-event.ts` — `AgentEvent` (in-process event stream emitted by an
  *   `Agent` runtime as it advances through an LLM turn).
  * - `runtime-event.ts` — `RuntimeEvent` (canonical wire format, re-exported
- *   from `@mavis/protocol`).
+ *   from `@hz/protocol`).
  */
 
 export * from './agent-message.js';

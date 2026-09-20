@@ -138,16 +138,16 @@ async fn resolve_mcode() -> PathBuf {
 /// answered — and the answer is yes for anything hz itself built. Three
 /// candidates, cheapest first:
 ///
-/// - **A release bundle**: `<Name>.app/Contents/Resources/mcode/bin/mcode`,
+/// - **A release bundle**: `<Name>.app/Contents/Resources/agent/bin/hz-agent`,
 ///   which `scripts/vendor-mcode.sh` wrote and Tauri copied in. Read off the
 ///   running executable, two directories up, because Tauri's own `resource_dir`
 ///   needs an `AppHandle` this module has no business holding.
-/// - **The source tree this repository owns**: `apps/agent/bin/mcode`, the
+/// - **The source tree this repository owns**: `apps/agent/bin/hz-agent`, the
 ///   launcher beside the built CLI. `CARGO_MANIFEST_DIR` is baked at compile
 ///   time, so this exists in `tauri dev` and in a debug build and points
 ///   nowhere in a released app — which is exactly the shape wanted, since a
 ///   released bundle carries the first candidate instead.
-/// - **A staged vendor tree**: `src-tauri/resources/mcode/bin/mcode`, what the
+/// - **A staged vendor tree**: `src-tauri/resources/agent/bin/hz-agent`, what the
 ///   vendoring script leaves for the bundle to pick up. Reached in dev before
 ///   the script has run only as a miss, and worth keeping in the list because
 ///   it is the copy that will actually ship.
@@ -157,7 +157,7 @@ async fn resolve_mcode() -> PathBuf {
 fn shipped_mcode() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let resources = exe.parent()?.parent()?.join("Resources");
-    let bundled = resources.join("mcode").join("bin").join("mcode");
+    let bundled = resources.join("agent").join("bin").join("hz-agent");
     if bundled.is_file() {
         return Some(bundled);
     }
@@ -165,8 +165,8 @@ fn shipped_mcode() -> Option<PathBuf> {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = crate_dir.parent()?.parent()?.parent()?;
     [
-        workspace.join("apps/agent/bin/mcode"),
-        crate_dir.join("resources/mcode/bin/mcode"),
+        workspace.join("apps/agent/bin/hz-agent"),
+        crate_dir.join("resources/agent/bin/hz-agent"),
     ]
     .into_iter()
     .find(|candidate| candidate.is_file())

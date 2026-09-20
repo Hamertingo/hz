@@ -18,7 +18,7 @@ import {
   AUTH_LEASE_PROTOCOL_PACKAGE_NAME,
   AUTH_LEASE_PROTOCOL_PACKAGE_VERSION,
   AUTH_LEASE_PROTOCOL_VERSION,
-} from '@mavis/oauth-lease-protocol';
+} from '@hz/oauth-lease-protocol';
 
 export type McodeToolsBuildEnv = 'test' | 'staging' | 'prod';
 export type McodeToolsRegion = 'cn' | 'en';

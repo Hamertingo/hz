@@ -1,4 +1,4 @@
-import { type MavisBuildEnv, type MavisRegion } from '@mavis/config';
+import { type MavisBuildEnv, type MavisRegion } from '@hz/config';
 
 import { redactTuiSensitiveText } from '../../user-facing-failure.js';
 import type { TuiFeedbackReceipt } from '../port.js';

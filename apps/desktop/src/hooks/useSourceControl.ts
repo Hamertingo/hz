@@ -9,7 +9,14 @@ import type { SourceControlState } from "@/types/events";
 /// reader lands here *because* something about it is wrong, and a cached answer
 /// would be the answer they already know. The read is one `git --version` and
 /// one `gh auth status`, both local.
-export function useSourceControl() {
+///
+/// **Keyed on the dialog, and it used to be keyed on the visit.** This lived
+/// inside the section's own component, and the settings bodies are built when
+/// the reader arrives at them — so the section was blank for as long as two
+/// child processes take, every time, and the reader who opened settings to
+/// *look* at it watched that happen. It is owned by [`SettingsDialog`], which
+/// outlives the visit, so opening the surface is what starts the read.
+export function useSourceControl(open: boolean) {
   const [state, setState] = useState<SourceControlState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -28,12 +35,13 @@ export function useSourceControl() {
     }
   }, []);
 
-  // On mount, and the mount *is* the visit: the settings bodies are switched
-  // rather than hidden, so this section is built fresh each time it is opened
-  // and torn down when the reader moves to another one.
+  // On every open, which is every visit: the bodies are still switched, so the
+  // section is built fresh each time it is shown — but the read has already
+  // finished by then.
   useEffect(() => {
+    if (!open) return;
     void read();
-  }, [read]);
+  }, [open, read]);
 
   /// Asks whether `gh` is there now. The absence of the binary is cached for
   /// the life of the process ([`recheck_gh`] is what throws that away), so

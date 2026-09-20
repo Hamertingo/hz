@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/oauth-core",
+  "name": "@hz/oauth-core",
   "version": "0.2.1-beta.7",
   "description": "Shared local OAuth state, credential store, and cross-process coordination for MCode hosts.",
   "license": "MIT",

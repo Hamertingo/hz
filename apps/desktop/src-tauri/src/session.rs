@@ -390,12 +390,90 @@ pub async fn publish_status(session_id: &str, status: SessionStatus, app: &AppHa
 #[derive(Debug)]
 pub struct SessionManager {
     pub sessions: Mutex<HashMap<String, Session>>,
+    /// Sends that have begun and not yet handed their session over, and whether
+    /// the reader asked to stop one while it ran.
+    ///
+    /// **A session is not in `sessions` until its child is up and its prompt is
+    /// written.** The spawn, the handshake and the first `session/new` all sit
+    /// inside `send_msg`, and measured together they are the better part of ten
+    /// seconds on a cold child — while the frontend marks the turn `in_progress`
+    /// the moment Enter is pressed. So Stop is offered for that whole window and
+    /// used to answer "no running session <id>": an internal sentence, for the
+    /// one control a reader reaches for when a start is slow.
+    ///
+    /// A plain `std::sync` lock, unlike the map above, because the guard's `Drop`
+    /// is what takes an id back out and `Drop` cannot await. Nothing is held
+    /// across an await — the map is read, written and released.
+    starts: std::sync::Mutex<HashMap<String, bool>>,
 }
 
 impl Default for SessionManager {
     fn default() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            starts: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// A send that has begun and has not yet handed its session over.
+///
+/// **Drop is the whole of it.** `send_msg` leaves by a dozen doors — a refused
+/// model, a checkout that will not land, a child that will not start — and every
+/// one of them has to take the id back out, or a later Stop lands on a start
+/// that is not running. The borrow is what ties the guard to the call.
+struct Starting<'a> {
+    manager: &'a SessionManager,
+    session_id: String,
+}
+
+impl Drop for Starting<'_> {
+    fn drop(&mut self) {
+        self.manager
+            .starts
+            .lock()
+            .expect("start map poisoned")
+            .remove(&self.session_id);
+    }
+}
+
+impl SessionManager {
+    /// Records a send in flight, taking the id back out when it ends.
+    fn starting(&self, session_id: &str) -> Starting<'_> {
+        self.starts
+            .lock()
+            .expect("start map poisoned")
+            .insert(session_id.to_string(), false);
+        Starting {
+            manager: self,
+            session_id: session_id.to_string(),
+        }
+    }
+
+    /// Whether the reader asked to stop this start while it was running.
+    fn start_cancelled(&self, session_id: &str) -> bool {
+        self.starts
+            .lock()
+            .expect("start map poisoned")
+            .get(session_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Marks a start to be abandoned at the next seam, answering whether there
+    /// was one to mark. `false` is "nothing of mine", and the caller says so.
+    fn cancel_start(&self, session_id: &str) -> bool {
+        match self
+            .starts
+            .lock()
+            .expect("start map poisoned")
+            .get_mut(session_id)
+        {
+            Some(cancelled) => {
+                *cancelled = true;
+                true
+            }
+            None => false,
         }
     }
 }
@@ -437,11 +515,14 @@ pub struct SendRequest<'a> {
     /// caller — the orchestration socket turns a session id into one, and
     /// nothing below here knows sessions.
     pub base_ref: Option<&'a str>,
-    /// The responsibility a new session starts under, written onto the index
-    /// entry *before* the child spawns: the role is resolved from the entry at
-    /// spawn, so a session created with one carries it from its first turn
-    /// rather than its next respawn. Ignored for an existing session.
-    pub role_id: Option<&'a str>,
+    /// The Agent a new session runs *as*, or `None` for the runtime's own default.
+    ///
+    /// **Creation-time only, and that is the runtime's rule rather than this
+    /// app's**: an Agent is composed into a Session when it is made, so a session
+    /// that already exists keeps the one it was created with. Ignored for an
+    /// existing session, which is why the composer hides the picker once a
+    /// conversation has started.
+    pub agent_name: Option<&'a str>,
     pub is_new_session: bool,
     /// Set only for a session created over the orchestration socket. Recorded
     /// rather than acted on — the depth cap reads it off the index on the
@@ -484,13 +565,17 @@ impl SessionManager {
             use_worktree,
             worktree_name,
             base_ref,
-            role_id,
+            agent_name,
             is_new_session,
             parent_session_id,
             from,
             sent_at,
         } = request;
 
+        // For the whole of this call, and taken back out however it leaves. The
+        // live path below holds its session in `sessions` already, so this
+        // covers exactly the window where Stop has nothing else to land on.
+        let _starting = self.starting(session_id);
 
         // The machine's answer, not a table: the agent states what it will take
         // on this account and these providers, so a model shipped after this
@@ -672,11 +757,6 @@ impl SessionManager {
             // later would be one more thing moving while the first turn starts.
             item.issues = linked_issues.clone();
 
-            // And the role with it, for the same reason and one more: the spawn
-            // below reads the entry, so a role written anywhere but here would
-            // reach the agent one turn late.
-            item.role_id = role_id.map(str::to_string);
-
             // The one failure that has to undo the tree, and the row that just
             // failed to be written is exactly why: removal is offered from a
             // session's own row, so an orphan here is one nothing in the app can
@@ -755,6 +835,7 @@ impl SessionManager {
                 spawn_worktree,
                 is_new_session,
                 None,
+                agent_name,
                 app,
             )
             .await?;
@@ -774,6 +855,20 @@ impl SessionManager {
             // fails the spawn outright — which took every worktree session's
             // title with it, in silence.
             crate::title::spawn_title_generation(session_id, harness, prompt, cwd, app);
+
+            // **The one seam a Stop can be honoured at.** The child is up, so it
+            // can be killed; the prompt has not gone out, so there is nothing
+            // half-delivered to explain. Everything earlier is a spawn that
+            // cannot be aborted without dropping a half-built child, and
+            // everything later is a turn the ordinary `session/cancel` already
+            // stops.
+            //
+            // The reader's words are not lost: this fails the send, and the
+            // composer puts the text back where they typed it.
+            if self.start_cancelled(session_id) {
+                let _ = session.kill().await;
+                bail!("Stopped before the turn started.");
+            }
 
             if let Err(error) = session
                 .send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
@@ -1169,6 +1264,10 @@ impl SessionManager {
             pending_worktree.as_deref(),
             is_new_session,
             cli_fork,
+            // A fork continues its parent's conversation, and the Agent comes
+            // with it — the CLI copies the session whole, so naming one here
+            // would be a second answer to a question already answered.
+            None,
             app,
         )
         .await?;
@@ -1180,6 +1279,20 @@ impl SessionManager {
         if fork_from.is_some() {
             clear_fork_from(session_id).await?;
         }
+
+            // **The one seam a Stop can be honoured at.** The child is up, so it
+            // can be killed; the prompt has not gone out, so there is nothing
+            // half-delivered to explain. Everything earlier is a spawn that
+            // cannot be aborted without dropping a half-built child, and
+            // everything later is a turn the ordinary `session/cancel` already
+            // stops.
+            //
+            // The reader's words are not lost: this fails the send, and the
+            // composer puts the text back where they typed it.
+            if self.start_cancelled(session_id) {
+                let _ = session.kill().await;
+                bail!("Stopped before the turn started.");
+            }
 
         if let Err(error) = session
             .send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
@@ -1358,13 +1471,67 @@ impl SessionManager {
         Ok(Some(snapshot))
     }
 
+    /// The agent's own roster of the work it delegated, read on demand.
+    ///
+    /// **Read on the session's own child**, not the control one: the agent
+    /// resolves the root session from the id it is asked about, so a roster asked
+    /// of a child that does not own it answers nothing. The push fires whenever
+    /// the roster moves; this is what a pane opened after the last push reads,
+    /// and it is live-only — nothing here is written to a log.
+    pub async fn delegations(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<mcode::delegation::DelegatedMember>, String> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id) else {
+            return Err(
+                "This session's agent is not running — its subagents are read while it is.".into(),
+            );
+        };
+        let Transport::Acp(child) = &session.stdin;
+        mcode::delegation::snapshot(child)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    /// Stops every subagent this session's root started, together.
+    ///
+    /// **The only stop there is.** The agent publishes no per-task handle over
+    /// ACP, so there is nothing narrower to offer — see
+    /// [`delegation`](crate::harness::mcode::delegation).
+    pub async fn stop_delegations(
+        &self,
+        session_id: &str,
+    ) -> Result<mcode::delegation::DelegationStop, String> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id) else {
+            return Err("This session's agent is not running, so there is nothing to stop.".into());
+        };
+        let Transport::Acp(child) = &session.stdin;
+        mcode::delegation::stop(child)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+
     pub async fn interrupt(&self, session_id: &str, _app: &AppHandle) -> Result<()> {
         let mut sessions_guard = self.sessions.lock().await;
-        let Some(session) = sessions_guard.get_mut(session_id) else {
-            bail!("no running session {session_id}");
-        };
+        if let Some(session) = sessions_guard.get_mut(session_id) {
+            return session.interrupt().await;
+        }
+        // The second lock is taken with the first released: nothing here holds
+        // both, and holding them in a different order somewhere else is how a
+        // deadlock is built.
+        drop(sessions_guard);
 
-        session.interrupt().await
+        // **A session that is still starting has no turn to cancel, and a reader
+        // who presses Stop on one means "never mind".** Recorded rather than
+        // acted on, because the spawn cannot be aborted mid-flight — `send_msg`
+        // honours it at the seam it already has, before the prompt goes out.
+        if self.cancel_start(session_id) {
+            return Ok(());
+        }
+
+        bail!("no running session {session_id}")
     }
 
     /// Hands every held prompt into the running turn, without stopping it.
@@ -1635,6 +1802,10 @@ impl Session {
         worktree_name: Option<&str>,
         is_new_session: bool,
         fork_from: Option<&str>,
+        // The Agent a new session runs *as*, or `None` for the runtime's default.
+        // Creation-time only: the runtime composes an Agent into a session when
+        // it is made, so a session that already exists keeps the one it has.
+        agent_name: Option<&str>,
         app: &AppHandle,
     ) -> Result<Session> {
         // The tree is made before this on every harness now — mcode has no `-w`
@@ -1656,6 +1827,7 @@ impl Session {
                     session_cwd,
                     is_new_session,
                     fork_from,
+                    agent_name,
                     app,
                 )
                 .await
@@ -2775,3 +2947,46 @@ pub async fn strand_queue_on_exit(
 // rebuilding on `harness/mcode/fixtures/live_turn.jsonl`. Until then the
 // coverage for that path is the mapper and parser tests, which pin what the
 // loop feeds them rather than what it does with it.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **The start map is the only thing Stop can land on while a child boots.**
+    /// So it has to answer for a start in flight, take a cancellation, and be
+    /// empty again the moment the send that opened it leaves — by any of the
+    /// dozen doors `send_msg` has.
+    #[test]
+    fn a_start_is_tracked_for_exactly_as_long_as_the_send_that_opened_it() {
+        let manager = SessionManager::default();
+
+        assert!(!manager.start_cancelled("s1"), "nothing in flight yet");
+        assert!(!manager.cancel_start("s1"), "and nothing to cancel");
+
+        {
+            let _start = manager.starting("s1");
+            assert!(!manager.start_cancelled("s1"), "in flight, not cancelled");
+            assert!(manager.cancel_start("s1"), "the reader pressed Stop");
+            assert!(manager.start_cancelled("s1"), "and the seam has to see it");
+        }
+
+        // Drop is what takes it back out, whichever door the send left by.
+        assert!(!manager.start_cancelled("s1"));
+        assert!(
+            !manager.cancel_start("s1"),
+            "a later Stop must not land on a start that is over"
+        );
+    }
+
+    /// Two sends in flight are two starts, so cancelling one leaves the other.
+    #[test]
+    fn a_cancelled_start_does_not_touch_another() {
+        let manager = SessionManager::default();
+        let _a = manager.starting("a");
+        let _b = manager.starting("b");
+
+        assert!(manager.cancel_start("a"));
+        assert!(manager.start_cancelled("a"));
+        assert!(!manager.start_cancelled("b"));
+    }
+}

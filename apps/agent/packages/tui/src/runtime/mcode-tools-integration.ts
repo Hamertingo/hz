@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 import {
   startMcodeToolsAuthLeaseBroker,
   validateMcodeToolsResource,
@@ -12,7 +12,7 @@ import {
   type McodeToolsHostAuthSession,
   type McodeToolsHostLogger,
   type ValidatedMcodeToolsResource,
-} from '@mavis/mcode-tools-host';
+} from '@hz/mcode-tools-host';
 
 import {
   activateTuiMcodeToolsHostEnvironment,

@@ -1,4 +1,4 @@
-import type { AbortSessionReq } from '@mavis/local-runtime-v2/cli-service';
+import type { AbortSessionReq } from '@hz/local-runtime-v2/cli-service';
 import type {
   ListTuiSessionPageInput,
   TuiDelegationSnapshot,

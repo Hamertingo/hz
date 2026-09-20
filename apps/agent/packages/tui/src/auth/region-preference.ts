@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 
 const REGION_PREFERENCE_DIRECTORY = 'preferences';
 const REGION_PREFERENCE_FILE = 'mcode-region.json';

@@ -10,8 +10,8 @@
  * this module is a tracked follow-up (out of scope for the foundation MR that
  * introduced this file). Until then, do NOT add a THIRD copy — extend here.
  *
- * IMPORTANT: this module lives in `@mavis/shared` and MUST NOT import from
- * `@mavis/ui` (that would create a package cycle). The dependency direction
+ * IMPORTANT: this module lives in `@hz/shared` and MUST NOT import from
+ * `@hz/ui` (that would create a package cycle). The dependency direction
  * is strictly ui → shared.
  */
 

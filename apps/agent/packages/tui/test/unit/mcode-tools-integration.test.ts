@@ -8,7 +8,7 @@ import type {
   McodeToolsAuthStatusSnapshot,
   McodeToolsHostAuthSession,
   ValidatedMcodeToolsResource,
-} from '@mavis/mcode-tools-host';
+} from '@hz/mcode-tools-host';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -431,7 +431,7 @@ function validatedResource(rootDir: string): ValidatedMcodeToolsResource {
       auth: {
         mode: 'shared-broker',
         protocol: {
-          name: '@mavis/oauth-lease-protocol',
+          name: '@hz/oauth-lease-protocol',
           version: '0.1.0-beta.0',
           wireVersion: 1,
         },

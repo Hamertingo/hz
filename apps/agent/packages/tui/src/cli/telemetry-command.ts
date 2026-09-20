@@ -1,4 +1,4 @@
-import { getConfig, getConfigPath, type Config } from '@mavis/config';
+import { getConfig, getConfigPath, type Config } from '@hz/config';
 import {
   createMcodeBusinessTelemetryPreview,
   resolveMcodeBusinessTelemetryPolicy,

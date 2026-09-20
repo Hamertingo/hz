@@ -4,7 +4,7 @@ import {
   type ToolDefinition,
   type ToolResult,
   type ToolResultContent,
-} from '@mavis/agent-core/tools';
+} from '@hz/agent-core/tools';
 import { Type, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 

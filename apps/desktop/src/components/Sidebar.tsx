@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckCheck, ChevronDown, CircleDashed, CircleDot, GitBranchPlus, GitPullRequest, Inbox, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
+import { Check, CheckCheck, ChevronDown, CircleDashed, CircleDot, GitBranchPlus, GitPullRequest, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
 
 import PrStateIcon, { prStateLabel } from "@/components/PrStateIcon";
@@ -94,11 +94,17 @@ type SidebarProps = {
   /// The reader has made a group at some point, so the drag needs no teaching.
   splitLearned: boolean;
   onNewSession: () => void;
+  /// Opens the plugins page in the main column, on the same terms as the two
+  /// below: not a session, so the selection does not move and coming back lands
+  /// on the session that was open before.
+  onOpenPlugins: () => void;
   /// Opens the issues page in the main column. It is not a session, so it does
   /// not move the selection — coming back from it lands on the session that was
   /// open before.
   onOpenIssues: () => void;
   onOpenPrs: () => void;
+  /// The plugins page is the thing on screen, on the same terms as the two below.
+  pluginsOpen: boolean;
   /// The issues page is the thing on screen, so the row draws as the current
   /// one. Read here rather than derived from the selection, which the page
   /// deliberately leaves alone.
@@ -843,6 +849,8 @@ export default function Sidebar({
   onDropSession,
   splitLearned,
   onNewSession,
+  onOpenPlugins,
+  pluginsOpen,
   onOpenIssues,
   onOpenPrs,
   issuesOpen,
@@ -1043,6 +1051,24 @@ export default function Sidebar({
           <Plus />
           New Task
           <ShortcutKeys ids={["session.new"]} className="ml-auto" />
+        </Button>
+
+        {/* Above Issues, which is where it was asked for and where it reads as
+            what the agent brings with it rather than as one more list of work.
+            Drawn whether or not the agent has Skills to show: the page's own
+            empty state is where that is said, and a row that appears only once
+            there is something behind it can only be found by people who did not
+            need it — the bargain the two lists below make. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenPlugins}
+          data-active={pluginsOpen || undefined}
+          className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground"
+        >
+          <Package />
+          Plugins
+          <ShortcutKeys ids={["plugins.open"]} className="ml-auto" />
         </Button>
 
         {/* Under New Task, because it is the other way a task starts — an

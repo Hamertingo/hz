@@ -11,7 +11,7 @@
  * those tags to short human-readable placeholders so the user at least
  * sees a meaningful hint that "the agent intended to deliver media".
  *
- * Lives in `@mavis/shared` because TWO outbound surfaces need it:
+ * Lives in `@hz/shared` because TWO outbound surfaces need it:
  *
  *   1. `IMGatewayChannelClient.sanitizeForIM` (Feishu / WeChat via the
  *      electron-side IM gateway).

@@ -10,7 +10,7 @@
  * and cloud drift and every format change breaks assertions in two places.
  */
 
-import type { ToolResult, ToolResultContent } from '@mavis/agent-core/tools';
+import type { ToolResult, ToolResultContent } from '@hz/agent-core/tools';
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
 
 import {

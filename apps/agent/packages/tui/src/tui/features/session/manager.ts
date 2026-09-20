@@ -8,7 +8,7 @@ import {
   renderPanelBottom as frameBottom,
 } from '../../widgets/panel-frame.js';
 // Keyboard-first durable Session management over the Runtime projection.
-import { formatProductTime } from '@mavis/shared/product-time';
+import { formatProductTime } from '@hz/shared/product-time';
 import { getKeybindings, Key, matchesKey } from '../../engine/public.js';
 import type { Component, Focusable } from '../../rendering/component.js';
 import { truncateToWidth, visibleWidth } from '../../rendering/text.js';

@@ -6,7 +6,7 @@ import {
   SigninPanelScene,
   type ClaimSigninData,
   type SigninPanel,
-} from '@mavis/shared/daily-signin';
+} from '@hz/shared/daily-signin';
 import {
   TuiDailyCheckinApplication,
   type TuiDailyCheckinGateway,

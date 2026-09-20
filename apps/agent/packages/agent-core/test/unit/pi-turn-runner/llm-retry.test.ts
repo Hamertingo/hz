@@ -7,7 +7,7 @@ import type {
   Context,
   Model,
 } from "@earendil-works/pi-ai";
-import { LLM_ERROR_CODES } from "@mavis/shared/llm-error-classifier";
+import { LLM_ERROR_CODES } from "@hz/shared/llm-error-classifier";
 import {
   DEFAULT_LLM_RETRY_POLICY,
   LLM_RETRY_REQUEST_SETTLED_OBSERVER,

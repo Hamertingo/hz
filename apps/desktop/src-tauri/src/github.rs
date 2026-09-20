@@ -129,6 +129,26 @@ pub struct PullRequest {
     /// repo requires no review, which `gh` reports as an empty string.
     pub review_decision: Option<String>,
     pub checks: Vec<PrCheck>,
+    /// What the author wrote, as markdown. Empty is ordinary — plenty of pull
+    /// requests are a title and a diff.
+    ///
+    /// Rendered now, having been deliberately left out when the pane was a list
+    /// of *states*: it is the longest thing here and it pushed the checks below
+    /// the fold. Read against the sections around it — the files, the commits —
+    /// it is the one part of a pull request that says why any of it changed,
+    /// and the pane has somewhere to put it.
+    pub body: String,
+    /// What the repository has filed it under, with their colours.
+    pub labels: Vec<PrLabel>,
+    /// Every file the change touches, with its own line counts.
+    ///
+    /// `changedFiles` is the count and this is the list, so the header can say
+    /// "12 files" while the section draws them. Capped at a hundred by the
+    /// query — past that the section says so rather than pretending.
+    pub files: Vec<PrFile>,
+    /// The commits on the branch, newest last — GitHub's own order, which is
+    /// how the reviewer above them reads them.
+    pub commits: Vec<PrCommit>,
     /// Comments, reviews and inline threads in one list, oldest first — the
     /// order GitHub reads them in, and the only order in which a bot's reply to
     /// a review makes sense. A thread is one entry carrying its own replies.
@@ -140,6 +160,47 @@ pub struct PullRequest {
     pub deletions: u32,
     pub changed_files: u32,
     pub updated_at: String,
+}
+
+/// One file a pull request touches.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct PrFile {
+    /// Repo-relative, the way every path in this app is.
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    /// `ADDED`, `MODIFIED`, `DELETED`, `RENAMED` or `COPIED`, GitHub's own
+    /// word, carried through untranslated — the panel draws a glyph for the
+    /// three it knows and nothing for the rest.
+    pub change_type: String,
+}
+
+/// One commit on the branch, cut down to what a row draws.
+///
+/// Not the same shape as the commits panel's `Commit`, which reads a working
+/// tree's history with `git` and carries a full body and tree. This is
+/// GitHub's, reached with `gh`, and the pane wants a line per commit.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct PrCommit {
+    /// The full sha, which is what the row's own link would need.
+    pub oid: String,
+    /// GitHub's own abbreviation, so the row shows the length GitHub shows.
+    pub short_oid: String,
+    /// The first line of the message and only the first — a full body here
+    /// would be one commit's essay among a list of one-liners.
+    pub headline: String,
+    pub committed_at: String,
+    /// The name git was configured with, which is the only thing a commit
+    /// *always* has. Attribution to an account is below, and can be missing.
+    pub author: String,
+    /// The account GitHub credits it to, where it can attribute one — an email
+    /// that matches no account resolves to the name alone.
+    pub login: Option<String>,
+    pub avatar: Option<String>,
 }
 
 /// How to land it. The three GitHub offers; the flag each maps to is `gh`'s.
@@ -177,7 +238,7 @@ impl MergeMethod {
 /// `mergeStateStatus` needs no preview header here, checked against the live
 /// API rather than assumed.
 ///
-/// **Page sizes are the point cost, and this shape is measured at 2.** GraphQL
+/// **Page sizes are the point cost, and this shape is measured at 3.** GraphQL
 /// charges on the shape asked for, not on what comes back: nested `first`s
 /// multiply, so one connection at `20 × 50 × 50` reserved a thousand thread
 /// comments and cost 11 points per read *of a branch with no PR at all* —
@@ -188,6 +249,15 @@ impl MergeMethod {
 /// where a reviewer bot's inline comments still fit, and past it the rest is
 /// silently absent, as it was past fifty before — paging would cost the points
 /// this saves.
+///
+/// **A hundred files and a hundred commits cost the third point**, measured
+/// with `rateLimit{cost}` before and after rather than assumed: both are
+/// siblings of the connections above, so neither multiplies against them.
+/// `commits` is asked **twice under two aliases** and must be — GraphQL refuses
+/// one field asked twice with different arguments, and one connection cannot
+/// serve both: `first:100` for the list, `last:1` for the tip whose rollup the
+/// checks read. The list deliberately does *not* carry a rollup, or a hundred
+/// contexts would ride on it.
 ///
 /// **Open and settled are two aliased connections**, the bargain [`QUERY_MARKS`]
 /// makes for the sidebar: a single `first:5` newest-first would drop an older
@@ -203,11 +273,15 @@ query($owner:String!,$repo:String!,$branch:String!){
 fragment pr on PullRequest{
  number title url state isDraft baseRefName headRefName headRef{name} isCrossRepository mergeable mergeStateStatus reviewDecision updatedAt
  additions deletions changedFiles
+ body
  author{login avatarUrl}
+ labels(first:20){nodes{name color}}
+ files(first:100){nodes{path additions deletions changeType}}
+ history: commits(first:100){nodes{commit{oid abbreviatedOid messageHeadline committedDate author{name user{login avatarUrl}}}}}
  comments(first:50){nodes{author{login avatarUrl} body createdAt url}}
  reviews(first:50){nodes{id author{login avatarUrl} body submittedAt state}}
  reviewThreads(first:30){nodes{id isResolved path line comments(first:50){nodes{author{login avatarUrl} body createdAt url pullRequestReview{id}}}}}
- commits(last:1){nodes{commit{statusCheckRollup{contexts(first:50){nodes{
+ tip: commits(last:1){nodes{commit{statusCheckRollup{contexts(first:50){nodes{
    __typename
    ... on StatusContext{context state targetUrl avatarUrl}
    ... on CheckRun{name status conclusion detailsUrl checkSuite{workflowRun{workflow{name}} app{name logoUrl}}}
@@ -458,6 +532,43 @@ struct RawCommitNode {
 struct RawCommit {
     #[serde(default)]
     status_check_rollup: Option<RawRollup>,
+    // The history half's fields. Absent on the tip's selection, which asks for
+    // the rollup alone — hence defaults, and one struct for both.
+    #[serde(default)]
+    oid: String,
+    #[serde(default)]
+    abbreviated_oid: String,
+    #[serde(default)]
+    message_headline: String,
+    #[serde(default)]
+    committed_date: String,
+    #[serde(default)]
+    author: Option<RawCommitAuthor>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawCommitAuthor {
+    /// What git recorded — a person's name, or whatever the machine was set to.
+    #[serde(default)]
+    name: String,
+    /// The account, where GitHub can match the address to one. Absent for a
+    /// commit pushed with an address no account owns.
+    #[serde(default)]
+    user: Option<RawAuthor>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawFile {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    additions: u32,
+    #[serde(default)]
+    deletions: u32,
+    #[serde(default)]
+    change_type: String,
 }
 
 #[derive(Deserialize)]
@@ -514,6 +625,18 @@ struct RawPr {
     #[serde(default)]
     changed_files: u32,
     #[serde(default)]
+    body: String,
+    #[serde(default)]
+    labels: Option<Nodes<RawLabel>>,
+    #[serde(default)]
+    files: Option<Nodes<RawFile>>,
+    /// The commits on the branch, asked for under `history`. The tip's rollup is
+    /// a *separate* connection ([`RawPr::commits`]) because GraphQL refuses one
+    /// field asked twice with different arguments — and it must be separate:
+    /// asking the rollup on a hundred commits would cost a hundred contexts.
+    #[serde(default)]
+    history: Option<Nodes<RawCommitNode>>,
+    #[serde(default)]
     comments: Option<Nodes<RawComment>>,
     #[serde(default)]
     reviews: Option<Nodes<RawReview>>,
@@ -524,8 +647,15 @@ struct RawPr {
     review_threads: Option<Nodes<RawThread>>,
     /// Only the tip commit's rollup is asked for: a check reported against an
     /// older commit is describing code that has since been pushed over.
+    ///
+    /// **Named for the alias in the query, not for the field it selects.** The
+    /// query asks `commits` twice — `tip` for this and `history` for the list —
+    /// because GraphQL refuses one field twice with different arguments, and the
+    /// response keys are the *aliases*. Reading `commits` here looked right and
+    /// found nothing, which is a Checks section that says "No checks on this
+    /// branch" over a pull request whose CI is green.
     #[serde(default)]
-    commits: Option<Nodes<RawCommitNode>>,
+    tip: Option<Nodes<RawCommitNode>>,
     #[serde(default)]
     updated_at: String,
 }
@@ -727,12 +857,61 @@ impl RawPr {
 
         comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
-        let checks = Nodes::take(self.commits)
+        let checks = Nodes::take(self.tip)
             .into_iter()
             .filter_map(|node| node.commit)
             .filter_map(|commit| commit.status_check_rollup)
             .flat_map(|rollup| Nodes::take(rollup.contexts))
             .filter_map(RawCheck::map)
+            .collect();
+
+        // Newest last, which is the order GitHub answers with and the order the
+        // branch was written in — a reader checking what a pull request contains
+        // reads downward through it.
+        let commits: Vec<PrCommit> = Nodes::take(self.history)
+            .into_iter()
+            .filter_map(|node| node.commit)
+            .filter(|commit| !commit.oid.is_empty())
+            .map(|commit| {
+                let author = commit.author;
+                let user = author.as_ref().and_then(|a| a.user.as_ref());
+                PrCommit {
+                    oid: commit.oid,
+                    short_oid: commit.abbreviated_oid,
+                    headline: commit.message_headline,
+                    committed_at: commit.committed_date,
+                    // The name is always there; the account behind it need not
+                    // be, so the two are read apart rather than one standing in
+                    // for the other.
+                    author: author.as_ref().map(|a| a.name.clone()).unwrap_or_default(),
+                    login: user
+                        .map(|u| u.login.clone())
+                        .filter(|login| !login.is_empty()),
+                    avatar: user.and_then(|u| u.avatar_url.clone()),
+                }
+            })
+            .collect();
+
+        // A file with no path is not a file — `files` is a connection of paths
+        // and counts, and one that arrived without its path cannot be drawn.
+        let files: Vec<PrFile> = Nodes::take(self.files)
+            .into_iter()
+            .filter(|file| !file.path.is_empty())
+            .map(|file| PrFile {
+                path: file.path,
+                additions: file.additions,
+                deletions: file.deletions,
+                change_type: file.change_type,
+            })
+            .collect();
+
+        let labels: Vec<PrLabel> = Nodes::take(self.labels)
+            .into_iter()
+            .filter(|label| !label.name.is_empty())
+            .map(|label| PrLabel {
+                name: label.name,
+                color: label.color.filter(|color| !color.is_empty()),
+            })
             .collect();
 
         PullRequest {
@@ -750,6 +929,10 @@ impl RawPr {
             merge_state_status: self.merge_state_status,
             review_decision: self.review_decision.filter(|d| !d.is_empty()),
             checks,
+            body: self.body,
+            labels,
+            files,
+            commits,
             comments,
             additions: self.additions,
             deletions: self.deletions,
@@ -2015,10 +2198,84 @@ mod tests {
     /// body, two bodyless review envelopes, and four inline threads — one of
     /// them resolved, two hanging on a line GitHub has since forgotten. Every
     /// avatar in it is one no `<login>.png` guess could have produced.
+    ///
+    /// **Its keys are the query's aliases**, which is the trap it exists to
+    /// catch: the checks hang off `tip`, the alias `commits(last:1)` is asked
+    /// under, and a reader looking for a `commits` key finds nothing at all.
+    /// The capture predates `body`, `labels`, `files` and `history`, so those
+    /// arrive as defaults here — which is also what keeps the deserializer's
+    /// tolerance of an older answer pinned.
     const FIXTURE: &str = include_str!("fixtures/pr_graphql.json");
 
     fn parse() -> PullRequest {
         read_prs(FIXTURE).expect("fixture parses").pop().expect("one PR")
+    }
+
+    /// The four things the pane shows *about* a change rather than about its
+    /// state: what the author wrote, what it is filed under, which files moved,
+    /// and the commits that did it.
+    ///
+    /// Two shapes here are the ones that go wrong quietly. A commit's **name and
+    /// account are separate**, and a commit pushed with an address no account
+    /// owns carries a name and no user at all — reading `author.user.login`
+    /// without the fallback would blank the row. And `files` is a connection
+    /// whose rows are nothing but a path and two counts, so a row that arrives
+    /// without its path cannot be drawn and must not become an empty line.
+    #[test]
+    fn a_pull_request_carries_its_body_labels_files_and_commits() {
+        // The body is prose and not a heading, deliberately: a JSON string
+        // opening with `"##` closes a raw literal, and this one is easier to
+        // keep honest than to re-delimit.
+        let raw: Vec<RawPr> = serde_json::from_str(
+            r#"[{
+              "number": 7, "title": "Add the page", "url": "https://x/7",
+              "state": "OPEN", "isDraft": false,
+              "author": { "login": "alice", "avatarUrl": "https://a/alice.png" },
+              "headRefName": "feature", "baseRefName": "main",
+              "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
+              "body": "Because the old one was wrong.",
+              "labels": { "nodes": [
+                { "name": "bug", "color": "d73a4a" },
+                { "name": "", "color": "ffffff" }
+              ]},
+              "files": { "nodes": [
+                { "path": "src/a.ts", "additions": 12, "deletions": 3, "changeType": "MODIFIED" },
+                { "path": "", "additions": 1, "deletions": 0, "changeType": "ADDED" }
+              ]},
+              "history": { "nodes": [
+                { "commit": { "oid": "abc123", "abbreviatedOid": "abc123",
+                  "messageHeadline": "Add the page", "committedDate": "2026-09-18T00:00:00Z",
+                  "author": { "name": "Alice", "user": { "login": "alice", "avatarUrl": "https://a/alice.png" } } } },
+                { "commit": { "oid": "def456", "abbreviatedOid": "def456",
+                  "messageHeadline": "Fix the test", "committedDate": "2026-09-19T00:00:00Z",
+                  "author": { "name": "Bob" } } }
+              ]}
+            }]"#,
+        )
+        .expect("a documented pull request parses");
+
+        let pr = raw.into_iter().next().expect("one pull request").map();
+
+        assert!(pr.body.contains("old one was wrong"));
+        // The nameless label is dropped rather than drawn as a dot with nothing
+        // beside it.
+        assert_eq!(pr.labels.len(), 1);
+        assert_eq!(pr.labels[0].name, "bug");
+        assert_eq!(pr.labels[0].color.as_deref(), Some("d73a4a"));
+
+        assert_eq!(pr.files.len(), 1);
+        assert_eq!(pr.files[0].path, "src/a.ts");
+        assert_eq!(pr.files[0].change_type, "MODIFIED");
+
+        assert_eq!(pr.commits.len(), 2);
+        assert_eq!(pr.commits[0].short_oid, "abc123");
+        assert_eq!(pr.commits[0].login.as_deref(), Some("alice"));
+        assert_eq!(pr.commits[0].avatar.as_deref(), Some("https://a/alice.png"));
+        // The unattributed one keeps its name and reports no account, rather
+        // than borrowing the name as a login.
+        assert_eq!(pr.commits[1].author, "Bob");
+        assert_eq!(pr.commits[1].login, None);
+        assert_eq!(pr.commits[1].avatar, None);
     }
 
     /// **Signed in and refused is its own answer**, and the reason it has to be
@@ -2384,7 +2641,7 @@ mod tests {
     fn null_connections_read_as_empty() {
         let out = r#"{"data":{"repository":{"open":{"nodes":[
             {"number":7,"comments":{"nodes":null},"reviews":null,"reviewThreads":{"nodes":null},
-             "commits":{"nodes":[]}}]}}}}"#;
+             "tip":{"nodes":[]}}]}}}}"#;
         let prs = read_prs(out).expect("nulls parse");
         assert!(prs[0].checks.is_empty() && prs[0].comments.is_empty());
     }
@@ -2393,7 +2650,7 @@ mod tests {
     #[test]
     fn an_unknown_check_shape_is_dropped() {
         let out = r#"{"data":{"repository":{"open":{"nodes":[{"number":7,
-            "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+            "tip":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
               {"__typename":"SomethingNew","name":"x"},
               {"__typename":"StatusContext","context":"CI","state":"PENDING"}]}}}}]}}]}}}}"#;
         let prs = read_prs(out).expect("unknown shape parses");
@@ -2406,7 +2663,7 @@ mod tests {
     #[test]
     fn a_running_check_is_pending() {
         let out = r#"{"data":{"repository":{"open":{"nodes":[{"number":7,
-            "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+            "tip":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
               {"__typename":"CheckRun","name":"build","status":"IN_PROGRESS",
                "conclusion":null}]}}}}]}}]}}}}"#;
         let prs = read_prs(out).expect("running check parses");

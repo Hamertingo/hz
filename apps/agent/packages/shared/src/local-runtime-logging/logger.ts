@@ -15,7 +15,7 @@ import {
  *
  * Per `.harness/docs/local-runtime-observability.md` — local-runtime business
  * code MUST import logger APIs from this module, never call `console.*` and
- * never reach into `@mavis/shared/logging` directly. This keeps the field
+ * never reach into `@hz/shared/logging` directly. This keeps the field
  * shape stable, sources go through the trace-context wrapper, and the host
  * can later swap the underlying transport without touching call sites.
  *

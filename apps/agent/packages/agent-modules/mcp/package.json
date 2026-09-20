@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/mcp",
+  "name": "@hz/mcp",
   "version": "0.2.1",
   "description": "Shared MCP runtime substrate for Mavis agent runtimes. Uses the MCP SDK and host-local naming storage; never imports runtime packages.",
   "type": "module",

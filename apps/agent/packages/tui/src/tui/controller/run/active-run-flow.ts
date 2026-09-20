@@ -17,7 +17,6 @@ import type {
   TuiConversationPort,
   TuiInspectionPort,
   TuiSession,
-  TuiSkillList,
   TuiWorkspaceFileEntry,
   TuiWorkspaceFilePort,
   TuiWorkspaceRoot,
@@ -25,15 +24,12 @@ import type {
 } from '../../../runtime/port.js';
 import {
   type TuiCommandCatalog,
-  MINIMAX_CODE_ACTIVE_RUN_COMMANDS,
-  MINIMAX_CODE_COMMANDS,
   MINIMAX_CODE_DISCOVERABLE_COMMANDS,
   type TuiCommand,
 } from '../../commands/catalog.js';
 import { TuiHelpPanel } from '../../features/help/panel.js';
 import type { TuiChatController, TuiChatSnapshot } from '../chat-controller.js';
 import { isRuntimeMethodNotImplemented } from '../support.js';
-import { sanitizeTerminalText } from '../../rendering/terminal-text.js';
 import {
   createTuiContextInspection,
   formatTuiContextSnapshot,
@@ -77,48 +73,6 @@ export function createTuiAutocomplete(
     workspaceFiles,
     shellCwd,
   );
-}
-
-export function buildTuiSkillCommands(result: TuiSkillList): TuiCommand[] {
-  const builtinNames = new Set(
-    [...MINIMAX_CODE_COMMANDS, ...MINIMAX_CODE_ACTIVE_RUN_COMMANDS].flatMap((command) =>
-      [command.name, ...(command.aliases ?? [])].map((name) => name.toLocaleLowerCase()),
-    ),
-  );
-  const seen = new Set<string>();
-  return (result.skills ?? [])
-    .flatMap((skill): TuiCommand[] => {
-      const name = skill.name.trim().toLocaleLowerCase();
-      if (
-        skill.enabled === false ||
-        builtinNames.has(name) ||
-        seen.has(name) ||
-        !name ||
-        name.length > 128 ||
-        name !== sanitizeTerminalText(name) ||
-        /[\s/]/u.test(name)
-      ) {
-        return [];
-      }
-      seen.add(name);
-      return [
-        {
-          name,
-          description: formatSkillCommandDescription(skill.displayDescription ?? skill.description),
-          category: 'Capability',
-          invocationKind: 'skill',
-          argumentHint: '[instructions]',
-          usage: `/${name} [instructions]`,
-          composerTemplate: `/${name} `,
-        },
-      ];
-    })
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function formatSkillCommandDescription(description: string | undefined): string {
-  const value = description ? sanitizeTerminalText(description).trim() : '';
-  return value ? `[Skill] ${value}` : '[Skill]';
 }
 
 export class TuiActiveRunFlow {

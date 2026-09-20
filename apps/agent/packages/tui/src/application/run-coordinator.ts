@@ -1,4 +1,4 @@
-import type { CliSendMessageReq } from '@mavis/local-runtime-v2/cli-service';
+import type { CliSendMessageReq } from '@hz/local-runtime-v2/cli-service';
 
 import type { TuiTransportAttachment } from '../types/invocation.js';
 import { TuiFailure } from '../failure.js';

@@ -1,4 +1,4 @@
-import { getRuntimeLocaleLanguage } from '@mavis/shared/runtime-i18n';
+import { getRuntimeLocaleLanguage } from '@hz/shared/runtime-i18n';
 
 import { COMPOSER_COPY, type ComposerCopyKey } from './copy.en.js';
 import { ZH_HANS_COMPOSER_COPY } from './copy.zh-Hans.js';

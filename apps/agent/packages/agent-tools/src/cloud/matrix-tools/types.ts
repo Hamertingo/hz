@@ -1,4 +1,4 @@
-import type { ToolExecutionContext } from '@mavis/agent-core/tools';
+import type { ToolExecutionContext } from '@hz/agent-core/tools';
 
 export type { MatrixPathScope } from './path-guard.js';
 

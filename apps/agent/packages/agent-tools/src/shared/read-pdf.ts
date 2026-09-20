@@ -23,7 +23,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 
-import type { ToolResult } from '@mavis/agent-core/tools';
+import type { ToolResult } from '@hz/agent-core/tools';
 
 import { readErrorResult } from './read-result.js';
 

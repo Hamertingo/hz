@@ -117,7 +117,7 @@ export function PanelToggle({
 
 /// Which body the right panel is showing. This is the set, not the order —
 /// see `tabOrder`.
-export const PANEL_TABS = ["changes", "browser", "todo", "subagents", "pr", "issue", "docs"] as const;
+export const PANEL_TABS = ["changes", "browser", "todo", "subagents", "pr", "issue", "docs", "skill"] as const;
 
 export type PanelTab = (typeof PANEL_TABS)[number];
 
@@ -141,6 +141,10 @@ const LABELS: Record<PanelTab, string> = {
   // Not "Pull Request": the short form is what anyone working on one calls it,
   // and the long one is the widest label in a row of three.
   pr: "PR",
+  // The plugins page's detail, and only ever that: no session has a Skill tab,
+  // so this never joins a session's strip. `heading` names the pane there, and
+  // this is what it would be called if a strip ever drew it.
+  skill: "Skill",
 };
 
 /// Which tabs exist, and in what order.

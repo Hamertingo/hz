@@ -197,19 +197,19 @@ pub async fn retag_space(from: &str, to: Option<String>) -> Result<Vec<Project>,
 /// contains it, or `None` when nothing does.
 ///
 /// The Rust half of `containingProject` in `src/lib/project.ts`, and the two
-/// must agree — the frontend decides which role a picker offers and this decides
-/// which one a spawn applies, and a reader seeing a role in the menu that the
-/// agent never received is the failure the pair exists to prevent. Neither side
-/// can call the other, so the rule is stated twice *identically*: longest wins,
-/// and the comparison is on a **path boundary**, never a bare prefix.
+/// must agree — the frontend decides which project a picker offers and this
+/// decides which one a session is filed under, and a reader picking a project
+/// the session never lands in is the failure the pair exists to prevent. Neither
+/// side can call the other, so the rule is stated twice *identically*: longest
+/// wins, and the comparison is on a **path boundary**, never a bare prefix.
 ///
 /// Longest wins because a repository attached as its own project beats the
 /// workspace holding it — a reader who attached both meant the narrower one. The
 /// boundary is what keeps `/repos/api-v2` out of `/repos/api`.
 ///
 /// Read on a spawn, so it costs one small file read per session start. That is
-/// the price of a project-scoped role being resolved against the *attached*
-/// projects rather than against whatever the filesystem happens to contain.
+/// the price of resolving against the *attached* projects rather than against
+/// whatever the filesystem happens to contain.
 pub async fn containing_project(path: &str) -> Option<String> {
     let projects: Vec<Project> = read_json(&projects_path().await.ok()?).await.ok()?;
 
@@ -250,7 +250,7 @@ mod containment_tests {
 
     /// The same four cases `src/lib/project.test.ts` pins, because the two
     /// implementations cannot call each other and a drift between them shows as
-    /// a role offered in the picker that the agent never receives.
+    /// a picker offering one project while the session is filed under another.
     #[test]
     fn the_longest_containing_path_wins() {
         let paths = ["/repos/hyze-cloud", "/repos/hyze-cloud/api"];

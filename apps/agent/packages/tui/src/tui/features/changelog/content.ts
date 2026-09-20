@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { getRuntimeLocaleLanguage } from '@mavis/shared/runtime-i18n';
+import { getRuntimeLocaleLanguage } from '@hz/shared/runtime-i18n';
 
 declare const __IS_NPM_BUILD__: boolean | undefined;
 

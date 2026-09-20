@@ -47,7 +47,7 @@ import {
   resolveMCodeOAuthEndpointConfig,
   type AccessTokenLease,
   type MCodeOAuthCore,
-} from '@mavis/oauth-core';
+} from '@hz/oauth-core';
 import {
   resolveTuiManagedBackendLane,
   resolveTuiStartupEnvironmentOption,
@@ -55,7 +55,7 @@ import {
 import { resolveMcodeStartupUpdateNotice } from '../update/startup-notice.js';
 import type { McodeUpdateApplication } from '../update/application.js';
 import { tuiErrorDiagnostic } from '../user-facing-failure.js';
-import { getConfig, resetConfig, writeTuiStatusLineSetting, type MavisRegion } from '@mavis/config';
+import { getConfig, resetConfig, writeTuiStatusLineSetting, type MavisRegion } from '@hz/config';
 import { markLoginRestartHandoff } from './login-restart-handoff.js';
 import { readTuiModeSetting, writeTuiModeSetting } from '../host/tui-settings.js';
 import { schedulePendingMcodePrefixUpdate } from '../update/prefix-update.js';
@@ -151,7 +151,7 @@ export async function launchTui(
   dependencies: LaunchTuiDependencies = {},
 ): Promise<void> {
   if (!options.terminal && (!process.stdin.isTTY || !process.stdout.isTTY)) {
-    throw new Error('Minimax Code interactive mode requires a TTY.');
+    throw new Error('Hz Agent interactive mode requires a TTY.');
   }
 
   const homeDirectory = options.homeDir ?? homedir();
@@ -462,7 +462,7 @@ export async function launchTui(
         report: (error) => {
           try {
             process.stderr.write(
-              `Minimax Code TUI stopped unexpectedly: ${tuiErrorDiagnostic(error)}. Restart MCode; if it keeps happening, report it through an available support channel.\n`,
+              `Hz Agent TUI stopped unexpectedly: ${tuiErrorDiagnostic(error)}. Restart MCode; if it keeps happening, report it through an available support channel.\n`,
             );
           } catch {
             // The terminal may already be disconnected.

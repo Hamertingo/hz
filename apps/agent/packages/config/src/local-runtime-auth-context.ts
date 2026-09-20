@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { retryWindowsFileSystemOperation } from '@mavis/shared';
+import { retryWindowsFileSystemOperation } from '@hz/shared';
 
 export const LOCAL_RUNTIME_AUTH_CONTEXT_FILE = 'local-runtime.auth.json';
 

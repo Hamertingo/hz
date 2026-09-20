@@ -1,4 +1,4 @@
-# @mavis/mcode-tools-host
+# @hz/mcode-tools-host
 
 Host-neutral Node.js lifecycle for an embedded `mcode-tools` artifact. The package validates the
 versioned artifact, starts the local OAuth lease broker, installs profile-scoped launchers and owns
@@ -6,8 +6,8 @@ their cleanup.
 
 The host remains the only credential-store, Refresh Token, refresh and logout owner. The host OAuth
 Core persists credentials in its profile-scoped `auth.json`; this package and the embedded child
-only receive short-lived Access Token leases. This package depends on `@mavis/oauth-lease-protocol`;
-it must not depend on Electron, `@mavis/oauth-core` or a credential store.
+only receive short-lived Access Token leases. This package depends on `@hz/oauth-lease-protocol`;
+it must not depend on Electron, `@hz/oauth-core` or a credential store.
 
 Generated launchers clear inherited sandbox, API/auth URL, client and scope overrides before setting
 the host-owned shared-broker coordinates. This keeps Desktop and TUI on the artifact's baked

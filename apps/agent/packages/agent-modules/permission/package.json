@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/permission",
+  "name": "@hz/permission",
   "version": "0.2.1",
   "description": "Tool-call permission decision engine for Mavis agents; host integration is injected and the package never imports runtime packages.",
   "type": "module",
@@ -11,7 +11,7 @@
     }
   },
   "dependencies": {
-    "@mavis/agent-core": "workspace:^"
+    "@hz/agent-core": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^20",

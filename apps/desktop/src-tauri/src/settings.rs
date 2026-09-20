@@ -78,27 +78,32 @@ pub struct AppSettings {
     #[serde(default)]
     pub transcription: TranscriptionSettings,
     /// The composer's sticky row: which agent, the model picked on each, effort
-    /// per model, permission stance, worktree and role defaults, fast mode.
+    /// per model, permission stance, worktree, the Agent a new chat runs as, and
+    /// fast mode.
     ///
     /// Stored verbatim, and every field of it is listed where it means
     /// something — `ComposerPrefs` in `src/hooks/useComposerPrefs.ts`.
     #[serde(default)]
     pub composer_prefs: Option<Value>,
-    /// The models the reader keeps in their rotation, in their own order — or
-    /// `None`, which means **every model the agent serves**. A fact about the
-    /// reader rather than about a session, so it is stored with them instead of on
-    /// an index entry a session could be handed away with.
+    /// The models the reader has switched **off** — or `None`, which means they
+    /// have switched none off. A fact about the reader rather than about a
+    /// session, so it is stored with them instead of on an index entry a session
+    /// could be handed away with.
     ///
-    /// **Not carried over from `starredModels`, and that is deliberate.** The
-    /// field this replaces held a *shortlist*: the few models a reader had picked
-    /// out of a list the picker otherwise drew in full. The meaning is now the
-    /// opposite — everything is in the rotation unless it is switched off — so a
-    /// shortlist read here would leave a reader who had chosen two models with
-    /// exactly two rows switched on under a heading that says everything is.
-    /// Absent is the honest reading of a file that build wrote, and it costs the
-    /// reader a pick they can make again in one click.
+    /// **The list is the hidden half, and that direction is what a new model
+    /// depends on.** A provider being connected adds rows the reader has never
+    /// seen; storing what is *kept* would leave every one of them off, which
+    /// reads as a model the agent serves and the app refuses to offer. Storing
+    /// what is hidden means a model nobody has decided about is shown.
+    ///
+    /// **Not carried over from `modelRotation`, and that is deliberate.** That
+    /// field held the *kept* half, so reading it here would invert it: a reader
+    /// who had kept two models would hide the very two they named. Named by
+    /// wire id (`m:<provider>:<model>:v:<variant>`) rather than by model name,
+    /// which is the one spelling both the picker and the settings screen already
+    /// hold — see `Model.id`.
     #[serde(default)]
-    pub model_rotation: Option<Vec<String>>,
+    pub hidden_models: Option<Vec<String>>,
     /// The reader's rebindings, keyed by shortcut id. Only overrides, so a
     /// default that changes in a later build still reaches everyone who never
     /// touched that row.
@@ -188,7 +193,7 @@ impl Default for AppSettings {
             linear_account: None,
             transcription: TranscriptionSettings::default(),
             composer_prefs: None,
-            model_rotation: None,
+            hidden_models: None,
             shortcuts: None,
             update_channel: None,
             open_with: None,
@@ -232,8 +237,8 @@ pub struct SettingsView {
 pub struct Preferences {
     /// See [`AppSettings::composer_prefs`].
     pub composer_prefs: Option<Value>,
-    /// See [`AppSettings::model_rotation`].
-    pub model_rotation: Option<Vec<String>>,
+    /// See [`AppSettings::hidden_models`].
+    pub hidden_models: Option<Vec<String>>,
     /// See [`AppSettings::shortcuts`].
     pub shortcuts: Option<Value>,
     /// See [`AppSettings::update_channel`].
@@ -254,7 +259,7 @@ impl From<AppSettings> for Preferences {
     fn from(settings: AppSettings) -> Self {
         Self {
             composer_prefs: settings.composer_prefs,
-            model_rotation: settings.model_rotation,
+            hidden_models: settings.hidden_models,
             shortcuts: settings.shortcuts,
             update_channel: settings.update_channel,
             open_with: settings.open_with,
@@ -283,8 +288,8 @@ impl From<AppSettings> for Preferences {
 pub enum PreferencesPatch {
     /// See [`AppSettings::composer_prefs`].
     ComposerPrefs(Option<Value>),
-    /// See [`AppSettings::model_rotation`].
-    ModelRotation(Option<Vec<String>>),
+    /// See [`AppSettings::hidden_models`].
+    HiddenModels(Option<Vec<String>>),
     /// See [`AppSettings::shortcuts`].
     Shortcuts(Option<Value>),
     /// See [`AppSettings::update_channel`].
@@ -313,7 +318,7 @@ pub fn apply(patches: Vec<PreferencesPatch>, settings: &mut AppSettings) {
     for patch in patches {
         match patch {
             PreferencesPatch::ComposerPrefs(value) => settings.composer_prefs = value,
-            PreferencesPatch::ModelRotation(value) => settings.model_rotation = value,
+            PreferencesPatch::HiddenModels(value) => settings.hidden_models = value,
             PreferencesPatch::Shortcuts(value) => settings.shortcuts = value,
             PreferencesPatch::UpdateChannel(value) => settings.update_channel = value,
             PreferencesPatch::OpenWith(value) => settings.open_with = value,
@@ -678,11 +683,11 @@ mod tests {
         };
 
         apply(
-            patches(r#"[{"field": "modelRotation", "value": ["opus"]}]"#),
+            patches(r#"[{"field": "hiddenModels", "value": ["opus"]}]"#),
             &mut settings,
         );
 
-        assert_eq!(settings.model_rotation, Some(vec!["opus".to_string()]));
+        assert_eq!(settings.hidden_models, Some(vec!["opus".to_string()]));
         assert_eq!(settings.space.as_deref(), Some("work"));
         assert_eq!(settings.open_with.as_deref(), Some("/Applications/Zed.app"));
     }
@@ -747,7 +752,7 @@ mod tests {
         let mut settings = AppSettings::default();
         apply(
             patches(
-                r#"[{"field": "space", "value": "work"}, {"field": "spaces", "value": ["work", "home"]}, {"field": "updateChannel", "value": "beta"}, {"field": "modelRotation", "value": ["opus"]}, {"field": "composerPrefs", "value": {"fast": true}}]"#,
+                r#"[{"field": "space", "value": "work"}, {"field": "spaces", "value": ["work", "home"]}, {"field": "updateChannel", "value": "beta"}, {"field": "hiddenModels", "value": ["opus"]}, {"field": "composerPrefs", "value": {"fast": true}}]"#,
             ),
             &mut settings,
         );
@@ -758,7 +763,7 @@ mod tests {
         assert_eq!(read.space.as_deref(), Some("work"));
         assert_eq!(read.spaces, Some(vec!["work".to_string(), "home".to_string()]));
         assert_eq!(read.update_channel, Some(UpdateChannel::Beta));
-        assert_eq!(read.model_rotation, Some(vec!["opus".to_string()]));
+        assert_eq!(read.hidden_models, Some(vec!["opus".to_string()]));
         assert_eq!(read.composer_prefs, Some(serde_json::json!({ "fast": true })));
         assert_eq!(read.open_with, None);
         assert_eq!(read.shortcuts, None);

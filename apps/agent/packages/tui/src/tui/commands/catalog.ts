@@ -304,7 +304,7 @@ const COMMAND_SOURCES: readonly TuiCommandSource[] = [
   },
   {
     name: 'login',
-    description: 'Sign in to use MiniMax Code Agent features',
+    description: 'Sign in to use Hz Agent features',
     category: 'Runtime',
     discoverability: 'contextual',
     visibleWhen: (context) => !context.managedTokenPresent,
@@ -500,7 +500,7 @@ const COMMAND_SOURCES: readonly TuiCommandSource[] = [
   {
     name: 'quit',
     aliases: ['exit'],
-    description: 'Exit Minimax Code',
+    description: 'Exit Hz Agent',
     category: 'Application',
     readiness: 'immediate',
   },

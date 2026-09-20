@@ -1,4 +1,4 @@
-export const AUTH_LEASE_PROTOCOL_PACKAGE_NAME = '@mavis/oauth-lease-protocol' as const;
+export const AUTH_LEASE_PROTOCOL_PACKAGE_NAME = '@hz/oauth-lease-protocol' as const;
 export const AUTH_LEASE_PROTOCOL_PACKAGE_VERSION = '0.1.0-beta.0' as const;
 export const AUTH_LEASE_PROTOCOL_VERSION = 1 as const;
 export const AUTH_LEASE_AUDIENCE = 'agent-backend' as const;

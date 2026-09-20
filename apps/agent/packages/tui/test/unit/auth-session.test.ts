@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createAuthNamespace, type OAuthClient } from '@mavis/oauth-core';
+import { createAuthNamespace, type OAuthClient } from '@hz/oauth-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMcodeSharedAuthSession } from '../../src/runtime/auth-session.js';

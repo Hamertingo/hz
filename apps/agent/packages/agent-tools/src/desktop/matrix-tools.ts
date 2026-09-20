@@ -1,4 +1,4 @@
-import type { RuntimeTool, ToolExecutionContext } from '@mavis/agent-core/tools';
+import type { RuntimeTool, ToolExecutionContext } from '@hz/agent-core/tools';
 import type { TSchema } from '@sinclair/typebox';
 import {
   buildMatrixTools,

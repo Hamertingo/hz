@@ -39,6 +39,7 @@ import {
 } from "react";
 
 import Avatar from "@/components/Avatar";
+import { LabelChip, LabelDot } from "@/components/LabelChip";
 import PrPanel from "@/components/PrPanel";
 import PrStateIcon from "@/components/PrStateIcon";
 import Tab from "@/components/Tab";
@@ -576,13 +577,7 @@ function Row({
                   own title off the line, and "+6" says there are more without
                   spending the width of the words. */}
               {item.labels.slice(0, 3).map((label) => (
-                <span
-                  key={label.name}
-                  className="flex max-w-32 min-w-0 items-center gap-1 rounded-full border border-border/60 py-px pr-1.5 pl-1 text-[10px] leading-4"
-                >
-                  <LabelDot color={label.color} className="size-2" />
-                  <span className="truncate">{label.name}</span>
-                </span>
+                <LabelChip key={label.name} name={label.name} color={label.color} />
               ))}
               {item.labels.length > 3 && (
                 <span className="shrink-0">+{item.labels.length - 3}</span>
@@ -1001,18 +996,6 @@ function LabelFilter({
         })}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
-  );
-}
-
-/// GitHub gives a label a hex colour without the `#`, and a label with none set
-/// falls back to the muted dot rather than to a colour this app invented.
-function LabelDot({ color, className }: { color: string | null; className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={cn("size-2.5 shrink-0 rounded-full bg-muted-foreground/50", className)}
-      {...(color ? { style: { backgroundColor: `#${color}` } } : {})}
-    />
   );
 }
 

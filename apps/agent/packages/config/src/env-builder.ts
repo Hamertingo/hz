@@ -1,11 +1,11 @@
 /**
- * Child-process environment builder — re-exported from `@mavis/shared` so the
+ * Child-process environment builder — re-exported from `@hz/shared` so the
  * runtime-boundary key lists live in a single lower-layer home that both the
- * config package and the bash-subprocess-env sanitizer (in `@mavis/agent-core`)
+ * config package and the bash-subprocess-env sanitizer (in `@hz/agent-core`)
  * can share without a package-boundary violation.
  *
- * The implementation moved to `@mavis/shared/runtime-boundary-env`; this file
- * keeps the historical `@mavis/config` import surface stable.
+ * The implementation moved to `@hz/shared/runtime-boundary-env`; this file
+ * keeps the historical `@hz/config` import surface stable.
  *
  * @module
  */
@@ -20,5 +20,5 @@ export {
   stripManagedRuntimeEnv,
   stripRuntimeBoundaryKeysFrom,
   findLegacyRuntimeEnvKeys,
-} from '@mavis/shared/runtime-boundary-env';
-export type { BuildChildEnvMode } from '@mavis/shared/runtime-boundary-env';
+} from '@hz/shared/runtime-boundary-env';
+export type { BuildChildEnvMode } from '@hz/shared/runtime-boundary-env';

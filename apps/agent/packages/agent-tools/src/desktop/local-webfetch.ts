@@ -1,4 +1,4 @@
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import { LocalWebFetchToolDef, type LocalWebFetchToolInput } from './builtin-defs.js';
 import type { LocalRuntimeToolContext, LocalWebFetchAdapter } from './types.js';

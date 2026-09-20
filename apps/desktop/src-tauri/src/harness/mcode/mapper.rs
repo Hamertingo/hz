@@ -20,7 +20,7 @@
 
 use crate::events::{
     usage::ContextWindow, AgentEvent, AgentEventPayload, BlockRef, BlockType, DeltaEvent,
-    SessionInfo, ToolResult, ToolType, TurnStatus, Usage,
+    SessionInfo, Subagent, ToolResult, ToolType, TurnStatus, Usage,
 };
 use crate::harness::{mentions_any, Harness};
 use serde_json::{json, Value};
@@ -175,7 +175,7 @@ impl Mapper {
                     if drawable {
                         if let Some(announced) = self.announced.remove(&tool_call_id) {
                             out.extend(self.close_open());
-                            out.push(self.tool_started(&tool_call_id, announced, raw_input));
+                            out.extend(self.tool_started(&tool_call_id, announced, raw_input));
                         }
                     }
                 }
@@ -207,15 +207,25 @@ impl Mapper {
                 // Closes the run the spawning call opened, or the panel row
                 // shimmers for the rest of the session.
                 if self.subagents.remove(&tool_call_id) {
-                    out.push(self.event(AgentEventPayload::SubagentCompleted {
-                        // Empty, and that is the honest answer: `agent_id` is the
-                        // handle a stop request names, and mcode publishes none
-                        // for a child over ACP.
-                        agent_id: String::new(),
-                        status: status_word(status).to_string(),
-                        summary: None,
-                        usage: None,
-                    }));
+                    out.push(self.event_in(
+                        // The envelope's id is the call's, so the completion joins
+                        // the run its own spawn opened rather than minting a
+                        // second one. `label` is left off on purpose: the walk
+                        // keeps the first non-null, and the start already named it.
+                        Some(Subagent {
+                            id: tool_call_id.clone(),
+                            label: None,
+                        }),
+                        AgentEventPayload::SubagentCompleted {
+                            // Empty, and that is the honest answer: `agent_id` is the
+                            // handle a stop request names, and mcode publishes none
+                            // for a child over ACP.
+                            agent_id: String::new(),
+                            status: status_word(status).to_string(),
+                            summary: None,
+                            usage: None,
+                        },
+                    ));
                 }
                 // The model reads the result next — the same reading fx's mapper
                 // makes, for the same working indicator.
@@ -266,33 +276,75 @@ impl Mapper {
     }
 
     /// The committed row for a call, from what its announcement said plus the
-    /// arguments that have finally arrived.
+    /// arguments that have finally arrived — and, for the tool that starts a
+    /// nested agent, the run's own opening event.
     fn tool_started(
         &mut self,
         call_id: &str,
         announced: Announced,
         raw_input: Option<Value>,
-    ) -> AgentEvent {
+    ) -> Vec<AgentEvent> {
         let Announced { name, kind } = announced;
         let input = tool_input(raw_input);
         self.drawn.insert(call_id.to_string());
-        if name == SUBAGENT_TOOL {
+
+        // **A `task` call is where a nested run is born**, and this is the only
+        // account of it mcode gives: the child's own events never reach this
+        // stream — it is a separate Session — so the spawning call is what the
+        // panel row is built from. The envelope's id is the call's, which is the
+        // one handle both sides can name: the frontend keys the run by it and
+        // finds this call when it looks up `run.spawn`.
+        let subagent = (name == SUBAGENT_TOOL).then(|| Subagent {
+            id: call_id.to_string(),
+            // The role the model named — `explore`, `worker`, `verifier` or a
+            // custom one — which is the row's title. A `task` call with no
+            // `agent_name` cannot happen against this schema, but a wire that
+            // omitted it would still leave a run worth drawing.
+            label: text_of(&input, "agent_name"),
+        });
+        if subagent.is_some() {
             self.subagents.insert(call_id.to_string());
         }
 
-        self.event(AgentEventPayload::ToolCallStarted {
+        let mut out = vec![self.event(AgentEventPayload::ToolCallStarted {
             call_id: call_id.to_string(),
             // mcode's own verb, lowercase — `write`, `bash` — which the tool
             // table in the frontend already conjugates from pi's rows.
             name: name.clone(),
             tool_type: tool_type(kind, &name),
-            input,
+            // Cloned rather than moved: the `task` branch below reads the role
+            // and the brief out of the same object.
+            input: input.clone(),
             raw_input: None,
             // mcode's title is the tool's own name repeated — `bash` beside a
             // row already saying "Bash" — so it is dropped and the row's own
             // summary draws the command or the path off the input.
             title: None,
-        })
+        })];
+
+        if let Some(subagent) = subagent {
+            let label = subagent
+                .label
+                .clone()
+                .unwrap_or_else(|| name.clone());
+            out.push(self.event_in(
+                Some(subagent),
+                AgentEventPayload::SubagentStarted {
+                    // Empty, and honest: this is the handle a *stop* request
+                    // would name, and mcode publishes none per child. The run is
+                    // addressed by the envelope's id instead — the spawning call.
+                    agent_id: String::new(),
+                    label,
+                    // The short child title the schema requires, and the whole
+                    // prompt. Both are drawn: the title on the row, the prompt
+                    // in the body the row opens onto.
+                    description: text_of(&input, "description"),
+                    prompt: text_of(&input, "prompt"),
+                },
+            ));
+        }
+
+        out
     }
 
     fn prompt_done(&mut self, response: PromptResponse) -> Vec<AgentEvent> {
@@ -490,6 +542,18 @@ impl Mapper {
             raw: None,
         }
     }
+
+    /// [`event`](Self::event), with the run this line belongs to named.
+    ///
+    /// **The envelope is what files a line under a subagent**, and ACP gives
+    /// every line of the parent's stream the same one — so the only events that
+    /// carry it are the run's own lifecycle, which the mapper mints itself.
+    fn event_in(&self, subagent: Option<Subagent>, payload: AgentEventPayload) -> AgentEvent {
+        AgentEvent {
+            subagent,
+            ..self.event(payload)
+        }
+    }
 }
 
 /// The word a closed nested run reports. mcode says nothing about a child's own
@@ -567,6 +631,15 @@ fn tool_input(raw: Option<Value>) -> Value {
         Some(Value::Null) | None => json!({}),
         Some(other) => json!({ "_unparsed": other.to_string() }),
     }
+}
+
+/// A trimmed, non-empty string field of a tool's input, or `None`.
+///
+/// The `task` tool's brief, role and title all land through here: an absent or
+/// blank field reads as "not said" rather than as an empty line on screen.
+fn text_of(input: &Value, key: &str) -> Option<String> {
+    let value = input.get(key).and_then(Value::as_str)?.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// A shell call's exit status, out of mcode's own `details`. `None` where the
@@ -793,5 +866,93 @@ mod tests {
         assert_eq!(tool_type(ToolKind::Search, "grep"), ToolType::Search);
         // A nested agent is a run whatever kind it was filed under.
         assert_eq!(tool_type(ToolKind::Other, "task"), ToolType::SubagentSpawn);
+    }
+
+    /// **A `task` call opens a run, and its envelope is what makes the frontend
+    /// file it as one.** No capture carries a `task` call — the fixture writes a
+    /// file and runs `wc` — so this is the hand-written shape the tool's own
+    /// schema documents.
+    ///
+    /// Without the envelope the whole lifecycle is main-thread: the spawning call
+    /// draws as an ordinary tool row and the Subagents tab stays empty, which is
+    /// exactly what shipped. The id it carries is the call's, because that is the
+    /// one handle both sides can name — the child's own events never reach this
+    /// stream, so the spawning call is the whole account of the run.
+    #[test]
+    fn a_task_call_opens_a_run_and_its_completion_closes_it() {
+        let mut mapper = Mapper::new("s".to_string(), Arc::new(AtomicU64::new(0)));
+
+        let announced = mapper.map(McodeEvent::Update(Box::new(SessionUpdate::ToolCall {
+            tool_call_id: "call-1".to_string(),
+            title: Some("task".to_string()),
+            name: Some("task".to_string()),
+            kind: ToolKind::Other,
+            status: ToolStatus::Pending,
+        })));
+        assert!(announced.is_empty(), "the announcement draws nothing");
+
+        let opened = mapper.map(McodeEvent::Update(Box::new(SessionUpdate::ToolCallUpdate {
+            tool_call_id: "call-1".to_string(),
+            status: ToolStatus::InProgress,
+            raw_input: Some(json!({
+                "description": "Map the auth flow",
+                "prompt": "Find how login works, and cite the files.",
+                "agent_name": "explore",
+            })),
+            raw_output: None,
+            content: Vec::new(),
+        })));
+
+        // The row is still a spawn, which is what the chat draws the link from.
+        assert!(opened.iter().any(|e| matches!(
+            &e.payload,
+            P::ToolCallStarted {
+                tool_type: ToolType::SubagentSpawn,
+                ..
+            }
+        )));
+
+        let (started, label, description, prompt) = opened
+            .iter()
+            .find_map(|e| match &e.payload {
+                P::SubagentStarted {
+                    label,
+                    description,
+                    prompt,
+                    ..
+                } => Some((
+                    e.subagent.as_ref().expect("the start names its run"),
+                    label.clone(),
+                    description.clone(),
+                    prompt.clone(),
+                )),
+                _ => None,
+            })
+            .expect("the task call opened a run");
+        assert_eq!(started.id, "call-1", "the run is keyed by the spawning call");
+        assert_eq!(started.label.as_deref(), Some("explore"));
+        assert_eq!(label, "explore");
+        assert_eq!(description.as_deref(), Some("Map the auth flow"));
+        assert_eq!(
+            prompt.as_deref(),
+            Some("Find how login works, and cite the files.")
+        );
+
+        let closed = mapper.map(McodeEvent::Update(Box::new(SessionUpdate::ToolCallUpdate {
+            tool_call_id: "call-1".to_string(),
+            status: ToolStatus::Completed,
+            raw_input: None,
+            raw_output: None,
+            content: Vec::new(),
+        })));
+        let completed = closed
+            .iter()
+            .find(|e| matches!(&e.payload, P::SubagentCompleted { .. }))
+            .expect("the run closed");
+        assert_eq!(
+            completed.subagent.as_ref().map(|s| s.id.as_str()),
+            Some("call-1"),
+            "the completion joins the run its own spawn opened"
+        );
     }
 }

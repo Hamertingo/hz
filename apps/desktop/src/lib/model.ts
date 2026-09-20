@@ -176,5 +176,22 @@ export function modelLabel(raw: string): string {
 /// which keys off a vendor prefix and must see `deepseek-v4.1-flash` as the
 /// agent spelled it rather than as a sentence.
 export function modelSlug(raw: string): string {
-  return raw.startsWith(WIRE_PREFIX) ? nameInRef(raw) : raw;
+  return publisherless(raw.startsWith(WIRE_PREFIX) ? nameInRef(raw) : raw);
+}
+
+/// **A reseller's catalog names a model `publisher/model`, and the publisher is
+/// not part of what the model is called.**
+///
+/// `meta/muse-spark-1.3`, `zai-org/GLM-5.3`, `deepseek/deepseek-v4-pro` — every
+/// one of those gateways answers a `name` of its own for the same row, and it is
+/// this: `Muse Spark 1.3`, `GLM-5.3`, `DeepSeek V4 Pro`. Drawn whole, the row
+/// reads as a path, and the brand table reads it as *no vendor at all* — nothing
+/// keys off `zai-org`, so a GLM row loses the mark it has under the name the
+/// publisher itself uses.
+///
+/// The **last** segment and not the first, since a catalog is free to nest one —
+/// `accounts/fireworks/models/llama-v3`. A name with no slash is its own answer,
+/// which is the whole of what a gateway that serves its own models states.
+function publisherless(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1);
 }

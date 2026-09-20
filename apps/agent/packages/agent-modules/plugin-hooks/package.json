@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/plugin-hooks",
+  "name": "@hz/plugin-hooks",
   "version": "0.1.0",
   "private": true,
   "description": "Shared Plugin Hook parsing, command execution, and session lifecycle coordination.",

@@ -65,10 +65,10 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/coding-agent
-      '@mavis/protocol':
+      '@hz/protocol':
         specifier: workspace:^
         version: link:../protocol
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../shared
       '@sinclair/typebox':
@@ -78,7 +78,7 @@ importers:
         specifier: ^3
         version: 3.25.76
     devDependencies:
-      '@mavis/config':
+      '@hz/config':
         specifier: workspace:^
         version: link:../config
       '@types/node':
@@ -96,25 +96,25 @@ importers:
 
   packages/agent-extension:
     dependencies:
-      '@mavis/agent-runtime':
+      '@hz/agent-runtime':
         specifier: workspace:^
         version: link:../agent-runtime
-      '@mavis/context-manager':
+      '@hz/context-manager':
         specifier: workspace:^
         version: link:../agent-modules/context-manager
-      '@mavis/permission':
+      '@hz/permission':
         specifier: workspace:^
         version: link:../agent-modules/permission
-      '@mavis/runaway-guard':
+      '@hz/runaway-guard':
         specifier: workspace:^
         version: link:../agent-modules/runaway-guard
-      '@mavis/session-report':
+      '@hz/session-report':
         specifier: workspace:^
         version: link:../agent-modules/session-report
-      '@mavis/skills':
+      '@hz/skills':
         specifier: workspace:^
         version: link:../agent-modules/skills
-      '@mavis/system-reminder':
+      '@hz/system-reminder':
         specifier: workspace:^
         version: link:../agent-modules/system-reminder
       '@sinclair/typebox':
@@ -127,7 +127,7 @@ importers:
       '@earendil-works/pi-ai':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/ai
-      '@mavis/protocol':
+      '@hz/protocol':
         specifier: workspace:^
         version: link:../protocol
       '@types/node':
@@ -163,7 +163,7 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: workspace:*
         version: link:../../../third_party/pi-mono/packages/coding-agent
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../../agent-core
       gpt-tokenizer:
@@ -194,10 +194,10 @@ importers:
 
   packages/agent-modules/cron:
     dependencies:
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../../agent-core
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../../shared
     devDependencies:
@@ -216,7 +216,7 @@ importers:
       '@earendil-works/pi-agent-core':
         specifier: workspace:*
         version: link:../../../third_party/pi-mono/packages/agent
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../../agent-core
       '@sinclair/typebox':
@@ -260,7 +260,7 @@ importers:
 
   packages/agent-modules/permission:
     dependencies:
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../../agent-core
     devDependencies:
@@ -288,7 +288,7 @@ importers:
 
   packages/agent-modules/runaway-guard:
     dependencies:
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../../agent-core
     devDependencies:
@@ -335,7 +335,7 @@ importers:
 
   packages/agent-modules/system-reminder:
     devDependencies:
-      '@mavis/config':
+      '@hz/config':
         specifier: workspace:^
         version: link:../../config
       '@types/node':
@@ -353,7 +353,7 @@ importers:
       '@earendil-works/pi-agent-core':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/agent
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../agent-core
       '@sinclair/typebox':
@@ -381,25 +381,25 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/coding-agent
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../agent-core
-      '@mavis/background-task':
+      '@hz/background-task':
         specifier: workspace:^
         version: link:../agent-modules/background-task
-      '@mavis/context-manager':
+      '@hz/context-manager':
         specifier: workspace:^
         version: link:../agent-modules/context-manager
-      '@mavis/plugin-hooks':
+      '@hz/plugin-hooks':
         specifier: workspace:^
         version: link:../agent-modules/plugin-hooks
-      '@mavis/protocol':
+      '@hz/protocol':
         specifier: workspace:^
         version: link:../protocol
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../shared
-      '@mavis/system-reminder':
+      '@hz/system-reminder':
         specifier: workspace:^
         version: link:../agent-modules/system-reminder
       '@modelcontextprotocol/sdk':
@@ -469,7 +469,7 @@ importers:
 
   packages/config:
     dependencies:
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../shared
       js-yaml:
@@ -503,43 +503,43 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/coding-agent
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:^
         version: link:../agent-core
-      '@mavis/agent-tools':
+      '@hz/agent-tools':
         specifier: workspace:^
         version: link:../agent-tools
-      '@mavis/config':
+      '@hz/config':
         specifier: workspace:^
         version: link:../config
-      '@mavis/context-manager':
+      '@hz/context-manager':
         specifier: workspace:^
         version: link:../agent-modules/context-manager
-      '@mavis/conversation-contract':
+      '@hz/conversation-contract':
         specifier: workspace:^
         version: link:../agent-modules/conversation-contract
-      '@mavis/cron':
+      '@hz/cron':
         specifier: workspace:^
         version: link:../agent-modules/cron
-      '@mavis/goal':
+      '@hz/goal':
         specifier: workspace:^
         version: link:../agent-modules/goal
-      '@mavis/mcp':
+      '@hz/mcp':
         specifier: workspace:^
         version: link:../agent-modules/mcp
-      '@mavis/permission':
+      '@hz/permission':
         specifier: workspace:^
         version: link:../agent-modules/permission
-      '@mavis/protocol':
+      '@hz/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../shared
-      '@mavis/skills':
+      '@hz/skills':
         specifier: workspace:^
         version: link:../agent-modules/skills
-      '@mavis/system-reminder':
+      '@hz/system-reminder':
         specifier: workspace:^
         version: link:../agent-modules/system-reminder
       '@modelcontextprotocol/sdk':
@@ -625,52 +625,52 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/coding-agent
-      '@mavis/agent-core':
+      '@hz/agent-core':
         specifier: workspace:*
         version: link:../agent-core
-      '@mavis/agent-extension':
+      '@hz/agent-extension':
         specifier: workspace:^
         version: link:../agent-extension
-      '@mavis/agent-runtime':
+      '@hz/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime
-      '@mavis/agent-tools':
+      '@hz/agent-tools':
         specifier: workspace:*
         version: link:../agent-tools
-      '@mavis/config':
+      '@hz/config':
         specifier: workspace:*
         version: link:../config
-      '@mavis/context-manager':
+      '@hz/context-manager':
         specifier: workspace:^
         version: link:../agent-modules/context-manager
-      '@mavis/conversation-contract':
+      '@hz/conversation-contract':
         specifier: workspace:*
         version: link:../agent-modules/conversation-contract
-      '@mavis/goal':
+      '@hz/goal':
         specifier: workspace:^
         version: link:../agent-modules/goal
-      '@mavis/local-runtime':
+      '@hz/local-runtime':
         specifier: workspace:*
         version: link:../local-runtime
-      '@mavis/mcp':
+      '@hz/mcp':
         specifier: workspace:^
         version: link:../agent-modules/mcp
-      '@mavis/permission':
+      '@hz/permission':
         specifier: workspace:^
         version: link:../agent-modules/permission
-      '@mavis/plugin-hooks':
+      '@hz/plugin-hooks':
         specifier: workspace:^
         version: link:../agent-modules/plugin-hooks
-      '@mavis/protocol':
+      '@hz/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@mavis/session-report':
+      '@hz/session-report':
         specifier: workspace:^
         version: link:../agent-modules/session-report
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../shared
-      '@mavis/system-reminder':
+      '@hz/system-reminder':
         specifier: workspace:^
         version: link:../agent-modules/system-reminder
       '@minimax/mcode-sandbox-runtime':
@@ -737,7 +737,7 @@ importers:
 
   packages/mcode-tools-host:
     dependencies:
-      '@mavis/oauth-lease-protocol':
+      '@hz/oauth-lease-protocol':
         specifier: workspace:*
         version: link:../oauth-lease-protocol
 
@@ -781,28 +781,28 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: workspace:*
         version: link:../../third_party/pi-mono/packages/coding-agent
-      '@mavis/agent-tools':
+      '@hz/agent-tools':
         specifier: workspace:^
         version: link:../agent-tools
-      '@mavis/browser-core':
+      '@hz/browser-core':
         specifier: workspace:^
         version: link:../browser-core
-      '@mavis/config':
+      '@hz/config':
         specifier: workspace:^
         version: link:../config
-      '@mavis/local-runtime-v2':
+      '@hz/local-runtime-v2':
         specifier: workspace:*
         version: link:../local-runtime-v2
-      '@mavis/mcode-tools-host':
+      '@hz/mcode-tools-host':
         specifier: workspace:*
         version: link:../mcode-tools-host
-      '@mavis/oauth-core':
+      '@hz/oauth-core':
         specifier: workspace:*
         version: link:../oauth-core
-      '@mavis/oauth-lease-protocol':
+      '@hz/oauth-lease-protocol':
         specifier: workspace:*
         version: link:../oauth-lease-protocol
-      '@mavis/shared':
+      '@hz/shared':
         specifier: workspace:^
         version: link:../shared
       ajv:

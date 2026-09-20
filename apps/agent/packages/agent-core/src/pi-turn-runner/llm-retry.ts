@@ -14,7 +14,7 @@ import {
   type LLMMetricErrorKind,
   type LLMRetryReason,
   type NormalizedLLMError,
-} from '@mavis/shared/llm-error-classifier';
+} from '@hz/shared/llm-error-classifier';
 
 function isByokProvider(provider: string): boolean {
   return provider === 'minimax_api' || provider.startsWith('custom_provider:');

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { LocalRuntimeAuthContextSnapshot, MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { LocalRuntimeAuthContextSnapshot, MavisBuildEnv, MavisRegion } from '@hz/config';
 
 import type { TuiTokenPlanQuota, TuiTokenPlanSummary } from '../runtime/port.js';
 

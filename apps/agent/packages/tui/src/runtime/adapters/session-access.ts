@@ -3,7 +3,7 @@ import {
   type CliService,
   type SessionInfoView,
   type SessionTreeChildView,
-} from '@mavis/local-runtime-v2/cli-service';
+} from '@hz/local-runtime-v2/cli-service';
 
 import type {
   CreateTuiSessionInput,
@@ -46,7 +46,10 @@ export class TuiSessionAccess {
     defaultModel?: TuiModelSelection,
   ): Promise<TuiSession> {
     const response = await this.cliService.createSession({
-      name: this.defaultAgentName,
+      // The runtime request's own field for this is `name`, and it is the Agent's
+      // name — not the Session title. Absent means the runtime default, which is
+      // what every caller but an explicit pick gets.
+      name: input.agentName?.trim() || this.defaultAgentName,
       workspaceDir: input.workspaceDir,
       ...(input.title ? { title: input.title } : {}),
       ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),

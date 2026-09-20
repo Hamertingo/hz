@@ -63,7 +63,7 @@ import {
   createTuiExternalTargetOpener,
   type TuiExternalTargetOpener,
 } from '../../../host/open-external.js';
-import { buildTuiSkillCommands } from '../run/active-run-flow.js';
+import { buildTuiSkillCommands } from '../../commands/skill-commands.js';
 import type { TuiChatController } from '../chat-controller.js';
 import { TuiModelState } from './model-state.js';
 import { isRuntimeErrorCode, isRuntimeMethodNotImplemented } from '../support.js';

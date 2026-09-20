@@ -3,7 +3,7 @@ import type {
   PiBeforeLlmCallHook,
   PiBeforeLlmCallHookDecision,
   PiBeforeLlmCallHookInput,
-} from '@mavis/agent-core/pi-turn-runner';
+} from '@hz/agent-core/pi-turn-runner';
 
 import { computeCompactionTriggerAt, DEFAULT_CONTEXT_MANAGER_SETTINGS } from './settings.js';
 import { createDefaultContextTokenEstimator, type TokenEstimator } from './token-estimator.js';

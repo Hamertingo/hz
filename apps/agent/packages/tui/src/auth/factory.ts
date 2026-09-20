@@ -1,8 +1,8 @@
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 import {
   resolveMCodeOAuthEndpointConfig,
   type MCodeOAuthEndpointEnvironment,
-} from '@mavis/oauth-core';
+} from '@hz/oauth-core';
 
 import { createMcodeSharedAuthSession } from '../runtime/auth-session.js';
 import { McodeAuthApplication, type McodeAuthApplicationOptions } from './application.js';

@@ -133,7 +133,7 @@ export function assertLocalMetricName(name: string): void {
 /**
  * Shared port shape used by every local-runtime module wiring layer
  * (`hooks/api.ts`, `cron/api.ts`, etc.) when it forwards an injected
- * `MetricsReporter` to the underlying `@mavis/cron` / hooks engine
+ * `MetricsReporter` to the underlying `@hz/cron` / hooks engine
  * `host-utils.ts`. Keeping the shape here means new wiring sites can
  * import a single canonical type from the facade instead of redeclaring
  * an identical interface beside every consumer.

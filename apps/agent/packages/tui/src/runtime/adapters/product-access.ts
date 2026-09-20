@@ -1,4 +1,4 @@
-import { isLegacyManagedMinimaxProvider } from "@mavis/config";
+import { isLegacyManagedMinimaxProvider } from "@hz/config";
 import {
   normalizeTuiPermissionMode,
   type TuiPermissionMode,
@@ -7,10 +7,17 @@ import type {
   TuiAccountStatus,
   TuiAccountStatusOptions,
   TuiActiveRunSnapshot,
+  TuiAgent,
+  TuiAgentDetail,
+  TuiAgentDraft,
   TuiCompactionResult,
+  TuiConfiguredMcpConfig,
+  TuiConfiguredMcpServer,
+  TuiConfiguredMcpServerDetail,
   TuiContextSnapshotResponse,
   TuiInstructionSource,
   TuiMcpServer,
+  TuiMcpTestResult,
   TuiProjectMcpPreview,
   TuiModel,
   TuiModelSelection,
@@ -38,6 +45,14 @@ import {
   normalizeRuntimeDiagnostics,
 } from "./normalizers.js";
 import { projectTuiContextSnapshot } from "../projections/context-snapshot.js";
+
+/// The roster is read in one page, and this is the page.
+///
+/// A management screen has to draw every Skill — that is what makes a switch
+/// findable again — so the read is deliberately wide rather than paged. `hasMore`
+/// rides the answer, so the count on screen is never a quiet lie about a machine
+/// that somehow holds more than this.
+const SKILL_ROSTER_LIMIT = 500;
 
 export class TuiProductAccess {
   constructor(
@@ -395,12 +410,136 @@ export class TuiProductAccess {
     return { skills, hasMore: false };
   }
 
+  /// Switches one Skill on or off, answering whether the registry took it.
+  ///
+  /// **`true` means "applied", not "on".** The registry answers `undefined` for a
+  /// Skill it does not recognise, and that is the honest answer rather than a
+  /// throw — the row the reader pressed may have been deleted since it was drawn.
+  ///
+  /// `locationUri` is passed through where the caller has it; see the port's own
+  /// note on why a name alone is not enough.
+  async setSkillEnabled(
+    skillName: string,
+    enabled: boolean,
+    locationUri?: string,
+  ): Promise<boolean> {
+    const result = await this.context.service("skill.set-enabled").setSkillEnabled(
+      {
+        skillName,
+        agentName: this.defaultAgentName,
+        ...(locationUri ? { locationUri } : {}),
+        ...(this.workspaceDir ? { workspaceDir: this.workspaceDir } : {}),
+      },
+      enabled,
+    );
+    return result !== undefined;
+  }
+
+  /// The whole roster, Skills that are switched off included.
+  ///
+  /// **Not `listSkills`, and the difference is the whole reason this exists.**
+  /// `listSkills` answers the *runtime* list — what the model is told about — and
+  /// the registry filters a switched-off Skill out of it, so a screen built on
+  /// that could never draw the row that turns one back on. This reads the same
+  /// management view the app's own "My skills" reads, which keeps every Skill and
+  /// marks each one as on or off.
+  async listAllSkills(agentName = this.defaultAgentName): Promise<TuiSkillList> {
+    const result = await this.context.service("skill.roster").listSkills({
+      agentName,
+      limit: SKILL_ROSTER_LIMIT,
+      ...(this.workspaceDir ? { workspaceDir: this.workspaceDir } : {}),
+    });
+    return { skills: result.skills ?? [], hasMore: result.hasMore };
+  }
+
+  /// One Skill's own text, read through the registry that owns it.
+  ///
+  /// `undefined` is an answer rather than a failure: the row may have been
+  /// deleted between the list and the press, and a client that got a throw there
+  /// would have to tell the two apart by reading a message.
+  async readSkill(skillName: string, locationUri?: string): Promise<string | undefined> {
+    const detail = await this.context.service("skill.read").getSkill(
+      {
+        skillName,
+        agentName: this.defaultAgentName,
+        ...(locationUri ? { locationUri } : {}),
+        ...(this.workspaceDir ? { workspaceDir: this.workspaceDir } : {}),
+      },
+      { includeBody: true },
+    );
+    return detail?.content;
+  }
+
   inspectProjectMcp(
     sessionId: string,
   ): Promise<TuiProjectMcpPreview | undefined> {
     return this.context
       .service("mcp.project.inspect")
       .inspectProjectMcp(sessionId);
+  }
+
+  /// Every Agent definition this machine holds, the built-in roles included.
+  ///
+  /// **One page, like the Skill roster and for the same reason**: a screen that
+  /// manages Agents has to draw all of them, so a second page nobody turns is a
+  /// row the reader cannot reach. The store answers far fewer rows than the
+  /// roster's cap.
+  async listAgents(
+    input: { search?: string; limit?: number; offset?: number } = {},
+  ): Promise<readonly TuiAgent[]> {
+    const agents = await this.context.service("agent.list").listAgents(input);
+    return agents.map(toTuiAgent);
+  }
+
+  /// One Agent with its stored prompt, or `undefined` for one that is gone.
+  async getAgent(name: string): Promise<TuiAgentDetail | undefined> {
+    const detail = await this.context.service("agent.get").getAgent(name);
+    return detail ? toTuiAgentDetail(detail) : undefined;
+  }
+
+  /// Writes a new Agent definition down, and answers what was stored.
+  async createAgent(input: TuiAgentDraft): Promise<TuiAgentDetail> {
+    const created = await this.context.service("agent.create").createAgent({
+      ...(input.name?.trim() ? { name: input.name.trim() } : {}),
+      ...(input.displayName?.trim() ? { displayName: input.displayName.trim() } : {}),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.avatar !== undefined ? { avatar: input.avatar } : {}),
+      ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+      ...(input.persona !== undefined ? { persona: input.persona } : {}),
+      ...(input.initialDefinition ? { initialDefinition: input.initialDefinition } : {}),
+    });
+    // Read back rather than assembled from the draft: the store resolves the
+    // exact name and the `requestRef` a later press has to address, and neither
+    // is derivable here — a name colliding with a reserved role is filed under
+    // `agent:<name>`.
+    const detail = await this.context.service("agent.get").getAgent(created.requestRef);
+    if (!detail) throw new Error(`The Agent ${created.name} was not readable after it was written.`);
+    return toTuiAgentDetail(detail);
+  }
+
+  /// Rewrites an Agent's identity and prompt. Absent fields are left as stored.
+  async updateAgent(name: string, input: TuiAgentDraft): Promise<TuiAgentDetail> {
+    await this.context.service("agent.update").updateAgent({
+      requestRef: name,
+      ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.avatar !== undefined ? { avatar: input.avatar } : {}),
+      ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+      ...(input.persona !== undefined ? { persona: input.persona } : {}),
+    });
+    const detail = await this.context.service("agent.get").getAgent(name);
+    if (!detail) throw new Error(`The Agent ${name} was not readable after it was written.`);
+    return toTuiAgentDetail(detail);
+  }
+
+  /// Removes an Agent definition, answering whether the store took it.
+  ///
+  /// A store that refuses — an Agent that is gone, or a built-in that cannot be
+  /// deleted — throws, and that sentence is what the client draws. `true` here
+  /// means the removal landed, which is the only success there is.
+  async deleteAgent(name: string): Promise<boolean> {
+    await this.context.service("agent.delete").deleteAgent(name);
+    return true;
   }
   async listMcpServers(
     keyword?: string,
@@ -415,6 +554,125 @@ export class TuiProductAccess {
       .listMcpServers(request);
     return result.servers as TuiMcpServer[];
   }
+
+  /// The reader's own MCP store — every server written down, off ones included.
+  ///
+  /// See the port's own note for why this is not `listMcpServers` above: that one
+  /// is what a session can reach, and a server switched off is simply absent from
+  /// it.
+  async listConfiguredMcpServers(keyword?: string): Promise<TuiConfiguredMcpServer[]> {
+    const servers = await this.context
+      .service("mcp.configured.list")
+      .listConfiguredMcpServers(keyword);
+    return servers as TuiConfiguredMcpServer[];
+  }
+
+  /// One server's configuration, which is the only read carrying `env`/`headers`.
+  ///
+  /// The agent's own union is handed back as the form's flat shape rather than
+  /// being taken apart and put together again: every field of either transport is
+  /// optional there, so the union already *is* that shape.
+  async getConfiguredMcpServer(
+    name: string,
+  ): Promise<TuiConfiguredMcpServerDetail | undefined> {
+    const detail = await this.context
+      .service("mcp.configured.get")
+      .getConfiguredMcpServer(name);
+    return detail ? { name: detail.name, enabled: detail.enabled, config: detail.config } : undefined;
+  }
+
+  async createConfiguredMcpServer(
+    name: string,
+    config: TuiConfiguredMcpConfig,
+  ): Promise<TuiConfiguredMcpServerDetail> {
+    const detail = await this.context
+      .service("mcp.configured.create")
+      .createConfiguredMcpServer(name, toConfiguredInput(config));
+    return { name: detail.name, enabled: detail.enabled, config: detail.config };
+  }
+
+  async updateConfiguredMcpServer(
+    name: string,
+    config: TuiConfiguredMcpConfig,
+  ): Promise<TuiConfiguredMcpServerDetail> {
+    const detail = await this.context
+      .service("mcp.configured.update")
+      .updateConfiguredMcpServer(name, toConfiguredInput(config));
+    return { name: detail.name, enabled: detail.enabled, config: detail.config };
+  }
+
+  async deleteConfiguredMcpServer(name: string): Promise<boolean> {
+    return this.context
+      .service("mcp.configured.delete")
+      .deleteConfiguredMcpServer(name);
+  }
+
+  async setConfiguredMcpServerEnabled(
+    name: string,
+    enabled: boolean,
+  ): Promise<TuiConfiguredMcpServer> {
+    return this.context
+      .service("mcp.configured.toggle")
+      .setConfiguredMcpServerEnabled(name, enabled);
+  }
+
+  async testConfiguredMcpServer(name: string): Promise<TuiMcpTestResult> {
+    return this.context
+      .service("mcp.configured.test")
+      .testConfiguredMcpServer(name);
+  }
+}
+
+/// The agent's own union, narrowed from the form's flat shape.
+///
+/// **Here rather than on the wire, because this is where the two vocabularies
+/// meet.** A form holds one object with the fields of both transports — it
+/// switches between them and the fields follow — while the agent's type says a
+/// stdio server has no `url` and a remote one has no `command`. Narrowing at this
+/// boundary is what makes that a rule rather than a hope: the fields the transport
+/// does not use are dropped instead of being sent and quietly ignored.
+///
+/// A blank field is dropped rather than sent: the agent refuses an empty command
+/// or URL, and "this one is still empty" is the form's sentence to say, not
+/// something for the reader to discover as a refusal.
+function toConfiguredInput(config: TuiConfiguredMcpConfig) {
+  const shared = {
+    ...(config.timeoutMs && config.timeoutMs > 0 ? { timeoutMs: config.timeoutMs } : {}),
+    ...(config.description?.trim() ? { description: config.description.trim() } : {}),
+  };
+  const args = config.args?.filter((arg) => arg.trim().length > 0);
+  const env = filledEntries(config.env);
+  const headers = filledEntries(config.headers);
+
+  if (config.transport === 'stdio') {
+    return {
+      transport: 'stdio' as const,
+      command: config.command?.trim() ?? '',
+      ...(args?.length ? { args } : {}),
+      ...(env ? { env } : {}),
+      ...shared,
+    };
+  }
+
+  return {
+    transport: config.transport,
+    url: config.url?.trim() ?? '',
+    ...(headers ? { headers } : {}),
+    ...shared,
+  };
+}
+
+/// A key/value map with blank keys and blank values taken out.
+///
+/// The agent refuses a map with an empty key, and a reader part-way through typing
+/// one has that on screen the whole time — so a half-written entry is dropped here
+/// rather than failing a save the reader cannot see the reason for.
+function filledEntries(
+  map: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!map) return undefined;
+  const kept = Object.entries(map).filter(([key, value]) => key.trim() && value.trim());
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
 }
 
 function modelRequest(model: TuiModelSelection): {
@@ -455,5 +713,49 @@ function projectTuiModelCatalogEntry(input: unknown): TuiModel {
           ? { defaultValue: defaultValueSnakeCase }
           : {}),
     },
+  };
+}
+
+/// One store row narrowed to what a client draws.
+///
+/// The store answers more than a listing needs — canonical names, a resolved
+/// agent name, the config directory, a legacy source — and none of it is
+/// something a row can show. What is kept is the identity line and the two facts
+/// a client files by: the role it plays and where it came from.
+function toTuiAgent(agent: {
+  name: string;
+  displayName: string;
+  description?: string;
+  avatar?: string;
+  agentRole: string;
+  creationSource: string;
+}): TuiAgent {
+  return {
+    name: agent.name,
+    // A row with no label still needs one, and the store's own name is the only
+    // other thing it could be.
+    displayName: agent.displayName || agent.name,
+    ...(agent.description ? { description: agent.description } : {}),
+    ...(agent.avatar ? { avatar: agent.avatar } : {}),
+    agentRole: agent.agentRole,
+    creationSource: agent.creationSource,
+  };
+}
+
+/// The same row with its prompt, for the one read that carries content.
+function toTuiAgentDetail(agent: {
+  name: string;
+  displayName: string;
+  description?: string;
+  avatar?: string;
+  agentRole: string;
+  creationSource: string;
+  systemPrompt?: string;
+  persona?: string;
+}): TuiAgentDetail {
+  return {
+    agent: toTuiAgent(agent),
+    ...(agent.systemPrompt !== undefined ? { systemPrompt: agent.systemPrompt } : {}),
+    ...(agent.persona !== undefined ? { persona: agent.persona } : {}),
   };
 }

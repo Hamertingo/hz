@@ -18,7 +18,7 @@
  * desktop rules SOFT_RISK_PATTERNS plus archon-specific MR design notes.
  */
 
-import { SENSITIVE_ENV_NAME_RE } from '@mavis/agent-core/bash-subprocess-env';
+import { SENSITIVE_ENV_NAME_RE } from '@hz/agent-core/bash-subprocess-env';
 import { logger, backgroundCtx } from '../host-utils.js';
 
 // ---------------------------------------------------------------------------

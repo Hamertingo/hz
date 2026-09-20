@@ -1,4 +1,4 @@
-import type { PiStepEndHookInput } from '@mavis/agent-core/pi-turn-runner';
+import type { PiStepEndHookInput } from '@hz/agent-core/pi-turn-runner';
 
 export type RunawayGuardSignalKind =
   | 'exact_action_repeat'

@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
-import type { ToolResult } from '@mavis/agent-core/tools';
+import type { ToolResult } from '@hz/agent-core/tools';
 
 const PATH_RG_FALLBACK = 'rg';
 const ASAR_PATH_PATTERN = /\.asar([/\\])/;

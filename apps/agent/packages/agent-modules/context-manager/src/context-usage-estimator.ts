@@ -2,7 +2,7 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import {
   type ContextUsageComponent,
   type ContextUsagePromptRange,
-} from '@mavis/agent-core/protocol';
+} from '@hz/agent-core/protocol';
 
 import { createDefaultTokenEstimator } from './token-estimator.js';
 

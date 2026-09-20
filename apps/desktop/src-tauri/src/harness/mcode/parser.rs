@@ -310,6 +310,22 @@ pub struct Command {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// What the command does with the rest of the line, where the agent says.
+    ///
+    /// ACP's `input`, and its one shape is `UnstructuredCommandInput`: the text
+    /// after the name is handed to the command whole, and the `hint` is what
+    /// says so. Four of mcode's ten carry one — `/model
+    /// [provider/model[#variant]]` — and every Skill does, since its argument is
+    /// free instructions.
+    #[serde(default)]
+    pub input: Option<CommandInput>,
+}
+
+/// ACP's `UnstructuredCommandInput`, which is the only kind there is.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CommandInput {
+    #[serde(default)]
+    pub hint: String,
 }
 
 /// `session/request_permission`'s params. The options are mcode's and go back as

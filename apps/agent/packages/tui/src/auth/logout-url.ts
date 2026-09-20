@@ -1,4 +1,4 @@
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 
 const WEB_ORIGINS: Record<MavisRegion, Record<MavisBuildEnv, string>> = {
   cn: {

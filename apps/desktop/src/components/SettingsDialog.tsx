@@ -39,6 +39,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { resetFontSizes, setFontSize, useFontSizes } from "@/hooks/useFontSizes";
 import type { useIntegrations } from "@/hooks/useIntegrations";
+import { useProviders } from "@/hooks/useProviders";
 import { useSourceControl } from "@/hooks/useSourceControl";
 import { useTheme } from "@/hooks/useTheme";
 import { type ManualCheck, updateFailure } from "@/hooks/useUpdater";
@@ -69,6 +70,7 @@ import { cn } from "@/lib/utils";
 import type {
   ExternalApp,
   GhAccount,
+  Model,
   Project,
   SettingsView,
   UpdateChannel,
@@ -108,6 +110,8 @@ export default function SettingsDialog({
   onInstallUpdate,
   updateChannel,
   onUpdateChannelChange,
+  models,
+  loadingModels,
   onProvidersChanged,
 }: {
   open: boolean;
@@ -143,12 +147,27 @@ export default function SettingsDialog({
   /// hands the pick back to the effect that re-arms the check on it.
   updateChannel: UpdateChannel;
   onUpdateChannelChange: (next: UpdateChannel) => void;
+  /// Every model the agent serves — the composer's own list, handed down rather
+  /// than read again here. The provider cards' switches decide which of those
+  /// rows the picker draws, so the two surfaces have to be talking about the
+  /// same rows, and a model is named on this side by the wire id the picker
+  /// holds.
+  models: Model[];
+  /// The composer's read of that list, so a refresh started here spins the same
+  /// way it does there.
+  loadingModels: boolean;
   /// A provider was added, removed or made active, so the model list the
   /// composer draws is stale — the app re-reads it.
   onProvidersChanged?: () => void;
 }) {
   const { settings, setAnalyticsEnabled } = useAppSettings(open);
   const transcription = useTranscriptionSettings(open);
+  // Both reads are owned here rather than by the sections that draw them, and
+  // that is only so they can start when this dialog opens: a body is built when
+  // the reader reaches its tab, so a read living there left the tab blank for as
+  // long as its children take. `useProviders` says the same thing at length.
+  const providers = useProviders(open, onProvidersChanged);
+  const sourceControl = useSourceControl(open);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -194,7 +213,17 @@ export default function SettingsDialog({
 
         <SettingsSections initialTab={initialTab}>
           {{
-            providers: <ProviderSettings onChanged={onProvidersChanged} />,
+            // The read started when this dialog opened, not when the reader
+            // reached the tab — see `useProviders`. `onChanged` is the same call
+            // as the refresh: both mean the composer's model list is stale.
+            providers: (
+              <ProviderSettings
+                {...providers}
+                models={models}
+                loadingModels={loadingModels}
+                onRefreshModels={onProvidersChanged}
+              />
+            ),
             appearance: (
               <>
                 <Section>
@@ -232,7 +261,7 @@ export default function SettingsDialog({
                 onSetMute={transcription.setMute}
               />
             ),
-            sourceControl: <SourceControlSettings />,
+            sourceControl: <SourceControlSettings {...sourceControl} />,
             integrations: (
               <Section>
                 <OpenFilesRow />
@@ -909,8 +938,12 @@ function StatusChip({ children, bad }: { children: ReactNode; bad?: boolean }) {
 /// GitHub's answer, and that answer is one error per field path rather than a
 /// sentence. So the account and its scopes are here, where a failure of that
 /// kind has somewhere to be looked at.
-function SourceControlSettings() {
-  const { state, error, loading, recheck } = useSourceControl();
+function SourceControlSettings({
+  state,
+  error,
+  loading,
+  recheck,
+}: ReturnType<typeof useSourceControl>) {
   const [stillMissing, setStillMissing] = useState(false);
 
   const check = async () => {

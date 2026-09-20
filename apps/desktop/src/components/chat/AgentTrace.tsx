@@ -50,6 +50,7 @@ function AgentTrace({
   icon,
   open: controlled,
   onToggle,
+  framed = true,
   className,
 }: {
   /// Shown, shimmering, while the work is still going.
@@ -74,6 +75,13 @@ function AgentTrace({
   /// follows the work by itself.
   open?: boolean;
   onToggle?: () => void;
+  /// Whether the body hangs behind a left rule and an indent.
+  ///
+  /// That frame is what makes a run of tool calls read as one piece of work —
+  /// and it is the wrong shape for a caller whose rows *are* the conversation,
+  /// where the reader is looking at the transcript rather than at a fold of it.
+  /// The folds inside such a caller keep theirs.
+  framed?: boolean;
   className?: string;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
@@ -85,7 +93,14 @@ function AgentTrace({
 
   // Nothing to reveal: the header is the whole row, and a chevron pointing at
   // an empty box is a control that answers nothing.
-  if (rows.length === 0) {
+  //
+  // **A caller that owns the folding owns the header too.** `TurnBlock` withholds
+  // a collapsed stretch's rows rather than mounting them behind a clip, so `rows`
+  // is empty for a body that is very much there — and reading that as "nothing to
+  // reveal" drew a settled turn's summary as plain text with no control on it.
+  // Which is a summary nothing could open: the only control was the button this
+  // branch declines to draw. An `onToggle` is the caller saying it has the rows.
+  if (rows.length === 0 && onToggle === undefined) {
     return (
       <div className={cn("flex items-center gap-2 text-chat text-muted-foreground", className)}>
         <span className="shrink-0 text-muted-foreground/70">
@@ -135,8 +150,18 @@ function AgentTrace({
       >
         <div className="min-h-0 overflow-hidden">
           {/* The rule runs the height of the rows, which is what makes them read
-              as one trace rather than as an indented list. */}
-          <div className="mt-1 ml-1.5 flex flex-col gap-1.5 border-l border-border pl-3">
+              as one trace rather than as an indented list.
+              //
+              `gap-0.5`, and tighter than it was: these are single lines of work
+              listed one after another, so every pixel of gap is a pixel the run
+              stops reading as a run. The rows carry the transcript's own leading,
+              which is what keeps them apart. */}
+          <div
+            className={cn(
+              "mt-1 flex flex-col gap-0.5",
+              framed && "ml-1.5 border-l border-border pl-3",
+            )}
+          >
             {rows.map((row, i) => (
               <div
                 key={i}

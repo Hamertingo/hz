@@ -497,7 +497,7 @@ describe('McodeUpdateApplication', () => {
   });
 
   it('recognizes only the internal package identity as environment-selectable', () => {
-    expect(isInternalMcodePackageName('@minimax/code')).toBe(true);
+    expect(isInternalMcodePackageName('@hz/code')).toBe(true);
     expect(isInternalMcodePackageName('@minimax-ai/code')).toBe(false);
     expect(isInternalMcodePackageName(undefined)).toBe(false);
   });
@@ -521,7 +521,7 @@ describe('McodeUpdateApplication', () => {
 describe('MCode update install-source commands', () => {
   it.each([
     ['/opt/homebrew/lib/node_modules/@minimax-ai/code', 'npm-global'],
-    ['C:\\Users\\demo\\AppData\\Roaming\\npm\\node_modules\\@minimax\\code', 'npm-global'],
+    ['C:\\Users\\demo\\AppData\\Roaming\\npm\\node_modules\\@hz\\code', 'npm-global'],
     ['/usr/local/lib/node_modules/@minimax-ai/code', 'npm-global'],
     ['/Users/demo/.local/share/pnpm/global/5/node_modules/@minimax-ai/code', 'pnpm-global'],
     [
@@ -529,7 +529,7 @@ describe('MCode update install-source commands', () => {
       'pnpm-global',
     ],
     [
-      'C:\\Users\\demo\\AppData\\Local\\pnpm\\global\\5\\node_modules\\@minimax\\code',
+      'C:\\Users\\demo\\AppData\\Local\\pnpm\\global\\5\\node_modules\\@hz\\code',
       'pnpm-global',
     ],
     [
@@ -538,12 +538,12 @@ describe('MCode update install-source commands', () => {
     ],
     ['/Users/demo/.config/yarn/global/node_modules/@minimax-ai/code', 'yarn-global'],
     [
-      'C:\\Users\\demo\\.config\\yarn\\global\\node_modules\\@minimax\\code',
+      'C:\\Users\\demo\\.config\\yarn\\global\\node_modules\\@hz\\code',
       'yarn-global',
     ],
     ['/Users/demo/.bun/install/global/node_modules/@minimax-ai/code', 'bun-global'],
     [
-      'C:\\Users\\demo\\.bun\\install\\global\\node_modules\\@minimax\\code',
+      'C:\\Users\\demo\\.bun\\install\\global\\node_modules\\@hz\\code',
       'bun-global',
     ],
   ] as const)('classifies %s as %s', (packageRoot, expected) => {
@@ -1323,7 +1323,7 @@ describe('MCode update install-source commands', () => {
   it.each([
     ['/usr/local/lib/node_modules/@minimax-ai/code', '/usr/local', 'linux'],
     [
-      'C:\\Users\\demo\\AppData\\Roaming\\npm\\node_modules\\@minimax\\code',
+      'C:\\Users\\demo\\AppData\\Roaming\\npm\\node_modules\\@hz\\code',
       'C:\\Users\\demo\\AppData\\Roaming\\npm',
       'win32',
     ],

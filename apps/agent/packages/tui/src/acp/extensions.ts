@@ -4,6 +4,9 @@ import * as acp from '@agentclientprotocol/sdk';
 
 import type { TuiSession } from '../runtime/port.js';
 import type { TuiAcpRuntime } from './runtime.js';
+import { registerTuiAcpMcpExtensions } from './mcp.js';
+import { registerTuiAcpSkillExtensions } from './skills.js';
+import { registerTuiAcpAgentExtensions } from './agents.js';
 
 export const TUI_ACP_EXTENSION_VERSION = 1;
 
@@ -26,6 +29,28 @@ export const TUI_ACP_EXTENSION_METHODS = [
   ...TUI_ACP_GOAL_METHODS,
   'mcode/session/delegation/get',
   'mcode/session/delegation/stop',
+  // The Skill roster. Not gated on a feature flag the way the Goal methods are:
+  // a runtime always has Skills, and one it has none of answers an empty list.
+  'mcode/session/skills/list',
+  'mcode/session/skills/read',
+  'mcode/session/skills/set_enabled',
+  // The reader's own MCP store. Not session-scoped like the rest: the file is the
+  // machine's, and the one list a client needs is the one a switched-off server
+  // is still in. See `mcp.ts`.
+  'mcode/mcp/servers/list',
+  'mcode/mcp/servers/get',
+  'mcode/mcp/servers/create',
+  'mcode/mcp/servers/update',
+  'mcode/mcp/servers/delete',
+  'mcode/mcp/servers/set_enabled',
+  'mcode/mcp/servers/test',
+  // The Agent definitions a Session is started under. Machine-scoped like the MCP
+  // store above: an Agent belongs to the machine, not to a conversation.
+  'mcode/agents/list',
+  'mcode/agents/get',
+  'mcode/agents/create',
+  'mcode/agents/update',
+  'mcode/agents/delete',
 ] as const;
 
 export const TUI_ACP_EXTENSION_NOTIFICATIONS = [
@@ -85,6 +110,26 @@ export function registerTuiAcpExtensions(options: RegisterTuiAcpExtensionsOption
     }
     return { sessionId };
   };
+
+  registerTuiAcpSkillExtensions({
+    app: options.app,
+    runtime: options.runtime,
+    resolveSession: options.resolveSession,
+  });
+
+  // No session resolver: the MCP store is the machine's rather than a session's,
+  // so none of these takes a session id — see `mcp.ts`.
+  registerTuiAcpMcpExtensions({
+    app: options.app,
+    runtime: options.runtime,
+  });
+
+  // Machine-scoped for the same reason: an Agent is a stored definition, and
+  // which Session is talking to it changes nothing about the roster.
+  registerTuiAcpAgentExtensions({
+    app: options.app,
+    runtime: options.runtime,
+  });
 
   options.app.onRequest('session/activate', parseSessionRequest, ({ params, client }) =>
     activateSession(params.sessionId, client),

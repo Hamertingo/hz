@@ -4,8 +4,8 @@ import path from 'node:path';
 import {
   sanitizeBashSubprocessEnv,
   type BashEnvPolicy,
-} from '@mavis/agent-core/bash-subprocess-env';
-import type { ToolResult } from '@mavis/agent-core/tools';
+} from '@hz/agent-core/bash-subprocess-env';
+import type { ToolResult } from '@hz/agent-core/tools';
 
 import { LocalBashToolDef, type LocalBashToolInput } from './builtin-defs.js';
 

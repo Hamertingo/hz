@@ -25,14 +25,18 @@
 //! Rejected: `mcode exec --output-format stream-json` is one JSON object per
 //! run, with no stream, no permission channel and no cancel.
 
+pub mod agents;
 pub mod commands;
 pub mod context;
+pub mod delegation;
 pub mod mapper;
+pub mod mcp;
 pub mod models;
 pub mod parser;
 pub mod permissions;
 pub mod providers;
 pub mod rpc;
+pub mod skills;
 
 use crate::events::{AgentEvent, AgentEventPayload, ApprovalPolicy, BlockRef, DeltaEvent};
 use crate::harness::permissions::PendingPermissions;
@@ -192,6 +196,15 @@ struct Parked {
     session: Session,
     session_id: String,
     cwd: String,
+    /// The Agent the parked session was opened *as*, so a park made for one is
+    /// never adopted for another.
+    ///
+    /// **Not a setting that can be corrected afterwards, unlike the model or the
+    /// stance.** The Agent is composed into the session at `session/new` — its
+    /// prompt, its tools, its model — so a park for a different one is a session
+    /// that would run as the wrong thing, and the answer is a fresh spawn rather
+    /// than a `set_config_option`.
+    agent_name: Option<String>,
     /// Identity as well as age: a reaper compares it so that a newer park is
     /// never killed by an older park's clock.
     at: Instant,
@@ -229,6 +242,7 @@ pub async fn prepare(
     model: Option<&Model>,
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
+    agent_name: Option<&str>,
     app: &AppHandle,
 ) -> Result<()> {
     // `false` for the thread id: there is no index entry yet — the manager
@@ -245,6 +259,7 @@ pub async fn prepare(
         true,
         None,
         false,
+        agent_name,
         app,
     )
     .await?;
@@ -260,6 +275,7 @@ pub async fn prepare(
             session,
             session_id: session_id.to_string(),
             cwd: cwd.to_string(),
+            agent_name: agent_name.map(str::to_string),
             at,
         })
     };
@@ -290,11 +306,11 @@ pub async fn prepare(
 
 /// Takes the parked session if it belongs to this one, so [`init`] can skip the
 /// spawn, the handshake and the settings alike.
-async fn adopt(session_id: &str, cwd: &str) -> Option<Session> {
+async fn adopt(session_id: &str, cwd: &str, agent_name: Option<&str>) -> Option<Session> {
     let mut slot = PARKED.lock().await;
     if !slot
         .as_ref()
-        .is_some_and(|parked| parked.belongs_to(session_id, cwd))
+        .is_some_and(|parked| parked.belongs_to(session_id, cwd, agent_name))
     {
         return None;
     }
@@ -310,19 +326,40 @@ impl Parked {
     /// the worktree. Refusing the mismatch falls back to a plain spawn, which is
     /// the right answer for one prompt and a wasted process for the other; what
     /// it must never be is a session running in a tree nobody named.
-    fn belongs_to(&self, session_id: &str, cwd: &str) -> bool {
-        park_matches(&self.session_id, &self.cwd, session_id, cwd)
+    fn belongs_to(&self, session_id: &str, cwd: &str, agent_name: Option<&str>) -> bool {
+        park_matches(
+            &self.session_id,
+            &self.cwd,
+            self.agent_name.as_deref(),
+            session_id,
+            cwd,
+            agent_name,
+        )
     }
 }
 
-/// Whether a park is the one `(session_id, cwd)` is about to want.
+/// Whether a park is the one `(session_id, cwd, agent)` is about to want.
 ///
 /// Free rather than a method so the rule is testable on its own two strings: a
 /// parked session is a live child, a reader loop and a handshake, and a test
 /// that had to build one to compare two names would be a network away from
 /// useless.
-fn park_matches(parked_id: &str, parked_cwd: &str, session_id: &str, cwd: &str) -> bool {
-    parked_id == session_id && parked_cwd == cwd
+///
+/// **The Agent is part of the identity, not a difference to reconcile.** The
+/// model and the stance can be moved on a live child, so a park that disagrees
+/// about those is adopted and corrected; the Agent cannot, because it is
+/// composed into the session when the session is made. A mismatch here therefore
+/// refuses the park and pays a spawn — which is the honest price of changing the
+/// pick after parking.
+fn park_matches(
+    parked_id: &str,
+    parked_cwd: &str,
+    parked_agent: Option<&str>,
+    session_id: &str,
+    cwd: &str,
+    agent_name: Option<&str>,
+) -> bool {
+    parked_id == session_id && parked_cwd == cwd && parked_agent == agent_name
 }
 
 /// The child a session runs on, spawned and not yet spoken to.
@@ -332,6 +369,23 @@ fn park_matches(parked_id: &str, parked_cwd: &str, session_id: &str, cwd: &str) 
 /// child that behaves differently from a spawned one, which is the kind of
 /// difference nobody would find until it mattered.
 async fn spawn_child(session_id: &str, cwd: &str) -> Result<Child> {
+    child_command(session_id, cwd)
+        .await
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("couldn't start mcode")
+}
+
+/// The command every child of this harness is started from.
+///
+/// Split out so the one caller that wants a different *lifecycle* — the control
+/// child [`open_control`] keeps, which must die with this app rather than outlive
+/// it — still launches exactly what a session launches. Two spawn sites drifting
+/// apart is how a child that behaves differently from a spawned one happens,
+/// which is the kind of difference nobody would find until it mattered.
+async fn child_command(session_id: &str, cwd: &str) -> Command {
     let bin = crate::binpath::mcode().await;
     let mut command = Command::new(&bin);
 
@@ -343,14 +397,8 @@ async fn spawn_child(session_id: &str, cwd: &str) -> Result<Child> {
 
     crate::harness::agent_env(&mut command, &bin).await;
 
+    command.current_dir(cwd).env("HZ_SESSION_ID", session_id);
     command
-        .current_dir(cwd)
-        .env("HZ_SESSION_ID", session_id)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("couldn't start mcode")
 }
 
 /// Spawns a session's `mcode acp`, handshakes it and opens or resumes its
@@ -365,6 +413,7 @@ pub async fn init(
     session_cwd: &str,
     is_new_session: bool,
     fork_from: Option<&str>,
+    agent_name: Option<&str>,
     app: &AppHandle,
 ) -> Result<Session> {
     // **Adopted where the reader typed long enough to cover the boot**, which is
@@ -374,7 +423,7 @@ pub async fn init(
     //
     // The parked session was configured with the picks the composer held when it
     // was made, so only a pick the reader changed *since* costs anything here.
-    if let Some(mut session) = adopt(session_id, cwd).await {
+    if let Some(mut session) = adopt(session_id, cwd, agent_name).await {
         // The child is borrowed for the three calls and the session's own
         // record is written afterwards, so the pick a send carries is what the
         // next comparison reads — not what the CLI happened to answer.
@@ -439,6 +488,7 @@ pub async fn init(
         is_new_session,
         fork_from,
         true,
+        agent_name,
         app,
     )
     .await
@@ -478,6 +528,7 @@ async fn start_session(
     is_new_session: bool,
     fork_from: Option<&str>,
     record_thread: bool,
+    agent_name: Option<&str>,
     app: &AppHandle,
 ) -> Result<Session> {
     // Ahead of the spawn: everything between the spawn and the kill-wrapped
@@ -538,16 +589,24 @@ async fn start_session(
     });
 
     let opening = Instant::now();
-    let (mcode_id, config) =
-        match open_session(&client, session_id, session_cwd, is_new_session, fork_from).await {
-            Ok(opened) => opened,
-            Err(error) => {
-                // Post-spawn, so the child is running with nobody left to talk
-                // to it. A `Child` is not reaped on drop.
-                let _ = child.kill().await;
-                return Err(error);
-            }
-        };
+    let (mcode_id, config) = match open_session(
+        &client,
+        session_id,
+        session_cwd,
+        is_new_session,
+        fork_from,
+        agent_name,
+    )
+    .await
+    {
+        Ok(opened) => opened,
+        Err(error) => {
+            // Post-spawn, so the child is running with nobody left to talk
+            // to it. A `Child` is not reaped on drop.
+            let _ = child.kill().await;
+            return Err(error);
+        }
+    };
     let opened = opening.elapsed();
 
     // Written before the first prompt, so a child dying mid-turn still leaves a
@@ -652,6 +711,7 @@ async fn open_session(
     session_cwd: &str,
     is_new_session: bool,
     fork_from: Option<&str>,
+    agent_name: Option<&str>,
 ) -> Result<(String, parser::ConfigOptions)> {
     let init = client
         .request(
@@ -665,6 +725,20 @@ async fn open_session(
                 "clientCapabilities": {
                     "fs": {"readTextFile": false, "writeTextFile": false},
                     "terminal": false,
+                    // **What turns the agent's own extension notifications on.**
+                    // It gates pushes, not requests: `mcode/session/delegation/get`
+                    // and its siblings answer whether or not this is here, but
+                    // `mcode/session/delegation_update` is only sent to a client
+                    // that says it speaks them — see `supportsTuiAcpExtensionNotifications`.
+                    // Stated with `notifications: true` because the delegation
+                    // snapshot is the one this build consumes; the goal, queue and
+                    // current-session pushes that ride the same flag arrive as
+                    // methods `parser::parse_notification` does not model and are
+                    // dropped, which is the ordinary path for a method we have no
+                    // use for.
+                    "_meta": {
+                        "minimax-code/extensions": {"version": 1, "notifications": true}
+                    },
                 },
                 "clientInfo": {"name": "hz", "version": env!("CARGO_PKG_VERSION")},
             }),
@@ -698,11 +772,22 @@ async fn open_session(
     }
 
     if is_new_session {
+        let mut params = json!({"cwd": session_cwd, "mcpServers": servers});
+        // **The Agent rides `_meta`, and it has to.** ACP's `NewSessionRequest`
+        // declares `cwd`, `additionalDirectories`, `mcpServers` and `_meta`, and
+        // the agent validates it with a stripping object — so a top-level
+        // `agentName` would be dropped before the handler ever saw it. `_meta` is
+        // the one slot the schema leaves open, and the same place this build's own
+        // extension capabilities travel.
+        //
+        // Absent means the runtime's own default agent, which is what every send
+        // that names nothing gets.
+        if let Some(name) = agent_name.map(str::trim).filter(|name| !name.is_empty()) {
+            params["_meta"] = json!({"minimax-code/agent": name});
+        }
+
         let answer = client
-            .request(
-                "session/new",
-                json!({"cwd": session_cwd, "mcpServers": servers}),
-            )
+            .request("session/new", params)
             .await
             .context("mcode refused to open a session")?;
 
@@ -934,6 +1019,154 @@ pub async fn shutdown(child: &mut Child, session: &McodeSession) {
 
     let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
     let _ = child.kill().await;
+}
+
+/// How long a control child is kept with nothing asked of it.
+///
+/// The Plugins screen asks in bursts — a list, then a switch, then a read — and
+/// the gaps inside a burst are seconds. This is the gap that means the reader has
+/// left the screen, and it is measured from the last question rather than from
+/// the last answer so a slow one is not counted twice.
+pub(crate) const CONTROL_IDLE: Duration = Duration::from_secs(300);
+
+/// A child kept to answer the Plugins screen's questions, and nothing else.
+///
+/// **The screen is not a session and cannot borrow one.** What it asks — which
+/// Skills exist, which of them the reader has switched off — are facts about the
+/// *machine*, and every `mcode/session/*` method is per-session by construction,
+/// so something has to hold a session open to ask them. A child per press would
+/// pay the cold boot every time: 2.7–3.7s to `initialize` plus another 1.8–3.7s
+/// to the first `session/new`, measured, which is a switch that moves six seconds
+/// after it is pressed.
+///
+/// So one is kept — opened on the first question, reused for the rest. The same
+/// bargain [`models::probe`](self::models) makes, with the child kept rather than
+/// closed; the resident cost of that is stated where the slot is held, in
+/// [`crate::plugins`], which is also what winds it down.
+///
+/// **Nothing here is a reader's session.** No index row, no event log, no status
+/// machine and no `session_created`: the child is spawned, handshaken and opened,
+/// and the only thing ever read back off it is the answer. That is why this is
+/// not [`init`] — a control child runs no turn and writes nothing down.
+pub struct Control {
+    pub session: McodeSession,
+    /// When a question was last put to it, so an idle one can be wound down.
+    pub asked_at: Instant,
+    child: Child,
+    reader: tokio::task::JoinHandle<()>,
+}
+
+impl Control {
+    /// Whether it has been left alone long enough to close.
+    pub fn is_idle(&self) -> bool {
+        self.asked_at.elapsed() > CONTROL_IDLE
+    }
+
+    /// Kills it without waiting, for a path that cannot await — the app quitting.
+    ///
+    /// The polite close is skipped deliberately: `RunEvent::Exit` runs without an
+    /// executor and the process ends moments later, so `start_kill` is the whole
+    /// of what can be sent. Killing one that has already gone is not an error.
+    pub fn kill_now(&mut self) {
+        self.reader.abort();
+        let _ = self.child.start_kill();
+    }
+
+    /// Leaves nothing running: the reader task, then the process.
+    ///
+    /// Closed politely first — `session/close` and a moment to leave — the way
+    /// every other child here is, so the agent drops its own record of a session
+    /// that will never be asked about again.
+    pub async fn close(mut self) {
+        self.reader.abort();
+        shutdown(&mut self.child, &self.session).await;
+    }
+}
+
+/// Opens a bare ACP session and hands it back with the child still running.
+pub async fn open_control() -> Result<Control> {
+    // The scratch directory a model probe uses, for the same reason: a session is
+    // bound to the `cwd` it is opened in, and management is not a project —
+    // nothing here reads or writes anything the reader is working on.
+    let scratch = std::env::temp_dir().join("hz-mcode-control");
+    let _ = std::fs::create_dir_all(&scratch);
+    let scratch_cwd = scratch.to_string_lossy().to_string();
+
+    // The child's own name for `HZ_SESSION_ID`, which the hz CLI defaults to.
+    // A control child runs no command that reads it, but it is named rather than
+    // left empty: an empty one falls back to whatever the environment held last.
+    let control_id = format!("hz-control-{}", std::process::id());
+
+    // `kill_on_drop` where a session's child has it not: this one is owned by no
+    // session and outlives no app, so a quit that dropped it must take the
+    // process with it rather than leave an agent nobody can see or reach.
+    let mut child = child_command(&control_id, &scratch_cwd)
+        .await
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("couldn't start mcode to ask about the reader's plugins")?;
+
+    let stdin = child.stdin.take().context("the control child has no stdin")?;
+    let stdout = child.stdout.take().context("the control child has no stdout")?;
+    let stderr = child.stderr.take().context("the control child has no stderr")?;
+
+    let client = RpcClient::new(stdin);
+
+    // **Something has to read it.** `accept` is what settles the waiters each
+    // request below registers, so without this task every call sits out its own
+    // timeout with the reply already written to a pipe nobody drains. A session's
+    // read loop would ingest all of this into a transcript that does not exist;
+    // this one keeps nothing but the answers.
+    let reader = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                client.accept(&line).await;
+            }
+        })
+    };
+
+    tokio::spawn(async move {
+        if let Err(error) = read_stderr(Mcode, stderr).await {
+            eprintln!("Failed to read the control child's stderr: {error}");
+        }
+    });
+
+    let opened = open_session(&client, &control_id, &scratch_cwd, true, None, None).await;
+    let (id, _configs) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            // Post-spawn, so the child is running with nobody left to talk to it.
+            reader.abort();
+            let _ = child.kill().await;
+            return Err(error);
+        }
+    };
+
+    Ok(Control {
+        // The settings are not applied: a control child is never asked to run a
+        // turn, so a model is a hop of the boot it does not need — and picking one
+        // would mean this app deciding what a management question runs on.
+        session: McodeSession {
+            client,
+            id,
+            prompt_id: Arc::new(Mutex::new(None)),
+            efforts: Arc::new(Mutex::new(None)),
+            model: Arc::new(Mutex::new(None)),
+            mode: Arc::new(Mutex::new(None)),
+            probe: Arc::new(Mutex::new(None)),
+        },
+        asked_at: Instant::now(),
+        child,
+        reader,
+    })
 }
 
 struct ReaderHandles {
@@ -1196,6 +1429,20 @@ async fn read_stdout(
             Some(event) => event,
             None => match handles.client.accept(&line).await {
                 Incoming::Notification { method, params } => {
+                    // **One of the agent's own extensions, sorted before the
+                    // parser is asked anything.** These ride beside ACP's as
+                    // top-level methods rather than as `session/update`
+                    // payloads, so `parse_notification` would answer `Ok(None)`
+                    // and a roster the reader is watching would be dropped in
+                    // silence. Emitted, never logged: a snapshot names children
+                    // no child survives a restart.
+                    if method == delegation::NOTIFICATION {
+                        let roster = delegation::event_of(&params, &handles.session_id);
+                        if let Err(err) = handles.app.emit(delegation::EVENT, &roster) {
+                            eprintln!("[delegation emit err] {err}");
+                        }
+                        continue;
+                    }
                     match parser::parse_notification(&method, params) {
                         // A method this build does not model is not a failure:
                         // mcode's own extensions ride in camel case beside
@@ -1608,14 +1855,31 @@ mod coalesce_tests {
 mod parked_tests {
     use super::*;
 
-    /// The match is on both fields, and the cwd half is the one that can be
+    /// The match is on all three fields, and the cwd half is the one that can be
     /// wrong: a worktree session asks for a tree the park was not made for, and
     /// adopting it would put the session somewhere nobody named.
     #[test]
     fn a_park_answers_only_for_its_own_session_and_tree() {
-        assert!(park_matches("s1", "/repo", "s1", "/repo"));
-        assert!(!park_matches("s1", "/repo", "s1", "/repo/.claude/worktrees/one"));
-        assert!(!park_matches("s1", "/repo", "s2", "/repo"));
-        assert!(!park_matches("s1", "/repo", "s2", "/other"));
+        assert!(park_matches("s1", "/repo", None, "s1", "/repo", None));
+        assert!(!park_matches("s1", "/repo", None, "s1", "/repo/.claude/worktrees/one", None));
+        assert!(!park_matches("s1", "/repo", None, "s2", "/repo", None));
+        assert!(!park_matches("s1", "/repo", None, "s2", "/other", None));
+    }
+
+    /// **A different Agent refuses the park**, and that is the one mismatch that
+    /// cannot be reconciled afterwards.
+    ///
+    /// The model and the stance move on a live child, so `init` applies the
+    /// difference to an adopted session; the Agent is composed into the session at
+    /// `session/new`, so a park opened as one Agent and adopted for another would
+    /// run as the wrong thing with nothing on screen saying so. The cost is a
+    /// spawn, which is the honest price of changing the pick after parking.
+    #[test]
+    fn a_park_answers_only_for_the_agent_it_was_opened_as() {
+        assert!(park_matches("s1", "/repo", Some("explore"), "s1", "/repo", Some("explore")));
+
+        assert!(!park_matches("s1", "/repo", Some("explore"), "s1", "/repo", None));
+        assert!(!park_matches("s1", "/repo", None, "s1", "/repo", Some("explore")));
+        assert!(!park_matches("s1", "/repo", Some("explore"), "s1", "/repo", Some("worker")));
     }
 }

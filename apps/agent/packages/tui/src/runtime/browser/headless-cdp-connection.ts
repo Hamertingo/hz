@@ -3,7 +3,7 @@ import {
   type BrowserTransportCommandOptions,
   type BrowserTransportEvent,
   type BrowserTransportEventListener,
-} from '@mavis/browser-core';
+} from '@hz/browser-core';
 import WebSocket from 'ws';
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;

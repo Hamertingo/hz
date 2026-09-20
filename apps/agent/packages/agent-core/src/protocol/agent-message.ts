@@ -72,7 +72,7 @@ export interface ToolCall {
   /** Tool execution wall-clock in ms; non-prod / debug only. */
   tool_call_duration_ms?: number;
   /** Plugin owners resolved by the turn-local runtime attribution snapshot. */
-  plugin_provenances?: import('@mavis/protocol').IPluginCapabilityProvenance[];
+  plugin_provenances?: import('@hz/protocol').IPluginCapabilityProvenance[];
 }
 
 /**

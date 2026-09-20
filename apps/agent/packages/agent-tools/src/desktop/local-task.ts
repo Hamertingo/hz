@@ -1,4 +1,4 @@
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import { LocalTaskToolDef, type LocalTaskToolInput } from './builtin-defs.js';
 import { formatLocalTaskParentReport } from './task-verification.js';

@@ -1,6 +1,6 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
-import { createDefaultTokenEstimator } from '@mavis/context-manager';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
+import { createDefaultTokenEstimator } from '@hz/context-manager';
 import { z } from 'zod';
 
 import { normalizeMavisCommand } from '../shared/mavis-operation-classifier.js';

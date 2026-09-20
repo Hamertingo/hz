@@ -17,7 +17,7 @@ export function resolveTuiPackageVersion(moduleUrl: string | URL = import.meta.u
         readFileSync(new URL(relativePath, moduleUrl), 'utf8'),
       ) as Partial<PackageManifest>;
       if (
-        (manifest.name === MINIMAX_CODE_PACKAGE_NAME || manifest.name === '@minimax/code') &&
+        (manifest.name === MINIMAX_CODE_PACKAGE_NAME || manifest.name === '@hz/code') &&
         typeof manifest.version === 'string' &&
         manifest.version.length > 0
       ) {

@@ -3,7 +3,7 @@
 # reads one of the two depending on which directory it treats as the project.
 #
 # The vendored agent writes activity and update-lock files into its own install
-# directory (`resources/mcode/.mcode-active/<pid>.json`), and every one of them
+# directory (`resources/agent/.mcode-active/<pid>.json`), and every one of them
 # reads as a source change: the app rebuilt itself in a loop while a session ran.
 
-src-tauri/resources/mcode
+src-tauri/resources/agent

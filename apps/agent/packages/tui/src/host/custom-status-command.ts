@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import { win32 } from 'node:path';
 
-import type { TuiCustomStatusLineConfig } from '@mavis/config';
+import type { TuiCustomStatusLineConfig } from '@hz/config';
 
 import { parseTuiExternalEditorCommand } from './external-editor.js';
 
-export type { TuiCustomStatusLineConfig } from '@mavis/config';
+export type { TuiCustomStatusLineConfig } from '@hz/config';
 
 /**
  * Custom status command runner.

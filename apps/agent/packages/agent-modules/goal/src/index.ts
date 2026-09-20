@@ -1,5 +1,5 @@
 /**
- * `@mavis/goal` —— codex-style Thread Goal primitives.
+ * `@hz/goal` —— codex-style Thread Goal primitives.
  *
  * This subpath is **IO-free** by design:
  *   - 4-state status model + objective validation (`types.ts`)

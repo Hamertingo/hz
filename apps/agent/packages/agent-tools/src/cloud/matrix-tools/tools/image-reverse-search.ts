@@ -4,7 +4,7 @@
  * write to the LLM-specified path. No remote files are downloaded.
  */
 
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import type { MatrixMediaClient, MatrixPathScope, MatrixToolContext } from '../types.js';
 import { callMatrixToolRaw, type MatrixExecutor } from '../client.js';

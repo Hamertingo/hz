@@ -10,8 +10,8 @@
  * edit goes through a separate host-owned durable mutation port.
  */
 
-import { bindTool } from '@mavis/agent-core/tools';
-import type { ToolExecutionContext, ToolImpl, ToolResult } from '@mavis/agent-core/tools';
+import { bindTool } from '@hz/agent-core/tools';
+import type { ToolExecutionContext, ToolImpl, ToolResult } from '@hz/agent-core/tools';
 
 import { ThreadGoalAlreadyExistsError, type ThreadGoalStore } from './store-port.js';
 import {

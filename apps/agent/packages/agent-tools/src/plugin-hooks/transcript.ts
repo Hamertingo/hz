@@ -6,7 +6,7 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type {
   PiHistoryChangedHookInput,
   PiOnHistoryChangedHook,
-} from '@mavis/agent-core/pi-turn-runner';
+} from '@hz/agent-core/pi-turn-runner';
 
 const TRANSCRIPT_DIRECTORY_MODE = 0o700;
 const TRANSCRIPT_FILE_MODE = 0o600;

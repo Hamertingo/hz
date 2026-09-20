@@ -1,8 +1,8 @@
 {
-  "name": "@mavis/agent-extension",
+  "name": "@hz/agent-extension",
   "version": "0.1.0",
   "private": true,
-  "description": "Built-in adapters that connect Mavis agent modules to the host-neutral @mavis/agent-runtime SPI.",
+  "description": "Built-in adapters that connect Mavis agent modules to the host-neutral @hz/agent-runtime SPI.",
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
@@ -12,19 +12,19 @@
     }
   },
   "dependencies": {
-    "@mavis/session-report": "workspace:^",
-    "@mavis/agent-runtime": "workspace:^",
-    "@mavis/context-manager": "workspace:^",
-    "@mavis/permission": "workspace:^",
-    "@mavis/runaway-guard": "workspace:^",
-    "@mavis/skills": "workspace:^",
-    "@mavis/system-reminder": "workspace:^",
+    "@hz/session-report": "workspace:^",
+    "@hz/agent-runtime": "workspace:^",
+    "@hz/context-manager": "workspace:^",
+    "@hz/permission": "workspace:^",
+    "@hz/runaway-guard": "workspace:^",
+    "@hz/skills": "workspace:^",
+    "@hz/system-reminder": "workspace:^",
     "@sinclair/typebox": "^0.34.0"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "workspace:*",
     "@earendil-works/pi-ai": "workspace:*",
-    "@mavis/protocol": "workspace:^",
+    "@hz/protocol": "workspace:^",
     "@types/node": "^20",
     "typescript": "^5",
     "vitest": "^2"

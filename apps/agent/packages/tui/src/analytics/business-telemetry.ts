@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 
 export type McodeChatType = 'chat' | 'agent_team' | 'claw' | 'hermes' | 'IM';
 export type McodeLoginSource =

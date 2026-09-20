@@ -1,7 +1,7 @@
 {
-  "name": "@mavis/goal",
+  "name": "@hz/goal",
   "version": "0.2.1",
-  "description": "Thread-goal capability (goal state, LLM goal tools, continuation/budget steering) for Mavis agent runtimes. Depends only on @mavis/agent-core primitives; never imports runtime packages.",
+  "description": "Thread-goal capability (goal state, LLM goal tools, continuation/budget steering) for Mavis agent runtimes. Depends only on @hz/agent-core primitives; never imports runtime packages.",
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
@@ -11,7 +11,7 @@
     }
   },
   "dependencies": {
-    "@mavis/agent-core": "workspace:^",
+    "@hz/agent-core": "workspace:^",
     "@sinclair/typebox": "^0.34.0",
     "@earendil-works/pi-agent-core": "workspace:*",
     "zod": "^3"

@@ -63,7 +63,7 @@ export function setCuBackend(value: CuBackend): void {
  * extra config lookup at the call site.
  *
  * Renderer code should keep using the pure variant from
- * `@mavis/config/cu-backend` and feed it the value from the renderer-side
+ * `@hz/config/cu-backend` and feed it the value from the renderer-side
  * cache instead of touching `config.yaml`.
  */
 export function assertCuBackendSupported(backend: CuBackend = getCuBackend()): void {

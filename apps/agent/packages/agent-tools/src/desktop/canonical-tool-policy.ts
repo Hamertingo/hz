@@ -1,4 +1,4 @@
-import type { RuntimeTool } from '@mavis/agent-core/tools';
+import type { RuntimeTool } from '@hz/agent-core/tools';
 
 import { MatrixWebSearchToolDef } from '../cloud/matrix-tools/tool-defs.js';
 import { isCanonicalSubagentRole } from './subagent-roles.js';

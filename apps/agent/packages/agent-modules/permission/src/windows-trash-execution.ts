@@ -3,7 +3,7 @@
  * checker to the local Bash implementation. Only literal trash targets cross
  * this seam; the runtime owns the launcher, script path and environment.
  */
-const WINDOWS_TRASH_EXECUTION = Symbol.for('@mavis/permission/windows-trash-execution');
+const WINDOWS_TRASH_EXECUTION = Symbol.for('@hz/permission/windows-trash-execution');
 
 export interface WindowsTrashExecution {
   readonly targets: readonly string[];

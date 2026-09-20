@@ -2,7 +2,7 @@ import {
   classifyLLMErrorToCode,
   toLLMProtocolClassification,
   type NormalizedLLMError,
-} from '@mavis/shared/llm-error-classifier';
+} from '@hz/shared/llm-error-classifier';
 import type { TurnTerminationReason } from '../event-bridge/types.js';
 import type { RuntimeProtocolError } from '../protocol/runtime-event.js';
 

@@ -1,4 +1,4 @@
-import type { TuiCustomStatusLineConfig } from '@mavis/config';
+import type { TuiCustomStatusLineConfig } from '@hz/config';
 import { tuiChalk as chalk, tuiColors as colors } from '../theme/runtime.js';
 import { sanitizeTerminalText } from '../rendering/terminal-text.js';
 import {

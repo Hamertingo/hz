@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 
-import { createAuthNamespace, type AuthStatus } from '@mavis/oauth-core';
+import { createAuthNamespace, type AuthStatus } from '@hz/oauth-core';
 import {
   setLegacyByokProviderMigrationEnabled,
   setManagedPresetBaseUrlSyncEnabled,
-} from '@mavis/config';
+} from '@hz/config';
 
 import {
   resolveMcodeAuthEnvironment,

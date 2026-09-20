@@ -13,7 +13,7 @@ import type {
   LocalMavisCronTask,
   LocalMavisModelResolution,
 } from './types.js';
-import { CRON_REQUEST_SOURCE_HEADER } from '@mavis/protocol';
+import { CRON_REQUEST_SOURCE_HEADER } from '@hz/protocol';
 
 export {
   LocalMavisCronValidationError,

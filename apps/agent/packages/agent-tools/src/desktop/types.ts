@@ -1,14 +1,14 @@
-import type { RuntimeTool, ToolExecutionContext, ToolResult } from '@mavis/agent-core/tools';
-import type { PiEventWriter, TurnEventReporter } from '@mavis/agent-core/pi-turn-runner';
+import type { RuntimeTool, ToolExecutionContext, ToolResult } from '@hz/agent-core/tools';
+import type { PiEventWriter, TurnEventReporter } from '@hz/agent-core/pi-turn-runner';
 import type {
   BackgroundTask,
   BackgroundTaskStatus,
   TaskOutputReadOptions,
   TaskOutputReadResult,
   TaskQuery,
-} from '@mavis/background-task';
-import type { IAgentConfig } from '@mavis/protocol';
-import type { AskUserToolInput } from '@mavis/shared/questionnaire';
+} from '@hz/background-task';
+import type { IAgentConfig } from '@hz/protocol';
+import type { AskUserToolInput } from '@hz/shared/questionnaire';
 import type { BashOperations } from '@earendil-works/pi-coding-agent';
 import type { TSchema } from '@sinclair/typebox';
 

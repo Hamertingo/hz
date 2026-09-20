@@ -1,5 +1,5 @@
 /**
- * Built-in adapters from domain-owned agent modules to `@mavis/agent-runtime`.
+ * Built-in adapters from domain-owned agent modules to `@hz/agent-runtime`.
  *
  * This package owns only SPI glue. It does not construct module instances,
  * choose a host profile, or provide a default extension list.

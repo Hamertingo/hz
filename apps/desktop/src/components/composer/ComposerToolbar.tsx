@@ -9,7 +9,7 @@ import PermissionSelector, {
 } from "@/components/composer/PermissionSelector";
 import ProjectSelector from "@/components/composer/ProjectSelector";
 import RepoSelector from "@/components/composer/RepoSelector";
-import RolePicker from "@/components/RolePicker";
+import AgentPicker from "@/components/composer/AgentPicker";
 import StashBadge from "@/components/composer/StashBadge";
 import WorktreeToggle from "@/components/composer/WorktreeToggle";
 import { Button } from "@/components/ui/button";
@@ -72,17 +72,12 @@ type ComposerToolbarProps = {
   branch: string | null;
   onSelectBranch: (branch: string) => void;
 
-  /// The responsibility a new session starts under, from the sticky defaults.
-  /// Creation-time like the project beside it: the spawn reads it once, and a
-  /// session that already exists has the header's own picker instead.
-  roleId: string | null;
-  onRoleChange: (roleId: string | null) => void;
-  /// Promotes a global role to the default every project starts under — the
-  /// every-project level the composer's own pick cannot reach.
-  onRoleGlobal: (roleId: string | null) => void;
-  /// The path the offered roles resolve against — a workspace's repository
-  /// target, or the project root.
-  roleOfferPath: string | null;
+  /// The Agent a new session runs *as*. Creation-time like the project beside
+  /// it: the runtime composes an Agent into a session when the session is made,
+  /// so a session that already exists keeps the one it has and there is nothing
+  /// here to switch.
+  agentName: string | null;
+  onAgentChange: (agentName: string | null) => void;
 
   /// Set while a switch waits on the uncommitted-changes prompt.
   pendingBranch: string | null;
@@ -147,10 +142,8 @@ export default function ComposerToolbar({
   branches,
   branch,
   onSelectBranch,
-  roleId,
-  onRoleChange,
-  onRoleGlobal,
-  roleOfferPath,
+  agentName,
+  onAgentChange,
   pendingBranch,
   onConfirmBranchSwitch,
   onCancelBranchSwitch,
@@ -230,18 +223,10 @@ export default function ComposerToolbar({
             />
           )}
 
-          {/* The responsibility this agent is being started with. It sits after
-              the project and repository because that is what its scope is
-              resolved against — a role filed on a workspace is offered whether
-              the session runs at the root or in one of its repositories. */}
-          <RolePicker
-            roleId={roleId}
-            projects={projects}
-            offerPath={roleOfferPath}
-            defaultProjectPath={projectPath}
-            onSelect={onRoleChange}
-            onSelectGlobal={onRoleGlobal}
-          />
+          {/* Who runs this chat. It sits after the project and repository
+              because those decide *where* the work happens, and this decides
+              what the thing doing it is — the two are read as a sentence. */}
+          <AgentPicker agentName={agentName} onSelect={onAgentChange} />
 
           {/* Both describe a repository, so neither means anything at a
               workspace root — which is not one. There is no branch to list and
@@ -295,24 +280,28 @@ export default function ComposerToolbar({
       )}
 
       {/* `ml-auto` rather than a spacer, so a long branch name still gets the
-          whole middle of the row and this stays pinned to the right edge. */}
-      {contextUsage && (
-        <div className="ml-auto">
-          {/* **Keyed by session, because a reading belongs to one.** The panel
-              holds what its own ask fetched, and this row survives a session
-              switch — unkeyed, the reading of the session the reader just left
-              would be drawn as current under the one they just arrived at. */}
-          <ContextMeter
-            key={sessionId ?? "new"}
-            sessionId={sessionId}
-            used={contextUsage.used}
-            max={contextUsage.max}
-            costUsd={contextUsage.costUsd}
-            events={events}
-            stored={contextReading}
-          />
-        </div>
-      )}
+          whole middle of the row and this stays pinned to the right edge.
+          //
+          **Drawn whether or not there is a number yet.** It used to wait for the
+          first turn's occupancy, so a fresh composer had no meter at all and one
+          appeared from nowhere mid-conversation — a control the reader has to
+          notice rather than one that was always there. Nothing counted yet is a
+          state it draws, and the first `usage_update` fills it in. */}
+      <div className="ml-auto">
+        {/* **Keyed by session, because a reading belongs to one.** The panel
+            holds what its own ask fetched, and this row survives a session
+            switch — unkeyed, the reading of the session the reader just left
+            would be drawn as current under the one they just arrived at. */}
+        <ContextMeter
+          key={sessionId ?? "new"}
+          sessionId={sessionId}
+          used={contextUsage?.used ?? 0}
+          max={contextUsage?.max ?? 0}
+          costUsd={contextUsage?.costUsd ?? null}
+          events={events}
+          stored={contextReading}
+        />
+      </div>
     </div>
   );
 }

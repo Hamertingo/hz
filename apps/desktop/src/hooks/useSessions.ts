@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { restoreAttachments } from "@/hooks/useAttachments";
 import { useComposerPrefs, type EffortByModel } from "@/hooks/useComposerPrefs";
 import { useDockBadge } from "@/hooks/useDockBadge";
@@ -21,14 +21,13 @@ import { isWindowFocused, onFocusChange } from "@/lib/focus";
 import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableEffort, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
 import { stanceFor } from "@/lib/permission";
-import { resolveDefaultRole, writeDefaultRole } from "@/lib/roles";
 import { isProvisional, nextMainSeq, provisionalId, retireOldestProvisional } from "@/lib/provisional";
 import { tracked } from "@/lib/slow";
 import { playNotification } from "@/lib/sound";
 import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/space";
 import { pendingAsksOf } from "@/lib/transcript";
 import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
-import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
+import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
 
 const DEFAULT_EFFORT: Effort = "high";
 
@@ -268,6 +267,25 @@ export function useSessions() {
     // current — and a stale non-empty set survives there across a restart. Only
     // an event this run writes here, which is what makes it honest.
     const [tasksBySession, setTasksBySession] = useState<Record<string, BackgroundTask[]>>({});
+    // sessionId → the subagents the agent is running, as it last published them.
+    // Live state for the same reason the tasks above are: a member names a child
+    // Session that no restart survives, so an empty list after a reopen is the
+    // honest answer and the on-demand read is what fills it in.
+    const [delegationsBySession, setDelegationsBySession] = useState<
+      Record<string, DelegatedMember[]>
+    >({});
+    // sessionId → how full the window is, as the agent last said.
+    //
+    // **Live, because the payload is not kept.** `usage_update` is deliberately
+    // never written to the log — its value is folded onto `turn_completed`, so
+    // persisting it would store the same number twice and the thinking ticks
+    // would be most of a session's file. That fold is also why the ring used to
+    // stand still for the whole of a turn: the agent reports its count as the
+    // turn runs and hz only drew it once the turn closed. The newest one is held
+    // here instead, so the ring follows the agent rather than the turn's end.
+    const [usageBySession, setUsageBySession] = useState<
+      Record<string, { window: ContextWindow; costUsd: number | null }>
+    >({});
     // sessionId → prompts typed during a running turn, oldest first, still
     // waiting for the backend to hand them to the CLI. Mirrors the queue in
     // `Session`, which is the authority; this copy exists so the composer can
@@ -343,38 +361,13 @@ const effort: Effort | null = model
   ? usableEffort(model, effortByModel[modelId] ?? null, DEFAULT_EFFORT)
   : effortByModel[modelId] ?? null;
 
-// The responsibility a new session starts under, resolved from the sticky
-// defaults for whichever project the composer is pointed at. Derived rather
-// than held in state: picking one *writes* the default, so the pick is the
-// resolution and a second copy could only drift from it.
-const roleId = resolveDefaultRole(prefs.roleDefault, prefs.roleByProject, projectPath);
+// The Agent a new session runs *as*, or `null` for the runtime's own default.
+// Held as one sticky pref rather than derived: there is nothing to resolve it
+// against, and the pick *is* the value.
+const agentName = prefs.agentName;
 
-// Files the pick where the composer is: the open project's own default, or the
-// global one when no project is open — which is what "every chat starts with
-// this" means. `lib/roles.ts` states the rule.
-const setRoleId = (next: string | null) => {
-  setPrefs(
-    writeDefaultRole(
-      { roleDefault: prefs.roleDefault, roleByProject: prefs.roleByProject },
-      projectPath,
-      next,
-    ),
-  );
-};
-
-// Writes the *global* default, which is what "every chat starts with this"
-// means. `projectPath` is deliberately not consulted: this is the reader asking
-// for it everywhere, from inside a project they are already working in — the
-// state the composer rule alone cannot reach, since the app always opens onto a
-// project.
-const setGlobalRoleId = (next: string | null) => {
-  setPrefs(
-    writeDefaultRole(
-      { roleDefault: prefs.roleDefault, roleByProject: prefs.roleByProject },
-      null,
-      next,
-    ),
-  );
+const setAgentName = (next: string | null) => {
+  setPrefs({ ...prefs, agentName: next });
 };
 
 // What the composer draws and what the send carries — the pick narrowed to what
@@ -730,8 +723,15 @@ useEffect(() => {
     model: modelId,
     effort,
     permissionMode: stanceFor(harness, permissionMode),
+    agentName,
+    // **The Agent is a dep, and the other picks deliberately are not.** A model
+    // or a stance the reader changes after parking is reconciled on the adopted
+    // child by `mcode::init` for three round trips; the Agent cannot be, because
+    // it is composed into the session at `session/new`. Without this the send
+    // would find the park's agent did not match and pay a whole boot, so the boot
+    // is paid here instead — while they are still typing.
   }).catch(() => {});
-}, [selectedSessionId, targetPath]);
+}, [selectedSessionId, targetPath, agentName]);
 
 const handleSendMsg = async (
   message: string,
@@ -815,7 +815,7 @@ const handleSendMsg = async (
           // Always, and the toggle is not consulted — see `fanOutPlan`.
           useWorktree: request.useWorktree,
           worktreeName: null,
-          roleId,
+          agentName,
           isNewSession: true,
           sentAt,
         });
@@ -917,10 +917,6 @@ const handleSendMsg = async (
       harness,
       cwd,
       projectPath: projectPath ?? cwd,
-      // The responsibility this session is being created under, which the
-      // backend writes to the index before the child spawns — so the shell can
-      // carry it too rather than naming a role that arrives a frame later.
-      roleId,
       branch: !useWorktree ? branch : null,
       worktreeName: null,
       worktreeRemoved: false,
@@ -996,9 +992,10 @@ const handleSendMsg = async (
       branch: isNewSession && !useWorktree ? branch : null,
       useWorktree: isNewSession && useWorktree,
       worktreeName: null,
-      // Only a creation reads it: an existing session already carries whatever
-      // role it was given, and changing that is the header control's job.
-      roleId: isNewSession ? roleId : null,
+      // Only a creation reads it: the runtime composes an Agent into a session
+      // when the session is made, so an existing one keeps the Agent it has and
+      // this is null for every send after the first.
+      agentName: isNewSession ? agentName : null,
       isNewSession,
       // The reader's clock, not this process's. A send is stamped where Enter
       // landed; the app may not write it until a cold child is up.
@@ -1959,7 +1956,16 @@ useEffect(() => {
             // every other usage field, so a turn-level update would otherwise
             // reset the counter to zero mid-thought.
             if (agentEvent.payload.type === "usage_update") {
-              const { reasoningTokens } = agentEvent.payload;
+              const { contextWindow, costUsd, reasoningTokens } = agentEvent.payload;
+              // **The ring follows this, not `turn_completed`.** The agent states
+              // its count as the turn runs; the fold onto the closing event is
+              // what made the meter stand still until the turn was over.
+              if (contextWindow) {
+                setUsageBySession((prev) => ({
+                  ...prev,
+                  [agentEvent.sessionId]: { window: contextWindow, costUsd },
+                }));
+              }
               if (reasoningTokens !== null) {
                 setWorkingBySession((prev) => {
                   const cur = prev[agentEvent.sessionId];
@@ -2491,6 +2497,20 @@ useEffect(() => {
   };
 }, []);
 
+// The agent's roster of what it delegated, pushed whenever it moves. **Live and
+// unpersisted**, like the slash commands above: a member names a child Session
+// no restart survives, so replaying one would draw subagents nothing is running.
+useEffect(() => {
+  const listenerPromise = listen<DelegationEvent>("subagent_delegations", (event) => {
+    const { sessionId, members } = event.payload;
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: members }));
+  });
+
+  return () => {
+    listenerPromise.then((unlisten) => unlisten());
+  };
+}, []);
+
 useEffect(() => {
   const listenerPromise = listen<SessionTitleEvent>("session_title", (event) => {
     const { sessionId, title } = event.payload;
@@ -2595,6 +2615,42 @@ const liveTaskIdsBySession = useMemo(
 );
 const liveTaskIds = liveTaskIdsBySession[selectedSessionId ?? ""] ?? NO_TASKS;
 
+// The subagents the selected session's agent is running, as the agent last
+// published them. Empty for a session with nothing delegated — which is the
+// ordinary state and not "not read yet": the push and the on-demand read both
+// answer with the whole roster, so an empty list is an answer.
+const delegations = selectedSessionId ? delegationsBySession[selectedSessionId] ?? [] : [];
+
+/// Re-reads a session's roster on demand, for a pane opened after the last push.
+///
+/// **A failed read is not an error to draw.** The agent refuses a session with no
+/// live child, and an idle session genuinely has no subagents — so this leaves
+/// what is on screen rather than replacing an honest empty list with a sentence.
+const refreshDelegations = useCallback(async (sessionId: string) => {
+  try {
+    const members = await invoke<DelegatedMember[]>("session_delegations", { sessionId });
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: members }));
+  } catch {
+    // Nothing to say that the empty list does not already say.
+  }
+}, []);
+
+/// Stops every subagent this session's root started, together, and answers the
+/// agent's own refusal where it had one.
+///
+/// The sentence goes back to the caller rather than into the composer's error
+/// slot: the control lives in a panel that may belong to a split pane, and a
+/// sentence about one session written into another's composer is worse than
+/// none.
+const stopDelegations = useCallback(async (sessionId: string): Promise<string | null> => {
+  try {
+    await invoke("stop_session_delegations", { sessionId });
+    return null;
+  } catch (cause) {
+    return String(cause);
+  }
+}, []);
+
 const compacting = compactingOf(selectedSession, busy);
 const apiRetry = apiRetryOf(selectedSession, busy);
 
@@ -2636,6 +2692,18 @@ const fastNote = fastNotice(selectedSession?.events ?? []);
 // above — occupancy is a fact about the conversation, not about a live run, so
 // a settled session's last reading is still the right one.
 const contextUsage: { used: number; max: number; costUsd: number | null } | null = (() => {
+  // **The live reading leads, and it is the same number the walk below would
+  // find.** The mapper folds a `usage_update` onto the `turn_completed` that
+  // follows it, so the two agree wherever both exist — but this copy exists
+  // *while the turn runs*, which is the whole of what "real time" means here:
+  // the agent states its count as it goes and the ring follows the agent rather
+  // than the turn's end. The walk stays for the case this cannot cover: a
+  // reopened session, whose live update died with the child that sent it.
+  const live = selectedSessionId ? usageBySession[selectedSessionId] : undefined;
+  if (live) {
+    return { used: live.window.usedTokens, max: live.window.maxTokens, costUsd: live.costUsd };
+  }
+
   if (!selectedSession) return null;
 
   let used: number | null = null;
@@ -2687,6 +2755,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, roleId, setRoleId, setGlobalRoleId, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, delegations, refreshDelegations, stopDelegations, indexSide};
 
 }

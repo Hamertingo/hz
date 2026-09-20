@@ -18,13 +18,13 @@ import type {
   AssistantMessageEventStream,
   Context,
 } from '@earendil-works/pi-ai';
-import type { MetricLabels, MetricsClient } from '@mavis/shared/metrics-proxy';
+import type { MetricLabels, MetricsClient } from '@hz/shared/metrics-proxy';
 import {
   normalizeLLMError,
   toLLMMetricErrorKind,
   type LLMMetricErrorKind,
   type NormalizedLLMError,
-} from '@mavis/shared/llm-error-classifier';
+} from '@hz/shared/llm-error-classifier';
 import type { TurnTerminationReason } from '../event-bridge/types.js';
 import type { RuntimeTool, ToolOperationClassifier } from '../tools/index.js';
 import type { LLMCallSettledEvent, LLMRetryEvent } from './llm-retry.js';

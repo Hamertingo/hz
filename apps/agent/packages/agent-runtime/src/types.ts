@@ -1,6 +1,6 @@
 /**
- * `@mavis/agent-runtime` — pluggable extension SPI + per-turn assembler on top of
- * `@mavis/agent-core`.
+ * `@hz/agent-runtime` — pluggable extension SPI + per-turn assembler on top of
+ * `@hz/agent-core`.
  *
  * Aligned with the `packages/agent-runtime` Feishu design document v1.0 after review. Key
  * constraints:
@@ -32,8 +32,8 @@ import type {
   PiOnStepEndHook,
   PiStepEndHookInput,
   PiTurnHooks,
-} from '@mavis/agent-core/pi-turn-runner';
-import type { RuntimeTool, ToolExecutionContext } from '@mavis/agent-core/tools';
+} from '@hz/agent-core/pi-turn-runner';
+import type { RuntimeTool, ToolExecutionContext } from '@hz/agent-core/tools';
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core';
 import type { TSchema } from '@sinclair/typebox';
 import type { PromptReadScope } from './prompt-read.js';
@@ -43,7 +43,7 @@ import type { PromptReadScope } from './prompt-read.js';
  * `TurnStartEvent`. Matches what `PiTurnRunner.runTurn` consumes as `history`
  * and what pi's `on_history_changed` payload carries — pi's `AgentMessage`
  * union (User / Assistant / ToolResult with `role`-discriminated content),
- * NOT the flat `@mavis/agent-core/protocol` wire shape.
+ * NOT the flat `@hz/agent-core/protocol` wire shape.
  */
 export type TurnHistoryProjection = readonly PiAgentMessage[];
 
@@ -331,7 +331,7 @@ export interface AssemblyDiagnostic {
 /**
  * `PiTurnHooks` covers agent-core's existing step-level contract; the host explicitly consumes turn
  * lifecycle handlers as raw arrays. This lets agent-runtime land without modifying
- * `@mavis/agent-core` (see document §11.6 migration strategy).
+ * `@hz/agent-core` (see document §11.6 migration strategy).
  */
 export interface AssemblyResult<TCtx extends ToolExecutionContext = ToolExecutionContext> {
   readonly systemPromptPrefix: string;

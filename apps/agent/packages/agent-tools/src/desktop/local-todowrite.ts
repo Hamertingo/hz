@@ -1,5 +1,5 @@
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
-import { updateTodoState } from '@mavis/system-reminder';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
+import { updateTodoState } from '@hz/system-reminder';
 
 import { LocalTodoWriteToolDef, type LocalTodoWriteToolInput } from './builtin-defs.js';
 import type { LocalRuntimeToolContext, LocalTodoEventSink } from './types.js';

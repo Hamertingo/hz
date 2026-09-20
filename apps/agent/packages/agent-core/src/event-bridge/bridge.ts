@@ -53,12 +53,12 @@
  */
 
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
-import { LLM_ERROR_CODES, classifyLLMErrorToCode } from '@mavis/shared/llm-error-classifier';
+import { LLM_ERROR_CODES, classifyLLMErrorToCode } from '@hz/shared/llm-error-classifier';
 import {
   InstalledPluginSource,
   PluginCapabilityType,
   type IPluginCapabilityProvenance,
-} from '@mavis/protocol';
+} from '@hz/protocol';
 import type { RuntimeProtocolError, RuntimeToolCall } from '../protocol/runtime-event.js';
 import type { TokenUsage } from '../protocol/agent-message.js';
 import {
@@ -98,7 +98,7 @@ const DEFAULT_CONTEXT_WINDOW = 200_000;
  * Runtime-side mirror of the UI typed session error messages
  * (`packages/ui/src/i18n/locales/*::errors.codes`).
  *
- * Keep a local copy to avoid making `@mavis/agent-core` depend on the UI package. Keep both sets
+ * Keep a local copy to avoid making `@hz/agent-core` depend on the UI package. Keep both sets
  * synchronized: when the UI adds a daemon code that should render as a localized session error
  * during streaming, add it here so the terminal assistant `agent_message` carries `code:message`
  * instead of bare `[Error] ...` text. The UI consumes assistant + finish_reason=error as session

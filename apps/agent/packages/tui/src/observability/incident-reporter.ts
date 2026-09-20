@@ -12,7 +12,7 @@ import {
 import { arch, platform } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { isTelemetryChannelEnabled, type MavisBuildEnv, type MavisRegion } from '@mavis/config';
+import { isTelemetryChannelEnabled, type MavisBuildEnv, type MavisRegion } from '@hz/config';
 
 export type TuiIncidentPhase = 'startup' | 'runtime' | 'shutdown';
 export type TuiIncidentSeverity = 'fatal' | 'error' | 'warning';

@@ -1,10 +1,10 @@
-import { LLM_ERROR_REASONS } from '@mavis/shared/llm-error-classifier';
+import { LLM_ERROR_REASONS } from '@hz/shared/llm-error-classifier';
 import type {
   SessionLLMRetryEventPayload,
   SessionLLMRetryReason,
   SessionLLMRetryScope,
   SessionLLMRetryStatus,
-} from '@mavis/shared/llm-retry-event';
+} from '@hz/shared/llm-retry-event';
 
 const SCOPES = new Set<SessionLLMRetryScope>(['agent', 'compaction', 'title']);
 const STATUSES = new Set<SessionLLMRetryStatus>(['waiting', 'recovered', 'exhausted', 'cancelled']);

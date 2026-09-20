@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import JSZip from 'jszip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionReportService } from '@mavis/session-report';
+import { SessionReportService } from '@hz/session-report';
 
 import { uploadTuiFeedbackDiagnostics } from '../../src/runtime/feedback/diagnostic-upload.js';
 import { TuiFeedbackService } from '../../src/runtime/feedback/service.js';

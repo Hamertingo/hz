@@ -4,7 +4,7 @@
  * `buildMatrixTools` construction uniform and are unused here.
  */
 
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import type { MatrixMediaClient, MatrixPathScope, MatrixToolContext } from '../types.js';
 import { callMatrixTool, type MatrixExecutor } from '../client.js';

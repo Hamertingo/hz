@@ -6,7 +6,7 @@ import {
   type TuiExternalTargetOpener,
 } from '../host/open-external.js';
 import { prepareTuiDataDir } from '../runtime/data-dir.js';
-import type { MavisRegion } from '@mavis/config';
+import type { MavisRegion } from '@hz/config';
 
 interface TuiAuthCommandApplication {
   login: McodeAuthApplication['login'];

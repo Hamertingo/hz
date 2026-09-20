@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/agent-core",
+  "name": "@hz/agent-core",
   "version": "0.2.1",
   "description": "Shared agent runtime contracts and PiTurnRunner assembly layer for Mavis local/cloud hosts.",
   "type": "module",
@@ -68,8 +68,8 @@
     }
   },
   "dependencies": {
-    "@mavis/protocol": "workspace:^",
-    "@mavis/shared": "workspace:^",
+    "@hz/protocol": "workspace:^",
+    "@hz/shared": "workspace:^",
     "@earendil-works/pi-agent-core": "workspace:*",
     "@earendil-works/pi-ai": "workspace:*",
     "@earendil-works/pi-coding-agent": "workspace:*",
@@ -77,7 +77,7 @@
     "zod": "^3"
   },
   "devDependencies": {
-    "@mavis/config": "workspace:^",
+    "@hz/config": "workspace:^",
     "@types/node": "^20",
     "tsx": "^4",
     "typescript": "^5",

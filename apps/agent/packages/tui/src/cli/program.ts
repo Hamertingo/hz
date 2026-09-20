@@ -1,5 +1,5 @@
 import { Command, InvalidArgumentError } from 'commander';
-import type { MavisRegion } from '@mavis/config';
+import type { MavisRegion } from '@hz/config';
 import { TuiContributionRegistry } from '../contributions/index.js';
 import type { RawTuiExecOptions } from '../headless/invocation.js';
 import {
@@ -65,8 +65,8 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
       : requirePluginRunner(options)(request);
   const program = applyInteractiveCliContract(
     new Command()
-      .name('mcode')
-      .description('Minimax Code — terminal coding agent')
+      .name('hz-agent')
+      .description('Hz Agent — terminal coding agent')
       .version(options.version)
       .enablePositionalOptions(),
     { allowStartupEnvironmentSelection: options.allowStartupEnvironmentSelection },
@@ -106,7 +106,7 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
 
   const acp = program
     .command('acp')
-    .description('Run MiniMax Code as an Agent Client Protocol server over stdio')
+    .description('Run Hz Agent as an Agent Client Protocol server over stdio')
     .allowExcessArguments(false)
     .action(() =>
       activeLane ? requireAcpRunner(options)(activeLane) : requireAcpRunner(options)(),
@@ -114,7 +114,7 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
 
   acp
     .command('login')
-    .description('Sign in to use MiniMax Code Agent features')
+    .description('Sign in to use Hz Agent features')
     .option('--region <region>', 'account region: cn or global', parseLoginRegion)
     .option('--no-browser', 'print the authorization URL without opening a browser')
     .allowExcessArguments(false)
@@ -126,7 +126,7 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
 
   program
     .command('login')
-    .description('Sign in to use MiniMax Code Agent features')
+    .description('Sign in to use Hz Agent features')
     .option('--region <region>', 'account region: cn or global', parseLoginRegion)
     .option('--no-browser', 'print the authorization URL without opening a browser')
     .allowExcessArguments(false)
@@ -145,7 +145,7 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
 
   program
     .command('update')
-    .description('Check for and install a Minimax Code update')
+    .description('Check for and install a Hz Agent update')
     .allowExcessArguments(false)
     .action(options.runUpdate);
 
@@ -270,7 +270,7 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
 
   const plugin = program
     .command('plugin')
-    .description('Manage MiniMax Code Plugins')
+    .description('Manage Hz Agent Plugins')
     .allowExcessArguments(false)
     .action(() => options.launchTui(withLane({ initialPrompt: '/plugins' })));
 
@@ -317,7 +317,7 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
 
   const marketplace = plugin
     .command('marketplace')
-    .description('List or refresh MiniMax Code Plugin sources');
+    .description('List or refresh Hz Agent Plugin sources');
 
   marketplace
     .command('list')

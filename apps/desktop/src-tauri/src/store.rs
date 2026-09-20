@@ -141,17 +141,6 @@ pub struct SessionIndexItem {
     /// not spawn more.
     #[serde(default)]
     pub parent_session_id: Option<String>,
-    /// The role this agent carries, if any. See [`crate::roles`].
-    ///
-    /// An **id**, never a copy of the instructions. That is what makes an edit
-    /// to a role reach every agent already carrying it — the text is read at
-    /// spawn, so there is nothing to go stale.
-    ///
-    /// `#[serde(default)]` for the reason every field on this struct has it: the
-    /// index is rewritten whole, so an entry written before the field existed
-    /// failing to parse is *every session* gone.
-    #[serde(default)]
-    pub role_id: Option<String>,
     /// The newest context reading the agent has given for this session, with the
     /// moment it was taken.
     ///
@@ -536,10 +525,6 @@ impl SessionIndexItem {
             issues: Vec::new(),
             fork_from: None,
             parent_session_id: parent_session_id.map(str::to_string),
-            // A fresh agent carries no responsibility until one is assigned —
-            // and it is read at spawn, so assigning one before the first prompt
-            // is the same as having had it all along.
-            role_id: None,
             // Nothing has asked the agent yet.
             context_reading: None,
             created: now.clone(),
@@ -621,12 +606,6 @@ impl SessionIndexItem {
             // not — a depth cap a copy could walk around. Detach is the way out
             // for anyone who wants the fork standing on its own.
             parent_session_id: self.parent_session_id.clone(),
-            // Inherited, unlike `thread_id` above and for the opposite reason: a
-            // fork continues the same conversation in a new tree, so the
-            // responsibility it was carrying is the one it still has. Nothing
-            // copies the text — this is the same id, so an edit to the role
-            // reaches the fork too.
-            role_id: self.role_id.clone(),
             // Deliberately not inherited, unlike the fields around it. A reading
             // counts one runtime's own state, and the fork's is a different
             // session id, its own memory and its own first turn — the parent's
@@ -1187,59 +1166,6 @@ pub async fn relocate_session_to_project(
     write_session_index(&sessions).await?;
 
     Ok(Some(updated))
-}
-
-/// Points a session at a role, or clears it with `None`.
-///
-/// The one write that decides what an agent's responsibility is. The read side
-/// is [`crate::roles::instructions_for`], which runs at spawn — so this needs no
-/// respawn of its own: a session that has not spawned yet carries the new role
-/// on its first turn, and one already running carries it from the next spawn.
-#[tauri::command]
-pub async fn set_session_role(
-    session_id: &str,
-    role_id: Option<String>,
-) -> Result<Option<SessionIndexItem>, crate::Fail> {
-    let _guard = INDEX_LOCK.lock().await;
-    let mut sessions = read_index().await?;
-
-    let Some(item) = sessions.iter_mut().find(|i| i.session_id == session_id) else {
-        return Ok(None);
-    };
-    item.role_id = role_id;
-    let updated = item.clone();
-
-    write_session_index(&sessions).await?;
-
-    Ok(Some(updated))
-}
-
-/// Clears a deleted role off every session that carried it.
-///
-/// The half of a delete that keeps an agent working: an entry holding an id
-/// whose role is gone would otherwise be an agent whose behaviour depends on
-/// whether a file still parses. Called from [`crate::roles::delete_role`] and
-/// nowhere else, so there is no path that removes a role and leaves an agent
-/// pointing at nothing.
-pub async fn clear_role_from_sessions(role_id: &str) -> Result<usize> {
-    let _guard = INDEX_LOCK.lock().await;
-    let mut sessions = read_index().await?;
-
-    let mut cleared = 0;
-    for item in sessions.iter_mut() {
-        if item.role_id.as_deref() == Some(role_id) {
-            item.role_id = None;
-            cleared += 1;
-        }
-    }
-
-    // Only where something moved: a role nobody used costs no write, which is
-    // the ordinary case for one just made and not yet assigned.
-    if cleared > 0 {
-        write_session_index(&sessions).await?;
-    }
-
-    Ok(cleared)
 }
 
 /// Marks the sessions whose worktree was deleted before the index recorded it.
@@ -1828,10 +1754,6 @@ mod tests {
                 "url": "https://linear.app/hzhq/issue/DRA-53",
             }],
             "parentSessionId": "0198c0de-dead-7000-8000-00000000f00d",
-            // Present-and-null, which is what an agent with no role writes. The
-            // fixture names the wire, so a field added to the struct has to
-            // appear here or this stops describing what is on disk.
-            "roleId": null,
             "created": "2026-08-30T09:00:00Z",
             "modified": "2026-08-30T09:41:00Z",
             "archived": false,

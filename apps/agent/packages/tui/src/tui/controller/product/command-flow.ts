@@ -28,7 +28,7 @@ import type { TuiUpdateFlow } from './update-flow.js';
 import type { TuiGoalFlow } from './goal-flow.js';
 import type { TuiPlanModeFlow } from '../interaction/plan-mode-flow.js';
 import type { TuiPermissionModeFlow } from '../interaction/permission-mode-flow.js';
-import type { MavisRegion } from '@mavis/config';
+import type { MavisRegion } from '@hz/config';
 import type { McodeAuthPort } from '../../../auth/application.js';
 import { markTuiAuthorizationUrl } from '../../../auth/authorization-url.js';
 import type { TuiMode } from '../../engine/public.js';

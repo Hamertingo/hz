@@ -2,11 +2,11 @@ import {
   requireTuiAgentAccess,
   requireTuiAccountLogin,
 } from "../../src/application/login-gate.js";
-import type { CliService } from "@mavis/local-runtime-v2/cli-service";
+import type { CliService } from "@hz/local-runtime-v2/cli-service";
 import { describe, expect, it, vi } from "vitest";
 
 import { TuiRuntimeAdapter } from "../../src/runtime/adapter.js";
-import { buildTuiSkillCommands } from "../../src/tui/controller/run/active-run-flow.js";
+import { buildTuiSkillCommands } from "../../src/tui/commands/skill-commands.js";
 
 describe("TuiRuntimeAdapter product access", () => {
   it("forwards the shared Provider Presets and Codex OAuth capability", async () => {

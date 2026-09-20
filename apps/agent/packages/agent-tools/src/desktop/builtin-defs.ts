@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 
-import type { ToolDefinition } from '@mavis/agent-core/tools';
+import type { ToolDefinition } from '@hz/agent-core/tools';
 
 import { createMavisOperationClassifier } from '../shared/mavis-operation-classifier.js';
 import { LOCAL_MAVIS_COMMANDS } from './local-mavis-commands.js';

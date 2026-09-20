@@ -4,7 +4,7 @@
  * placeholders echoed in `output_file` back to the LLM's `output_file_path_list[i]`.
  */
 
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 import { basename } from 'node:path';
 
 import type { MatrixMediaClient, MatrixPathScope, MatrixToolContext } from '../types.js';

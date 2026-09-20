@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// readTuiPresentationConfig lazily imports @mavis/config on first use. Warm
+// readTuiPresentationConfig lazily imports @hz/config on first use. Warm
 // that module here so a cold import on a loaded CI worker is charged to this
 // setup hook instead of pushing the first test past its own timeout.
 beforeAll(async () => {

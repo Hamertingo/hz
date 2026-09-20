@@ -1,4 +1,4 @@
-import type { MavisBuildEnv, MavisRegion } from '@mavis/config';
+import type { MavisBuildEnv, MavisRegion } from '@hz/config';
 import {
   createAuthNamespace,
   createCredentialStore,
@@ -7,7 +7,7 @@ import {
   MCodeOAuthCore,
   type HttpOAuthClientOptions,
   type OAuthClient,
-} from '@mavis/oauth-core';
+} from '@hz/oauth-core';
 
 export interface CreateMcodeSharedAuthSessionOptions {
   dataDir: string;

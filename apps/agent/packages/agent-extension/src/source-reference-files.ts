@@ -1,5 +1,5 @@
 import nodePath from 'node:path';
-import { shellSourceStages } from '@mavis/agent-runtime';
+import { shellSourceStages } from '@hz/agent-runtime';
 
 import type { ToolSourceAdapterInput, ToolSourceReference } from './source-reference.js';
 

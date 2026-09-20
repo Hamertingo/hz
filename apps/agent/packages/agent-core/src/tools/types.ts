@@ -27,7 +27,7 @@
 import type { AgentToolUpdateCallback, ToolExecutionMode } from '@earendil-works/pi-agent-core';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import type { Static, TSchema } from '@sinclair/typebox';
-import type { IPluginCapabilityProvenance } from '@mavis/protocol';
+import type { IPluginCapabilityProvenance } from '@hz/protocol';
 
 export type RuntimeToolSource = 'builtin' | 'builtin-matrix' | 'configured';
 

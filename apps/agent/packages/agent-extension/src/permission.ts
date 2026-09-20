@@ -1,9 +1,9 @@
 /**
  * `permissionExtension`: Installs the permission `PermissionEngine` through the
- * `@mavis/agent-runtime` extension SPI's `pi.on('before_tool_call')` short-circuit event (design
+ * `@hz/agent-runtime` extension SPI's `pi.on('before_tool_call')` short-circuit event (design
  * document §4.3).
  *
- * Boundary policy: `@mavis/permission` is a pure decision engine. `checkPermission(toolName, input,
+ * Boundary policy: `@hz/permission` is a pure decision engine. `checkPermission(toolName, input,
  * ctx) => PermissionDecision` requires a host-provided `ToolPermissionContext` (including
  * host-specific rules / mode / sandbox state). This factory therefore accepts a host closure
  * `decide(toolName, input, toolCallCtx) => Promise<PermissionDecision>`. The extension only adapts
@@ -27,8 +27,8 @@
  *   `LocalPermissionFacade`.
  */
 
-import type { AgentExtension, BeforeToolCallHandler, ExtensionAPI } from '@mavis/agent-runtime';
-import type { PermissionDecision } from '@mavis/permission';
+import type { AgentExtension, BeforeToolCallHandler, ExtensionAPI } from '@hz/agent-runtime';
+import type { PermissionDecision } from '@hz/permission';
 
 /** Minimal shape captured from pi `BeforeToolCallContext` — subset actually needed by decision engines. */
 export interface PermissionToolCallSummary {
@@ -50,7 +50,7 @@ export interface PermissionExtensionOptions {
    * the pi `BeforeToolCallResult.reason` field. Defaults to `JSON.stringify`
    * on the reason object—hosts wanting the localized `reason-format` output
    * pass their own formatter here (e.g. `formatDecisionReason` from
-   * `@mavis/permission`).
+   * `@hz/permission`).
    *
    * Caveat: default JSON.stringify drops `Map` values (e.g. `subcommandResults`
    * in bash-decision reason variants) — host formatters should handle those

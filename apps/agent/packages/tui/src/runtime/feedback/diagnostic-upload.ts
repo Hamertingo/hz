@@ -6,9 +6,9 @@ import {
   getRuntimeRegion,
   type MavisBuildEnv,
   type MavisRegion,
-} from '@mavis/config';
+} from '@hz/config';
 import JSZip from 'jszip';
-import type { SessionReportManifest } from '@mavis/local-runtime-v2/session-system';
+import type { SessionReportManifest } from '@hz/local-runtime-v2/session-system';
 
 import { summarizeDiagnosticText } from './diagnostic-summary.js';
 

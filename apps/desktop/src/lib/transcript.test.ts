@@ -273,26 +273,30 @@ describe("a failed turn whose sentence arrived twice", () => {
   });
 
   /// A user's own Stop closes the turn as an error and deliberately draws no
-  /// red row, so there is nothing to be duplicated by — dropping the block
-  /// there would take the agent's last words off screen entirely.
-  it("keeps the block when the abort draws no row", () => {
+  /// red row, so nothing echoes it — but the block is still the turn's last
+  /// word, so it is the **answer** and is carried there. Losing it here would
+  /// take the agent's last words off screen entirely, which is what this pins.
+  it("carries the block as the answer when the abort draws no row", () => {
     const { turns } = buildTranscript(
       [prompt(0, "go", false), text(1, OAUTH), failed(2, OAUTH, "aborted_streaming")],
       false,
     );
 
-    expect(textRows(turns[0])).toHaveLength(1);
+    expect(textRows(turns[0])).toHaveLength(0);
+    expect(turns[0].finalText).toBe(OAUTH);
   });
 
-  /// A successful turn's `finalText` is the ordinary duplicate the collapsed
-  /// view already handles by standing in for the message, not by dropping it.
-  it("leaves a successful turn's own duplicate alone", () => {
+  /// **A successful turn's duplicate leaves the work.** `finalText` is drawn
+  /// under the summary, so the row it stands for is the answer rather than a
+  /// step — and kept in, opening that summary swallowed the ending into the
+  /// trace and left a finished turn with nothing at the bottom of it.
+  it("moves a successful turn's own duplicate out of the work", () => {
     const { turns } = buildTranscript(
       [prompt(0, "go", false), text(1, "all done"), completed(2, "all done")],
       false,
     );
 
-    expect(textRows(turns[0])).toHaveLength(1);
+    expect(textRows(turns[0])).toHaveLength(0);
     expect(turns[0].finalText).toBe("all done");
   });
 });
@@ -322,10 +326,10 @@ describe("segmentWork", () => {
     expect(segments[1].prompt).toBeNull();
   });
 
-  /// `finalText` re-renders the turn's last message, and the turn-level counts
-  /// discount it — the last segment has to agree, or the summary line promises
-  /// a message the collapse isn't hiding.
-  it("mirrors the finalText discount on the last segment", () => {
+  /// The answer left the work in `groupTurns`, so a segment's own counts are the
+  /// turn's counts — the last stretch has nothing to promise that the collapse
+  /// is not hiding, and the two cannot drift apart.
+  it("counts a segment's messages off the work the turn kept", () => {
     const { turns } = buildTranscript(
       [
         prompt(0, "go", false),

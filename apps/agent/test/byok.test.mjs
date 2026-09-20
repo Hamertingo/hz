@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { withoutProxyEnvironment } from "./offline-environment.mjs";
 
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
@@ -23,7 +23,10 @@ test(
   "BYOK runs without managed login and resumes its saved conversation",
   { timeout: 90000 },
   async (t) => {
-    const dataDir = mkdtempSync(path.join(tmpdir(), "minimax-code-byok-"));
+    const fixtureDir = mkdtempSync(path.join(tmpdir(), "minimax-code-byok-"));
+    const dataDir = path.join(fixtureDir, "data");
+    const workspaceDir = path.join(fixtureDir, "workspace");
+    mkdirSync(workspaceDir);
     const dbPath = path.join(dataDir, "v2", "sqlite", "runtime-state.sqlite");
     mkdirSync(path.dirname(dbPath), { recursive: true });
     const legacyDb = new Database(dbPath);
@@ -38,7 +41,7 @@ test(
     }
     const requests = [];
     const readMarker = `ACTUAL_FILE_CONTENT_${Date.now()}`;
-    writeFileSync(path.join(dataDir, "read-fixture.txt"), readMarker);
+    writeFileSync(path.join(workspaceDir, "read-fixture.txt"), readMarker);
     let toolRequested = false;
     let rejectConnection = false;
     const networkAudit = path.join(dataDir, "network-audit.log");
@@ -97,7 +100,7 @@ test(
                       function: {
                         name: "read",
                         arguments: JSON.stringify({
-                          path: path.join(dataDir, "read-fixture.txt"),
+                          path: path.join(workspaceDir, "read-fixture.txt"),
                         }),
                       },
                     },
@@ -148,7 +151,7 @@ test(
             : "Unexpected external request",
         );
       } finally {
-        rmSync(dataDir, { recursive: true, force: true });
+        rmSync(fixtureDir, { recursive: true, force: true });
       }
     });
     const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
@@ -173,7 +176,7 @@ test(
         : args;
       return new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [cli, ...commandArgs], {
-          cwd: dataDir,
+          cwd: workspaceDir,
           env: { ...withoutProxyEnvironment(environment), ...env },
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -332,6 +335,32 @@ test(
       assert.equal(savedConfig().defaultModel, config.defaultModel);
     }
     assert.equal(requests.length, beforeSaveOnly, "Limits alone must not test or select a model");
+    // Exercise the metadata persisted by provider preset import through real
+    // config reload, headless validation and the OpenAI-compatible request body.
+    const effortConfig = savedConfig();
+    effortConfig.custom_provider.fixture.models["kimi-k3"] = {
+      reasoning: true,
+      thinking: { effortOptions: ["low", "high", "max"] },
+    };
+    writeFileSync(configPath, stringifyYaml(effortConfig));
+    const effortModel = `${selected.providerId}/kimi-k3`;
+    for (const effort of ["low", "high", "max"]) {
+      const beforeEffort = requests.length;
+      await run(["exec", "EFFORT_TEST", "--model", effortModel, "--effort", effort,
+        "--timeout", "20s", "--max-steps", "1"]);
+      // Background title generation is a separate non-streaming request and
+      // does not use the turn's effort selection.
+      const modelRequests = requests.slice(beforeEffort).filter(
+        (r) => r.body.model === "kimi-k3" && r.body.stream === true,
+      );
+      assert.ok(modelRequests.length > 0);
+      for (const request of modelRequests) assert.equal(request.body.reasoning_effort, effort);
+    }
+    const beforeInvalidEffort = requests.length;
+    await assert.rejects(run(["exec", "EFFORT_TEST", "--model", effortModel,
+      "--effort", "medium", "--timeout", "20s", "--max-steps", "1"]),
+    /Available levels: low, high, max/);
+    assert.equal(requests.length, beforeInvalidEffort, "Invalid effort must fail before transport");
     const modelArgs = ["--model", `${selected.providerId}/fixture-model`];
     // The first run must work through the saved default, without --model or managed login.
     const first = await run([

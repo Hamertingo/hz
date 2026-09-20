@@ -145,10 +145,9 @@ export type TurnSegment = {
 /// they said. Each stretch gets its own summary line instead, so a prompt sits
 /// after the work it interrupted, collapsed or not.
 ///
-/// The last segment's counts absorb the same discount `groupTurns` applies to
-/// the turn: `finalText` re-renders the turn's last message, and that message is
-/// always in the last segment — a queued prompt after it would have unset the
-/// discount by being the last rendered row itself.
+/// Nothing is discounted here any more, and that is worth saying: the message
+/// `finalText` stands for leaves the turn's work in `groupTurns`, so a segment's
+/// own counts *are* the turn's counts and the two cannot disagree.
 export function segmentWork(turn: Turn): TurnSegment[] {
   const segments: TurnSegment[] = [];
   let items: WorkItem[] = [];
@@ -179,12 +178,6 @@ export function segmentWork(turn: Turn): TurnSegment[] {
     items.push(item);
   }
   push(null);
-
-  const raw = segments.reduce((n, s) => n + s.messages, 0);
-  const discount = raw - turn.messages;
-  const last = segments[segments.length - 1];
-  last.messages -= discount;
-  last.rows -= discount;
 
   return segments;
 }
@@ -276,6 +269,18 @@ function failureSentence(completed: AgentEvent | null): string | null {
   if (completed === null || completed.payload.type !== "turn_completed") return null;
   if (!drawsFailure(completed.payload)) return null;
   return completed.payload.finalText?.trim() || null;
+}
+
+/// The turn's last assistant message, or null where it has none.
+///
+/// The block `finalText` stands for: the harness copies its last message there,
+/// and a turn that closed without one falls back to that same message. Either
+/// way one row holds the answer, and it is the one that leaves `work`.
+function lastAssistantText(work: AgentEvent[]): AgentEvent | null {
+  for (let i = work.length - 1; i >= 0; i--) {
+    if (work[i].payload.type === "assistant_text") return work[i];
+  }
+  return null;
 }
 
 /// The trailing text block a failed turn's red row would repeat, or null.
@@ -467,7 +472,6 @@ function groupTurns(events: AgentEvent[], subagentIds: Set<string>): Turn[] {
     // settles all three at once.
     const echoed = echoedFailure(turn);
     const body = echoed ? turn.work.filter((event) => event !== echoed) : turn.work;
-    const work = groupTools(body, subagentIds);
     // An interrupted or otherwise cut-short turn closes with no `finalText` —
     // the CLI only writes one for a turn that ended on its own terms. Fall back
     // to the turn's last message so the collapsed view still ends on what the
@@ -479,22 +483,37 @@ function groupTurns(events: AgentEvent[], subagentIds: Set<string>): Turn[] {
     // on, so `finalText` is cleared rather than reaching back to an earlier
     // message that was never the turn's last word.
     let finalText = echoed ? null : turn.finalText;
+    /// The row `finalText` stands for, when one can be named.
+    let answer: AgentEvent | null = null;
     if (!echoed && finalText === null && turn.completed !== null) {
       for (let i = turn.work.length - 1; i >= 0; i--) {
         const p = turn.work[i].payload;
         if (p.type === "assistant_text") {
           finalText = p.text;
+          // The fallback takes the message, so the message is the answer by
+          // construction — no second test needed.
+          answer = turn.work[i];
           break;
         }
       }
+    } else if (!echoed && finalText !== null && lastWasAssistantText) {
+      // The harness's own copy, and it names a row only when **both** hold: the
+      // message is the turn's trailing rendered row, and its words are the copy.
+      // Either alone picks the wrong one — a message the agent narrated an error
+      // in merely *contains* the sentence, and a matching message it went back
+      // to work after is its own statement.
+      const last = lastAssistantText(turn.work);
+      if (last?.payload.type === "assistant_text" && last.payload.text.trim() === finalText.trim()) {
+        answer = last;
+      }
     }
-    // `finalText` is a verbatim copy of the turn's last `assistant_text`, and
-    // the collapsed view renders it in that message's place — so when the last
-    // rendered row really is that message, it is on screen either way:
-    // collapsing hides one fewer row, and the summary has one fewer message to
-    // claim. An interrupted turn has no `finalText`, and a tool call after the
-    // last message means the copy is of an earlier one; neither discounts.
-    const duplicated = finalText !== null && lastWasAssistantText ? 1 : 0;
+    // **The answer leaves the work, and that is the whole of "one message, one
+    // place".** `TurnBlock` draws `finalText` under the summary, so the row it
+    // stands for goes rather than being drawn twice — and, kept in, expanding
+    // that summary swallowed the answer into the trace and left a finished turn
+    // with no ending on screen.
+    const answered = answer === null ? body : body.filter((event) => event !== answer);
+    const work = groupTools(answered, subagentIds);
     // Queued prompts stay on screen through a collapse, so they are not rows
     // the toggle has to account for. Without this a turn whose only extra row is
     // a queued prompt offers a toggle that reveals nothing.
@@ -503,12 +522,12 @@ function groupTurns(events: AgentEvent[], subagentIds: Set<string>): Turn[] {
       ...rest,
       finalText,
       work,
-      // An echoed block is gone from `work`, so the row count already excludes
-      // it and only the message tally still has to be told. `duplicated` is
-      // zero there by construction — it needs a `finalText`, and an echoed turn
-      // has none.
-      messages: turn.messages - (echoed ? 1 : duplicated),
-      rows: work.filter(rendersRow).length - duplicated - alwaysShown,
+      // Both counts are read off `work`, so a row that left it is already gone
+      // from them. The message tally is the one exception, because it is a
+      // running total rather than a filter over what is left: whichever text
+      // block left — the echoed one, or the answer — comes off here.
+      messages: turn.messages - (echoed !== null || answer !== null ? 1 : 0),
+      rows: work.filter(rendersRow).length - alwaysShown,
     });
   };
 

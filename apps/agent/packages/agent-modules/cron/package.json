@@ -1,7 +1,7 @@
 {
-  "name": "@mavis/cron",
+  "name": "@hz/cron",
   "version": "0.2.1",
-  "description": "Cron task scheduling/execution capability for Mavis agent runtimes. Depends only on @mavis/agent-core primitives; never imports runtime packages.",
+  "description": "Cron task scheduling/execution capability for Mavis agent runtimes. Depends only on @hz/agent-core primitives; never imports runtime packages.",
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
@@ -11,8 +11,8 @@
     }
   },
   "dependencies": {
-    "@mavis/agent-core": "workspace:^",
-    "@mavis/shared": "workspace:^"
+    "@hz/agent-core": "workspace:^",
+    "@hz/shared": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^20",

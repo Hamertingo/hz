@@ -1,4 +1,4 @@
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
 
 import { callMatrixToolRaw, type MatrixExecutor } from '../client.js';
 import {

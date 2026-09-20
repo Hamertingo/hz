@@ -87,7 +87,12 @@ export default defineConfig(async () => ({
     // `.claude/worktrees` holds live agent worktrees — full checkouts of this
     // repo. Their test files resolve `@` against *this* tree's src, so a stale
     // copy fails against code it was never written for.
-    exclude: [...configDefaults.exclude, "**/.claude/**"],
+    //
+    // And `src-tauri/target` holds the agent, copied there for a build. It is a
+    // third-party tree with its own suite, written for its own runner, against a
+    // layout it does not have here — so a run that picks its files up fails on
+    // missing siblings rather than on anything in this app.
+    exclude: [...configDefaults.exclude, "**/.claude/**", "**/src-tauri/target/**"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

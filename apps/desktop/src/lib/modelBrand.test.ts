@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { modelBrand } from "@/lib/modelBrand";
+import { modelBrand, modelDisplayName } from "@/lib/modelBrand";
 
 describe("modelBrand", () => {
   /// The slug is what is asserted rather than the path data: the geometry is the
@@ -62,5 +62,44 @@ describe("modelBrand", () => {
   it("always answers something", () => {
     expect(modelBrand("").initial).toBe("?");
     expect(modelBrand("m::").initial).toBe("?");
+  });
+});
+
+/// **A reseller names a model `publisher/model`, and the publisher is not part of
+/// what the model is called.** Command Code serves 71 rows, 55 of them prefixed —
+/// `meta/muse-spark-1.3`, `zai-org/GLM-5.3`, `moonshotai/Kimi-K3` — and answers a
+/// plain `name` for every one of them, which is what the row should read as.
+describe("a catalog that prefixes the publisher", () => {
+  it("drops the prefix from the name", () => {
+    expect(modelDisplayName("meta/muse-spark-1.3")).toBe("Muse Spark 1.3");
+    expect(modelDisplayName("moonshotai/Kimi-K3")).toBe("Kimi K3");
+    expect(modelDisplayName("MiniMaxAI/MiniMax-M3")).toBe("MiniMax M3");
+    expect(modelDisplayName("deepseek/deepseek-v4-pro")).toBe("DeepSeek V4 Pro");
+    expect(modelDisplayName("google/gemini-3.8-flash")).toBe("Gemini 3.8 Flash");
+  });
+
+  /// **And it is what the brand table was missing.** Nothing keys off `zai-org`
+  /// or `xai`, so a row drawn with its prefix loses the mark it has under the
+  /// name its own publisher uses.
+  it("gives the mark back, because the table keys off the model", () => {
+    expect(modelBrand("zai-org/GLM-5.3").slug).toBe("zhipu");
+    expect(modelBrand("xai/grok-4.6").slug).toBe("grok");
+    expect(modelBrand("Qwen/Qwen3.8-Max").slug).toBe("qwen");
+    expect(modelBrand("xiaomi/mimo-v2.5-pro").slug).toBe("xiaomimimo");
+  });
+
+  /// A name with no slash is its own answer, which is the whole of what a gateway
+  /// serving its own models states — the OpenCode Go rows, unchanged.
+  it("leaves a name that has no publisher alone", () => {
+    expect(modelDisplayName("minimax-m3")).toBe("MiniMax M3");
+    expect(modelDisplayName("glm-5.3")).toBe("GLM 5.3");
+    expect(modelDisplayName("kimi-k2.7-code")).toBe("Kimi K2.7 Code");
+  });
+
+  /// The **last** segment, not the first: a catalog is free to nest one.
+  it("takes the last segment where a catalog nests one", () => {
+    expect(modelDisplayName("accounts/fireworks/models/llama-v3-70b")).toBe(
+      "Llama V3 70b",
+    );
   });
 });

@@ -10,13 +10,18 @@ export const MCODE_PUBLIC_NPM_REGISTRY = 'https://registry.npmjs.org/';
 export const MCODE_PUBLIC_NPM_MIRROR_REGISTRY = 'https://registry.npmmirror.com/';
 const REGISTRY_FETCH_TIMEOUT_MS = 30_000;
 const MCODE_PACKAGE_BASENAME = 'code';
-const MCODE_INTERNAL_SCOPE = '@minimax';
+const MCODE_INTERNAL_SCOPE = '@hz';
 const MCODE_PUBLIC_SCOPE = '@minimax-ai';
 // Public packaging rewrites this marker together with the bundled package identity.
 const MCODE_EMBEDDED_PACKAGE_NAME = '@minimax-ai/code' as McodeNpmPackageName;
+// The two scopes, as the install-path patterns below spell them. Stated here so a
+// scope rename has one other place to look — these regexes matched `@minimax`
+// long after the package was called `@hz`, and a path that stops matching
+// classifies as *not an install of ours*, which is a silent wrong answer.
+const MCODE_SCOPE_PATTERN = '@(?:hz|minimax-ai)';
 
 export type McodeNpmDistTag = 'latest' | 'test' | 'preview';
-export type McodeNpmPackageName = '@minimax/code' | '@minimax-ai/code';
+export type McodeNpmPackageName = '@hz/code' | '@minimax-ai/code';
 type TuiBuildEnvironment = 'test' | 'staging' | 'prod';
 
 declare const __TUI_BUILD_ENV__: TuiBuildEnvironment | undefined;
@@ -102,26 +107,32 @@ export async function detectMcodeInstallSource(
   }
 }
 
+/// The tail every one of those layouts ends on: a `node_modules` holding the
+/// package under either scope it is shipped as.
+///
+/// Built from the scope pattern rather than spelled out, because the two move
+/// together and a path that stops matching classifies as *not an install of
+/// ours* — a silent wrong answer that reads as "no update available".
+function mcodeInstallPattern(prefix: string): RegExp {
+  return new RegExp(`${prefix}/node_modules/${MCODE_SCOPE_PATTERN}/code$`, 'u');
+}
+
 export function classifyMcodeInstallPath(
   packageRoot: string,
 ): McodePackageManagerInstallSource | undefined {
   const normalized = packageRoot.replaceAll('\\', '/').toLocaleLowerCase();
-  if (
-    /\/pnpm\/global\/(?:v11\/[^/]+|[^/]+)\/node_modules\/@minimax(?:-ai)?\/code$/u.test(normalized)
-  ) {
+  if (mcodeInstallPattern('/pnpm/global/(?:v11/[^/]+|[^/]+)').test(normalized)) {
     return 'pnpm-global';
   }
-  if (
-    /\/(?:\.config\/yarn|\.yarn)\/global\/node_modules\/@minimax(?:-ai)?\/code$/u.test(normalized)
-  ) {
+  if (mcodeInstallPattern('/(?:\\.config/yarn|\\.yarn)/global').test(normalized)) {
     return 'yarn-global';
   }
-  if (/\/\.bun\/install\/global\/node_modules\/@minimax(?:-ai)?\/code$/u.test(normalized)) {
+  if (mcodeInstallPattern('/\\.bun/install/global').test(normalized)) {
     return 'bun-global';
   }
   if (
-    /\/lib\/node_modules\/@minimax(?:-ai)?\/code$/u.test(normalized) ||
-    /\/npm\/node_modules\/@minimax(?:-ai)?\/code$/u.test(normalized)
+    mcodeInstallPattern('/lib').test(normalized) ||
+    mcodeInstallPattern('/npm').test(normalized)
   ) {
     return 'npm-global';
   }

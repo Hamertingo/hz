@@ -2,7 +2,7 @@ import type {
   LocalBrowserAdapter,
   LocalBrowserToolAction,
   LocalRuntimeToolContext,
-} from '@mavis/agent-tools/desktop';
+} from '@hz/agent-tools/desktop';
 import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -19,7 +19,7 @@ import {
   type BrowserTransportEvent,
   type BrowserTransportEventListener,
   type ClipboardProvider,
-} from '@mavis/browser-core';
+} from '@hz/browser-core';
 import {
   HeadlessChromeBrowser,
   type HeadlessChromeLaunchOptions,

@@ -85,7 +85,7 @@ export class CronRegistry {
     const scheduler = this.options.scheduler;
     if (!scheduler) {
       throw new AppError(
-        '[@mavis/cron] CronRegistry requires a host-provided CronSchedulerPort. ' +
+        '[@hz/cron] CronRegistry requires a host-provided CronSchedulerPort. ' +
           'Runtime hosts must inject a scheduler instead of relying on agent-core timers.',
         'CRON_SCHEDULER_MISSING',
         500,

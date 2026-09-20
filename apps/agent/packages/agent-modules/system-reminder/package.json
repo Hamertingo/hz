@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/system-reminder",
+  "name": "@hz/system-reminder",
   "version": "0.2.1",
   "description": "Framework-agnostic system-reminder assembly for Mavis agents; never imports runtime packages.",
   "type": "module",
@@ -11,7 +11,7 @@
     }
   },
   "devDependencies": {
-    "@mavis/config": "workspace:^",
+    "@hz/config": "workspace:^",
     "@types/node": "^20",
     "typescript": "^5",
     "vitest": "^2"

@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/agent-tools",
+  "name": "@hz/agent-tools",
   "version": "0.2.1",
   "description": "Platform-owned runtime tool definitions and helpers for Mavis hosts.",
   "type": "module",
@@ -37,13 +37,13 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "workspace:*",
     "@earendil-works/pi-coding-agent": "workspace:*",
-    "@mavis/agent-core": "workspace:^",
-    "@mavis/plugin-hooks": "workspace:^",
-    "@mavis/background-task": "workspace:^",
-    "@mavis/context-manager": "workspace:^",
-    "@mavis/protocol": "workspace:^",
-    "@mavis/shared": "workspace:^",
-    "@mavis/system-reminder": "workspace:^",
+    "@hz/agent-core": "workspace:^",
+    "@hz/plugin-hooks": "workspace:^",
+    "@hz/background-task": "workspace:^",
+    "@hz/context-manager": "workspace:^",
+    "@hz/protocol": "workspace:^",
+    "@hz/shared": "workspace:^",
+    "@hz/system-reminder": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@sinclair/typebox": "^0.34.0",
     "@vscode/ripgrep": "1.18.0",
@@ -63,7 +63,7 @@
     "@types/shell-quote": "^1.7.5",
     "typescript": "^5",
     "vitest": "^2",
-    "@mavis/protocol": "workspace:*"
+    "@hz/protocol": "workspace:*"
   },
   "private": true,
   "license": "MIT"

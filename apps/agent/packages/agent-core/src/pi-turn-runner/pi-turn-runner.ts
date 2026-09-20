@@ -10,7 +10,7 @@
  * @see packages/agent-core/ARCHITECTURE.md
  */
 
-import type { MetricsClient } from '@mavis/shared/metrics-proxy';
+import type { MetricsClient } from '@hz/shared/metrics-proxy';
 import type { TurnTerminationReason } from '../event-bridge/types.js';
 import { newAgent, runAgent } from './agent.js';
 import { defaultMessageIdAllocator, defaultNowMs, noopLogger } from './defaults.js';

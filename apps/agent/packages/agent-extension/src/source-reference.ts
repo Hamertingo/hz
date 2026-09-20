@@ -7,13 +7,13 @@ import {
   collapseAdjacentDuplicateFileCitations,
   collectUsedWebEvidenceIds,
   resolveKnownCitationAlias,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 import type {
   AfterLlmCallHandler,
   AgentExtension,
   AfterToolCallHandler,
   TurnAssemblyCtx,
-} from '@mavis/agent-runtime';
+} from '@hz/agent-runtime';
 import {
   filePathsMatch,
   generatedFilePathsForToolCall,

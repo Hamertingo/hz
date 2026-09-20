@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { release } from 'node:os';
 
-import { getRuntimeRegion, type MavisBuildEnv, type MavisRegion } from '@mavis/config';
+import { getRuntimeRegion, type MavisBuildEnv, type MavisRegion } from '@hz/config';
 
 import type {
   TuiFeedbackPhase,
@@ -184,7 +184,7 @@ export class TuiFeedbackService {
     let token = auth?.accessToken?.trim();
     if (!token)
       throw feedbackError(
-        'MiniMax Code sign-in is required. Run /login, then retry.',
+        'Hz Agent sign-in is required. Run /login, then retry.',
         'feedback_login_required',
         401,
         true,
@@ -215,14 +215,14 @@ export class TuiFeedbackService {
       const realUserID = auth?.realUserID?.trim();
       if (!token)
         throw feedbackError(
-          'MiniMax Code sign-in is required. Run /login, then retry.',
+          'Hz Agent sign-in is required. Run /login, then retry.',
           'feedback_login_required',
           401,
           true,
         );
       if (!realUserID)
         throw feedbackError(
-          'MiniMax Code account identity is not ready. Check the connection, then retry.',
+          'Hz Agent account identity is not ready. Check the connection, then retry.',
           'feedback_upload_failed',
           503,
           true,

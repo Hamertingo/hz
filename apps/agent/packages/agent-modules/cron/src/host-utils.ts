@@ -170,7 +170,7 @@ export function formatLocalMonthDayTime(ts: number | Date): string {
 
 const fallbackThrow = (label: string): never => {
   throw new Error(
-    `[@mavis/cron] No ${label} registered. Hosts must call ` +
+    `[@hz/cron] No ${label} registered. Hosts must call ` +
       `configureCronHost(...) before cron orchestration runs.`,
   );
 };

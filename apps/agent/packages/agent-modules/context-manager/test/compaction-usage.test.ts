@@ -3,7 +3,7 @@ import type {
   CompactionSummaryMessage,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { PiBeforeLlmCallHookInput } from "@mavis/agent-core/pi-turn-runner";
+import type { PiBeforeLlmCallHookInput } from "@hz/agent-core/pi-turn-runner";
 import { describe, expect, it, vi } from "vitest";
 import { ContextManager } from "../src/manager.js";
 import { BpeTokenEstimator } from "../src/token-estimator.js";

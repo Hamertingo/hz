@@ -1,8 +1,8 @@
-/** @deprecated Import the source contracts from `@mavis/agent-core`. */
-export { isPromptSnapshotInvalidError, PromptSnapshotInvalidError } from '@mavis/agent-core';
+/** @deprecated Import the source contracts from `@hz/agent-core`. */
+export { isPromptSnapshotInvalidError, PromptSnapshotInvalidError } from '@hz/agent-core';
 export type {
   PromptReadScope,
   PromptReadSnapshot,
   PromptSnapshotSource,
   PromptTemplateRead,
-} from '@mavis/agent-core';
+} from '@hz/agent-core';

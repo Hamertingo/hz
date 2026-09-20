@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/session-report",
+  "name": "@hz/session-report",
   "version": "0.1.0",
   "private": true,
   "description": "Host-independent local Session diagnostics and feedback artifact collection.",

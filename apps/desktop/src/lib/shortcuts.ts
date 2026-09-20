@@ -59,6 +59,10 @@ export const SHORTCUTS = [
   { id: "chat.bottom", label: "Scroll chat to bottom", group: "Panels and views", chord: k("ArrowDown") },
   { id: "issues.open", label: "Open issues", group: "Panels and views", chord: k("i") },
   { id: "prs.open", label: "Open pull requests", group: "Panels and views", chord: k("l", { shift: true }) },
+  // Not ⌘⇧P, which is the one that reads like the name and already belongs to
+  // `project.next`: two ids cannot share a default, and moving an unrelated chord
+  // to free this one is a behaviour change nobody asked for.
+  { id: "plugins.open", label: "Open plugins", group: "Panels and views", chord: k("u", { shift: true }) },
   { id: "issues.search", label: "Search issues", group: "Panels and views", chord: k("f", { shift: true }) },
 
   { id: "dictate", label: "Dictate", group: "Composer", chord: k("d") },

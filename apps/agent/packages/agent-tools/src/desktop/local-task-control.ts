@@ -1,5 +1,5 @@
-import { bindTool, type ToolImpl, type ToolResult } from '@mavis/agent-core/tools';
-import { isActiveTaskStatus, type BackgroundTask, type TaskQuery } from '@mavis/background-task';
+import { bindTool, type ToolImpl, type ToolResult } from '@hz/agent-core/tools';
+import { isActiveTaskStatus, type BackgroundTask, type TaskQuery } from '@hz/background-task';
 
 import {
   LocalTaskOutputToolDef,

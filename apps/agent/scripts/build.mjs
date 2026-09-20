@@ -72,7 +72,7 @@ const sourcePlugin = {
     });
   },
 };
-const version = packages.get("@minimax/code").manifest.version;
+const version = packages.get("@hz/code").manifest.version;
 const result = await build({
   absWorkingDir: root,
   entryPoints: {
@@ -137,7 +137,7 @@ writeFileSync(
   JSON.stringify(result.metafile, null, 2) + "\n",
 );
 console.log(
-  `Built MiniMax Code ${version} from ${Object.keys(result.metafile.inputs).length} source files.`,
+  `Built Hz Agent ${version} from ${Object.keys(result.metafile.inputs).length} source files.`,
 );
 
 writeFileSync(

@@ -77,18 +77,18 @@ async function launch(copies: Record<string, unknown>, named: Record<string, unk
 
 describe("adoptDurablePreferences", () => {
   it("moves a pick the webview still holds and lets the copy go", async () => {
-    const prefs = await launch({ "hz.modelRotation": ["opus"], "hz.space": "work" });
+    const prefs = await launch({ "hz.hiddenModels": ["opus"], "hz.space": "work" });
 
     expect(invoke).toHaveBeenLastCalledWith("set_preferences", {
       patches: [
-        { field: "modelRotation", value: ["opus"] },
+        { field: "hiddenModels", value: ["opus"] },
         { field: "space", value: "work" },
       ],
     });
-    expect(webview.has("hz.modelRotation")).toBe(false);
+    expect(webview.has("hz.hiddenModels")).toBe(false);
     expect(webview.has("hz.space")).toBe(false);
     expect(prefs.readPreference("hz.space", null)).toBe("work");
-    expect(prefs.readPreference("hz.modelRotation", [])).toEqual(["opus"]);
+    expect(prefs.readPreference("hz.hiddenModels", [])).toEqual(["opus"]);
   });
 
   /// The whole of the idempotence argument: the copy is removed only after the

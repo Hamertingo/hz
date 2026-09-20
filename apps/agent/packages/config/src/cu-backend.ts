@@ -3,7 +3,7 @@
  *
  * Intentionally has **zero** Node-only imports (no `node:fs`, no
  * `js-yaml`) so this file can be consumed unchanged by the renderer
- * package via the `@mavis/config/cu-backend` sub-path export. The
+ * package via the `@hz/config/cu-backend` sub-path export. The
  * Node-side getter/setter that touches `config.yaml` lives in
  * `cu-backend-io.ts`.
  */

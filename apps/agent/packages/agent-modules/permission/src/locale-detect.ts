@@ -29,7 +29,7 @@
  * "produce the Chinese template or the English template?". Treat any other language as `unknown`.
  */
 
-import type { AgentMessageProtocol } from '@mavis/agent-core/protocol/agent-message';
+import type { AgentMessageProtocol } from '@hz/agent-core/protocol/agent-message';
 
 /** Coarse user-language hint for picking localized templates. */
 export type UserLocaleHint = 'zh' | 'en' | 'unknown';

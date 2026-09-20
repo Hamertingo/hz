@@ -9,7 +9,7 @@ reproduced in full here rather than linked. The credit tables in
 **The bundled CLI is the one licence here that ships as a file.** Everything
 else is a palette or a link; `apps/desktop/scripts/vendor-mcode.sh` copies the
 built MiniMax Code CLI into the app bundle, so its notice travels in the same
-directory (`src-tauri/resources/mcode/LICENSE`) as well as here.
+directory (`src-tauri/resources/agent/LICENSE`) as well as here.
 
 Ported palettes live in `apps/desktop/src/App.css`. Colours are theirs, token
 names are ours, and each value carries the name it has upstream so a port can be

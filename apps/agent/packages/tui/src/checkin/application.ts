@@ -6,7 +6,7 @@ import {
   validateSigninPanel,
   type ClaimSigninData,
   type SigninPanel,
-} from '@mavis/shared/daily-signin';
+} from '@hz/shared/daily-signin';
 
 export interface TuiDailyCheckinGateway {
   getSigninPanel(): Promise<SigninPanel>;

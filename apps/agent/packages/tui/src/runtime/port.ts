@@ -1,8 +1,15 @@
 import type { TuiAttachment, TuiTransportAttachment } from '../types/invocation.js';
-import type { GlobalThreadGoal } from '@mavis/shared/global-events';
+import type { GlobalThreadGoal } from '@hz/shared/global-events';
 import type {
+  TuiAgent,
+  TuiAgentDetail,
+  TuiAgentDraft,
   TuiCompactionResult,
+  TuiConfiguredMcpConfig,
+  TuiConfiguredMcpServer,
+  TuiConfiguredMcpServerDetail,
   TuiMcpServer,
+  TuiMcpTestResult,
   TuiModel,
   TuiPendingPermission,
   TuiQuestionnaireReplyAnswer,
@@ -25,7 +32,7 @@ import type {
   CliSendMessageOptions,
   ConversationSteerInput,
   ConversationSteerResult,
-} from '@mavis/local-runtime-v2/cli-service';
+} from '@hz/local-runtime-v2/cli-service';
 
 export type { TuiMessage, TuiMessagePart, TuiStreamEvent, TuiToolCall } from './stream-events.js';
 export type { TuiRuntimeEvent } from '../types/runtime-events.js';
@@ -134,6 +141,14 @@ export interface TuiSessionModelSelection {
 export interface CreateTuiSessionInput {
   workspaceDir: string;
   title?: string;
+  /**
+   * The Agent this Session runs *as*.
+   *
+   * **The whole of what "start a chat with an agent" means**: the runtime records
+   * it and every Turn is composed from that Agent's prompt, tools and model. Omit
+   * it for the runtime's own default, which is what every other caller does.
+   */
+  agentName?: string;
   mcpServers?: readonly TuiSessionMcpServer[];
   /** Parent Session of a branch child. Required to create a BTW side session. */
   parentSessionId?: string;
@@ -295,7 +310,81 @@ export interface TuiInspectionPort {
     customInstructions?: string,
   ): Promise<TuiCompactionResult>;
   listSkills(agentName?: string, keyword?: string): Promise<TuiSkillList>;
+  /// The whole roster, Skills that are switched off included.
+  ///
+  /// **`listSkills` cannot answer this one.** It is the *runtime* list — what the
+  /// model is told about — and a Skill switched off is filtered out of it, so a
+  /// screen built on it could never draw the row that turns one back on.
+  listAllSkills(agentName?: string): Promise<TuiSkillList>;
+  /// One Skill's own text, or `undefined` for one the registry cannot find.
+  readSkill(skillName: string, locationUri?: string): Promise<string | undefined>;
+  /// Switches one Skill on or off, and answers whether it ended up as asked.
+  ///
+  /// **The `locationUri` is not decoration.** The registry keys its disabled set
+  /// by it, and the reader picks a row by *name* — so the row has to hand back
+  /// what it was built from, or a rename between the read and the press leaves
+  /// the switch setting a Skill that no longer answers to that name.
+  setSkillEnabled(
+    skillName: string,
+    enabled: boolean,
+    locationUri?: string,
+  ): Promise<boolean>;
+  /// Every Agent definition this machine holds, the built-in roles included.
+  ///
+  /// **Definitions, not Sessions** — an Agent is what a Session is started
+  /// *under*, and this says nothing about what is running.
+  listAgents(input?: {
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<readonly TuiAgent[]>;
+  /// One Agent with its stored prompt, or `undefined` for one that is gone.
+  ///
+  /// `undefined` is an answer rather than a throw, for the reason
+  /// [`readSkill`](Self::readSkill) gives: the row may have been deleted between
+  /// the list and the press.
+  getAgent(name: string): Promise<TuiAgentDetail | undefined>;
+  /// Writes a new Agent definition down, and answers what was stored.
+  ///
+  /// **Definition-only**: no Root Session and no greeting. A Session is started
+  /// later, explicitly, by whoever wants to talk to it.
+  createAgent(input: TuiAgentDraft): Promise<TuiAgentDetail>;
+  /// Rewrites an Agent's identity and prompt. Absent fields are left as stored.
+  updateAgent(name: string, input: TuiAgentDraft): Promise<TuiAgentDetail>;
+  /// Removes an Agent definition, answering whether one was there.
+  deleteAgent(name: string): Promise<boolean>;
   listMcpServers(keyword?: string, sessionId?: string): Promise<TuiMcpServer[]>;
+  /// The reader's own MCP store — every server written down, off ones included.
+  ///
+  /// **`listMcpServers` above cannot answer this.** That one is what a *session*
+  /// can reach, and a server switched off is not in it at all — so a screen built
+  /// on it could switch one off and then never see it again to switch it back on.
+  /// This is the file on this machine, with no live status attached: whether a
+  /// server is up is [`testConfiguredMcpServer`]'s question.
+  listConfiguredMcpServers(keyword?: string): Promise<TuiConfiguredMcpServer[]>;
+  /// One server's whole configuration.
+  ///
+  /// The only read that carries `env` and `headers` — which is why it is asked for
+  /// one server at a time rather than riding the listing.
+  getConfiguredMcpServer(name: string): Promise<TuiConfiguredMcpServerDetail | undefined>;
+  createConfiguredMcpServer(
+    name: string,
+    config: TuiConfiguredMcpConfig,
+  ): Promise<TuiConfiguredMcpServerDetail>;
+  updateConfiguredMcpServer(
+    name: string,
+    config: TuiConfiguredMcpConfig,
+  ): Promise<TuiConfiguredMcpServerDetail>;
+  deleteConfiguredMcpServer(name: string): Promise<boolean>;
+  setConfiguredMcpServerEnabled(
+    name: string,
+    enabled: boolean,
+  ): Promise<TuiConfiguredMcpServer>;
+  /// Connects once and answers what happened.
+  ///
+  /// Kept apart from saving because the two fail differently: an entry can be
+  /// written down cleanly and still name a command that is not installed.
+  testConfiguredMcpServer(name: string): Promise<TuiMcpTestResult>;
   inspectProjectMcp(sessionId: string): Promise<TuiProjectMcpPreview | undefined>;
   getContextSnapshot(sessionId: string): Promise<TuiContextSnapshotResponse>;
 }
@@ -643,8 +732,16 @@ export interface TuiModelSelection {
   thinking?: TuiModelThinkingSelection;
 }
 export type {
+  TuiAgent,
+  TuiAgentDetail,
+  TuiAgentDraft,
   TuiCompactionResult,
+  TuiConfiguredMcpConfig,
+  TuiConfiguredMcpServer,
+  TuiConfiguredMcpServerDetail,
+  TuiConfiguredMcpTransport,
   TuiMcpServer,
+  TuiMcpTestResult,
   TuiModel,
   TuiPendingPermission,
   TuiQuestionnaireReplyAnswer,

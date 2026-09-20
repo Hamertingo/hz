@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { stripRuntimeBoundaryKeysFrom } from '@mavis/shared/runtime-boundary-env';
+import { stripRuntimeBoundaryKeysFrom } from '@hz/shared/runtime-boundary-env';
 
 type ProcessEnvironment = Record<string, string | undefined>;
 

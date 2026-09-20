@@ -34,7 +34,7 @@ import {
 } from 'node:fs/promises';
 import { formatPatch, structuredPatch } from 'diff';
 
-import type { ToolResult } from '@mavis/agent-core/tools';
+import type { ToolResult } from '@hz/agent-core/tools';
 import type { WriteOperations } from '@earendil-works/pi-coding-agent';
 import { withPluginHookCompatibleToolResponse } from '../plugin-hooks/vendor-tool-response.js';
 

@@ -1,4 +1,4 @@
-import { getRuntimeLocaleLanguage } from '@mavis/shared/runtime-i18n';
+import { getRuntimeLocaleLanguage } from '@hz/shared/runtime-i18n';
 import type { TuiStatusLineItem } from '../../shell/status-line-items.js';
 
 const en = {

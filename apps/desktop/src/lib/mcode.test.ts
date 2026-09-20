@@ -19,13 +19,13 @@ import {
   byProvider,
   cycledModels,
   discoveredList,
+  hiddenSet,
   matchingRows,
   matchesQuery,
   rowModel,
   rowOf,
-  toggleRotation,
-  topLevel,
-} from "./modelRotation";
+  visibleRows,
+} from "./modelVisibility";
 
 /// The one harness this build has, named once so a second one added later is a
 /// compile error in every case below rather than a silently passing test.
@@ -214,17 +214,28 @@ describe("the models the picker draws", () => {
     expect(rows.every((row) => row.variants.length === 1)).toBe(true);
   });
 
-  /// **Every model, not the reader's shortlist.** A model the agent will run is
-  /// a model the picker has to offer; the rotation only leads, which is what
-  /// makes the top of the menu the chord's cycle.
-  it("draws every model the harness serves, the rotation leading", () => {
+  /// **Every model the harness serves, unless the reader switched it off** — and
+  /// in the order the agent answered with, since nothing is reordered any more.
+  /// A switch that is on is a model the picker has to offer, and the one thing
+  /// that takes a row out of the menu entirely.
+  it("draws every model the harness serves, minus the ones switched off", () => {
     const models = [model("opus"), omen(), glm(""), glm("thinking")];
-    const rows = topLevel(models, [`${GLM_BASE}:v:thinking` as ModelId], MCODE);
 
-    expect(rows.map((row) => row.key)).toEqual([GLM_BASE, "opus", "m:custom_provider%3Aopencode-go:omen-alpha"]);
-    // Four wire rows, three models — and a model kept by one variant draws
-    // whole, with the variant the reader never named still on it.
-    expect(rows[0].variants).toHaveLength(2);
+    expect(visibleRows(models, hiddenSet(null), MCODE).map((row) => row.key)).toEqual([
+      "opus",
+      "m:custom_provider%3Aopencode-go:omen-alpha",
+      GLM_BASE,
+    ]);
+
+    // One model switched off takes both its variants with it, and leaves the
+    // order of everything else alone.
+    const rows = visibleRows(models, hiddenSet([`${GLM_BASE}:v:thinking` as ModelId]), MCODE);
+    expect(rows.map((row) => row.key)).toEqual([
+      "opus",
+      "m:custom_provider%3Aopencode-go:omen-alpha",
+    ]);
+    // Four wire rows, three models — and a model served two ways draws whole.
+    expect(byBase(models)[2].variants).toHaveLength(2);
   });
 
   /// Picking a row as it stands must not undo the variant the session is on: a
@@ -243,27 +254,15 @@ describe("the models the picker draws", () => {
   /// and then on `glm-5.3 · thinking` is two presses for one idea; a session on
   /// either draws the same single row.
   ///
-  /// Nothing stored is every model in the rotation, so the cycle here is the
-  /// whole list — that is what "everything is on" costs, and what switching one
-  /// off buys back.
+  /// Nothing stored is nothing switched off, so the cycle here is the whole list —
+  /// which is the price of a fresh install having every model on, and what the
+  /// switches buy back.
   it("makes one step of a model, however many variants it is served in", () => {
     const models = [glm(""), glm("thinking"), omen()];
     const cycle = cycledModels(models, MCODE, `${GLM_BASE}:v:thinking` as ModelId);
 
     expect(cycle).toHaveLength(2);
     expect(cycle.map((row) => row.key)).toEqual([GLM_BASE, "m:custom_provider%3Aopencode-go:omen-alpha"]);
-  });
-
-  /// The rotation is a fact about the *model*, so it is switched on or off on
-  /// every variant of one at once: half of one would draw the model in the picker
-  /// as kept and let the send pick the variant the reader turned off.
-  it("switches a model rather than half of one", () => {
-    const ids = [`${GLM_BASE}:v:`, `${GLM_BASE}:v:thinking`] as ModelId[];
-
-    expect(toggleRotation([], ids)).toEqual(ids);
-    // Half kept is not kept: the row it draws says off, so it goes on.
-    expect(toggleRotation([ids[0]], ids)).toEqual(ids);
-    expect(toggleRotation(ids, ids)).toEqual([]);
   });
 
   /// Grouped under the provider each row came from, in the order the agent

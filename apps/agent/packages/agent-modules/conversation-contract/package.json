@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/conversation-contract",
+  "name": "@hz/conversation-contract",
   "version": "0.1.0",
   "description": "Runtime-neutral Session, Queue, Turn, and compaction service contract.",
   "type": "module",

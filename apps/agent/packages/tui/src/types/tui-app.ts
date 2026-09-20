@@ -22,7 +22,7 @@ import type { TuiExternalTargetOpener } from '../host/open-external.js';
 import type { TuiTranscriptExporter } from '../host/transcript-export.js';
 import type { McodeBusinessTelemetry } from '../analytics/business-telemetry.js';
 import type { TuiNotificationSettings } from '../tui/platform/terminal-notifications.js';
-import type { MavisRegion } from '@mavis/config';
+import type { MavisRegion } from '@hz/config';
 import type { TuiKeybindingOverride, TuiKeybindingRegistry } from '../tui/shell/keybindings.js';
 import type { FindRecentCodexSession } from '../host/recent-codex-session.js';
 

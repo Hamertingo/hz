@@ -2,13 +2,13 @@ import type {
   CreateLocalRuntimeHostOptions,
   LocalRuntimeAuthContext,
   LocalRuntimeConfig,
-} from '@mavis/local-runtime-v2/process-local';
-import { getDefaultLocalRuntimeConfig } from '@mavis/local-runtime-v2';
+} from '@hz/local-runtime-v2/process-local';
+import { getDefaultLocalRuntimeConfig } from '@hz/local-runtime-v2';
 import {
   getRuntimeBuildEnv,
   getRuntimeRegion,
   readExplicitBetaFeatureFromFile,
-} from '@mavis/config';
+} from '@hz/config';
 import {
   AuthSessionChangedError,
   MCODE_OAUTH_SCOPES,
@@ -17,8 +17,8 @@ import {
   type AccessTokenLease,
   type AuthStatusSnapshot,
   type MCodeOAuthCore,
-} from '@mavis/oauth-core';
-import type { McodeToolsHostAuthSession } from '@mavis/mcode-tools-host';
+} from '@hz/oauth-core';
+import type { McodeToolsHostAuthSession } from '@hz/mcode-tools-host';
 import {
   createEmbeddedRuntimeHost,
   type EmbeddedRuntimeHost,
@@ -601,7 +601,7 @@ export async function createTuiRuntime(
     if (cleanupFailures.length > 0) {
       throw new AggregateError(
         [error, ...cleanupFailures],
-        'Minimax Code Runtime startup cleanup failed.',
+        'Hz Agent Runtime startup cleanup failed.',
       );
     }
     throw error;

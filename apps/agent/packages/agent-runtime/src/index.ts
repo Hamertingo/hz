@@ -1,5 +1,5 @@
 /**
- * `@mavis/agent-runtime` — pluggable extension SPI + assembleTurn assembler.
+ * `@hz/agent-runtime` — pluggable extension SPI + assembleTurn assembler.
  *
  * See design doc: Feishu wiki "agent-runtime: A pluggable extension layer above agent-core" v1.0
  * (`.harness/docs/adr/agent-runtime-extension-layer.md` when ADR lands).
@@ -40,8 +40,8 @@ export type {
 export { isPromptSnapshotInvalidError, PromptSnapshotInvalidError } from './prompt-read.js';
 export { BoundedInternalTurnPromptReadRegistry } from './internal-turn-prompt-read.js';
 export type { InternalTurnPromptReadRegistry } from './internal-turn-prompt-read.js';
-export { defineRuntimeTool } from '@mavis/agent-core/tools';
-export type { ToolExecutionContext } from '@mavis/agent-core/tools';
+export { defineRuntimeTool } from '@hz/agent-core/tools';
+export type { ToolExecutionContext } from '@hz/agent-core/tools';
 export {
   buildToolCallCitationId,
   collapseAdjacentDuplicateFileCitations,
@@ -53,5 +53,5 @@ export {
   compactToolCallCitationKey,
   findUniqueSingleSubstitutionCitationAlias,
   resolveKnownCitationAlias,
-} from '@mavis/agent-core';
+} from '@hz/agent-core';
 export * from './types.js';

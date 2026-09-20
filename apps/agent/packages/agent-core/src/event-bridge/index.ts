@@ -1,5 +1,5 @@
 /**
- * `@mavis/agent-core/event-bridge` — convert pi `AgentEvent` streams into
+ * `@hz/agent-core/event-bridge` — convert pi `AgentEvent` streams into
  * canonical `RuntimeEvent` frames consumed by `EventSink.pushRuntime`.
  *
  * This module is **stateless across turns**: callers create one
@@ -36,7 +36,7 @@ export {
   RUNTIME_WARNING_EVENT_TYPE,
   type RuntimeWarningEventInput,
 } from './runtime-warning.js';
-export { classifyLLMErrorToCode } from '@mavis/shared/llm-error-classifier';
+export { classifyLLMErrorToCode } from '@hz/shared/llm-error-classifier';
 export {
   buildAbortedTerminalStatusEvent,
   buildCompletedAssistantMessage,

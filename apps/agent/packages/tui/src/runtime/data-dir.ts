@@ -1,4 +1,4 @@
-import { getPrimaryDataDirPath, getProfile } from '@mavis/config';
+import { getPrimaryDataDirPath, getProfile } from '@hz/config';
 import { resolveMcodeDataEnvironment, type McodeDataEnvironment } from '../auth/environment.js';
 import { configureTuiRuntimeEnvironment } from '../cli/environment.js';
 

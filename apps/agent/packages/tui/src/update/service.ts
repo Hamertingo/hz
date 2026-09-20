@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import spawn from 'cross-spawn';
 import { EnvHttpProxyAgent, fetch } from 'undici';
-import { retryWindowsFileSystemOperation } from '@mavis/shared';
+import { retryWindowsFileSystemOperation } from '@hz/shared';
 import {
   McodeUpdateCancelledError,
   reportMcodeUpdatePhase,

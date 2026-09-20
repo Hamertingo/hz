@@ -114,7 +114,7 @@
       "path": "native-module-path.ts",
       "currentSha256": "3ccdf82cad479183dc88c8713aa027c2e4e0aa50bb041b6513209c60c50f468c",
       "changeIds": ["L014"],
-      "reason": "Adapt Pi's post-baseline native module candidate resolver to the @minimax/code package layout.",
+      "reason": "Adapt Pi's post-baseline native module candidate resolver to the @hz/code package layout.",
       "behaviorImpact": "Installed npm packages and standalone archives share one deterministic native helper resolution path."
     },
     {

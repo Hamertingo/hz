@@ -1,5 +1,5 @@
 {
-  "name": "@mavis/protocol",
+  "name": "@hz/protocol",
   "version": "0.2.1",
   "type": "module",
   "types": "./src/index.ts",

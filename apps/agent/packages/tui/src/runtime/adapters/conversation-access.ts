@@ -7,7 +7,7 @@ import type {
   ConversationSteerResult,
   ResumeSessionReq,
   SessionStreamFrameView,
-} from '@mavis/local-runtime-v2/cli-service';
+} from '@hz/local-runtime-v2/cli-service';
 
 import { TuiFailure } from '../../failure.js';
 import type { TuiConversationPort } from '../port.js';

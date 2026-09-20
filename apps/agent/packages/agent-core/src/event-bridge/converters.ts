@@ -27,7 +27,7 @@ import {
   type SessionStatusEvent,
   type StreamRespEvent,
 } from '../protocol/runtime-event.js';
-import { ProtocolErrorCode } from '@mavis/protocol';
+import { ProtocolErrorCode } from '@hz/protocol';
 import { applyRespDataTransform, type RespDataTransform } from './resp-data.js';
 import { sanitizeToolCallForDisplay } from './display-sanitize.js';
 import type { PiTurnRunnerLogger } from '../pi-turn-runner/types.js';

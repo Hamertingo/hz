@@ -10,7 +10,7 @@
 // ── Service orchestration ports (consumed by the host wiring) ──
 
 import type { ToolPermissionContext, PermissionUpdate } from './types.js';
-import type { AgentMessageProtocol } from '@mavis/agent-core/protocol/agent-message';
+import type { AgentMessageProtocol } from '@hz/agent-core/protocol/agent-message';
 
 // ── Prompt content port ─────────────────────────────────────────────────────
 
