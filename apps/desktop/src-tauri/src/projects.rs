@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn most_recently_selected_sorts_first() {
-        let mut projects = vec![
+        let mut projects = [
             Project {
                 path: "/a".into(),
                 name: "a".into(),

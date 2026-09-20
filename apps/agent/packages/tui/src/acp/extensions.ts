@@ -7,6 +7,7 @@ import type { TuiAcpRuntime } from './runtime.js';
 import { registerTuiAcpMcpExtensions } from './mcp.js';
 import { registerTuiAcpSkillExtensions } from './skills.js';
 import { registerTuiAcpAgentExtensions } from './agents.js';
+import { projectDelegationTurns } from './updates.js';
 
 export const TUI_ACP_EXTENSION_VERSION = 1;
 
@@ -29,6 +30,10 @@ export const TUI_ACP_EXTENSION_METHODS = [
   ...TUI_ACP_GOAL_METHODS,
   'mcode/session/delegation/get',
   'mcode/session/delegation/stop',
+  // What a delegated child has actually said. The roster above is status only, and
+  // a child's `session/update`s never reach its parent's stream — so this is the
+  // one way a client can watch a subagent work rather than merely run.
+  'mcode/session/delegation/messages',
   // The Skill roster. Not gated on a feature flag the way the Goal methods are:
   // a runtime always has Skills, and one it has none of answers an empty list.
   'mcode/session/skills/list',
@@ -269,6 +274,79 @@ export function registerTuiAcpExtensions(options: RegisterTuiAcpExtensionsOption
       return { receipt: await options.runtime.stopDelegation(rootSessionId) };
     },
   );
+
+  /// What a delegated member has actually said.
+  ///
+  /// **The roster says a child is running; this says what it is doing.** A
+  /// delegated Session is hidden and its `session/update`s never reach the parent's
+  /// stream, so without this a client can watch a subagent's status but never its
+  /// work — which is the half a reader wants.
+  ///
+  /// **Read, never attach.** `session/load` also carries a transcript but it
+  /// re-attaches the session (re-applying the client's MCP list over the child's
+  /// own) and is refused on internal sessions by design. This is a plain read of a
+  /// page of messages, so watching a child cannot disturb it.
+  ///
+  /// **Scoped like the roster it belongs to**: the member is resolved as a
+  /// descendant of the caller's root first, so a client can read its own children
+  /// and nothing else.
+  options.app.onRequest(
+    'mcode/session/delegation/messages',
+    parseDelegationMessagesRequest,
+    async ({ params }) => {
+      const session = resolve(params.sessionId);
+      const rootSessionId = await resolveRootSessionId(options.runtime, session);
+      const snapshot = await options.runtime.getDelegationSnapshot(rootSessionId);
+      if (!snapshot.members.some((member) => member.sessionId === params.memberSessionId)) {
+        throw acp.RequestError.invalidParams(
+          undefined,
+          'That Session is not a delegated member of this one.',
+        );
+      }
+
+      const page = await options.runtime.listMessagePage(params.memberSessionId, {
+        limit: params.limit ?? DELEGATION_PAGE,
+        ...(params.before !== undefined ? { before: params.before } : {}),
+      });
+      return {
+        // **The turns, in ACP's own vocabulary**, so the client draws a subagent
+        // with the code it draws the conversation with. A purpose-built shape here
+        // would be a second renderer on the other side, and the one that existed
+        // could say no more than "a tool ran".
+        turns: projectDelegationTurns(page.messages),
+        hasMore: page.hasMore === true,
+        ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+      };
+    },
+  );
+}
+
+/// How many messages one read answers with.
+///
+/// A delegated run is short — a task, a few tool calls, a report — so a page this
+/// size is the whole of one in the ordinary case, and a client that wants the rest
+/// pages with the cursor rather than the agent holding a whole transcript in one
+/// reply.
+const DELEGATION_PAGE = 120;
+
+/// Names the member to read, and optionally a page of it.
+function parseDelegationMessagesRequest(value: unknown): {
+  sessionId: string;
+  memberSessionId: string;
+  limit?: number;
+  before?: string;
+} {
+  const record = requireRecord(value);
+  const limit = record.limit;
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit <= 0)) {
+    throw acp.RequestError.invalidParams(undefined, '`limit` must be a positive integer.');
+  }
+  return {
+    sessionId: requireText(record.sessionId, 'sessionId'),
+    memberSessionId: requireText(record.memberSessionId, 'memberSessionId'),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(record.before === undefined ? {} : { before: requireText(record.before, 'before') }),
+  };
 }
 
 export function supportsTuiAcpExtensionNotifications(

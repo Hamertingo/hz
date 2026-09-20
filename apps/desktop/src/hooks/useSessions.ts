@@ -16,7 +16,9 @@ import { clearStash } from "@/hooks/useStash";
 import { clearFanOut, fanOutModels } from "@/hooks/useModelFanOut";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import { canFanOut, fanOutPlan } from "@/lib/fanOut";
+import { changeRange } from "@/lib/changes";
 import { fastFor, fastNotice } from "@/lib/fastMode";
+import { lastTurn, secondOpinionPrompt } from "@/lib/secondOpinion";
 import { isWindowFocused, onFocusChange } from "@/lib/focus";
 import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableEffort, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
@@ -732,6 +734,75 @@ useEffect(() => {
     // is paid here instead — while they are still typing.
   }).catch(() => {});
 }, [selectedSessionId, targetPath, agentName]);
+
+/// Opens a review of the newest turn: a session of its own, in its own worktree,
+/// **seeded from the work it is being asked to judge**.
+///
+/// **Its own worktree and never this checkout**, for the reason `hz new` always
+/// takes one: a reviewer is told it may fix what it finds, and two agents writing
+/// into one tree overwrite each other.
+///
+/// The seed is the turn's own closing snapshot rather than a ref, and that is the
+/// whole feature: a ref carries committed work only, so a reviewer opened that
+/// way would read a tree from *before* the turn, find nothing wrong with it, and
+/// say so. See `git::commit_tree`.
+const startSecondOpinion = async (model: ModelId): Promise<void> => {
+  const parent = selectedSession;
+  const cwd = targetPath;
+  if (!parent || !cwd) {
+    setError("Attach a project first.");
+    return;
+  }
+
+  const seed = changeRange(parent.events).head;
+  if (!seed) {
+    setError("There is no finished turn to review yet.");
+    return;
+  }
+
+  const { request, report } = lastTurn(parent.events);
+
+  try {
+    const outcome = await invoke<SendOutcome>("send_msg", {
+      sessionId: crypto.randomUUID(),
+      prompt: secondOpinionPrompt({ request, report }),
+      attachmentPaths: [],
+      harness,
+      model,
+      // The model's own default: a reviewer's effort ladder has nothing to do
+      // with the level this session happens to be set to, and `null` is what
+      // asks the backend for the model's own.
+      effort: null,
+      // The parent's stance, handed over as the reader set it. A review that
+      // stopped at its first write waiting for a card nobody is next to would be
+      // the same failure `hz new` has — but this one is the app's own button,
+      // and the reader is right here.
+      permissionMode: stanceFor(harness, permissionMode),
+      fast,
+      cwd,
+      branch: null,
+      useWorktree: true,
+      worktreeName: null,
+      baseRef: null,
+      seedTree: seed,
+      // So the sidebar nests the row beside the work it was asked about.
+      parentSessionId: parent.sessionId,
+      agentName,
+      isNewSession: true,
+      sentAt: new Date().toISOString(),
+    });
+
+    const snapshot = outcome.snapshot;
+    if (!snapshot) return;
+    upsertSession(withEarlyEvents(snapshot));
+    // Deliberately **not selected**, the same bargain `session_created` makes:
+    // the reader is mid-review of a transcript, and being thrown into a session
+    // that is still booting is a worse answer than a row appearing.
+    if (!showArchivedRef.current) setSessionIndexItems((prev) => [...prev, snapshot]);
+  } catch (e) {
+    setError(String(e));
+  }
+};
 
 const handleSendMsg = async (
   message: string,
@@ -2755,6 +2826,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, delegations, refreshDelegations, stopDelegations, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, delegations, refreshDelegations, stopDelegations, indexSide};
 
 }

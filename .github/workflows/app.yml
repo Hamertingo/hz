@@ -14,6 +14,7 @@ on:
   pull_request:
     paths:
       - "apps/desktop/**"
+      - "apps/cli/**"
       - "crates/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/app.yml"
@@ -23,6 +24,7 @@ on:
     branches: [main]
     paths:
       - "apps/desktop/**"
+      - "apps/cli/**"
       - "crates/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/app.yml"
@@ -68,3 +70,29 @@ jobs:
       - name: Run the Rust tests
         working-directory: apps/desktop/src-tauri
         run: cargo test
+
+      # `-D warnings`, so this is a gate rather than a wall nobody reads. The
+      # set was nine warnings the day it went in, every one of them in test
+      # code, and all of them fixed rather than allowed — `--all-targets` is
+      # what finds those, so it stays.
+      #
+      # Deliberately **no `cargo fmt --check`**: this tree is shaped by hand and
+      # rustfmt's first run rewrites 319 files, which is the same bargain
+      # biome.jsonc records for the frontend.
+      - name: Lint the Rust
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Neither of these had a gate at all before this. `release-cli.yml` is
+      # tag-only, so the CLI's own tests ran for the first time on the release
+      # that shipped them; and `hz-proto`'s are its own package's, so the
+      # `cargo test` above — which is `src-tauri`'s — never reached them even
+      # though the path filter already watched `crates/**`. Both are plain
+      # crates with no Tauri in them, so this is seconds — and `hz-proto` is the
+      # wire shape the two sides share, which is the seam that must not drift.
+      - name: Test and lint the wire crate and the CLI
+        run: |
+          cargo test --manifest-path crates/hz-proto/Cargo.toml
+          cargo clippy --manifest-path crates/hz-proto/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path apps/cli/Cargo.toml
+          cargo clippy --manifest-path apps/cli/Cargo.toml --all-targets -- -D warnings

@@ -902,7 +902,19 @@ export default function ChatInput({
         {/* Pulled left by the toolbar's own `px-1` plus the ghost button's 6px
             icon inset, so the `+` glyph — not the button box — lands on the
             same edge as the text below it. */}
-        {isNewTask && <div className="-ml-2.5 pb-1.5">{toolbar}</div>}
+        {/* **The row has its own scroll, and that is not decoration.** A window
+            narrower than the toolbar's own content — ~860px with every control
+            showing — used to widen the form it sits in, and the form widened the
+            column the empty state is centred in. That column carries
+            `overflow-y-auto`, whose computed `overflow-x` is `auto` too, so the
+            overflow surfaced as a horizontal scrollbar along the *bottom of the
+            column* rather than beside the row that caused it. Containing it here
+            costs the row a scroll and stops it at its own edge. The bar is not
+            drawn: a toolbar is read by its controls, and a scrollbar under them
+            is chrome for a gesture the trackpad already does. */}
+        {isNewTask && (
+          <div className="-ml-2.5 scrollbar-none overflow-x-auto pb-1.5">{toolbar}</div>
+        )}
 
         {/* Directly above the card and with no gap: the row runs on past its own
             reserve and behind the card, which is the opaque thing that hides it.
@@ -1314,7 +1326,8 @@ export default function ChatInput({
             </div>
           )
         ) : (
-          <div className="pt-1.5">{toolbar}</div>
+          // Its own scroll, for the reason the new-task row above states.
+          <div className="scrollbar-none overflow-x-auto pt-1.5">{toolbar}</div>
         )}
       </form>
     </div>

@@ -634,6 +634,153 @@ pub async fn changes_since(cwd: &str, baseline: &str, head: Option<&str>) -> Res
     })
 }
 
+/// What an undo did, so the caller can say it rather than show a diff move.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct UndoReport {
+    /// Paths written back as the baseline had them.
+    pub restored: u32,
+    /// Paths the turn created, removed again.
+    pub deleted: u32,
+    /// The turn's own paths, so the reader can be told which files moved.
+    pub files: Vec<String>,
+}
+
+/// Puts a finished turn's files back the way its baseline had them.
+///
+/// **Scoped to the turn's own range, not to the working tree.** The pair of
+/// snapshot ids names exactly the paths that turn touched, so an undo writes
+/// those and nothing else — a file the reader had already dirtied before the
+/// prompt went out is in both trees at the same content and is not in the range
+/// at all. `git restore` does the writing, with `--source=<tree>` and no
+/// `--staged`, so the index is left exactly as it was: a restore that staged
+/// itself would put the reader's next commit out of step with their working
+/// tree, which is a side effect nobody asked for.
+///
+/// **A file touched since the turn closed refuses the whole thing**, and that is
+/// the one rule worth the rigidity. The turn's closing snapshot is a fixed tree,
+/// so comparing the working tree against it says exactly which paths have moved
+/// on since — a hand edit, a second session, a rebase. Restoring over one of
+/// those throws away work the reader never asked to lose and cannot get back,
+/// and there is no partial answer that is safe: the files are one turn's worth
+/// of work, not a set to pick from. So it refuses, names them, and does nothing.
+///
+/// Cost, stated: nothing is cleaned up that git does not track, so a directory
+/// the turn created and only files filled stays behind as an empty one.
+#[tauri::command]
+pub async fn undo_turn(cwd: &str, baseline: &str, head: &str) -> Result<UndoReport, Fail> {
+    if !is_tree_id(baseline) || !is_tree_id(head) {
+        fail!("invalid snapshot id");
+    }
+
+    // Both idempotent, and the second one is the check: a frozen range for the
+    // turn, and the turn's closing tree against the working tree as it stands.
+    let turn = changes_since(cwd, baseline, Some(head)).await?;
+    let since = changes_since(cwd, head, None).await?;
+
+    if turn.files.is_empty() {
+        return Ok(UndoReport {
+            restored: 0,
+            deleted: 0,
+            files: Vec::new(),
+        });
+    }
+
+    // Renames are matched by both names on both sides: over-refusing costs the
+    // reader a sentence, and under-refusing costs them their edit.
+    let names = |set: &ChangeSet| -> Vec<String> {
+        set.files
+            .iter()
+            .flat_map(|f| [Some(f.path.clone()), f.old_path.clone()])
+            .flatten()
+            .collect()
+    };
+    let moved: Vec<String> = {
+        let past = names(&since);
+        let mut moved: Vec<String> = names(&turn)
+            .into_iter()
+            .filter(|path| past.contains(path))
+            .collect();
+        moved.sort();
+        moved.dedup();
+        moved
+    };
+
+    if !moved.is_empty() {
+        let named = moved
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = moved.len().saturating_sub(3);
+        fail!(
+            "{} changed since that turn{}: {named}. Undoing would overwrite {}.",
+            if moved.len() == 1 { "this file has" } else { "these files have" },
+            if more > 0 { format!(" (and {more} more)") } else { String::new() },
+            if moved.len() == 1 { "it" } else { "them" }
+        );
+    }
+
+    // Which of the turn's paths the baseline holds, and which it does not. The
+    // ones it does not are what the turn *created* — an addition, or the new
+    // name of a rename — and undoing those means taking the file away.
+    let mut restore: Vec<String> = Vec::new();
+    let mut remove: Vec<String> = Vec::new();
+    for file in &turn.files {
+        // Where the file lived before the turn: its old name on a rename, its
+        // own otherwise. This is the side the baseline holds content for.
+        let old = file.old_path.clone().unwrap_or_else(|| file.path.clone());
+        if in_tree(cwd, baseline, &old).await {
+            restore.push(old);
+        }
+        // And the side the turn ended at is whatever the baseline does *not*
+        // hold — an addition, or a rename's new name — which undo takes away.
+        if !in_tree(cwd, baseline, &file.path).await {
+            remove.push(file.path.clone());
+        }
+    }
+    restore.sort();
+    restore.dedup();
+    remove.sort();
+    remove.dedup();
+
+    if !restore.is_empty() {
+        let mut args = vec!["restore", "--source", baseline, "--"];
+        args.extend(restore.iter().map(String::as_str));
+        // Deliberately not the shared `git` helper: that sets
+        // `GIT_OPTIONAL_LOCKS=0`, which is right for a read and wrong for the
+        // one call here that writes.
+        // Reported with git's own sentence rather than a context over it: `Fail`
+        // serializes the outermost message alone, so a wrapper would hide the
+        // one line that says which path or which tree was wrong.
+        exec(cwd, &[], &args)
+            .await
+            .map_err(|e| anyhow::anyhow!("could not restore the turn's files: {e}"))?;
+    }
+
+    // Files, not directories: a tree the turn created stays behind empty, and
+    // sweeping it would mean deciding which empty directories were the turn's.
+    for path in &remove {
+        let _ = fs::remove_file(Path::new(cwd).join(path)).await;
+    }
+
+    Ok(UndoReport {
+        restored: restore.len() as u32,
+        deleted: remove.len() as u32,
+        files: turn.files.iter().map(|f| f.path.clone()).collect(),
+    })
+}
+
+/// Whether `tree` holds this path at all — which is what decides whether undoing
+/// the turn means writing the file back or taking it away.
+async fn in_tree(cwd: &str, tree: &str, path: &str) -> bool {
+    git(cwd, &["cat-file", "-e", &format!("{tree}:{path}")])
+        .await
+        .is_some()
+}
+
 /// Newest edit first, which is the order the working tree is actually read in:
 /// git lists paths alphabetically, so the file just written sits wherever its
 /// name happens to fall and the reader has to hunt for it.
@@ -1651,6 +1798,53 @@ pub async fn create_worktree(project_path: &str, name: &str, base: &str) -> Resu
     Ok(path)
 }
 
+/// Pins a working tree to a commit, so a worktree can start from work that was
+/// never committed.
+///
+/// **`--from` takes a ref, and a ref holds committed work only.** A tree seeded
+/// from one sees the repository as of the last commit and *none* of the turn
+/// being reviewed — which is the failure worth this function, because a reviewer
+/// handed the wrong tree reads it, finds nothing wrong, and says so.
+///
+/// The commit gets **no ref of its own**: the branch [`create_worktree`] mints is
+/// the only thing pointing at it, so nothing in the reader's history moves and
+/// nothing they can see changes. hz already writes tree objects on every prompt
+/// (`snapshot_tree`); this is one object more, with a parent so the history
+/// behind it reads normally.
+///
+/// The identity is fixed rather than read from config, and that is not laziness:
+/// `commit-tree` needs an author, a repository with no `user.email` set would
+/// refuse the whole thing, and whose name lands on a commit nobody will read is
+/// not a question worth a failure in the middle of starting a session.
+pub async fn commit_tree(cwd: &str, tree: &str, parent: Option<&str>) -> Result<String> {
+    if !is_tree_id(tree) {
+        bail!("invalid snapshot id");
+    }
+
+    let identity = [
+        ("GIT_AUTHOR_NAME", "hz"),
+        ("GIT_AUTHOR_EMAIL", "hz@localhost"),
+        ("GIT_COMMITTER_NAME", "hz"),
+        ("GIT_COMMITTER_EMAIL", "hz@localhost"),
+    ];
+    // `-m` folded into the argument rather than separated: `git commit-tree`
+    // wants the message last, and the parent list is variadic in between.
+    let message = "-ma session's working tree, for review";
+
+    let mut args = vec!["commit-tree", tree];
+    if let Some(parent) = parent {
+        args.push("-p");
+        args.push(parent);
+    }
+    args.push(message);
+
+    let commit = exec(cwd, &identity, &args).await?.trim().to_string();
+    if !is_tree_id(&commit) {
+        bail!("git did not answer with a commit id");
+    }
+    Ok(commit)
+}
+
 /// Deletes a worktree directory and the branch it was checked out on.
 ///
 /// Order is load-bearing at both ends. The unlock has to come first because
@@ -1947,7 +2141,16 @@ mod tests {
     // modify, and an add whose name contains a space.
     const NAME_STATUS: &str =
         "R100\0before.txt\0after.txt\0M\0bin.dat\0D\0gone.txt\0M\0keep.txt\0A\0spaced name.txt\0";
-    const NUMSTAT: &str = "0\t0\t\0before.txt\0after.txt\0-\t-\tbin.dat\00\t2\tgone.txt\01\t0\tkeep.txt\02\t0\tspaced name.txt\0";
+    // Split where a `\0` would otherwise meet the count that follows it: C reads
+    // `\00` as an octal escape, and clippy is right to flag the same shape here
+    // even though Rust ends the NUL at the backslash-zero. `concat!` keeps it
+    // one literal to the test.
+    const NUMSTAT: &str = concat!(
+        "0\t0\t\0before.txt\0after.txt\0-\t-\tbin.dat\0",
+        "0\t2\tgone.txt\0",
+        "1\t0\tkeep.txt\0",
+        "2\t0\tspaced name.txt\0",
+    );
 
     #[test]
     fn parses_name_status_including_rename_pairs() {
@@ -2581,6 +2784,161 @@ mod tests {
         assert!(
             changes_since(at, &base, Some("--not-a-tree")).await.is_err(),
             "a non-hex head must be rejected before it reaches argv"
+        );
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// **The thing a second opinion stands on.** A worktree seeded from a ref
+    /// sees committed work only, so reviewing an uncommitted turn through one
+    /// would show the reviewer a tree without the work — and it would review
+    /// that, find nothing wrong, and say so.
+    #[tokio::test]
+    async fn a_working_tree_can_be_pinned_so_a_worktree_starts_from_dirty_work() {
+        let dir = scratch_repo().await;
+        let at = dir.to_str().unwrap();
+
+        // What a turn leaves behind: a file changed and nothing committed.
+        fs::write(dir.join("keep.txt"), "a\nb\nc\nuncommitted\n")
+            .await
+            .unwrap();
+        fs::write(dir.join("brand-new.txt"), "never committed either\n")
+            .await
+            .unwrap();
+        let tree = snapshot_tree(at).await.unwrap();
+
+        let pinned = commit_tree(at, &tree, Some("HEAD")).await.unwrap();
+        let worktree = create_worktree(at, "review", &pinned).await.unwrap();
+
+        let file = Path::new(&worktree).join("keep.txt");
+        assert_eq!(
+            fs::read_to_string(&file).await.unwrap(),
+            "a\nb\nc\nuncommitted\n",
+            "the reviewer must see the work it is reviewing"
+        );
+        assert_eq!(
+            fs::read_to_string(Path::new(&worktree).join("brand-new.txt"))
+                .await
+                .unwrap(),
+            "never committed either\n",
+            "including what the turn created"
+        );
+
+        // And it is clean there, which is the other half: a reviewer starting on
+        // the same uncommitted diff would be judging a tree it cannot tell from
+        // its own edits.
+        let status = exec(&worktree, &[], &["status", "--porcelain"])
+            .await
+            .unwrap();
+        assert!(status.trim().is_empty(), "{status:?}");
+
+        // The reader's own history is untouched: nothing names this commit.
+        let branches = exec(at, &[], &["for-each-ref", "--format=%(refname)", "refs/heads"])
+            .await
+            .unwrap();
+        assert!(!branches.contains(&pinned), "{branches}");
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// The whole of what undo is for: a turn's edits, its additions and its
+    /// deletions, all taken back.
+    #[tokio::test]
+    async fn undo_puts_a_turns_files_back() {
+        let dir = scratch_repo().await;
+        let at = dir.to_str().unwrap();
+        let baseline = snapshot_tree(at).await.unwrap();
+
+        fs::write(dir.join("keep.txt"), "a\nb\nc\nedited\n")
+            .await
+            .unwrap();
+        fs::write(dir.join("added.txt"), "brand new\n").await.unwrap();
+        fs::remove_file(dir.join("gone.txt")).await.unwrap();
+        let head = snapshot_tree(at).await.unwrap();
+
+        let report = undo_turn(at, &baseline, &head).await.unwrap();
+
+        assert_eq!((report.restored, report.deleted), (2, 1), "{report:?}");
+        assert_eq!(
+            fs::read_to_string(dir.join("keep.txt")).await.unwrap(),
+            "a\nb\nc\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("gone.txt")).await.unwrap(),
+            "x\ny\n",
+            "a file the turn deleted comes back"
+        );
+        assert!(
+            !fs::try_exists(dir.join("added.txt")).await.unwrap(),
+            "a file the turn created goes away"
+        );
+        assert!(report.files.contains(&"added.txt".to_string()), "{report:?}");
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// **The rule worth the rigidity.** The turn's closing snapshot is a fixed
+    /// tree, so the working tree against it says exactly what has moved since:
+    /// restoring over one of those would take work the reader never asked to
+    /// lose, and there is no safe partial answer.
+    #[tokio::test]
+    async fn undo_refuses_when_a_file_moved_since_the_turn() {
+        let dir = scratch_repo().await;
+        let at = dir.to_str().unwrap();
+        let baseline = snapshot_tree(at).await.unwrap();
+        fs::write(dir.join("keep.txt"), "a\nb\nc\nfrom the agent\n")
+            .await
+            .unwrap();
+        let head = snapshot_tree(at).await.unwrap();
+
+        // The reader edits the same file by hand once the turn is over.
+        fs::write(dir.join("keep.txt"), "a\nb\nc\nmine\n")
+            .await
+            .unwrap();
+
+        let error = undo_turn(at, &baseline, &head).await.unwrap_err();
+        let message = format!("{error:?}");
+        assert!(message.contains("keep.txt"), "the refusal names it: {message}");
+        assert_eq!(
+            fs::read_to_string(dir.join("keep.txt")).await.unwrap(),
+            "a\nb\nc\nmine\n",
+            "a refused undo must not have written anything"
+        );
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// `restore` without `--staged`, so the index stays where the reader put it:
+    /// a restore that staged itself would put their next commit out of step with
+    /// their working tree. The two columns of `status` are what tell them apart.
+    #[tokio::test]
+    async fn undo_writes_the_tree_and_leaves_the_index_alone() {
+        let dir = scratch_repo().await;
+        let at = dir.to_str().unwrap();
+
+        // Dirty before the turn, so the baseline differs from HEAD and a staged
+        // restore would be visible rather than cancelling out.
+        fs::write(dir.join("keep.txt"), "a\nb\nc\ndirty before\n")
+            .await
+            .unwrap();
+        let baseline = snapshot_tree(at).await.unwrap();
+
+        fs::write(dir.join("keep.txt"), "a\nb\nc\nfrom the agent\n")
+            .await
+            .unwrap();
+        let head = snapshot_tree(at).await.unwrap();
+
+        undo_turn(at, &baseline, &head).await.unwrap();
+
+        let status = exec(at, &[], &["status", "--porcelain", "keep.txt"])
+            .await
+            .unwrap();
+        // `trim_end`, never `trim`: the leading space *is* the index column
+        // being asserted — `M ` would mean a staged restore.
+        assert_eq!(
+            status.trim_end(),
+            " M keep.txt",
+            "only the worktree column may move: {status:?}"
         );
 
         fs::remove_dir_all(&dir).await.ok();

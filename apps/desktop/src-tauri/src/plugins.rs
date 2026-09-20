@@ -526,7 +526,7 @@ async fn the_shipped_agent_answers_about_its_skills() {
         .iter()
         .find(|skill| skill.name == target.name)
         .unwrap_or_else(|| panic!("the switched-off Skill left the roster: {after:?}"));
-    assert_eq!(still.enabled, false, "the roster did not move the switch");
+    assert!(!still.enabled, "the roster did not move the switch");
 
     let text = read_skill(target.name.clone(), target.location_uri.clone())
         .await
@@ -735,6 +735,33 @@ async fn the_shipped_agent_writes_down_an_agent() {
             .await
             .expect("the agent deletes it"),
         "the delete answered that nothing was removed"
+    );
+
+    close_now();
+}
+
+/// **The delegation read is registered, and it refuses a stranger.**
+///
+/// The panel that draws a subagent's work is only ever as good as this request,
+/// and the failure it must never have is the quiet one: a read that answered
+/// somebody else's session because the membership check was missing or wrong.
+/// The control child has a session of its own and no children, so any id is
+/// somebody else's.
+///
+/// Ignored by default: it spawns the shipped agent.
+#[tokio::test]
+#[ignore = "spawns the shipped agent"]
+async fn the_shipped_agent_refuses_to_read_a_session_that_is_not_its_child() {
+    let _serialised = PLUGIN_TESTS.lock().await;
+
+    let refused = with_control(|session| {
+        Box::pin(mcode::delegation::transcript(session, "mvs_not_a_child", None))
+    })
+    .await;
+
+    assert!(
+        refused.is_err(),
+        "a foreign session was read as if it were a delegated child: {refused:?}"
     );
 
     close_now();

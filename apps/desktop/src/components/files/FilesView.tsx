@@ -19,7 +19,7 @@ import { useFileSearch } from "@/hooks/useFileSearch";
 import { useHotkey } from "@/hooks/useHotkey";
 import { FILE_OPENER } from "@/lib/openWith";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { useResizable } from "@/components/ResizeHandle";
+import { usePaneWidth, useResizable } from "@/components/ResizeHandle";
 import {
   activateFile,
   closeFile,
@@ -51,7 +51,12 @@ const MIN_WIDTH = 180;
 /// number rather than the chat column's: a split lifts that floor, since split
 /// panes are deliberately small, and this view renders under a split like any
 /// other — so borrowing it let the list be dragged over the file it opens.
-const VIEWER_MIN = 360;
+///
+/// It came down from 360 when this view moved into the right pane. There it is
+/// sharing a window the reader can drag, not the whole window: at the pane's
+/// own 512 the larger floor left the tree under 160px, which is narrower than
+/// the filenames it draws.
+const VIEWER_MIN = 240;
 
 /// The session's directory as a tree, with the files it opens beside it.
 ///
@@ -78,6 +83,11 @@ export default function FilesView({
 
   const [side, setSide] = useLocalStorage<Side>(SIDE_KEY, DEFAULT_SIDE);
   const [shown, setShown] = useLocalStorage<boolean>(SHOWN_KEY, true);
+  // The room the two halves actually share is this pane's width, not the
+  // window's — this view renders inside the right pane now. Zero before the
+  // pane has published its own, and the window's bounds stand in for that one
+  // frame; the remembered width is inside both, so nothing moves for it.
+  const panelWidth = usePaneWidth("panel");
   // The handle sits on the list's *inner* edge, which is the opposite side to
   // the one the list is on.
   const { style, handle } = useResizable({
@@ -87,6 +97,7 @@ export default function FilesView({
     edge: side === "left" ? "right" : "left",
     label: "Resize the file list",
     floor: VIEWER_MIN,
+    within: panelWidth > 0 ? panelWidth : undefined,
   });
 
   const [query, setQuery] = useState("");
@@ -218,10 +229,9 @@ export default function FilesView({
   );
 
   return (
-    // The top border is what parts this from the titlebar, the same rule the
-    // Diff view states: without it the tab strip floats directly under the
-    // window's own controls and reads as part of them.
-    <div className={cn("flex min-h-0 flex-1 border-t border-border", side === "right" && "flex-row-reverse")}>
+    // No top border: the pane's own tab row above already carries a bottom
+    // rule, the same bargain the Diff view makes.
+    <div className={cn("flex min-h-0 flex-1", side === "right" && "flex-row-reverse")}>
       {list}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">

@@ -3,6 +3,7 @@ import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from "react
 
 import AgentTrace from "@/components/chat/AgentTrace";
 import AssistantMessage from "@/components/chat/AssistantMessage";
+import BloubAvatar from "@/components/BloubAvatar";
 import EventRow from "@/components/chat/EventRow";
 import SubagentRow from "@/components/chat/SubagentRow";
 import ToolGroupRow from "@/components/chat/ToolGroupRow";
@@ -27,6 +28,10 @@ type TurnBlockProps = {
   /// Opens the session that relayed a prompt, for a `user_message` that carries
   /// a sender. Reaches both the turn's own prompt and any queued one inside it.
   onOpenSession: (sessionId: string) => void;
+  /// What the settled line's own bot is derived from — the same seed the live
+  /// indicator above it carries, so the face working is the face that stopped.
+  /// Absent draws no bot, which is right for a caller with no session behind it.
+  botSeed?: string;
   /// Trails the turn's work inside this block's own stack. The thinking
   /// indicator and the streaming preview both go here rather than after the
   /// block, so they sit at the same gap the committed event will — placing them
@@ -102,6 +107,7 @@ function TurnBlock({
   todosByCallId,
   onOpenSubagent,
   onOpenSession,
+  botSeed,
   footer,
 }: TurnBlockProps) {
   // Per segment, not per turn: a stretch of work between queued prompts opens
@@ -218,7 +224,12 @@ function TurnBlock({
           end on screen. */}
       {turn.finalText && <AssistantMessage text={turn.finalText} />}
 
-      <TurnFooter prompt={turn.prompt} completed={turn.completed} text={turn.finalText} />
+      <TurnFooter
+        prompt={turn.prompt}
+        completed={turn.completed}
+        text={turn.finalText}
+        botSeed={botSeed}
+      />
 
       {footer}
 
@@ -253,12 +264,15 @@ function TurnFooter({
   prompt,
   completed,
   text,
+  botSeed,
 }: {
   prompt: AgentEvent | null;
   completed: AgentEvent | null;
   /// The answer's own markdown, which is what a copy hands over — the source
   /// rather than the rendered text, so a table or a code block pastes as one.
   text: string | null;
+  /// Who did the work, for the mark that opens the line. See `TurnBlockProps`.
+  botSeed?: string;
 }) {
   // Nothing to say about a turn still running or one with no prompt to time it
   // from — the line exists between two events, and either half missing is the
@@ -268,10 +282,22 @@ function TurnFooter({
   const ms = Date.parse(completed.ts) - Date.parse(prompt.ts);
   const waited = Number.isFinite(ms) && ms >= 0 ? formatDuration(ms) : null;
   const at = clockTime(completed.ts);
+  // A turn that failed wears the state that says so, so the mark at the head of
+  // the line reads the same way the row above it does.
+  const failed = completed.payload.type === "turn_completed" && completed.payload.status === "error";
 
   return (
     <div className="mt-1 flex items-center gap-2 text-ui text-muted-foreground">
-      {waited && <span>{`Responded in ${waited}`}</span>}
+      {/* **The face that worked**, and the same one the live indicator above it
+          showed — the bot is derived from the session, so the two are one face
+          rather than two marks that happen to sit in the same column. */}
+      {botSeed && <BloubAvatar name={botSeed} size={14} mood={failed ? "failed" : "done"} />}
+      {/* **`Worked for`, and the live row above it says `Working for …`** — one
+          sentence in two tenses. It used to read `Responded in`, which named the
+          reply rather than the work: a turn that spent forty seconds reading and
+          one second answering was reported as though the reading had not
+          happened. */}
+      {waited && <span>{`Worked for ${waited}`}</span>}
       {/* `ml-auto`, so the clock and the control sit at the column's right edge
           and stay put as the wait grows a digit — a ragged left edge under a
           sentence reads as part of it. */}

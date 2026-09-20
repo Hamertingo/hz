@@ -482,6 +482,11 @@ fn filter_by_archived(items: Vec<SessionIndexItem>, archived: bool) -> Vec<Sessi
 impl SessionIndexItem {
     /// Everything the index needs is known when the first prompt is sent, so a
     /// session appears in the list even if its process fails to start.
+    ///
+    /// The argument list is the struct's own fields, one to one, and it is
+    /// written once per session — a builder for it would be more machinery than
+    /// the twelve call sites it replaced.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_id: &str,
         harness: Harness,

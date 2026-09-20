@@ -36,7 +36,7 @@ type SessionFiles = { open: OpenFile[]; active: string | null };
 /// rather than unmounts, so a session's own tabs survive being switched away
 /// from and back either way.
 ///
-/// In memory only, like `viewTabs` — a restart opens on an empty pane.
+/// In memory only — a restart opens on an empty pane.
 const bySession = new Map<string, SessionFiles>();
 
 /// Shared by every session that has opened nothing, so an untouched session

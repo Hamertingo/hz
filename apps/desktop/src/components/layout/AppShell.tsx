@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { DROP_ATTR } from "@/lib/dragSession";
 import { EMPTY_VIEW } from "@/lib/groups";
+import { cn } from "@/lib/utils";
 
 type AppShellProps = {
   sidebar: ReactNode;
@@ -10,6 +11,14 @@ type AppShellProps = {
   /// Right-hand inspector, when open. Sits outside the chat column so the
   /// composer stays scoped to the conversation rather than spanning both.
   panel?: ReactNode;
+  /// The pane has taken this column's room — the wide half of `panel`'s two
+  /// sizes.
+  ///
+  /// **Hidden, not dropped.** The transcript is what loses its place here, and
+  /// unmounting it would cost the reader their scroll position and every turn
+  /// backfilled so far, for a mode they may be stepping in and out of. It is
+  /// the bargain every pane in this app already makes.
+  columnHidden?: boolean;
   /// Holds the composer in the upper middle of the window and drops the
   /// transcript pane. The empty state has no transcript to anchor the composer
   /// against, so pinning it to the bottom leaves the one usable control as far
@@ -30,6 +39,7 @@ export default function AppShell({
   header,
   footer,
   panel,
+  columnHidden = false,
   centered = false,
   overlay,
   children,
@@ -39,8 +49,11 @@ export default function AppShell({
       {sidebar}
 
       {/* `min-w-0` is load-bearing: without it a wide code block in the transcript
-          sets the flex item's floor and pushes the sidebar off-screen. */}
-      <div className="flex min-w-0 flex-1 flex-col">
+          sets the flex item's floor and pushes the sidebar off-screen.
+
+          Display is conditional rather than stacked with `flex`, which would
+          leave the winner of two `display` declarations to stylesheet order. */}
+      <div className={cn("min-w-0 flex-1 flex-col", columnHidden ? "hidden" : "flex")}>
         {header}
         {centered ? (
           // Held below the top rather than centered. Centering moves the whole
@@ -63,7 +76,7 @@ export default function AppShell({
           </div>
         ) : (
           <>
-            {/* `flex flex-col` so the view tabs' bodies, which size themselves
+            {/* `flex flex-col` so the column's bodies, which size themselves
                 with `flex-1` the way the right panel's do, have a column to
                 grow in. */}
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>

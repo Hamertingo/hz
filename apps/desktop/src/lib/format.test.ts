@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { calendarDay, clockTime, formatDuration } from "@/lib/format";
+import { calendarDay, clockTime, formatDuration, formatElapsed } from "@/lib/format";
 
 /// Fixed so "today" is a known afternoon rather than whenever the suite runs —
 /// every case here is about which side of a midnight a timestamp falls on, and
@@ -73,6 +73,28 @@ describe("formatDuration", () => {
   /// reading is a zero rather than a negative count.
   it("never goes below zero", () => {
     expect(formatDuration(-500)).toBe("0.0s");
+  });
+});
+
+describe("formatElapsed", () => {
+  /// The live row redraws every second, so a tenth would be a `.0` that changes
+  /// under the reader's eye and says nothing.
+  it("counts whole seconds, with no decimal", () => {
+    expect(formatElapsed(2300)).toBe("2s");
+    expect(formatElapsed(9900)).toBe("9s");
+    expect(formatElapsed(0)).toBe("0s");
+  });
+
+  /// Rounded down, so the number is time actually spent — 59.9s must not read as
+  /// a minute the wait has not reached.
+  it("does not round a wait up into the next unit", () => {
+    expect(formatElapsed(59_900)).toBe("59s");
+    expect(formatElapsed(60_000)).toBe("1m 0s");
+    expect(formatElapsed(95_400)).toBe("1m 35s");
+  });
+
+  it("never goes below zero", () => {
+    expect(formatElapsed(-500)).toBe("0s");
   });
 });
 

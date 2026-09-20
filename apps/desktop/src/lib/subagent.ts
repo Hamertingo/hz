@@ -1,4 +1,4 @@
-import type { DelegatedMember } from "@/types/events";
+import type { DelegatedMember, ToolResult } from "@/types/events";
 
 /// The statuses a member is still going in. The agent's own vocabulary — see
 /// [`DelegatedMember::status`] — and the set that decides whether a Stop is worth
@@ -64,4 +64,35 @@ export function statusWord(status: string): string {
     default:
       return status || "Unknown";
   }
+}
+
+/// The child Session a run's own result names, where it names one.
+///
+/// **The `task` tool reports the id in its structured result** (`sub_session_id`),
+/// and that id is the very thing the roster is keyed by — so the join stops being
+/// a guess the moment the call answers. It arrives at completion for a foreground
+/// child and at the start for a background one; `memberFor`'s best-effort match
+/// stands in until then.
+export function subSessionIdOf(result: ToolResult | undefined): string | null {
+  const details = result?.structured;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  const id = (details as Record<string, unknown>).sub_session_id;
+  return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+}
+
+/// The roster row a run *is*, exactly where the run's own result says.
+///
+/// Two ways in, in order of trust: the child's session id off the call's result
+/// when the roster still holds it, and the label-and-title guess otherwise. The
+/// second is only ever reached while a foreground child is still working — which
+/// is exactly the window a reader is watching it in — so the guess matters, and it
+/// fails toward drawing nothing rather than toward drawing somebody else's work.
+export function memberIdOf(
+  run: { id: string; label: string | null; description: string | null },
+  members: readonly DelegatedMember[],
+  result: ToolResult | undefined,
+): string | null {
+  const exact = subSessionIdOf(result);
+  if (exact !== null && members.some((member) => member.sessionId === exact)) return exact;
+  return memberFor(run, members)?.sessionId ?? null;
 }

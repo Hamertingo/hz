@@ -8,10 +8,18 @@ import { trackActiveDay } from "@/lib/analytics";
 import { onFocusChange } from "@/lib/focus";
 import { adoptDurablePreferences, loadPreferences } from "@/lib/prefs";
 import { startSurveys } from "@/lib/surveys";
+import { startUiScale } from "@/hooks/useUiScale";
 
 // Before the first render, since every render below reads one of these keys —
 // and before the effects, which write them. See the function for what it moves.
 adoptPreviousStorageKeys();
+
+// A stored zoom is applied here rather than from an effect, for the font sizes'
+// reason inside `index.html`: there is nothing to wait for, and an effect would
+// paint one frame at 100% and then resize the whole window under the reader.
+// Unlike the sizes it cannot go in the pre-paint script — this is a call into
+// the webview, and that script runs before anything can answer one.
+startUiScale();
 
 // And the durable half, still before the first render and in that order: one
 // command answers every preference that lives in `~/.hz/settings.json`, and then

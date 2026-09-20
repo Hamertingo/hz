@@ -1688,9 +1688,9 @@ function RowAction({
 }
 
 /// The fork submenu's rows, in the order they are drawn. The number key that
-/// picks one is its position here — same rule `VIEW_TABS` accelerators follow —
-/// so reordering moves the digits with it and there is no second table to fall
-/// out of step with the labels.
+/// picks one is its position here — the rule the pane digits follow too — so
+/// reordering moves the digits with it and there is no second table to fall out
+/// of step with the labels.
 const FORKS = [
   { label: "Fork in new worktree", worktree: true },
   { label: "Fork here", worktree: false },

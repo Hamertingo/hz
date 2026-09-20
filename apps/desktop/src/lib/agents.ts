@@ -99,13 +99,10 @@ export function emptyAgent(): AgentDraft {
 /// How many portraits the store's marker names.
 ///
 /// The agent's own format is `[0-9]`, so this is its ceiling and not a choice
-/// made here.
+/// made here. **It is read and never written**: what this app edits is the bot
+/// (`lib/agentSkin.ts`), and the marker only decides a shape and a colour for an
+/// Agent somebody dressed in the agent's own UI.
 export const PORTRAIT_COUNT = 10;
-
-/// The marker the store reads as "built-in portrait number N".
-export function portraitMarker(variant: number): string {
-  return `mavis-agent-avatar://default/v1/${variant}`;
-}
 
 /// The variant a stored avatar names, or `null` for an image or none at all.
 ///

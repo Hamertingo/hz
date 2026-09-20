@@ -30,30 +30,39 @@ export function reconcileLog(
 ///
 /// Named here rather than beside the row it labels, so the rule below can
 /// answer in it without this file reaching up into a component.
-export type SubTab = "uncommitted" | "branch" | "history";
+export type SubTab = "turn" | "uncommitted" | "branch" | "history";
 
 /// Where that row lands before the reader has picked a tab.
 ///
-/// Uncommitted leads, because it is the one list still being written and every
-/// other tab is a record. A clean tree makes it the emptiest thing on screen
-/// though, so with nothing to commit the branch's own commits are what the
-/// session has to show for itself and the view opens on those instead.
+/// The turn leads, because it is what just happened: the pane is opened from
+/// the toggle's git glyph, and a glyph saying the last turn touched files that
+/// lands the reader anywhere else is a lie. Failing that, uncommitted carries
+/// on — it is the one list still being written and every other tab is a record.
+/// A clean tree makes it the emptiest thing on screen though, so with nothing
+/// to commit the branch's own commits are what the session has to show for
+/// itself and the view opens on those instead.
 ///
 /// `settled` is what stops that from flipping under the reader. The view
 /// paints before the first read lands, and until it does an empty list says
 /// "not asked yet" rather than "nothing changed" — the same two meanings
 /// `useHeadTree` carries its own `settled` to tell apart. Read as clean, an
 /// unanswered read opens the branch tab for a frame and steps off it the moment
-/// the working tree replies.
+/// the working tree replies. `hasTurn` is read the same way: an unanswered turn
+/// read is not "the turn changed nothing".
 export function defaultSubTab({
+  hasTurn,
   hasUncommitted,
   settled,
   hasBranchCommits,
 }: {
+  /// The turn on screen changed something, read off the snapshot pair the
+  /// prompt took rather than off the tree.
+  hasTurn: boolean;
   hasUncommitted: boolean;
   /// Whether the working-tree read has ever come back for this directory.
   settled: boolean;
   hasBranchCommits: boolean;
 }): SubTab {
+  if (hasTurn) return "turn";
   return !hasUncommitted && settled && hasBranchCommits ? "branch" : "uncommitted";
 }

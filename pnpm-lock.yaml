@@ -6,15 +6,7 @@ settings:
 
 importers:
 
-  .:
-    dependencies:
-      '@lobehub/icons-static-svg':
-        specifier: ^1.95.0
-        version: 1.95.0
-    devDependencies:
-      '@biomejs/biome':
-        specifier: ^2.5.14
-        version: 2.5.14
+  .: {}
 
   apps/desktop:
     dependencies:

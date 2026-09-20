@@ -11,6 +11,18 @@ export type Chord = {
   shift: boolean;
   alt: boolean;
   code?: string;
+  /// Take the physical key whichever way Shift is held.
+  ///
+  /// For a chord whose shifted twin is the same control: ⌘+ and ⌘= are one key
+  /// on a US layout and every reader reaches for the shifted one, so a chord
+  /// declared as `=` alone would answer the press nobody makes. Only ever set
+  /// beside `code`, since it is the physical key that is being named.
+  ///
+  /// A **rebound** chord is exact again — the recorder writes down what it saw,
+  /// Shift included — so this is the default's privilege and not the matcher's
+  /// general behaviour. Not compared by `sameChord`: two chords differing only
+  /// here are the same key, which is what `holderOf` has to answer with.
+  anyShift?: boolean;
 };
 
 export type ShortcutGroup = "General" | "Sessions" | "Panels and views" | "Composer" | "Notifications";
@@ -30,6 +42,10 @@ export const SHORTCUTS = [
   { id: "session.new", label: "New task", group: "Sessions", chord: k("n") },
   { id: "session.prev", label: "Previous session", group: "Sessions", chord: k("ArrowUp", { shift: true }) },
   { id: "session.next", label: "Next session", group: "Sessions", chord: k("ArrowDown", { shift: true }) },
+  // Back and forward on the keys browsers and editors use for it. Free because
+  // ⌘⇧[ / ⌘⇧] are the right pane's tabs — the shifted pair — and these are bare.
+  { id: "visit.back", label: "Back to the previous session", group: "Sessions", chord: k("[") },
+  { id: "visit.forward", label: "Forward to the next session", group: "Sessions", chord: k("]") },
   { id: "group.prev", label: "Previous project", group: "Sessions", chord: k("ArrowUp", { alt: true }) },
   { id: "group.next", label: "Next project", group: "Sessions", chord: k("ArrowDown", { alt: true }) },
   { id: "search", label: "Search sessions", group: "Sessions", chord: k("f") },
@@ -46,16 +62,22 @@ export const SHORTCUTS = [
 
   { id: "sidebar.toggle", label: "Toggle sidebar", group: "Panels and views", chord: k("b") },
   { id: "panel.toggle", label: "Toggle right panel", group: "Panels and views", chord: k("e") },
+  // The same letter with one more modifier, since it is the same control's
+  // other half — ⌘E says whether the pane is up, this says how much room it
+  // takes. Not ⌘⇧E, which is `effort.next`.
+  { id: "panel.expand", label: "Expand right panel", group: "Panels and views", chord: k("e", { alt: true }) },
   { id: "panel.tab.prev", label: "Previous panel tab", group: "Panels and views", chord: k("{", { shift: true, code: "BracketLeft" }) },
   { id: "panel.tab.next", label: "Next panel tab", group: "Panels and views", chord: k("}", { shift: true, code: "BracketRight" }) },
   { id: "panel.refresh", label: "Refresh panel", group: "Panels and views", chord: k("r") },
   { id: "doc.save", label: "Save doc", group: "Panels and views", chord: k("s") },
   { id: "subtab.prev", label: "Previous tab in the view or panel", group: "Panels and views", chord: k("ArrowLeft", { shift: true }) },
   { id: "subtab.next", label: "Next tab in the view or panel", group: "Panels and views", chord: k("ArrowRight", { shift: true }) },
-  { id: "view.chat", label: "Chat view", group: "Panels and views", chord: k("1", { alt: true, code: "Digit1" }) },
-  { id: "view.changes", label: "Changes view", group: "Panels and views", chord: k("2", { alt: true, code: "Digit2" }) },
-  { id: "view.browser", label: "Browser view", group: "Panels and views", chord: k("3", { alt: true, code: "Digit3" }) },
-  { id: "view.files", label: "Files view", group: "Panels and views", chord: k("4", { alt: true, code: "Digit4" }) },
+  // One per view rather than by position, since a rebinding names the view and
+  // not its slot in the row. Three, because the transcript is not a view the
+  // reader switches to — it is what the column shows otherwise.
+  { id: "view.changes", label: "Diff view", group: "Panels and views", chord: k("1", { alt: true, code: "Digit1" }) },
+  { id: "view.browser", label: "Browser view", group: "Panels and views", chord: k("2", { alt: true, code: "Digit2" }) },
+  { id: "view.files", label: "Files view", group: "Panels and views", chord: k("3", { alt: true, code: "Digit3" }) },
   { id: "chat.bottom", label: "Scroll chat to bottom", group: "Panels and views", chord: k("ArrowDown") },
   { id: "issues.open", label: "Open issues", group: "Panels and views", chord: k("i") },
   { id: "prs.open", label: "Open pull requests", group: "Panels and views", chord: k("l", { shift: true }) },
@@ -81,6 +103,13 @@ export const SHORTCUTS = [
 
   { id: "settings", label: "Settings", group: "General", chord: k(",") },
   { id: "palette.open", label: "Command palette", group: "General", chord: k("k") },
+  // The browser's three, because they are the ones a reader already presses and
+  // this app has a webview's zoom under them. `anyShift` on the two that have a
+  // shifted twin: everyone reaches for ⌘+ and ⌘_, and ⌘= and ⌘- are the same
+  // physical keys.
+  { id: "zoom.in", label: "Zoom in", group: "General", chord: k("=", { code: "Equal", anyShift: true }) },
+  { id: "zoom.out", label: "Zoom out", group: "General", chord: k("-", { code: "Minus", anyShift: true }) },
+  { id: "zoom.reset", label: "Actual size", group: "General", chord: k("0") },
 ] as const satisfies readonly { id: string; label: string; group: ShortcutGroup; chord: Chord }[];
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];

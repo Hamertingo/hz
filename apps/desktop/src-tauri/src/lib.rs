@@ -17,6 +17,7 @@ macro_rules! fail {
 }
 
 pub mod analytics;
+mod automations;
 pub mod apps;
 pub mod attachments;
 pub mod binpath;
@@ -115,6 +116,16 @@ async fn send_msg(
     branch: Option<&str>,
     use_worktree: bool,
     worktree_name: Option<&str>,
+    // Where a new session's worktree starts from. **Two fields and not one**
+    // because they carry different things: a ref holds committed work only,
+    // where a seed is a snapshot of another checkout's working tree — and a
+    // review of a turn nobody has committed needs the second. The composer sets
+    // neither; the second opinion sets the seed.
+    base_ref: Option<String>,
+    seed_tree: Option<String>,
+    // The session that asked for this one, so the sidebar nests the row beside
+    // the work it was asked about.
+    parent_session_id: Option<String>,
     // The Agent the composer picked for a new session, or `None` for the
     // runtime's own default. Applied only when a session is created — an
     // existing one already runs as whatever it was made with, and `send_msg`
@@ -166,16 +177,11 @@ async fn send_msg(
                 branch,
                 use_worktree,
                 worktree_name,
-                // The composer offers no base ref: a worktree session created
-                // there is one the reader is starting fresh, and the picker
-                // already hides the branch list in worktree mode because `-w`
-                // would not honour it.
-                base_ref: None,
+                base_ref: base_ref.as_deref(),
+                seed_tree: seed_tree.as_deref(),
                 agent_name: agent_name.as_deref(),
                 is_new_session,
-                // The composer never has a parent, and its prompts are the
-                // user's own; only the orchestration socket sets either.
-                parent_session_id: None,
+                parent_session_id: parent_session_id.as_deref(),
                 from: None,
                 sent_at: sent_at.as_deref(),
             },
@@ -680,6 +686,29 @@ async fn stop_session_delegations(
     manager.stop_delegations(&session_id).await
 }
 
+/// A delegated child's own session, as this app's events.
+///
+/// **Polled while the child runs, and that is the design rather than a shortcut.**
+/// A delegated Session is separate, its stream never reaches the parent's, and the
+/// agent reports only its status — so a reader watching one is watching a read,
+/// not a subscription. The read attaches nothing on the agent's side, which is
+/// what makes repeating it free of consequence.
+///
+/// **It answers in the app's own event vocabulary**, which is what lets a subagent
+/// be drawn by the transcript's own components rather than by a second renderer
+/// written for it.
+#[tauri::command]
+async fn session_delegation_messages(
+    session_id: String,
+    member_session_id: String,
+    limit: Option<u64>,
+    manager: State<'_, SessionManager>,
+) -> Result<Vec<crate::events::AgentEvent>, String> {
+    manager
+        .delegation_transcript(&session_id, &member_session_id, limit)
+        .await
+}
+
 /// Every Skill the agent holds, the switched-off ones included.
 ///
 /// **A management read, not the runtime one.** The list the *model* is told about
@@ -1005,6 +1034,11 @@ pub fn run() {
                 }
             });
 
+            // Prompts that run themselves. A task in this process rather than a
+            // daemon — an automation nobody can watch run is one the reader finds
+            // out about by reading a diff they did not expect. See `automations`.
+            automations::start(app.handle().clone());
+
             // Returns immediately: consent is read, and the id minted, inside
             // the task `track` spawns — so nothing on screen waits on a file
             // read and an opted-out install still sends nothing.
@@ -1029,8 +1063,13 @@ pub fn run() {
             remove_provider,
             test_provider,
             refresh_models,
+            git::undo_turn,
             prepare_session,
             agent_availability,
+            automations::list_automations,
+            automations::create_automation,
+            automations::delete_automation,
+            automations::set_automation_enabled,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_open,
             #[cfg(all(feature = "cef", target_os = "macos"))]
@@ -1099,6 +1138,7 @@ pub fn run() {
             context_snapshot,
             session_delegations,
             stop_session_delegations,
+            session_delegation_messages,
             list_plugin_skills,
             set_plugin_skill_enabled,
             read_plugin_skill,

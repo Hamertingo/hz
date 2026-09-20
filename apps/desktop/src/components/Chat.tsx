@@ -87,9 +87,9 @@ type ChatProps = {
   /// Whether the checkpoint rail may draw at all. Off for a split pane that
   /// shares its column: at half height the rail sits over the text.
   rail?: boolean;
-  /// Whether the chat tab is the one on screen. The transcript is hidden rather
-  /// than unmounted when another view tab is picked, so ⌘↓ has to be told to
-  /// stop listening — otherwise it scrolls a pane nobody can see.
+  /// Whether this transcript is the one on screen. The column hides rather than
+  /// unmounts when a page is opened over it, so ⌘↓ has to be told to stop
+  /// listening — otherwise it scrolls a pane nobody can see.
   active?: boolean;
 };
 
@@ -582,6 +582,7 @@ export default function Chat({
                   todosByCallId={todosByCallId}
                   onOpenSubagent={openSubagent}
                   onOpenSession={openSession}
+                  botSeed={session?.sessionId}
                   // Both cover the wait for output, and on every harness but fx
                   // never at once — `waitingTurn` requires no streaming text
                   // there. Inside the block so they sit at the gap the committed
@@ -603,7 +604,11 @@ export default function Chat({
                             <AssistantMessage text={streamingText} streaming />
                           ))}
                         {turn === waitingTurn && (
-                          <WorkingIndicator tokens={working?.tokens ?? 0} />
+                          <WorkingIndicator
+                            tokens={working?.tokens ?? 0}
+                            seed={session?.sessionId}
+                            since={turn.prompt?.ts}
+                          />
                         )}
                       </>
                     )

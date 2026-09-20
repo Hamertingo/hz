@@ -141,7 +141,7 @@ fn the_stance_rows_are_the_ones_the_frontend_offers() {
         let policy = stance_named(&row.stance);
 
         assert_eq!(
-            permission_value_for(policy).ok().as_deref(),
+            permission_value_for(policy).ok(),
             row.permission_value.as_deref(),
             "{} as a permissionMode value",
             row.stance

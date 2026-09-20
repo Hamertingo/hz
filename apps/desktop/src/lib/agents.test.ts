@@ -6,7 +6,6 @@ import {
   filterAgents,
   groupAgents,
   isPicture,
-  portraitMarker,
   portraitVariant,
 } from "./agents";
 import type { PluginAgent } from "@/types/events";
@@ -86,16 +85,19 @@ describe("emptyAgent", () => {
 });
 
 describe("portraits", () => {
-  it("round-trips a variant through the store's own marker", () => {
+  it("reads the store's own marker as a variant", () => {
+    // Read, never written: the marker is the agent's store, and what this app
+    // edits is the bot. It still decides a shape and a colour for an Agent that
+    // was dressed on the agent's side.
     for (let variant = 0; variant < 10; variant += 1) {
-      expect(portraitVariant(portraitMarker(variant))).toBe(variant);
+      expect(portraitVariant(`mavis-agent-avatar://default/v1/${variant}`)).toBe(variant);
     }
   });
 
   it("reads a picture as a picture, not as variant zero", () => {
     expect(portraitVariant("data:image/png;base64,AAAA")).toBeNull();
     expect(isPicture("data:image/png;base64,AAAA")).toBe(true);
-    expect(isPicture(portraitMarker(3))).toBe(false);
+    expect(isPicture("mavis-agent-avatar://default/v1/3")).toBe(false);
     expect(isPicture(null)).toBe(false);
   });
 

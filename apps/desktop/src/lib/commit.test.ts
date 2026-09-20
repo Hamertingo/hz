@@ -52,15 +52,26 @@ describe("reconcileLog", () => {
 });
 
 describe("defaultSubTab", () => {
-  it("opens on work still being written", () => {
+  const none = { hasTurn: false };
+
+  // The pane is opened from the toggle's git glyph, which says the last turn
+  // touched files — so the tab that answers that has to be the one it lands on,
+  // over anything the wider tree would have claimed.
+  it("opens on the turn that just happened", () => {
     expect(
-      defaultSubTab({ hasUncommitted: true, settled: true, hasBranchCommits: true }),
+      defaultSubTab({ ...none, hasTurn: true, hasUncommitted: true, settled: true, hasBranchCommits: true }),
+    ).toBe("turn");
+  });
+
+  it("opens on work still being written when the turn changed nothing", () => {
+    expect(
+      defaultSubTab({ ...none, hasUncommitted: true, settled: true, hasBranchCommits: true }),
     ).toBe("uncommitted");
   });
 
   it("opens on the branch when the tree is clean and the branch has commits", () => {
     expect(
-      defaultSubTab({ hasUncommitted: false, settled: true, hasBranchCommits: true }),
+      defaultSubTab({ ...none, hasUncommitted: false, settled: true, hasBranchCommits: true }),
     ).toBe("branch");
   });
 
@@ -69,13 +80,13 @@ describe("defaultSubTab", () => {
   // the branch tab for a frame and steps off it when the read replies.
   it("waits for the working tree to answer before leaving Uncommitted", () => {
     expect(
-      defaultSubTab({ hasUncommitted: false, settled: false, hasBranchCommits: true }),
+      defaultSubTab({ ...none, hasUncommitted: false, settled: false, hasBranchCommits: true }),
     ).toBe("uncommitted");
   });
 
   it("stays put when the branch has nothing of its own either", () => {
     expect(
-      defaultSubTab({ hasUncommitted: false, settled: true, hasBranchCommits: false }),
+      defaultSubTab({ ...none, hasUncommitted: false, settled: true, hasBranchCommits: false }),
     ).toBe("uncommitted");
   });
 });

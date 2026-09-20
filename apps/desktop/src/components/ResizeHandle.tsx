@@ -73,6 +73,13 @@ function useChatFloor(): number {
   return useSyncExternalStore(layoutChanged.subscribe, () => chatFloor);
 }
 
+/// What the named pane is holding right now, so a pane *inside* it can size
+/// against the room it actually has. `0` until it has published, which it does
+/// in an effect a frame after mounting.
+export function usePaneWidth(pane: Pane): number {
+  return useSyncExternalStore(layoutChanged.subscribe, () => widths[pane] ?? 0);
+}
+
 /// Called by `App` with whether the chat column is showing one conversation.
 ///
 /// Split view is the exception: its panes are deliberately small, so a floor
@@ -108,12 +115,22 @@ export function useResizable({
   label,
   pane,
   floor,
+  within,
 }: {
   storageKey: string;
   initial: number;
   min: number;
   edge: Edge;
   label: string;
+  /// The width of the row this pane's edge moves along, where that row is not
+  /// the window's.
+  ///
+  /// Given, it replaces both the window and the side panes — neither says
+  /// anything about a pane nested inside another one, which is the files list:
+  /// it was bounded by the window and by what the sidebar and the right pane
+  /// were holding, and all three together left it a sliver of a pane it
+  /// actually had the room for.
+  within?: number;
   /// What the pane's sibling keeps, where that sibling is not the chat column.
   /// The chat floor is lifted for a split — its panes are deliberately small —
   /// and a pane on another row must not inherit that lifting, since nothing
@@ -133,8 +150,20 @@ export function useResizable({
   // beside this was the alternative and it is the very split it would recreate:
   // CSS drew the pane at its share while the clamp here still answered its own
   // minimum.
+  // All three read unconditionally — a nested pane ignores them, but a hook
+  // called behind a condition is a hook whose count moves between renders.
+  const windowWidth = useViewportWidth();
+  const senior = useSeniorPanes(pane);
   const columnFloor = useChatFloor();
-  const bounds = paneBounds(min, useViewportWidth(), useSeniorPanes(pane), floor ?? columnFloor);
+  const nested = within !== undefined;
+  const bounds = paneBounds(
+    min,
+    within ?? windowWidth,
+    nested ? 0 : senior,
+    // A nested pane is not beside the chat column, so the chat's floor has no
+    // say in what it may take either.
+    floor ?? (nested ? 0 : columnFloor),
+  );
   const clamp = useCallback(
     (raw: number) => snapWidth(raw, bounds.min, bounds.max, initial),
     [bounds.min, bounds.max, initial],

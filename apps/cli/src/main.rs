@@ -17,6 +17,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 /// The skill, embedded rather than downloaded at install time — a skill that
 /// describes a different version of the CLI than the one installed is worse
@@ -40,6 +41,16 @@ const INSTALLER_URL: &str =
                   app to be running."
 )]
 struct Cli {
+    /// Reuse the id from an earlier attempt whose outcome you never learned.
+    ///
+    /// Every command stamps an id on its request. If one is reported as having
+    /// run but not answered — a timeout, a killed process — retry the identical
+    /// command with the id it printed: the app remembers the answer and hands
+    /// back that same one instead of running it a second time. Without it, a
+    /// retry is a second side effect.
+    #[arg(long = "request-id", global = true, value_name = "ID")]
+    request_id: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -251,7 +262,15 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+
+    // Claimed before anything is dispatched, so the id a failure names is the id
+    // the request actually went out under. Left unset, `request_id` mints one.
+    if let Some(id) = cli.request_id {
+        let _ = REQUEST_ID.set(id);
+    }
+
+    match cli.command {
         Command::New(args) => new(args),
         Command::Ls(args) => ls(args),
         Command::Send(args) => send_message(args),
@@ -771,6 +790,41 @@ fn connect_failure(error: &std::io::Error, endpoint: &str) -> String {
     }
 }
 
+/// The id this run stamps on its request, taken once.
+///
+/// `--request-id` where the caller has one — which is the whole point: it is how
+/// a retry of an attempt whose outcome was never learned reaches the app under
+/// the *same* name and is answered from the ledger rather than run again.
+///
+/// Otherwise a fresh one, built from this process and the clock because this
+/// crate links no uuid. It exists so that an error can name something to retry
+/// with; nothing else reads it.
+static REQUEST_ID: OnceLock<String> = OnceLock::new();
+
+fn request_id() -> &'static str {
+    REQUEST_ID.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        format!("{}-{nanos}", std::process::id())
+    })
+}
+
+/// Appended to every failure that happened *after* the line went out.
+///
+/// Once it is away the app may have acted on it, so those errors are not "it
+/// didn't happen" — they are "you don't know". Naming the id and the exact retry
+/// is what turns a second attempt from a second side effect into the same
+/// answer, and it is the only reason the id is minted at all.
+fn uncertain(error: String) -> String {
+    format!(
+        "{error}\nThe request may still have run. To find out rather than repeat it, retry the \
+         same command with --request-id {}",
+        request_id()
+    )
+}
+
 /// One request, one response, connection closed.
 fn send(request: Request) -> Result<Response, String> {
     let endpoint = hz_proto::endpoint().ok_or("could not work out where hz is listening")?;
@@ -778,26 +832,28 @@ fn send(request: Request) -> Result<Response, String> {
     let mut stream =
         UnixStream::connect(&endpoint).map_err(|e| connect_failure(&e, &endpoint))?;
 
-    let line = encode_line(&Envelope::new(request)).map_err(|e| e.to_string())?;
+    let line =
+        encode_line(&Envelope::retryable(request, request_id())).map_err(|e| e.to_string())?;
     stream
         .write_all(line.as_bytes())
-        .map_err(|e| format!("could not send the request: {e}"))?;
+        .map_err(|e| uncertain(format!("could not send the request: {e}")))?;
     // Without this the app blocks reading a line that never terminates, because
     // this end is still notionally able to write more of it.
     stream
         .flush()
-        .map_err(|e| format!("could not send the request: {e}"))?;
+        .map_err(|e| uncertain(format!("could not send the request: {e}")))?;
 
     let mut response = String::new();
     BufReader::new(&stream)
         .read_line(&mut response)
-        .map_err(|e| format!("could not read the response: {e}"))?;
+        .map_err(|e| uncertain(format!("could not read the response: {e}")))?;
 
     if response.trim().is_empty() {
-        return Err("hz closed the connection without answering.".into());
+        return Err(uncertain("hz closed the connection without answering.".into()));
     }
 
-    serde_json::from_str(&response).map_err(|e| format!("could not parse the response: {e}"))
+    serde_json::from_str(&response)
+        .map_err(|e| uncertain(format!("could not parse the response: {e}")))
 }
 
 /// Splits `issue link`'s positionals into the session and the issues it names.
@@ -1159,6 +1215,30 @@ mod tests {
             panic!("wrong subcommand");
         };
         assert_eq!(args.prompt, "fix the login redirect loop");
+    }
+
+    /// The id a retry has to reuse. **Global rather than per-subcommand**: every
+    /// command can be retried, and the one that matters is the one that hung —
+    /// not a subcommand a caller plans for.
+    #[test]
+    fn a_request_id_is_accepted_anywhere() {
+        let cli = Cli::parse_from(["hz", "ls", "--request-id", "abc-1"]);
+        assert_eq!(cli.request_id.as_deref(), Some("abc-1"));
+
+        let cli = Cli::parse_from(["hz", "--request-id", "abc-1", "send", "s", "hi"]);
+        assert_eq!(cli.request_id.as_deref(), Some("abc-1"));
+
+        assert_eq!(Cli::parse_from(["hz", "ls"]).request_id, None);
+    }
+
+    /// An error from after the line went out has to name the retry, or the
+    /// caller's only move is to send the same thing a second time — which is the
+    /// double side effect the id exists to prevent.
+    #[test]
+    fn an_uncertain_failure_names_the_retry() {
+        let message = uncertain("could not read the response: timed out".into());
+        assert!(message.contains("--request-id"), "{message}");
+        assert!(message.contains(request_id()), "{message}");
     }
 
     #[test]

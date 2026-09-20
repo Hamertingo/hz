@@ -333,6 +333,26 @@ so a failure to connect is one of three things, and the line tells you which.
 Nothing was created and nothing was sent in any of the three, so retrying after
 the cure is safe.
 
+### When you do not know whether it ran
+
+Those three are all failures to *connect*, where nothing went out and a retry is
+free. Every other failure is the opposite — the request is already on its way,
+the app may be acting on it, and the line says so:
+
+```
+The request may still have run. To find out rather than repeat it, retry the
+same command with --request-id 4711-1758374291023
+```
+
+**Do exactly that.** Run the identical command again with the id it printed. The
+app remembers that id, so the retry is answered with whatever the first attempt
+did — a second `hz new` starts no second session, a second `hz send` delivers
+nothing twice.
+
+Retrying **without** the id is a second side effect that looks like success,
+which is the one thing not to do here. If the retry says the first attempt
+failed, the id is spent: a fresh command needs nothing from it.
+
 ## Limits
 
 - **`hz` does not write to the tracker.** Tagging records the link on the

@@ -661,3 +661,100 @@ describe("pendingAsksOf", () => {
     expect(pendingAsksOf(events).map((ask) => ask.requestId)).toEqual(["first", "second"]);
   });
 });
+
+/// **A delegated child's session, as the app receives it.** The agent projects a
+/// child into ACP's own vocabulary and the mapper turns that into these events —
+/// so this is the list the Subagents panel draws, and the whole reason it can be
+/// drawn by the transcript's own components.
+describe("a delegated child's session", () => {
+  /// The three messages one always has: the brief, a tool call that answered, and
+  /// the reply — in the order the mapper emits them, deltas included, because the
+  /// deltas are what the committed block supersedes.
+  function childSession(): AgentEvent[] {
+    return [
+      prompt(1, "Olá! Este é um teste de conexão.", false),
+      event(2, {
+        type: "delta",
+        delta: "block_start",
+        block: { messageId: "thought-1", index: 0 },
+        blockType: { type: "thinking" },
+      } as AgentEventPayload),
+      event(3, {
+        type: "delta",
+        delta: "text_delta",
+        block: { messageId: "thought-1", index: 0 },
+        text: "The assignment is a read-only check.",
+      } as AgentEventPayload),
+      event(4, {
+        type: "delta",
+        delta: "block_stop",
+        block: { messageId: "thought-1", index: 0 },
+      } as AgentEventPayload),
+      event(5, { type: "reasoning", block: { messageId: "thought-1", index: 0 }, text: "The assignment is a read-only check.", encrypted: false }),
+      event(6, {
+        type: "tool_call_started",
+        callId: "c1",
+        name: "glob",
+        toolType: "search",
+        input: { pattern: "*", path: "/repo" },
+        rawInput: null,
+        title: null,
+      } as AgentEventPayload),
+      event(7, {
+        type: "tool_call_completed",
+        callId: "c1",
+        result: { text: "focus/src/lib/id.ts", isError: false, structured: null, exitCode: null, durationMs: null, images: [] },
+      } as AgentEventPayload),
+      event(8, {
+        type: "delta",
+        delta: "block_start",
+        block: { messageId: "m2", index: 0 },
+        blockType: { type: "text" },
+      } as AgentEventPayload),
+      event(9, {
+        type: "delta",
+        delta: "text_delta",
+        block: { messageId: "m2", index: 0 },
+        text: "Status: ok",
+      } as AgentEventPayload),
+      event(10, {
+        type: "delta",
+        delta: "block_stop",
+        block: { messageId: "m2", index: 0 },
+      } as AgentEventPayload),
+      event(11, {
+        type: "assistant_text",
+        block: { messageId: "m2", index: 0 },
+        text: "Status: ok\n\nEcho: olá!",
+      } as AgentEventPayload),
+      completed(12, null),
+    ];
+  }
+
+  /// **The answer is the thing a reader opens a subagent for.** It arrives as a
+  /// committed block with no `finalText` on the turn — the CLI's own summary is
+  /// absent here — so the fallback is what puts it on screen, and a turn that
+  /// closed without one looks like a run that stopped mid-thought.
+  it("keeps the child's reply, from the block the turn closed on", () => {
+    const transcript = buildTranscript(childSession(), false);
+
+    expect(transcript.turns).toHaveLength(1);
+    expect(transcript.turns[0]!.finalText).toBe("Status: ok\n\nEcho: olá!");
+  });
+
+  /// And the work it took to get there stays above it, rather than being filed
+  /// behind a summary the reader has to open.
+  it("keeps the thinking and the tool call as the work of that turn", () => {
+    const turn = buildTranscript(childSession(), false).turns[0]!;
+    // Grouped rows are not events, so the fold is flattened first — this child has
+    // a single call and folds nothing, but the assertion is about the event kinds
+    // either way.
+    const kinds = turn.work
+      .filter((item): item is AgentEvent => !isToolGroup(item))
+      .map((event) => event.payload.type);
+
+    expect(kinds).toContain("reasoning");
+    expect(kinds).toContain("tool_call_started");
+    expect(kinds).not.toContain("assistant_text");
+  });
+});

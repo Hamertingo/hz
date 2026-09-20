@@ -460,6 +460,37 @@ isImage: boolean,
  */
 preview: string | null, };
 
+export type Automation = { id: string, 
+/**
+ * What the sidebar row this run opens is called.
+ */
+name: string, 
+/**
+ * Sent as the prompt, as written. Nothing is assembled around it — see
+ * `SKILL.md`'s rule about prompts that read as the reader's own words.
+ */
+prompt: string, 
+/**
+ * The repository it runs in. Held rather than taken from whichever session
+ * is selected, since a run happens with nobody looking.
+ */
+projectPath: string, model: ModelId, 
+/**
+ * Minutes between runs. **One number rather than a cron string**: nothing
+ * in this app can edit an expression, and every schedule anybody actually
+ * wants is "every N".
+ */
+everyMinutes: number, enabled: boolean, 
+/**
+ * When this is next due, RFC 3339 in UTC.
+ */
+nextRunAt: string, lastRunAt: string | null, 
+/**
+ * The session the last run opened, so the reader can find what it said —
+ * the row is what an automation answers with.
+ */
+lastSessionId: string | null, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });
+
 /**
  * One outstanding background task. The harness's wire shape is snake_case, so
  * the parser keeps its own struct and the mapper converts — sharing this one
@@ -2701,6 +2732,23 @@ ready: boolean, };
  * captured.
  */
 export type TurnStatus = "success" | "error";
+
+/**
+ * What an undo did, so the caller can say it rather than show a diff move.
+ */
+export type UndoReport = { 
+/**
+ * Paths written back as the baseline had them.
+ */
+restored: number, 
+/**
+ * Paths the turn created, removed again.
+ */
+deleted: number, 
+/**
+ * The turn's own paths, so the reader can be told which files moved.
+ */
+files: Array<string>, };
 
 export type Unreadable = "binary" | "too_large";
 

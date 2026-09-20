@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 
 import "./App.css";
 import Chat from "@/components/Chat";
-import ChangesPanel from "@/components/ChangesPanel";
 import ChangesView from "@/components/changes/ChangesView";
+import SecondOpinionAction from "@/components/changes/SecondOpinionAction";
 import FilesView from "@/components/files/FilesView";
 import ChatInput from "@/components/ChatInput";
 import CommandPalette from "@/components/CommandPalette";
@@ -43,7 +43,6 @@ import {
 } from "@/lib/browser";
 import { setLinkOpener } from "@/lib/openLink";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useChanges } from "@/hooks/useChanges";
 import { usePrMarks } from "@/hooks/usePrMarks";
 import { usePrReady } from "@/hooks/usePrReady";
 import { useWorkStatus } from "@/hooks/useWorkStatus";
@@ -94,7 +93,6 @@ import AppShell from "@/components/layout/AppShell";
 import SessionHeader from "@/components/layout/SessionHeader";
 import { nextEffort } from "@/components/composer/ModelSelector";
 import { cycledModels, rowModel } from "@/lib/modelVisibility";
-import ViewTabs, { type ViewTab } from "@/components/layout/ViewTabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
 import { useCodeTheme } from "@/hooks/useCodeTheme";
@@ -142,6 +140,15 @@ import {
 } from "@/lib/space";
 import { worktreeNoticeDetail } from "@/lib/worktree";
 import { buildTranscript } from "@/lib/transcript";
+import {
+  EMPTY_VISITS,
+  prune,
+  step,
+  visit,
+  type VisitHistory,
+} from "@/lib/tabVisitHistory";
+import { UI_SCALE_STEP } from "@/lib/uiScale";
+import { resetUiScale, zoomBy } from "@/hooks/useUiScale";
 import { cn } from "@/lib/utils";
 
 const PANE_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
@@ -218,6 +225,7 @@ function App() {
     runCheckout,
     setUseWorktree,
     handleSendMsg,
+    startSecondOpinion,
     handleInterrupt,
     handleSendNow,
     queuedMessages,
@@ -308,11 +316,49 @@ function App() {
 
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
 
-  // Per session and not persisted: which view you were last on is working
-  // context for one session rather than a standing preference, and reopening
-  // the app onto a repo view for every session would be wrong more often than
-  // right.
-  const [viewTabs, setViewTabs] = useState<Record<string, ViewTab>>({});
+  /// Where ⌘[ and ⌘] walk. Held here rather than in a store because it dies with
+  /// the window and nothing else reads it — see [tabVisitHistory](lib/tabVisitHistory.ts).
+  const [visits, setVisits] = useState<VisitHistory>(EMPTY_VISITS);
+  /// Set while a step is being taken, so the recording effect below does not
+  /// push the session the step just moved to — which would erase the forward
+  /// trail the step was walking.
+  const steppingVisit = useRef(false);
+
+  /// Bumped by an undo, which is the one thing that moves the working tree with
+  /// no event behind it — see `revision`.
+  const [repoRevision, setRepoRevision] = useState(0);
+
+  /// A review is being opened. Held here rather than in the hook because it is
+  /// about the control: opening one is a worktree and a cold child, and a second
+  /// press inside that window would open a second session.
+  const [secondOpinionBusy, setSecondOpinionBusy] = useState(false);
+
+  /// The sessions the index holds, which is what ⌘[ and ⌘] may land on.
+  ///
+  /// A session it does not hold cannot be opened at all — selecting one goes
+  /// through the not-found rollback — so stepping over such an entry is what
+  /// keeps the key honest. Cost, stated: the index carries one side of the
+  /// archived split, so a trail entry on the other side is stepped over.
+  const liveSessions = useMemo(
+    () => new Set(sessionIndexItems.map((item) => item.sessionId)),
+    [sessionIndexItems],
+  );
+
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    if (steppingVisit.current) {
+      steppingVisit.current = false;
+      return;
+    }
+    setVisits((prev) => visit(prev, selectedSessionId));
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    // The same object comes back where nothing has died, so this is a no-op on
+    // every ordinary index change.
+    setVisits((prev) => prune(prev, liveSessions));
+  }, [liveSessions]);
+
   // **One value, not a flag per page.**
   //
   // The main column shows one page at a time and the pages are a fixed set, so the
@@ -439,8 +485,6 @@ function App() {
   /// detail read lands — the same bargain the session panel makes with a
   /// session's links.
   const [pickedIssue, setPickedIssue] = useState<Issue | null>(null);
-
-  const viewTab: ViewTab = selectedSessionId ? viewTabs[selectedSessionId] ?? "chat" : "chat";
 
   /// The picked issue as a link, which is the shape the panel reads.
   ///
@@ -598,10 +642,6 @@ function App() {
       subject: title,
     });
   };
-  const setViewTab = (tab: ViewTab) => {
-    if (selectedSessionId) setViewTabs((prev) => ({ ...prev, [selectedSessionId]: tab }));
-  };
-
   // Themes and Shiki's engine are shared by every code surface, so they load
   // once here instead of on the first diff the user happens to open.
   const { pair: codeThemePair } = useCodeTheme();
@@ -725,10 +765,10 @@ function App() {
   // floor there would refuse the layout the reader asked for.
   useChatColumnFloor(!activeGroup);
 
-  // The pane's open flag and tab pick are held per session, like `viewTabs`
-  // above and for the same reason: app-wide, a pane opened on one session's
-  // PR sat blank beside the next session, which had none, and was gone again
-  // on the way back. Not persisted, and a session never opened holds no entry,
+  // The pane's open flag and tab pick are held per session: app-wide, a pane
+  // opened on one session's PR sat blank beside the next session, which had
+  // none, and was gone again on the way back. Not persisted, and a session
+  // never opened holds no entry,
   // which is also what keeps a new task from inheriting whichever pane the
   // last session left up — the reads there have nothing to answer from until
   // the first turn lands.
@@ -748,6 +788,15 @@ function App() {
   // `activeTab`.
   const [panelOpens, setPanelOpens] = useState<Record<string, boolean>>({});
   const [panelTabs, setPanelTabs] = useState<Record<string, PanelTab | null>>({});
+  /// Whether the pane has taken the column, over the transcript.
+  ///
+  /// **App-wide, unlike the two above, and that is the whole point of it.**
+  /// Open and tab are per session because they are about a session's content —
+  /// a pane opened on one session's PR was blank beside the next. This is about
+  /// how the reader is looking at something: it is the answer to a diff that
+  /// does not fit, and switching sessions to glance at another does not ask for
+  /// the room back. Not persisted, for `panelOpen`'s reason.
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const openKey = useCallback(
     (id: string) => {
       const group = groupOf(spaceGroups, id);
@@ -785,6 +834,16 @@ function App() {
     },
     [selectedSessionId],
   );
+  /// Brings the pane up on a tab. The one action every route to a view needs,
+  /// since the pane may be closed — and a tab set on a hidden pane is a change
+  /// nobody sees.
+  const showPanelTab = useCallback(
+    (tab: PanelTab) => {
+      setPanelTab(tab);
+      setPanelOpen(true);
+    },
+    [setPanelTab, setPanelOpen],
+  );
 
   /// Whether one of the main-column pages is up.
   ///
@@ -805,6 +864,15 @@ function App() {
   /// preference is kept, so coming back restores the pane exactly as it was;
   /// everything that draws or reads reads this instead.
   const panelShown = panelOpen && !pageOpen;
+  /// The pane is up *and* holding the column. `panelShown` alone is not enough:
+  /// a page takes the column for itself, and a pane left expanded behind one
+  /// would come back over the page it was hidden by.
+  const panelWide = panelExpanded && panelShown;
+  /// The transcript is actually on screen: no page over it, and not behind the
+  /// pane at its wide size. What `Chat` and `SplitView` take as `active`, which
+  /// is a question about being *seen* — a hidden transcript must not follow the
+  /// stream or claim the chords that scroll it.
+  const chatShown = !pageOpen && !panelWide;
   const memberKey = activeGroup ? members(activeGroup).join("\n") : "";
   const paneColumns = useMemo(
     () =>
@@ -995,23 +1063,6 @@ function App() {
   const browserTabs = useBrowserTabs(selectedSessionId);
   const pendingBrowserTab = usePendingTab(selectedSessionId ?? "");
   const hasBrowserTabs = browserTabs && browserTabs.length > 0;
-  // The main column's Browser view is the panel's browser expanded. Arriving
-  // on it closes the pane, every time and whatever tab the pane was on: the
-  // reader came for the full width. Nothing keeps it closed — ⌘E brings it
-  // back beside the page — and the next arrival closes it again.
-  const fullBrowserOpen = !pageOpen && viewTab === "browser";
-  const lastViewTab = useRef(viewTab);
-  useEffect(() => {
-    const was = lastViewTab.current;
-    lastViewTab.current = viewTab;
-    if (viewTab === "browser" && was !== "browser") setPanelOpen(false);
-  }, [viewTab, setPanelOpen]);
-  const expandBrowser = () => setViewTab("browser");
-  const collapseBrowser = () => {
-    setViewTab("chat");
-    setPanelTab("browser");
-    setPanelOpen(true);
-  };
 
   // A live background task counts even where no run is built for it yet, or the
   // chat's background-tasks indicator offers a tab that isn't in the row.
@@ -1039,7 +1090,21 @@ function App() {
   // the reader's pick for when they switch to one that has it.
   const activeTab: PanelTab = panelTab && tabs.includes(panelTab) ? panelTab : defaultTab;
 
+  /// The browser is on screen. One reading, since the pane is its only home
+  /// now — the layout and the chord that closes a tab both ask this.
+  const browserShown = panelShown && activeTab === "browser";
+
   const togglePanel = () => setPanelOpen((prev) => !prev);
+
+  /// Swaps the pane's two sizes, opening it on the way in — a reader asking for
+  /// the room is asking to see the pane. Guarded on a session for the reason
+  /// `setPanelOpen` is: with none there is no pane to size, and flipping the
+  /// flag anyway would land it on whichever session is opened next.
+  const togglePanelWide = () => {
+    if (!selectedSessionId || pageOpen) return;
+    setPanelOpen(true);
+    setPanelExpanded((prev) => !prev);
+  };
 
   // Moves along the visible row, wrapping. Off `tabs` rather than `PANEL_TABS`,
   // so a session with no PR tab cycles through two and never lands on one that
@@ -1053,8 +1118,7 @@ function App() {
   // Opens the tab without touching the selection, so a run the reader already
   // had expanded is still expanded when they come back to it.
   const openSubagentPanel = () => {
-    setPanelTab("subagents");
-    setPanelOpen(true);
+    showPanelTab("subagents");
     // **The roster is live-only, so opening the pane is when it is read.** A push
     // covers every move while the child is up; this covers the pane opened after
     // the last one — a session reopened, or a tab switched back to long after the
@@ -1069,10 +1133,7 @@ function App() {
 
   /// Opens the plan in the pane, for the rows the strip had no room for. Same
   /// bargain as the subagent panel: the tab, not the selection.
-  const openTodoPanel = () => {
-    setPanelTab("todo");
-    setPanelOpen(true);
-  };
+  const openTodoPanel = () => showPanelTab("todo");
 
   // An open session's own directory, since project- and local-scoped commands
   // differ per repo and a session can be running somewhere the picker isn't
@@ -1196,35 +1257,27 @@ function App() {
   // What tells the panel to re-read — a cache key, not a count. The event total
   // moves as a turn's writes land, and `busy` covers the turn ending, where the
   // final file write and the closing event can arrive in either order.
-  const revision = `${selectedSession?.events.length ?? 0}:${busy}`;
+  //
+  // **An undo is the third term** and the reason this is not just those two: it
+  // moves the working tree without an event, so nothing else would tell a view
+  // its answer had gone stale.
+  const revision = `${selectedSession?.events.length ?? 0}:${busy}:${repoRevision}`;
 
-  // Both panel bodies are presentational, and their hooks live here for the
-  // same reason: the tab row needs what they know before either tab is opened —
-  // whether a PR tab exists at all, and which refresh the one shared button
-  // should run.
-  const changesData = useChanges(
-    selectedSession?.cwd ?? "",
-    baseline,
-    head,
-    revision,
-    panelShown && activeTab === "changes",
-  );
-
-  // One button, so the tab decides what it re-reads. Subagents has nothing to
-  // fetch, so it gets none rather than a button that does nothing.
+  // One button, so the tab decides what it re-reads. Diff and Subagents have
+  // nothing to fetch here: `ChangesView` owns its own reads and re-runs them
+  // off `revision` and off becoming the tab on screen, so a second handle on
+  // them would be a second way to ask for the same thing.
   const panelRefresh =
-    activeTab === "changes"
-      ? { onRefresh: changesData.refresh, loading: changesData.loading }
-      : activeTab === "pr"
-        ? { onRefresh: pullRequests.refresh, loading: pullRequests.loading }
-        : activeTab === "issue"
-          ? { onRefresh: issueData.refresh, loading: issueData.loading }
-          : activeTab === "docs"
-            ? {
-                onRefresh: () => refreshActiveDoc(selectedSessionId),
-                loading: activeDoc?.body.status === "loading",
-              }
-            : null;
+    activeTab === "pr"
+      ? { onRefresh: pullRequests.refresh, loading: pullRequests.loading }
+      : activeTab === "issue"
+        ? { onRefresh: issueData.refresh, loading: issueData.loading }
+        : activeTab === "docs"
+          ? {
+              onRefresh: () => refreshActiveDoc(selectedSessionId),
+              loading: activeDoc?.body.status === "loading",
+            }
+          : null;
 
   // Same order the sidebar draws, so the walk matches the list even when the
   // sidebar is collapsed and there is nothing on screen to follow — project
@@ -1311,21 +1364,20 @@ function App() {
   }, [docsOpened, setPanelTab, setPanelOpen]);
 
   // The same signal for the other half of a file link: a path that is not
-  // markdown opens in the Files view, which is a whole column rather than a
-  // pane, so this flips the view instead of opening one. A counter for the
-  // docs panel's reason — reopening a file already on screen leaves the list
-  // unchanged, so only a count of *clicks* can say the reader asked.
+  // markdown opens on the Files tab. A counter for the docs panel's reason —
+  // reopening a file already on screen leaves the list unchanged, so only a
+  // count of *clicks* can say the reader asked.
   const lastFileOpened = useRef(filesOpened);
   useEffect(() => {
     if (filesOpened === lastFileOpened.current) return;
     lastFileOpened.current = filesOpened;
-    if (!pageOpen) setViewTab("files");
+    if (!pageOpen) showPanelTab("files");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filesOpened]);
 
   // A link in the transcript opens as a new tab in the session's browser and
-  // brings the pane up on it, unless the full view already has it. ⌘-click,
-  // or no session to hold one, goes to the system browser.
+  // brings the pane up on it, unless it is already showing that browser.
+  // ⌘-click, or no session to hold one, goes to the system browser.
   useEffect(() => {
     setLinkOpener((url, { external }) => {
       if (external || !selectedSessionId) {
@@ -1336,7 +1388,7 @@ function App() {
       // then the reader may be on another session whose pane must stay put.
       void openInBrowser(selectedSessionId, url, true)
         .then(() => {
-          if (fullBrowserOpen) return;
+          if (browserShown) return;
           setPanelTab("browser", selectedSessionId);
           setPanelOpen(true, selectedSessionId);
         })
@@ -1347,38 +1399,34 @@ function App() {
         });
     });
     return () => setLinkOpener(null);
-  }, [selectedSessionId, fullBrowserOpen, setPanelTab, setPanelOpen]);
+  }, [selectedSessionId, browserShown, setPanelTab, setPanelOpen]);
 
   // An element picked in the page lands in that session's draft, and the
-  // composer is brought on screen to show it — off the full view and onto
-  // Chat, since the composer is hidden there.
+  // composer is focused to show it. The browser sits beside the transcript
+  // rather than over it, so there is nothing to leave first.
   useEffect(() => {
     setPickHandler((sessionId, element) => {
       if (!element) return;
       appendToDraft(sessionId, describePick(element));
       if (sessionId !== selectedSessionId) return;
-      if (viewTab === "browser") setViewTab("chat");
       focusComposer();
     });
     return () => setPickHandler(null);
-  }, [selectedSessionId, viewTab, setViewTab]);
+  }, [selectedSessionId]);
 
   // The first browser tab appearing — an agent opening a page — brings the
-  // pane up on Browser, once. Not while the full view is up, where the same
-  // page is already the whole column. Only a change within one session
-  // counts, and only from a *known* empty list: arriving at a session that
-  // already holds a tab, or its first read landing, is the reader looking,
-  // not the agent acting, and both used to pop the pane open (DRA-184).
+  // pane up on Browser, once. Not while it is already showing, which is the
+  // same page in the same place. Only a change within one session counts, and
+  // only from a *known* empty list: arriving at a session that already holds a
+  // tab, or its first read landing, is the reader looking, not the agent
+  // acting, and both used to pop the pane open (DRA-184).
   const lastTabs = useRef({ id: selectedSessionId, had: hasBrowserTabs });
   useEffect(() => {
     const was = lastTabs.current;
     lastTabs.current = { id: selectedSessionId, had: hasBrowserTabs };
     if (was.id !== selectedSessionId || was.had !== false) return;
-    if (hasBrowserTabs && !fullBrowserOpen) {
-      setPanelTab("browser");
-      setPanelOpen(true);
-    }
-  }, [selectedSessionId, hasBrowserTabs, fullBrowserOpen, setPanelTab, setPanelOpen]);
+    if (hasBrowserTabs && !browserShown) showPanelTab("browser");
+  }, [selectedSessionId, hasBrowserTabs, browserShown, showPanelTab]);
 
   // Every way of arriving at a session, so none of them can forget to leave the
   // pages. The two sidebar buttons closed one and the chords beside them did not,
@@ -1389,6 +1437,20 @@ function App() {
   const goToSession = (go: () => void) => {
     setPage("none");
     go();
+  };
+
+  /// ⌘[ / ⌘]. Walks the trail rather than the list, which is the whole
+  /// difference between "the session I was just in" and "the row above this
+  /// one" — on a sidebar sorted by project and state, the two are rarely the
+  /// same row.
+  const stepVisit = (delta: number) => {
+    const next = step(visits, delta, liveSessions);
+    if (!next) return;
+    // Before the selection moves, so the effect that records arrivals knows
+    // this one is not an arrival.
+    steppingVisit.current = true;
+    setVisits(next.history);
+    goToSession(() => void handleSelectSessionIndexItem(next.to));
   };
 
   // The pages share the main column, and **one value is what keeps them exclusive**
@@ -1658,15 +1720,24 @@ function App() {
   // ⌘↑/↓ is the webview's own jump-to-start/end of the input.
   useHotkey("session.prev", () => goToSession(() => stepSession(-1)));
   useHotkey("session.next", () => goToSession(() => stepSession(1)));
+  // Bound only where there is somewhere to go: `useHotkey` claims every chord it
+  // matches, and a ⌘[ that eats the key and does nothing is worse than one the
+  // app never had.
+  useHotkey("visit.back", () => stepVisit(-1), {
+    enabled: step(visits, -1, liveSessions) !== null,
+  });
+  useHotkey("visit.forward", () => stepVisit(1), {
+    enabled: step(visits, 1, liveSessions) !== null,
+  });
   useHotkey("group.prev", () => goToSession(() => stepGroup(-1)));
   useHotkey("group.next", () => goToSession(() => stepGroup(1)));
   // The bare ⌘ digits go to the panes, since focus is what moves most inside
-  // a grid; the view tabs take ⌘⌥ below. Not ⌘⇧, which macOS spends on
+  // a grid; the pane's tabs take ⌘⌥ below. Not ⌘⇧, which macOS spends on
   // screenshots for exactly these digits. Bound only while a grid is *on
   // screen*: with none ⌘1 has nothing to point at and must not eat the key,
-  // and under the Diff tab or the issues page ⌘W would close a pane the
-  // reader cannot see.
-  const gridShown = !!activeGroup && !pageOpen && viewTab === "chat";
+  // and behind a page — or behind the pane at its wide size — ⌘W would close a
+  // pane the reader cannot see.
+  const gridShown = !!activeGroup && !pageOpen && !panelWide;
   const paneIds = activeGroup ? paneOrder(activeGroup) : [];
   // Keyboard focus moves with the pane. A click moves it by itself, but a
   // chord left it on whatever the old pane held — a link, a subagent control
@@ -1696,12 +1767,11 @@ function App() {
     const open = browserTabs?.find((tab) => tab.active);
     if (open) void closeTab(selectedSessionId, open.id);
   };
-  // `viewTab` is per session and a page does not clear it, so a reader who
-  // opened Issues from the Files view still has `activeFile` naming a tab in a
-  // view nobody can see — and ⌘W there closed it silently. Every other arm
-  // already carries the guard: `fullBrowserOpen`, `gridShown` and the view's
-  // own bodies all hold `!pageOpen`, and `panelShown` is the pane a page hides.
-  const fileShown = !pageOpen && viewTab === "files" && !!activeFile;
+  // A page hides the pane without clearing its tab, so a reader who opened
+  // Issues from the Files tab would still have `activeFile` naming a file in a
+  // view nobody can see — and ⌘W there closed it silently. `panelShown` is the
+  // one predicate that covers that, and the other arms carry `!pageOpen`.
+  const fileShown = panelShown && activeTab === "files" && !!activeFile;
   const closeTabOrPane = () => {
     // **First, and ahead of the session guard below.** The pull-requests page's
     // tabs are the reader's pull requests rather than a session's views, so no
@@ -1710,9 +1780,8 @@ function App() {
     if (prsOpen && activePrKey) return closePr(activePrKey);
     if (!selectedSessionId) return;
     if (fileShown && activeFile) return closeFile(selectedSessionId, activeFile);
-    if (fullBrowserOpen) return closeBrowserTab();
+    if (browserShown) return closeBrowserTab();
     if (gridShown) return closeSessionPane(selectedSessionId);
-    if (panelShown && activeTab === "browser") closeBrowserTab();
   };
   // Bound only where it has something to close: `useHotkey` claims every chord
   // it matches, and a ⌘W that eats the key and does nothing is worse than one
@@ -1720,8 +1789,7 @@ function App() {
   const hasCloseTarget =
     (prsOpen && !!activePrKey) ||
     fileShown ||
-    ((fullBrowserOpen || (panelShown && activeTab === "browser")) &&
-      (pendingBrowserTab || !!hasBrowserTabs)) ||
+    (browserShown && (pendingBrowserTab || !!hasBrowserTabs)) ||
     gridShown;
   useHotkey("tab.close", closeTabOrPane, { enabled: hasCloseTarget });
   // ⌘E for the right pane against ⌘B for the left.
@@ -1736,6 +1804,11 @@ function App() {
     if (closePagePane()) return;
     togglePanel();
   });
+  // The pane's other size, and deliberately **not** sharing that guard: a page
+  // owns the column, so there is nothing to expand into and ⌘E's job of
+  // closing the page first is not what was asked for here. `togglePanelWide`
+  // no-ops instead.
+  useHotkey("panel.expand", togglePanelWide);
   // ⌘⇧[ / ⌘⇧] — the browser and editor chord for stepping through tabs, so it
   // arrives already known. The shift layout reaches `key`, so the character is
   // `{` rather than `[`; the physical key rides along for the engines that
@@ -1769,18 +1842,18 @@ function App() {
   useHotkey("doc.save", () => saveActiveDoc(selectedSessionId), {
     enabled: panelShown && activeTab === "docs",
   });
-  // By position in the tab row, so a third view needs only a third line here.
-  // No-ops without a session, where there is no row to switch — and on the
-  // issues page, where the row is not drawn: switching an invisible tab looks
-  // like nothing happening and then shows up as the wrong view on the way back.
+  // Each names the view it opens rather than its slot in the row, so a
+  // rebinding moves one chord and never the set. No-ops behind a page, where
+  // the pane is hidden: opening a tab nobody can see looks like nothing
+  // happening and shows up as the wrong view on the way back. Without a
+  // session the pane's setters no-op on their own, having no id to key.
   //
   // Under ⌘⌥, with the bare ⌘ digits given to the panes: inside a grid the
   // focus moves many times a minute, where a view is a mode changed a few
   // times a session. `code`, since Option turns a digit's `key` into a symbol.
-  useHotkey("view.chat", () => !pageOpen && setViewTab("chat"));
-  useHotkey("view.changes", () => !pageOpen && setViewTab("changes"));
-  useHotkey("view.browser", () => !pageOpen && setViewTab("browser"));
-  useHotkey("view.files", () => !pageOpen && setViewTab("files"));
+  useHotkey("view.changes", () => !pageOpen && showPanelTab("changes"));
+  useHotkey("view.browser", () => !pageOpen && showPanelTab("browser"));
+  useHotkey("view.files", () => !pageOpen && showPanelTab("files"));
   // ⌘, — every macOS app's preferences chord, and the only way into settings
   // while the sidebar is collapsed and its gear gone with it. Safe to take for
   // `useHotkey`'s usual pair of reasons: it claims the chord, and the app's
@@ -1858,6 +1931,12 @@ function App() {
   // ⌘K, which nothing else here claims. A toggle, so the chord that opened the
   // box closes it — the same reasoning settings follows.
   useHotkey("palette.open", () => setPaletteOpen((open) => !open));
+  // Bound here rather than inside `useUiScale`, so the store stays free of
+  // React and the three rows stay in the registry with every other chord —
+  // which is what puts them in the Shortcuts tab and the palette.
+  useHotkey("zoom.in", () => zoomBy(UI_SCALE_STEP));
+  useHotkey("zoom.out", () => zoomBy(-UI_SCALE_STEP));
+  useHotkey("zoom.reset", resetUiScale);
 
   /// Everything the palette can reach, in the order it should be read.
   ///
@@ -1934,10 +2013,16 @@ function App() {
 
     if (selectedSessionId && !pageOpen) {
       actions.push(
-        { id: "view.chat", label: "Show the chat", run: () => setViewTab("chat") },
-        { id: "view.changes", label: "Show the changes", run: () => setViewTab("changes") },
-        { id: "view.browser", label: "Show the browser", run: () => setViewTab("browser") },
-        { id: "view.files", label: "Show the files", run: () => setViewTab("files") },
+        {
+          id: "panel.expand",
+          // The label follows the state, since a row that says "Expand" over an
+          // expanded pane is a row that promises the wrong thing.
+          label: panelWide ? "Restore the panel" : "Expand the panel",
+          run: togglePanelWide,
+        },
+        { id: "view.changes", label: "Show the diff", run: () => showPanelTab("changes") },
+        { id: "view.browser", label: "Show the browser", run: () => showPanelTab("browser") },
+        { id: "view.files", label: "Show the files", run: () => showPanelTab("files") },
       );
     }
 
@@ -1970,10 +2055,37 @@ function App() {
     openPlugins,
     pageOpen,
     prsCwds,
+    showPanelTab,
+    panelWide,
+    togglePanelWide,
   ]);
 
   const fullscreen = useFullscreen();
   useGlass(fullscreen);
+
+  /// The one thing that belongs at the window's left edge in the top row.
+  ///
+  /// A collapsed sidebar renders nothing, so whatever reaches that edge has to
+  /// clear the traffic lights — the app header normally, and the pane's own row
+  /// while the pane is wide and the header is hidden behind it. One node, drawn
+  /// in whichever of the two is on screen, so the way back out of a collapsed
+  /// sidebar never goes with it.
+  const sidebarLead = collapsed && (
+    <div
+      className={cn(
+        "flex shrink-0 items-center",
+        // Fullscreen has no traffic lights, so the toggle pulls back past the
+        // row's own padding to sit flush at the window edge.
+        fullscreen ? "-ml-1" : "pl-(--traffic-lights-w)",
+      )}
+    >
+      {/* No dev badge beside it: the badge lives at the sidebar's bottom edge
+          now and shows nothing while the sidebar is collapsed, the same bargain
+          `UpdateRow` makes — neither is urgent enough to earn a second home in
+          this header. */}
+      <SidebarToggle onToggle={toggleSidebar} collapsed />
+    </div>
+  );
 
   return (
     <TooltipProvider>
@@ -1982,6 +2094,7 @@ function App() {
       // The issues page fills the column, so the centred empty-composer state
       // is wrong there even with no session selected.
       centered={!selectedSession && !pageOpen}
+      columnHidden={panelWide}
       overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <Sidebar
@@ -2054,25 +2167,9 @@ function App() {
           // clickable element that carries no attribute of its own.
           data-tauri-drag-region="deep"
         >
-          {/* Only when collapsed — expanded, the sidebar owns the toggle. This
-              header reaches the window edge in that state, so it has to clear
-              the traffic lights, which fullscreen removes. */}
-          {collapsed && (
-            <div
-              className={cn(
-                "flex items-center",
-                // Fullscreen has no traffic lights, so the toggle pulls back past
-                // the header's own padding to sit flush at the window edge.
-                fullscreen ? "-ml-1" : "pl-(--traffic-lights-w)",
-              )}
-            >
-              {/* No dev badge beside it: the badge lives at the sidebar's
-                  bottom edge now and shows nothing while the sidebar is
-                  collapsed, the same bargain `UpdateRow` makes — neither is
-                  urgent enough to earn a second home in this header. */}
-              <SidebarToggle onToggle={toggleSidebar} collapsed />
-            </div>
-          )}
+          {/* Only when collapsed — expanded, the sidebar owns the toggle and
+              already covers this edge. */}
+          {sidebarLead}
 
           <SessionHeader
             session={selectedSession}
@@ -2093,8 +2190,6 @@ function App() {
             }
             className="flex-1"
           />
-
-          {!pageOpen && selectedSession && <ViewTabs tab={viewTab} onChange={setViewTab} />}
 
           {issuesOpen
             ? // Only once something is open to close. Nothing on this page can
@@ -2279,6 +2374,12 @@ function App() {
         selectedSession ? (
           <RightPanel
             open={panelShown}
+            // Wide, this row is what reaches the window's left edge — the header
+            // that normally carries the collapsed sidebar's toggle is behind the
+            // pane, so both the clearance and the way back ride here instead.
+            lead={panelWide ? sidebarLead : undefined}
+            wide={panelWide}
+            onToggleWide={togglePanelWide}
             tab={activeTab}
             onTabChange={setPanelTab}
             counts={{
@@ -2298,23 +2399,57 @@ function App() {
             todo={hasTodoTab}
             refresh={panelRefresh}
             cwd={selectedSession.cwd}
+            actions={
+              // On the Diff tab alone: a review is of the turn, and the turn's
+              // own range is what that tab draws. Nowhere else in the pane is
+              // there anything to have an opinion about.
+              activeTab === "changes" ? (
+                <SecondOpinionAction
+                  models={models}
+                  busy={secondOpinionBusy}
+                  disabled={!head || !targetPath}
+                  onPick={(model) => {
+                    setSecondOpinionBusy(true);
+                    void startSecondOpinion(model).finally(() =>
+                      setSecondOpinionBusy(false),
+                    );
+                  }}
+                />
+              ) : null
+            }
           >
             <TabBody active={activeTab === "changes"}>
-              <ChangesPanel
+              {/* Keyed by session so the selection, the sub-tab and the open
+                  commit reset with it, the same bargain the Files tab makes. */}
+              <ChangesView
+                key={selectedSession.sessionId}
                 cwd={selectedSession.cwd}
+                // The newest prompt's snapshot and its turn's closing one: the
+                // Turn sub-tab is that pair, and the same two ids light the
+                // toggle's git glyph.
                 baseline={baseline}
-                onOpenRepo={() => setViewTab("changes")}
-                {...changesData}
+                head={head}
+                active={panelShown && activeTab === "changes"}
+                revision={revision}
+                onUndone={() => setRepoRevision((n) => n + 1)}
               />
             </TabBody>
             <TabBody active={activeTab === "browser"}>
               <BrowserPane
                 sessionId={selectedSession.sessionId}
                 active={panelShown && activeTab === "browser"}
-                mode="panel"
-                fullOpen={fullBrowserOpen}
-                onExpand={expandBrowser}
-                onCollapse={collapseBrowser}
+              />
+            </TabBody>
+            <TabBody active={activeTab === "files"}>
+              {/* Keyed by session so the expanded tree resets with it. The tab
+                  strip does not: its store is per session and outlives the
+                  remount, so what comes back is that session's own files. */}
+              <FilesView
+                key={selectedSession.sessionId}
+                sessionId={selectedSession.sessionId}
+                cwd={selectedSession.cwd}
+                active={panelShown && activeTab === "files"}
+                revision={revision}
               />
             </TabBody>
             <TabBody active={hasTodoTab && activeTab === "todo"}>
@@ -2322,6 +2457,7 @@ function App() {
             </TabBody>
             <TabBody active={activeTab === "subagents"}>
               <SubagentPanel
+                sessionId={selectedSessionId}
                 runs={subagents}
                 selectedId={selectedSubagentId}
                 resultByCallId={resultByCallId}
@@ -2342,7 +2478,7 @@ function App() {
             <TabBody active={hasDocsTab && activeTab === "docs"}>
               <DocsPanel
                 sessionId={selectedSessionId}
-                active={panelShown && activeTab === "docs" && viewTab === "chat"}
+                active={panelShown && activeTab === "docs"}
               />
             </TabBody>
             <TabBody active={hasIssueTab && activeTab === "issue"}>
@@ -2357,9 +2493,10 @@ function App() {
         ) : null
       }
       footer={
-        // Only under the transcript it writes into. The other views are not
-        // conversations, and a composer under them would send into a session the
-        // reader cannot see.
+        // Only under the transcript it writes into: a page is not a
+        // conversation, and a composer under one would send into a session the
+        // reader cannot see. The pane's tabs need no such guard — they sit
+        // *beside* the transcript rather than over it, so the composer stays.
         //
         // **`pageOpen`, never a list of the pages.** Every page hides the composer
         // for the same reason, and a list written out here is a list that comes up
@@ -2368,7 +2505,7 @@ function App() {
         // send into a session the reader had left. Safe to unmount: the draft, the
         // attachments and the fan-out set are module-level stores precisely
         // because the composer already unmounts crossing the empty state.
-        pageOpen || (selectedSession && viewTab !== "chat") ? null : (
+        pageOpen ? null : (
         <ChatInput
           onSend={handleSendMsg}
           commands={slashCommands}
@@ -2540,9 +2677,9 @@ function App() {
       {/* One bad row costs one view rather than the window: the sidebar, the
           header and the composer are all outside this. Keyed on what the column
           is showing, so a caught error clears when the reader moves to another
-          session or another tab instead of latching until a reload. */}
+          session or another page instead of latching until a reload. */}
       <RenderErrorBoundary
-        resetKey={`${viewTab}:${selectedSessionId ?? ""}:${page}`}
+        resetKey={`${selectedSessionId ?? ""}:${page}`}
         subject="view"
       >
       {/* Hidden rather than unmounted, like everything else in this column:
@@ -2585,8 +2722,8 @@ function App() {
 
       {/* Hidden rather than unmounted, the same bargain the right panel's tabs
           make: the transcript keeps its scroll position and its highlighted
-          diffs, and the repo view keeps its selection and its reads. */}
-      <TabBody active={!pageOpen && viewTab === "chat"}>
+          diffs across a trip into a page and back. */}
+      <TabBody active={!pageOpen}>
       {activeGroup ? (
         <SplitView
           columns={paneColumns}
@@ -2595,7 +2732,11 @@ function App() {
           groups={spaceGroups}
           onFocus={(id) => void handleSelectSessionIndexItem(id)}
           onClose={closeSessionPane}
-          active={!pageOpen && viewTab === "chat"}
+          // `chatShown`, not `!pageOpen`: the pane at its wide size covers this
+          // column too, and a transcript that is not on screen must not follow
+          // the stream — a `scrollTop` written against a `display: none` element
+          // lands at zero, which is what the reader would come back to.
+          active={chatShown}
           chat={{
             onOpenSubagent: openSubagent,
             onOpenSession: (id) => void handleSelectSessionIndexItem(id),
@@ -2631,52 +2772,12 @@ function App() {
         onSendNow={handleSendNow}
         working={working}
         crowded={!collapsed && (panelShown || (pageOpen && !!pickedIssue))}
-        active={!pageOpen && viewTab === "chat"}
+        active={chatShown}
       />
       {singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       </div>
       )}
       </TabBody>
-
-      {selectedSession && (
-        // Keyed by session so the selection, the sub-tab and the commit box
-        // reset with it. Cheap to remount: the reads behind it are cached by
-        // tree id at module level and survive the unmount.
-        <TabBody active={!pageOpen && viewTab === "changes"}>
-          <ChangesView
-            key={selectedSession.sessionId}
-            cwd={selectedSession.cwd}
-            active={viewTab === "changes"}
-            revision={revision}
-          />
-        </TabBody>
-      )}
-
-      {selectedSession && (
-        <TabBody active={!pageOpen && viewTab === "browser"}>
-          <BrowserPane
-            sessionId={selectedSession.sessionId}
-            active={fullBrowserOpen}
-            mode="full"
-            onCollapse={collapseBrowser}
-          />
-        </TabBody>
-      )}
-
-      {selectedSession && (
-        // Keyed by session so the expanded tree resets with it. The tab strip
-        // does not: its store is per session and outlives the remount, so what
-        // comes back is that session's own files.
-        <TabBody active={!pageOpen && viewTab === "files"}>
-          <FilesView
-            key={selectedSession.sessionId}
-            sessionId={selectedSession.sessionId}
-            cwd={selectedSession.cwd}
-            active={!pageOpen && viewTab === "files"}
-            revision={revision}
-          />
-        </TabBody>
-      )}
       </RenderErrorBoundary>
     </AppShell>
     {/* Outside `AppShell` on purpose: it is fixed to the window rather than

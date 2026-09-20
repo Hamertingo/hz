@@ -45,13 +45,20 @@ export function useHotkey(
   handler: () => void,
   { enabled = true, platformOnly = false, skipInTextField = false }: HotkeyOptions = {},
 ) {
-  const { key, meta, shift, alt, code } = useChord(id);
+  const { key, meta, shift, alt, code, anyShift } = useChord(id);
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
 
   useEffect(() => {
     if (!enabled) return;
     const onKeyDown = (e: KeyboardEvent) => {
+      // **A keystroke that is part of an IME composition is not a chord.** While
+      // one is running `key` is whatever the composition is building — it can be
+      // the very letter a chord names — and this claims every chord it matches,
+      // so `preventDefault` would eat the character the reader is midway through
+      // typing. `keyCode === 229` is the legacy spelling of the same thing, kept
+      // for the engines that still report it and never set `isComposing`.
+      if (e.isComposing || e.keyCode === 229) return;
       // `code` is only consulted for an Option chord, and only for a letter.
       // macOS applies the Option layout to `key` — ⌥O can arrive as "ø" — so a
       // binding that reads `key` alone silently never fires. The narrowness is
@@ -70,7 +77,7 @@ export function useHotkey(
       if (meta && platformOnly && !(IS_MAC ? e.metaKey : e.ctrlKey)) return;
       if (meta && !platformOnly && !e.metaKey && !e.ctrlKey) return;
       if (!meta && (e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey !== shift) return;
+      if (e.shiftKey !== shift && !anyShift) return;
       // Exact, so ⌘⌥↑ can't also fire the plain ⌘ bindings.
       if (e.altKey !== alt) return;
 
@@ -84,7 +91,7 @@ export function useHotkey(
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [key, meta, shift, alt, code, enabled, platformOnly, skipInTextField]);
+  }, [key, meta, shift, alt, code, anyShift, enabled, platformOnly, skipInTextField]);
 }
 
 /// Somewhere a caret can be, and therefore somewhere the platform's own text

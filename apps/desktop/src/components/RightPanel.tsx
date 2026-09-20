@@ -1,4 +1,11 @@
-import { GitCompare, GitPullRequest, GitPullRequestDraft, RefreshCw } from "lucide-react";
+import {
+  GitCompare,
+  GitPullRequest,
+  GitPullRequestDraft,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+} from "lucide-react";
 
 import OpenInButton from "@/components/OpenInButton";
 import TabButton from "@/components/TabButton";
@@ -117,16 +124,24 @@ export function PanelToggle({
 
 /// Which body the right panel is showing. This is the set, not the order —
 /// see `tabOrder`.
-export const PANEL_TABS = ["changes", "browser", "todo", "subagents", "pr", "issue", "docs", "skill"] as const;
+export const PANEL_TABS = ["changes", "browser", "files", "todo", "subagents", "pr", "issue", "docs", "skill"] as const;
 
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 const LABELS: Record<PanelTab, string> = {
-  changes: "Changes",
+  // "Diff" rather than "Changes": this is the session's whole repository, the
+  // same reading the sidebar's mark and the handoff row take, and the shorter
+  // word is the one a reader asks for. The turn-scoped list that used to carry
+  // "Changes" is gone — its files are the repository's own uncommitted ones
+  // whenever nothing else has touched the tree.
+  changes: "Diff",
   // The session's browser lives here. Always drawn, unlike PR or Docs: its
   // empty state is a URL bar, which is a place to start rather than a
   // sentence saying there is nothing.
   browser: "Browser",
+  // Always drawn, for the browser's reason: its empty state is the project's
+  // own tree, which is a place to start rather than a sentence.
+  files: "Files",
   subagents: "Subagents",
   // Not "Todos": the app already calls this a plan everywhere it speaks about
   // one — the strip's own line, `planLine`, the panel's header — and the tool's
@@ -183,9 +198,14 @@ export function tabOrder({
   /// whose only content is "there is nothing here" is one the eye skips.
   todo: boolean;
 }): readonly PanelTab[] {
-  const tabs: PanelTab[] = pr ? ["pr", "changes", "browser"] : ["changes", "browser"];
-  // Hard against the pair above, since a plan is about the work this session is
-  // doing rather than something it read: the two windows onto the session's own
+  // The three that are always drawn lead, in the order the main column used to
+  // carry them: the two windows onto the session's own state, then what it can
+  // read. PR ahead of them wherever it is drawn, per the rule above.
+  const tabs: PanelTab[] = pr
+    ? ["pr", "changes", "browser", "files"]
+    : ["changes", "browser", "files"];
+  // Hard against the three above, since a plan is about the work this session is
+  // doing rather than something it read: the windows onto the session's own
   // state come first, and what it picked up along the way follows.
   if (todo) tabs.push("todo");
   // After Changes, which is what keeps Issue immediately before Subagents.
@@ -251,6 +271,25 @@ type RightPanelProps = {
   /// what they act on; over a heading belonging to the thing underneath it, it
   /// cuts a title off its own body.
   heading?: string;
+  /// Drawn ahead of the tab row, at the window's left edge.
+  ///
+  /// For the one thing that lives out there rather than in this pane: a
+  /// collapsed sidebar renders nothing, so the traffic lights land on whatever
+  /// reaches the window's left — the app header normally, and this pane's row
+  /// while it is wide. Only set while wide, or the control would be drawn twice.
+  lead?: React.ReactNode;
+  /// The pane has taken the main column, so the transcript is behind it and
+  /// there is no width to drag — see `onToggleWide`.
+  wide?: boolean;
+  /// Swaps between the pane's two sizes: beside the transcript at the width the
+  /// reader dragged, or over it at whatever the column has.
+  ///
+  /// A tab here rather than in the window's titlebar because the pane is what
+  /// got cramped: the reader looking at a diff that does not fit reaches for
+  /// the control that is *on* it. Absent on the panes that already own the
+  /// column — the issues, pull-request and plugins pages have nothing to
+  /// expand into.
+  onToggleWide?: () => void;
   /// A strip of the caller's own tabs, drawn in place of the heading or the
   /// session's row.
   ///
@@ -279,9 +318,8 @@ export function TabBody({ active, children }: { active: boolean; children: React
 }
 
 /// The frame every right-hand inspector shares: one border, one row of tabs.
-/// Bodies render inside it and own no chrome of their own, so adding a third
-/// view is a tab and a component rather than another panel competing for the
-/// same slot.
+/// Bodies render inside it and own no chrome of their own, so adding a view is a
+/// tab and a component rather than another panel competing for the same slot.
 ///
 /// No close button: [PanelToggle] and ⌘E both close it, and a third affordance
 /// for the same action inside the thing it dismisses is the one the eye has to
@@ -304,6 +342,9 @@ export default function RightPanel({
   cwd,
   actions,
   heading,
+  lead,
+  wide = false,
+  onToggleWide,
   tabs,
   children,
 }: RightPanelProps) {
@@ -317,21 +358,30 @@ export default function RightPanel({
     label: "Resize the panel",
     // Dropped while closed, for the sidebar's reason: this pane hides rather
     // than unmounting, so it would go on holding width the sidebar could not
-    // bid for while nothing of it is on screen.
-    pane: open ? "panel" : undefined,
+    // bid for while nothing of it is on screen. And dropped while wide, where
+    // its width is the column's rather than the reader's — publishing that
+    // would read as the pane bidding for the whole window.
+    pane: open && !wide ? "panel" : undefined,
   });
 
   return (
     <aside
-      style={style}
+      // No width style while wide: `flex-1` takes what the transcript gave up.
+      style={wide ? undefined : style}
       className={cn(
-        "relative shrink-0 flex-col border-l border-border bg-sidebar",
+        "relative min-w-0 flex-col bg-sidebar",
         // Conditional `flex` rather than `flex` plus `hidden`: both set
         // `display`, so stacking them leaves the winner to stylesheet order.
         open ? "flex" : "hidden",
+        // Exclusive rather than stacked: `flex-1` and `shrink-0` both set
+        // `flex-shrink`, and which wins would be stylesheet order. Wide, the
+        // pane takes the column, so it draws no edge between it and a
+        // transcript that is not there — the sidebar's own right border is the
+        // one border left.
+        wide ? "flex-1" : "shrink-0 border-l border-border",
       )}
     >
-      {handle}
+      {!wide && handle}
       <div
         className={cn(
           // `overflow-hidden` for the reason the app header carries it: this
@@ -342,6 +392,8 @@ export default function RightPanel({
         )}
         data-tauri-drag-region="deep"
       >
+        {lead}
+
         {tabs ? (
           // **The frame owns the row; the caller brings what goes in it.** The
           // pane's own tabs are this session's views, which is what the frame
@@ -427,6 +479,33 @@ export default function RightPanel({
             Refresh is gone on Subagents and the Open button is gone off a
             session, so whichever survives has to hold the same edge. */}
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {/* Leading the group because it acts on the *frame* where every
+              control after it acts on the pane's contents — and because it
+              never comes and goes the way Refresh and Open do. */}
+          {onToggleWide && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground/60 hover:text-muted-foreground"
+                  onClick={onToggleWide}
+                  aria-label={wide ? "Restore the panel" : "Expand the panel"}
+                >
+                  {wide ? (
+                    <Minimize2 className="size-3.5" />
+                  ) : (
+                    <Maximize2 className="size-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">
+                {wide ? "Restore the panel" : "Expand the panel"}
+                <ShortcutKeys ids={["panel.expand"]} />
+              </TooltipContent>
+            </Tooltip>
+          )}
+
           {actions}
 
           {/* Ahead of Refresh, and outside the tab row's own logic: it acts on

@@ -247,7 +247,7 @@ pub(crate) async fn read_capped(path: &str, cap: u64) -> Result<Vec<u8>, String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn scratch() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("hz-docs-{}", uuid::Uuid::now_v7()));
@@ -255,7 +255,7 @@ mod tests {
         dir
     }
 
-    fn at(dir: &PathBuf, name: &str) -> String {
+    fn at(dir: &Path, name: &str) -> String {
         dir.join(name).to_str().unwrap().to_string()
     }
 

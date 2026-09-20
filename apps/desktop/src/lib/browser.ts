@@ -8,10 +8,8 @@ import type { ChromiumStatus } from "@/types/events";
 /// reports them, and the one rule about who presents the native view.
 ///
 /// Chromium draws straight into the window above the webview, so React
-/// cannot compose it. Two panes can show a session's browser — the Browser
-/// tab and the right panel's Live slot — and each *claims* the view with its
-/// rect; the highest-priority live claim wins and its rect goes to Rust. No
-/// claim, or a modal open, hides the view.
+/// cannot compose it. The Browser tab *claims* the view with its rect, and
+/// that rect goes to Rust. No claim, or a modal open, hides the view.
 
 export type BrowserTab = {
   id: number;
@@ -359,7 +357,7 @@ export function setViewport(sessionId: string, viewport: Viewport | null) {
 
 // --- Presenting the native view ---------------------------------------------
 
-type Claim = { priority: number; sessionId: string; rect: DOMRectReadOnly };
+type Claim = { sessionId: string; rect: DOMRectReadOnly };
 const claims = new Map<string, Claim>();
 let modalOpen = false;
 /// Something open lands on the view: `null` until judged for this modal,
@@ -442,11 +440,10 @@ export function claimPresenter(key: string, claim: Claim | null) {
 }
 
 function presenter(): Claim | null {
-  let winner: Claim | null = null;
   for (const c of claims.values()) {
-    if (c.rect.width > 0 && c.rect.height > 0 && (!winner || c.priority > winner.priority)) winner = c;
+    if (c.rect.width > 0 && c.rect.height > 0) return c;
   }
-  return winner;
+  return null;
 }
 
 function present() {

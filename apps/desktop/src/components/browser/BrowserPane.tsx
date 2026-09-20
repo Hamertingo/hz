@@ -5,8 +5,6 @@ import {
   Bug,
   ExternalLink,
   Globe,
-  Maximize2,
-  Minimize2,
   Plus,
   RotateCcw,
   RotateCw,
@@ -66,29 +64,20 @@ const TIP_SIDE = "top" as const;
 
 /// The session's browser: tab strip, URL bar, navigation, and the page.
 ///
-/// Two mounts of one component. The right panel's Browser tab is where it
-/// lives; the main column's is the full view, reached by the expand button,
-/// and while that is open the panel says so instead of drawing a second copy.
+/// One mount, in the right panel's Browser tab — the main column is the
+/// transcript and nothing else. There used to be a second, full-width mount
+/// reached by an expand button, and the two had to arbitrate which of them the
+/// page landed in; with one left there is nothing to arbitrate.
 ///
 /// The page is a native view Chromium draws into the window above the
 /// webview; nothing here renders it. The stage below reports its rect and
-/// Rust moves the view onto it. The full view outranks the panel, so should
-/// both ever be on screen the page lands in the full view.
+/// Rust moves the view onto it.
 export default function BrowserPane({
   sessionId,
   active,
-  mode,
-  fullOpen = false,
-  onExpand,
-  onCollapse,
 }: {
   sessionId: string;
   active: boolean;
-  mode: "panel" | "full";
-  /// The full view is showing, so the panel mount stands aside.
-  fullOpen?: boolean;
-  onExpand?: () => void;
-  onCollapse?: () => void;
 }) {
   const tabs = useBrowserTabs(sessionId) ?? [];
   const pending = usePendingTab(sessionId);
@@ -99,23 +88,21 @@ export default function BrowserPane({
   const key = useId();
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  const standingAside = mode === "panel" && fullOpen;
   // The empty state stands in for the page: nothing open, or a new tab
   // waiting for its first URL.
   const empty = !current;
 
   useEffect(() => {
     const stage = stageRef.current;
-    if (!active || standingAside || !stage || empty) {
+    if (!active || !stage || empty) {
       claimPresenter(key, null);
       return;
     }
-    const priority = mode === "full" ? 2 : 1;
     // The device frame is the page when one is set; the native view cannot
     // be clipped by the DOM, so the frame is sized to fit the stage below.
     const report = () => {
       const target = frameRef.current ?? stage;
-      claimPresenter(key, { priority, sessionId, rect: target.getBoundingClientRect() });
+      claimPresenter(key, { sessionId, rect: target.getBoundingClientRect() });
     };
     report();
     const observer = new ResizeObserver(report);
@@ -127,20 +114,7 @@ export default function BrowserPane({
       window.removeEventListener("resize", report);
       claimPresenter(key, null);
     };
-  }, [sessionId, key, active, mode, standingAside, empty, viewport]);
-
-  if (standingAside) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-ui text-muted-foreground">
-        <span>Open in the full view.</span>
-        {onCollapse && (
-          <Button variant="outline" size="sm" onClick={onCollapse}>
-            Bring it back here
-          </Button>
-        )}
-      </div>
-    );
-  }
+  }, [sessionId, key, active, empty, viewport]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -149,11 +123,8 @@ export default function BrowserPane({
         tabs={tabs}
         current={current}
         pending={pending}
-        mode={mode}
         deviceBar={deviceBar}
         onToggleDeviceBar={() => setDeviceBar((v) => !v)}
-        onExpand={onExpand}
-        onCollapse={onCollapse}
       />
       {deviceBar && (
         <DeviceBar sessionId={sessionId} viewport={viewport} onClose={() => setDeviceBar(false)} />
@@ -228,21 +199,15 @@ function Chrome({
   tabs,
   current,
   pending,
-  mode,
   deviceBar,
   onToggleDeviceBar,
-  onExpand,
-  onCollapse,
 }: {
   sessionId: string;
   tabs: BrowserTab[];
   current: BrowserTab | null;
   pending: boolean;
-  mode: "panel" | "full";
   deviceBar: boolean;
   onToggleDeviceBar: () => void;
-  onExpand?: () => void;
-  onCollapse?: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const openError = useOpenError(sessionId);
@@ -265,8 +230,6 @@ function Chrome({
     setPendingTab(sessionId, true);
     setDraft("");
   };
-
-  const swap = mode === "panel" ? onExpand : onCollapse;
 
   return (
     <div className="shrink-0 border-b border-border">
@@ -450,24 +413,6 @@ function Chrome({
           </TooltipTrigger>
           <TooltipContent side={TIP_SIDE}>Open in system browser</TooltipContent>
         </Tooltip>
-        {swap && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={TOOL_BTN}
-                onClick={swap}
-                aria-label={mode === "panel" ? "Open full view" : "Back to the panel"}
-              >
-                {mode === "panel" ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side={TIP_SIDE}>
-              {mode === "panel" ? "Open full view" : "Back to the panel"}
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
       {openError && (
         <p className="bg-card px-3 pb-1.5 text-ui text-destructive">{openError}</p>

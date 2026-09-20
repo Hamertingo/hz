@@ -2,10 +2,11 @@ import * as acp from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTuiAcpAgent } from '../../src/acp/agent.js';
+import { projectDelegationTurns } from '../../src/acp/updates.js';
 import { TuiAcpPromptContinuation } from '../../src/acp/prompt-continuation.js';
 import type { TuiAcpRuntime } from '../../src/acp/runtime.js';
 import type { TuiContextSnapshotResponse, TuiRuntimeDiagnostics } from '../../src/runtime/port.js';
-import type { TuiStreamEvent } from '../../src/runtime/stream-events.js';
+import { normalizeTuiMessage, type TuiStreamEvent } from '../../src/runtime/stream-events.js';
 import type {
   TuiMcpServer,
   TuiModel,
@@ -6132,3 +6133,118 @@ function planReviewEvent(index: number): TuiRuntimeEvent {
     },
   };
 }
+
+/// One child session's three message rows, **copied off a real one**. The shape
+/// the runtime stores (`msg_content`, `thinking_content`, `tool_calls` with the
+/// result on the same entry) is the shape this projection has to survive — and
+/// the one it dropped an answer for.
+const CHILD_ROWS = [
+  {
+    msg_id: 'msg-1',
+    turnId: 'turn_task_bg_1',
+    turn_id: 'turn_task_bg_1',
+    role: 'user',
+    timestamp: 1789903868282,
+    msg_content: 'Olá! Este é um teste de conexão.',
+  },
+  {
+    msg_id: 'msg-2',
+    turnId: 'turn_task_bg_1',
+    turn_id: 'turn_task_bg_1',
+    role: 'assistant',
+    timestamp: 1789903872840,
+    msg_content: '',
+    thinking_content: 'The assignment is a read-only check.',
+    thinking_duration_ms: 345,
+    finish_reason: 'toolUse',
+    tool_calls: [
+      {
+        tool_call_id: 'call_00_9RooccCGjYtq',
+        tool_name: 'glob',
+        tool_call_status: 2,
+        tool_call_args: '{"pattern":"*","path":"/repo"}',
+        tool_call_result_data: {
+          content: [{ type: 'text', text: 'focus/src/lib/id.ts' }],
+        },
+      },
+    ],
+  },
+  {
+    msg_id: 'msg-3',
+    turnId: 'turn_task_bg_1',
+    turn_id: 'turn_task_bg_1',
+    role: 'assistant',
+    timestamp: 1789903901137,
+    msg_content: 'Status: ok\n\nEcho: olá!',
+    finish_reason: 'stop',
+  },
+];
+
+/// What a delegated child is read back as.
+///
+/// **A child's session read is projected into ACP's own vocabulary**, so a client
+/// draws it with the code that draws a conversation. Nothing about the shape
+/// below is bespoke: it is what `session/load` would replay.
+describe('a delegated child, projected for a client', () => {
+  /// **The failure this pins is the answer going missing.** A reader opening a
+  /// subagent wants what the child thought, the tool it ran with the result that
+  /// came back, and — above all — what it said. Three of those four arriving is a
+  /// run that looks like it stopped mid-thought.
+  it('arrives as thinking, a tool call with its result, and the reply', () => {
+    const turns = projectDelegationTurns(CHILD_ROWS.map((row) => normalizeTuiMessage(row)));
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.id).toBe('turn_task_bg_1');
+    expect(turns[0]!.status).toBe('completed');
+    expect(turns[0]!.prompt).toBe('Olá! Este é um teste de conexão.');
+
+    const kinds = turns[0]!.updates.map((update) => update.sessionUpdate);
+    expect(kinds).toContain('agent_thought_chunk');
+    expect(kinds).toContain('tool_call');
+    expect(kinds).toContain('agent_message_chunk');
+
+    // The call carries what the tool was given and what it answered with, which
+    // is what the transcript's own row draws a diff, a command or a match from.
+    expect(turns[0]!.updates.find((u) => u.sessionUpdate === 'tool_call')).toMatchObject({
+      name: 'glob',
+      status: 'completed',
+      rawInput: { pattern: '*', path: '/repo' },
+    });
+
+    const said = turns[0]!.updates
+      .filter((update) => update.sessionUpdate === 'agent_message_chunk')
+      .map((update) => (update.content as { text?: string })?.text ?? '')
+      .join('');
+    expect(said).toBe('Status: ok\n\nEcho: olá!');
+  });
+
+  /// **The clock is the child's, taken off its own messages.** A read happens
+  /// whenever a client asks and takes no time at all, so a turn stamped at the
+  /// read reported every child — a two-minute one included — as `0.0s`.
+  it('dates the turn from the messages rather than from the read', () => {
+    const [turn] = projectDelegationTurns(CHILD_ROWS.map((row) => normalizeTuiMessage(row)));
+    expect(turn!.at).toBe(1789903868282);
+    expect(turn!.endedAt).toBe(1789903901137);
+  });
+
+  /// A batch has no second line to follow, so a call that is already over gets
+  /// its own closing update. A client that only ever sees the announcement draws
+  /// nothing at all — the row would shimmer for the rest of the session.
+  it('closes a call the batch never sees a second line for', () => {
+    const [turn] = projectDelegationTurns(CHILD_ROWS.map((row) => normalizeTuiMessage(row)));
+    expect(turn!.updates.map((u) => u.sessionUpdate)).toContain('tool_call_update');
+  });
+
+  /// **`toolUse` is not an ending, and treating it as one is what showed a child
+  /// that had stopped mid-thought.** It is the model saying "I have asked for a
+  /// tool"; the turn carries on with the answer behind it. A reader that closed
+  /// the turn there drew the tool call and nothing after it — and the answer, which
+  /// had not been written yet, never arrived.
+  it('does not close a turn on a tool call', () => {
+    const [turn] = projectDelegationTurns(
+      CHILD_ROWS.slice(0, 2).map((row) => normalizeTuiMessage(row)),
+    );
+    expect(turn!.status).toBe('running');
+    expect(turn!.endedAt).toBe(1789903872840);
+  });
+});

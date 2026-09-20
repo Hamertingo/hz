@@ -103,7 +103,7 @@ export default function SessionHeader({
               aria-label={`Copy the working directory, ${cwd}`}
               // Shrinkable, not `shrink-0`: a worktree branch name is long and
               // unbounded, so a fixed one overflowed the row and drew itself
-              // over the view tabs rather than giving up width.
+              // over the panel toggle rather than giving up width.
               className="flex min-w-0 cursor-pointer items-center gap-1 rounded-md text-muted-foreground outline-none transition-colors select-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               {copied ? (

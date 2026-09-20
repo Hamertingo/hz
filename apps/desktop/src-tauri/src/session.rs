@@ -515,6 +515,14 @@ pub struct SendRequest<'a> {
     /// caller — the orchestration socket turns a session id into one, and
     /// nothing below here knows sessions.
     pub base_ref: Option<&'a str>,
+    /// A snapshot of *another* checkout's working tree, to start this session's
+    /// worktree from — the second opinion's whole subject.
+    ///
+    /// A ref cannot carry it: `--from` holds committed work only, so a reviewer
+    /// seeded from one sees the repository before the turn it was asked to
+    /// review. Outranks [`Self::base_ref`], since a caller that named both meant
+    /// the work. See `git::commit_tree`.
+    pub seed_tree: Option<&'a str>,
     /// The Agent a new session runs *as*, or `None` for the runtime's own default.
     ///
     /// **Creation-time only, and that is the runtime's rule rather than this
@@ -565,6 +573,7 @@ impl SessionManager {
             use_worktree,
             worktree_name,
             base_ref,
+            seed_tree,
             agent_name,
             is_new_session,
             parent_session_id,
@@ -684,12 +693,27 @@ impl SessionManager {
             // never start. `HEAD` where there is no remote, matching what the
             // CLI itself falls back to when the fetch fails.
             let resolved_base = match (harness.caps().creates_own_worktree, use_worktree, base_ref) {
-                (false, true, None) => {
+                // A seed is a base of its own, so the default is not fetched for
+                // it: `default_base` reaches the remote, and the answer would be
+                // thrown away.
+                (false, true, None) if seed_tree.is_none() => {
                     Some(git::default_base(cwd).await.unwrap_or_else(|| "HEAD".into()))
                 }
                 _ => None,
             };
-            let base_ref = base_ref.or(resolved_base.as_deref());
+
+            // **The work, not the last commit.** A snapshot of another checkout
+            // is pinned to a commit so `worktree add` can check it out at all —
+            // see `git::commit_tree` for why a ref will not carry it. It leads
+            // the base, because a caller that named both meant the work.
+            let seeded = match seed_tree {
+                Some(tree) => {
+                    let head = git::resolve_commit(cwd, "HEAD").await;
+                    Some(git::commit_tree(cwd, tree, head.as_deref()).await?)
+                }
+                None => None,
+            };
+            let base_ref = seeded.as_deref().or(base_ref).or(resolved_base.as_deref());
 
             let worktree_name = if use_worktree {
                 Some(resolve_unclaimed_worktree_name(cwd, worktree_name).await?)
@@ -1509,6 +1533,33 @@ impl SessionManager {
         };
         let Transport::Acp(child) = &session.stdin;
         mcode::delegation::stop(child)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    /// A delegated child's own session, as this app's events.
+    ///
+    /// **The child's own stream never reaches this app** — it is a separate
+    /// runtime Session, and the parent's ACP stream carries only the spawning call
+    /// — so this read is the one way a subagent's work can be watched rather than
+    /// merely counted. It attaches nothing on the agent's side, which is what makes
+    /// polling it safe while the run is live, and what it answers with is the same
+    /// event vocabulary the app draws a conversation from.
+    pub async fn delegation_transcript(
+        &self,
+        session_id: &str,
+        member_session_id: &str,
+        limit: Option<u64>,
+    ) -> Result<Vec<crate::events::AgentEvent>, String> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id) else {
+            return Err(
+                "This session's agent is not running — a subagent's work is read while it is."
+                    .into(),
+            );
+        };
+        let Transport::Acp(child) = &session.stdin;
+        mcode::delegation::transcript(child, member_session_id, limit)
             .await
             .map_err(|e| format!("{e:#}"))
     }

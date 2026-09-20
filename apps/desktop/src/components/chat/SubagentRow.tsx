@@ -1,13 +1,13 @@
 import { memo } from "react";
 import { ChevronRight } from "lucide-react";
-import Orb from "@/components/Orb";
+import BloubAvatar from "@/components/BloubAvatar";
 
 import type { SubagentRun } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
 
 /// The subagent's place in the main conversation: one compact row. It never
 /// expands inline — clicking opens the subagent panel, which is where the run's
-/// events actually live.
+/// own work actually lives.
 ///
 /// The row says what the agent is doing and nothing else. Its tool name is
 /// harness vocabulary ("Task", "local_bash") that names the mechanism rather
@@ -43,11 +43,20 @@ function SubagentRow({
       onClick={() => onOpen(run.id)}
       className="group flex w-full cursor-pointer items-center gap-2 text-left text-chat"
     >
-      {/* The orb *is* the running state, so it goes when the run ends rather
-          than settling into a resting pose — a still orb next to a finished run
-          reads as something that stalled. Same size and pinned theme as
-          `WorkingIndicator`, which is the other place it appears inline. */}
-      {running && <Orb state="listening" size={20} aria-hidden />}
+      {/* **The run's own face.** The bot is derived from the agent the spawning
+          call named, so a row says *which* subagent this is rather than only that
+          one exists — and it animates while the run does, which is the one place
+          the reader can see a child working without opening the panel.
+
+          It stays after the run ends, unlike the orb this replaced: a still bot
+          next to a finished run reads as the agent that ran, where a still orb
+          read as something that stalled. */}
+      <BloubAvatar
+        name={run.label ?? detail}
+        size={18}
+        live={running}
+        mood={running ? "working" : run.done ? "done" : "idle"}
+      />
 
       <span
         className={cn(

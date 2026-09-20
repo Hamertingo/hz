@@ -118,6 +118,21 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 
+/// How long the wait has been so far, for the row that is still waiting.
+///
+/// **No decimal, unlike [`formatDuration`].** The settled line is read once, and
+/// a tenth is worth having there because that is where 2.3s and 2.8s differ.
+/// This one is redrawn every second, so a tenth would only ever be `.0` — a
+/// digit that changes under the reader's eye and never says anything.
+///
+/// Rounds **down**, so the number is time actually spent: a wait of 59.9s reads
+/// `59s` rather than promising a minute it has not reached.
+export function formatElapsed(ms: number): string {
+  const seconds = Math.floor(Math.max(0, ms) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 /// The wall clock a stamp fell at, local and 24-hour: `14:32`.
 ///
 /// Beside the duration under a turn, which answers "how long" and leaves "when"

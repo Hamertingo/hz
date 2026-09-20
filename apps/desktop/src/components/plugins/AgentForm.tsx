@@ -1,17 +1,15 @@
 import { Bot, TriangleAlert } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import AgentAvatar from "@/components/plugins/AgentAvatar";
+import BloubAvatar from "@/components/BloubAvatar";
 import { Button } from "@/components/ui/button";
 import Spinner from "@/components/ui/spinner";
 import { useAgentEditor } from "@/hooks/usePluginAgents";
-import {
-  PORTRAIT_COUNT,
-  draftProblem,
-  portraitMarker,
-  portraitVariant,
-  type AgentPick,
-} from "@/lib/agents";
+import { useAgentSkin, setAgentSkin } from "@/lib/agentSkin";
+import { draftProblem, portraitVariant, type AgentPick } from "@/lib/agents";
+import { EXPRESSIONS } from "@/lib/bloub/expressions";
+import { COLORS, SHAPES } from "@/lib/bloub/skins";
+import { bloubSkinFor, type AgentSkin } from "@/lib/bloubAgent";
 import { cn } from "@/lib/utils";
 import type { AgentDraft } from "@/types/events";
 
@@ -55,7 +53,10 @@ export default function AgentForm({
   const [displayNameText, setDisplayNameText] = useState("");
   const [descriptionText, setDescriptionText] = useState("");
   const [promptText, setPromptText] = useState("");
-  const [portrait, setPortrait] = useState<number | null>(null);
+  /// The reader's portrait pick, held as a draft until Save — the store behind
+  /// it is written on the way out rather than on every click, so a form the
+  /// reader walks away from leaves nothing behind.
+  const [chosen, setChosen] = useState<AgentSkin | null>(null);
   /// The delete's own second press, held here rather than in a dialog: the row is
   /// one thing and a modal takes the window over for it.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -69,12 +70,31 @@ export default function AgentForm({
     setDisplayNameText(agent?.displayName ?? "");
     setDescriptionText(agent?.description ?? "");
     setPromptText(editor.detail?.systemPrompt ?? "");
-    setPortrait(portraitVariant(agent?.avatar));
   }, [editor.detail, editor.name]);
+
+  // The portrait the reader already chose for this Agent, if any. Adopted when it
+  // arrives and when the picked Agent changes — and *not* on every pick, since
+  // the pick is the thing this is seeding.
+  const stored = useAgentSkin(editor.name ?? "");
+  useEffect(() => {
+    setChosen(stored);
+  }, [stored, pick]);
 
   useEffect(() => {
     setConfirmingDelete(false);
   }, [pick]);
+
+  /// What the bot would be if nobody had chosen: the name's own, unless the
+  /// Agent carries a portrait marker from somewhere else.
+  const autoSkin = useMemo(
+    () =>
+      bloubSkinFor(
+        nameText.trim() || "agent",
+        portraitVariant(editor.detail?.agent.avatar ?? null),
+      ),
+    [nameText, editor.detail],
+  );
+  const skin: AgentSkin = chosen ?? autoSkin;
 
   const problem = editor.isNew ? draftProblem(nameText) : null;
   const canSave = !problem && !editor.saving && !editor.loading;
@@ -89,7 +109,10 @@ export default function AgentForm({
       name: editor.isNew ? nameText.trim() || null : null,
       displayName: displayNameText.trim() || null,
       description: descriptionText.trim() ? descriptionText : null,
-      avatar: portrait !== null ? portraitMarker(portrait) : null,
+      // **The portrait is not the agent's to hold.** Its own marker is a single
+      // digit and is read, never written from here; what this screen edits is the
+      // bot, and the bot lives on this machine — see `lib/agentSkin.ts`.
+      avatar: null,
       // Sent even when empty: clearing a prompt is something a reader may mean,
       // where clearing a *name* is not — and the Rust side drops a blank name for
       // exactly that reason.
@@ -101,15 +124,20 @@ export default function AgentForm({
       // store has no route to move one.
       model: null,
     };
-  }, [editor.isNew, nameText, displayNameText, descriptionText, portrait, promptText]);
+  }, [editor.isNew, nameText, displayNameText, descriptionText, promptText]);
 
   const save = useCallback(async () => {
     if (problem) return;
     const address = editor.isNew ? null : editor.name;
     if (await editor.save(draft(), address)) {
-      if (editor.isNew) onSaved(nameText.trim());
+      // **The bot is filed under the name the store answered with**, not the one
+      // that was typed: a creation's name is the store's to resolve, and a pick
+      // filed under a spelling it did not keep is a bot nothing would ever wear.
+      const saved = address ?? nameText.trim();
+      setAgentSkin(saved, chosen);
+      if (editor.isNew) onSaved(saved);
     }
-  }, [draft, editor, nameText, onSaved, problem]);
+  }, [chosen, draft, editor, nameText, onSaved, problem]);
 
   const remove = useCallback(async () => {
     if (await editor.remove()) onClose();
@@ -127,13 +155,15 @@ export default function AgentForm({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
-        <AgentAvatar
-          agent={{
-            name: nameText || "agent",
-            displayName: displayNameText || nameText || "A",
-            avatar: portrait !== null ? portraitMarker(portrait) : null,
-          }}
+        <BloubAvatar
+          name={nameText.trim() || "agent"}
+          override={skin}
           size={40}
+          label={displayNameText || nameText || "Agent"}
+          // The one bot on this screen that runs: it is what the reader is
+          // looking at while they decide who this agent is, and a still would
+          // make the Portrait row below it read as the only moving part.
+          live
         />
         <div className="flex min-w-0 flex-col gap-1">
           <h3 className="min-w-0 truncate text-ui font-medium">
@@ -157,31 +187,74 @@ export default function AgentForm({
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
         <Field
           label="Portrait"
-          hint="How the agent is drawn in the list. Nothing about how it works."
+          hint="Who this agent is on screen. Nothing about how it works."
         >
-          <div className="flex flex-wrap items-center gap-1">
-            {Array.from({ length: PORTRAIT_COUNT }, (_, variant) => (
-              <button
-                key={variant}
-                type="button"
-                aria-label={`Portrait ${variant + 1}`}
-                aria-pressed={portrait === variant}
-                onClick={() => setPortrait(variant)}
-                className={cn(
-                  "cursor-pointer rounded-lg p-0.5 transition-colors",
-                  portrait === variant ? "ring-2 ring-accent" : "hover:bg-sidebar-accent/60",
-                )}
-              >
-                <AgentAvatar
-                  agent={{
-                    name: nameText || "agent",
-                    displayName: displayNameText || nameText || "A",
-                    avatar: portraitMarker(variant),
-                  }}
-                  size={26}
+          <div className="flex flex-col gap-2">
+            {/* **Three picks rather than one grid of ten.** A single marker could
+                only ever carry a number, so the old row was ten bots and no way to
+                say which part of one you liked. These are the bot's own axes: its
+                silhouette, its colour, and the face it rests in — and every swatch
+                is drawn as the bot you would get, in the other two. */}
+            <PortraitRow label="Shape">
+              {SHAPES.map((shape) => (
+                <PortraitSwatch
+                  key={shape.id}
+                  label={shape.id}
+                  active={skin.shape === shape.id}
+                  onPick={() => setChosen({ ...skin, shape: shape.id })}
+                >
+                  <BloubAvatar name="portrait" size={26} override={{ ...skin, shape: shape.id }} />
+                </PortraitSwatch>
+              ))}
+            </PortraitRow>
+
+            <PortraitRow label="Colour">
+              {COLORS.map((color) => (
+                <button
+                  key={color.id}
+                  type="button"
+                  aria-label={color.id}
+                  aria-pressed={skin.color === color.id}
+                  onClick={() => setChosen({ ...skin, color: color.id })}
+                  className={cn(
+                    "size-5 cursor-pointer rounded-full transition-transform",
+                    skin.color === color.id
+                      ? "ring-2 ring-accent ring-offset-2 ring-offset-background"
+                      : "hover:scale-110",
+                  )}
+                  style={{ background: color.hex }}
                 />
+              ))}
+            </PortraitRow>
+
+            <PortraitRow label="Face">
+              {EXPRESSIONS.map((expression) => (
+                <PortraitSwatch
+                  key={expression.id}
+                  label={expression.id}
+                  active={skin.expression === expression.id}
+                  onPick={() => setChosen({ ...skin, expression: expression.id })}
+                >
+                  <BloubAvatar
+                    name="portrait"
+                    size={24}
+                    override={{ ...skin, expression: expression.id }}
+                  />
+                </PortraitSwatch>
+              ))}
+            </PortraitRow>
+
+            {/* Only where there is something to go back from: a button that
+                changed nothing is a button the reader presses twice. */}
+            {chosen && (
+              <button
+                type="button"
+                onClick={() => setChosen(null)}
+                className="w-fit cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Back to the name's own
               </button>
-            ))}
+            )}
           </div>
         </Field>
 
@@ -296,6 +369,46 @@ export default function AgentForm({
         )}
       </footer>
     </div>
+  );
+}
+
+/// One axis of the portrait: what it is called, and the picks along it.
+function PortraitRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="w-14 shrink-0 pt-1 text-xs text-muted-foreground/70">{label}</span>
+      <div className="flex flex-wrap items-center gap-1">{children}</div>
+    </div>
+  );
+}
+
+/// One pick, drawn as the bot it would give — which is the whole reason the
+/// swatch is a bot rather than a glyph: a reader is choosing a face, and a name
+/// like `goutte` says less about a droplet than the droplet does.
+function PortraitSwatch({
+  label,
+  active,
+  onPick,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  onPick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      onClick={onPick}
+      className={cn(
+        "cursor-pointer rounded-lg p-0.5 transition-colors",
+        active ? "ring-2 ring-accent" : "hover:bg-sidebar-accent/60",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -25,11 +25,16 @@ use hz_proto::{
     encode_line, CreateSession, Envelope, IssueLink, LinkIssues, ListSessions, Request, Response,
     SendMessage, SessionSummary, MAX_LINE, PROTOCOL_VERSION,
 };
-use std::path::Path;
+use std::{
+    collections::{HashMap, VecDeque},
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
+    sync::OnceCell,
 };
 
 /// Emitted when a session is created by something other than the composer, so
@@ -176,6 +181,99 @@ fn mismatch(theirs: u32) -> String {
     format!("this hz CLI speaks protocol v{theirs}, the app speaks v{PROTOCOL_VERSION} — {cure}")
 }
 
+/// One dispatch, with a failure turned into the answer the caller reads back.
+///
+/// Reported rather than logged: the caller is an agent, and this string is what
+/// it reads as tool output.
+async fn run(request: Request, app: &AppHandle) -> Response {
+    match dispatch(request, app).await {
+        Ok(response) => response,
+        Err(e) => Response::error(format!("{e:#}")),
+    }
+}
+
+/// How many answers are remembered. Vastly more than the number of requests an
+/// agent has outstanding: this is a retry window, and a retry arrives seconds
+/// after the attempt it repeats rather than minutes.
+const LEDGER_CAP: usize = 64;
+
+/// One remembered request.
+///
+/// A `OnceCell` rather than a stored `Response`: the first attempt *initialises*
+/// it and every later one awaits that same initialisation, so a retry arriving
+/// while the attempt it repeats is still running waits for its answer instead of
+/// starting a second one. A map of finished answers alone would dedup only the
+/// retries that arrive after the damage is already done — and a killed CLI is
+/// exactly the case where the app is still working.
+type Cell = Arc<OnceCell<Response>>;
+
+#[derive(Default)]
+struct Ledger {
+    /// Insertion order, for eviction. The map is the lookup.
+    order: VecDeque<String>,
+    cells: HashMap<String, Cell>,
+}
+
+impl Ledger {
+    /// Drops the oldest **finished** answers once the map is over its cap.
+    ///
+    /// Only finished ones: evicting a cell that is still running would let the
+    /// next retry start a second copy of a request that is still in flight,
+    /// which is the hazard this whole type exists for. The scan is bounded, so a
+    /// map that is over the cap with everything still running is left over it —
+    /// sixty-four concurrent orchestrations is not a state this app has.
+    fn evict(&mut self) {
+        let mut scanned = 0;
+        while self.cells.len() > LEDGER_CAP && scanned < self.order.len() {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if self.cells.get(&oldest).is_some_and(|cell| cell.initialized()) {
+                self.cells.remove(&oldest);
+            } else {
+                self.order.push_back(oldest);
+                scanned += 1;
+            }
+        }
+    }
+}
+
+static LEDGER: OnceLock<tokio::sync::Mutex<Ledger>> = OnceLock::new();
+
+/// Answers `id`'s request, running it at most once.
+async fn answer_once(id: &str, request: Request, app: &AppHandle) -> Response {
+    let cell: Cell = {
+        let mut ledger = ledger().lock().await;
+        // Taken under one hold of the lock, so two connections carrying the same
+        // id cannot both find the map empty and both install a cell.
+        if let Some(existing) = ledger.cells.get(id) {
+            existing.clone()
+        } else {
+            let cell: Cell = Arc::new(OnceCell::new());
+            ledger.cells.insert(id.to_string(), cell.clone());
+            ledger.order.push_back(id.to_string());
+            ledger.evict();
+            cell
+        }
+    };
+
+    // The closure runs for the first caller alone; every other one awaits the
+    // value it produced. It takes `request` by move, which is why the second
+    // caller's copy is simply dropped — it parsed the line and has nothing to do
+    // with it.
+    let answer = cell
+        .get_or_init(|| async move { run(request, app).await })
+        .await;
+
+    // Cloned out rather than held: the borrow of the cell cannot outlive the
+    // ledger entry, and a later eviction must not be able to race a reader.
+    answer.clone()
+}
+
+fn ledger() -> &'static tokio::sync::Mutex<Ledger> {
+    LEDGER.get_or_init(|| tokio::sync::Mutex::new(Ledger::default()))
+}
+
 /// Reads one request, answers it, closes. A connection carries one command so
 /// that a client crashing mid-line costs nothing but itself.
 async fn handle(stream: UnixStream, app: &AppHandle) -> Result<()> {
@@ -200,11 +298,12 @@ async fn handle(stream: UnixStream, app: &AppHandle) -> Result<()> {
     let response = match serde_json::from_str::<Version>(&line) {
         Ok(Version { v }) if v != PROTOCOL_VERSION => Response::error(mismatch(v)),
         _ => match serde_json::from_str::<Envelope>(&line) {
-            Ok(envelope) => match dispatch(envelope.request, app).await {
-            Ok(response) => response,
-            // Reported rather than logged: the caller is an agent, and this
-            // string is what it reads back as tool output.
-                Err(e) => Response::error(format!("{e:#}")),
+            Ok(envelope) => match envelope.id.as_deref().filter(|id| !id.is_empty()) {
+                // A caller that named this request can have it retried: see
+                // `Envelope::id`. `None` is every caller that did not, and is
+                // dispatched exactly as it always was.
+                Some(id) => answer_once(id, envelope.request, app).await,
+                None => run(envelope.request, app).await,
             },
             Err(e) => Response::error(format!("could not parse the request: {e}")),
         },
@@ -386,6 +485,10 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
                 // one.
                 worktree_name: None,
                 base_ref: base_ref.as_deref(),
+                // `hz new` forks from committed work, which is all a ref can
+                // carry. Seeding a tree from a live checkout is the second
+                // opinion's, and it is the app's own to ask for.
+                seed_tree: None,
                 // `hz new` names no Agent: a spawned session runs as the
                 // runtime's default, which is the one the caller itself is on.
                 // Naming another is a product decision about delegation, and the
@@ -640,6 +743,7 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
                 use_worktree: false,
                 worktree_name: None,
                 base_ref: None,
+                seed_tree: None,
                 // A relayed message must not reconfigure the session it arrives
                 // at, and the Agent is a creation-time property besides. The
                 // target is already running, so this is ignored either way.

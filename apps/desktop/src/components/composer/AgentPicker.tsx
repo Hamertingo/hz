@@ -59,7 +59,7 @@ export default function AgentPicker({
           aria-label="The agent this chat runs as"
         >
           {picked ? (
-            <AgentAvatar agent={picked} size={16} />
+            <AgentAvatar agent={picked} size={16} live />
           ) : (
             <Bot className="size-3.5 shrink-0" />
           )}
@@ -85,7 +85,7 @@ export default function AgentPicker({
             onSelect={() => onSelect(agent.name)}
             className="cursor-pointer gap-2"
           >
-            <AgentAvatar agent={agent} size={16} />
+            <AgentAvatar agent={agent} size={16} paper="var(--popover, var(--background))" />
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="min-w-0 truncate">{agent.displayName}</span>
               {agent.description && (

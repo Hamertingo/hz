@@ -12,11 +12,5 @@
     "build:app": "pnpm --filter hz run build",
     "build:web": "pnpm --filter @hz/web run build",
     "test": "pnpm --filter hz run test"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.14"
-  },
-  "dependencies": {
-    "@lobehub/icons-static-svg": "^1.95.0"
   }
 }

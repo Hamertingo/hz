@@ -243,6 +243,45 @@ owner's permission rather than with a licence file. No Greptile artwork is used.
 
 ---
 
+## bloub
+
+<https://github.com/jeremy-prt/bloub> at revision
+`b4bb3c1b5f93c7b87a2e8d620f667c4093d97749`.
+
+The animated bot every Agent wears — see `apps/desktop/src/lib/bloub/`, which is
+upstream's `src/bot/` kept verbatim, and `components/BloubAvatar.tsx`, which draws
+it. Only the engine was taken: no Vue, no customiser, no export encoders.
+
+Upstream recreates the visual behaviour of the x.ai bot avatar as an exercise and
+is not affiliated with, endorsed by or connected to x.ai; its MIT licence covers
+the code, not the design it imitates.
+
+```
+MIT License
+
+Copyright (c) 2026 Jérémy Perret
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
 ## MiniMax Code
 
 <https://www.npmjs.com/package/@minimax-ai/code>

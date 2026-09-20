@@ -32,7 +32,19 @@ use std::path::PathBuf;
 /// damage in. See [`Envelope`] and the app's own `mismatch`, which names which
 /// half is behind so the reader — usually an agent, reading it as tool output —
 /// runs the cure that applies rather than the one that doesn't.
-pub const PROTOCOL_VERSION: u32 = 6;
+///
+/// ## What earned each bump
+///
+/// `v2` = `from`, `v3` = `issues` and `LinkIssues`, `v4` = `LinkIssues.identifiers`
+/// renamed to `issues`, `v5` = `Browser`, `v6` = `fast`, **`v7` = [`Envelope::id`]**.
+///
+/// v7 is the first bump for a field whose *absence* is the hazard rather than a
+/// wrong default. An app that ignores `id` runs the request — exactly as it does
+/// today — and answers `ok`, so a caller told "retry with this id" retries and
+/// the side effect happens twice with nothing anywhere saying so. The advice is
+/// what is new and it is unkeepable below v7, which is the "wrong work that
+/// looks like right work" this constant exists for.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Where the app listens, unless [`endpoint`] is overridden.
 pub const SOCKET_NAME: &str = "hz.sock";
@@ -58,14 +70,43 @@ pub const MAX_LINE: u64 = 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
     pub v: u32,
+    /// The caller's name for this request, optional because most callers do not
+    /// have one to give.
+    ///
+    /// **It exists so a retry can be answered rather than repeated.** A CLI
+    /// killed mid-request — an agent's Bash timeout is the ordinary way — leaves
+    /// its caller unable to tell "did not run" from "ran and I never heard".
+    /// Retrying the first is correct and retrying the second sends the same
+    /// prompt into a session twice. Given an id, the app remembers the answer
+    /// and hands the second attempt that same answer without dispatching again,
+    /// and a second attempt that arrives while the first is still running waits
+    /// for it rather than starting its own.
+    ///
+    /// Opaque to the app: any non-empty string, chosen by the caller. Omitted
+    /// rather than sent as `null`, so the line for a caller that has none is the
+    /// one it always was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(flatten)]
     pub request: Request,
 }
 
 impl Envelope {
+    /// A line with no id: the shape every caller sent before v7, and what a
+    /// one-shot command with nothing to retry still sends.
     pub fn new(request: Request) -> Self {
         Self {
             v: PROTOCOL_VERSION,
+            id: None,
+            request,
+        }
+    }
+
+    /// A line a caller can retry: see [`Envelope::id`].
+    pub fn retryable(request: Request, id: impl Into<String>) -> Self {
+        Self {
+            v: PROTOCOL_VERSION,
+            id: Some(id.into()),
             request,
         }
     }
@@ -498,6 +539,32 @@ pub fn encode_line<T: Serialize>(value: &T) -> serde_json::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The id rides beside the flattened request and survives both directions,
+    /// and a line without one still parses — the two halves of an optional field
+    /// that an older caller and a newer one each depend on.
+    #[test]
+    fn the_request_id_round_trips_and_is_optional() {
+        let with = Envelope::retryable(
+            Request::ListSessions(ListSessions {
+                all: false,
+                project_path: None,
+                parent_session_id: None,
+            }),
+            "abc-1",
+        );
+        let line = encode_line(&with).unwrap();
+        assert!(line.contains(r#""id":"abc-1""#), "{line}");
+
+        let back: Envelope = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.id.as_deref(), Some("abc-1"));
+        assert_eq!(back.v, PROTOCOL_VERSION);
+
+        // Absent, not null: a caller with no id sends the line it always sent.
+        let bare: Envelope = serde_json::from_str(r#"{"v":7,"cmd":"list_sessions"}"#).unwrap();
+        assert_eq!(bare.id, None);
+        assert!(!encode_line(&Envelope::new(bare.request)).unwrap().contains("id"));
+    }
 
     /// Deliberately a v1 line, and that is half the point: an envelope from a
     /// version we no longer speak still has to *parse*, or the app answers

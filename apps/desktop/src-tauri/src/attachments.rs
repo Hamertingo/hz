@@ -483,7 +483,7 @@ mod tests {
         // No mention expansion: mcode's prompt is text and nothing parses
         // `@` out of it, so the file is named in prose where punctuation would
         // arrive as literal characters the model has to guess at.
-        let prepared = prepare("s", "look at this", &[path.clone()], Harness::Mcode)
+        let prepared = prepare("s", "look at this", std::slice::from_ref(&path), Harness::Mcode)
             .await
             .expect("prepared");
         assert_eq!(
