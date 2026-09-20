@@ -9,7 +9,7 @@ function turn(id: string, authFailed: boolean): AgentEvent {
   return {
     id,
     sessionId: "s",
-    harness: "claude_code",
+    harness: "mcode",
     seq: 0,
     ts: "2026-08-30T00:00:00Z",
     turnId: null,

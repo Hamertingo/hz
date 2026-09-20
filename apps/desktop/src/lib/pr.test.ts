@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -51,59 +52,56 @@ const check = (state: PrCheck["state"]): PrCheck => ({
   avatar: null,
 });
 
+/// The branch rule's cases, and the answers both readings of it have to give:
+/// the same file `store::session_branch`'s test reads in Rust, so the PR tab and
+/// `--from` cannot drift apart between two hand-written sets of cases.
+const SHARED_RULES = new URL(
+  "../../src-tauri/src/harness/mcode/fixtures/shared_rules.json",
+  import.meta.url,
+);
+
+type SessionBranchRow = {
+  branch: string | null;
+  worktreeRemoved: boolean;
+  observed?: string | null;
+  expected: string | null;
+};
+
+type SharedRules = { sessionBranch: SessionBranchRow[] };
+
+/// The cast is the boundary a parsed file needs: this is a fixture in this repo
+/// rather than anything off a wire, and a row of the wrong shape fails the
+/// assertions below rather than passing quietly.
+const shared = JSON.parse(readFileSync(SHARED_RULES, "utf8")) as SharedRules;
+const branchRows = shared.sessionBranch;
+
 describe("sessionBranch", () => {
+  /// Every row, read as the index record it is: the `branch` column is what the
+  /// record holds, so a worktree session's minted name is already in it. The
+  /// `observed` column covers all three spellings of "no reading yet" — a git
+  /// read that landed empty, a null, and a caller that left it off.
+  it("answers every shared row the way the backend does", () => {
+    for (const row of branchRows) {
+      const answer = sessionBranch(
+        { branch: row.branch, worktreeName: null, worktreeRemoved: row.worktreeRemoved },
+        row.observed,
+      );
+
+      expect(
+        answer,
+        `branch ${row.branch}, removed ${row.worktreeRemoved}, observed ${row.observed}`,
+      ).toBe(row.expected);
+    }
+  });
+
+  /// The one shape `store::session_branch` has no case for, and so is not a
+  /// shared row: a session object older than the write that put
+  /// `worktree-<name>` into its record. This side rebuilds the name from the
+  /// worktree; Rust's record always already holds it, so a row here would be
+  /// asking that side a question it never sees.
   it("names a worktree session's branch the way the CLI does", () => {
     expect(sessionBranch({ branch: "main", worktreeName: "calm-owl" })).toBe(
       "worktree-calm-owl",
-    );
-  });
-
-  it("uses the checked-out branch otherwise", () => {
-    expect(sessionBranch({ branch: "feature", worktreeName: null })).toBe("feature");
-    expect(sessionBranch({ branch: null, worktreeName: null })).toBeNull();
-  });
-
-  // A settled session whose worktree was deleted keeps the branch its work is
-  // on and loses only the name of the directory it ran in. The PR outlives
-  // both, so the tab has to survive the tidy-up.
-  it("keeps naming the PR's branch after the worktree is deleted", () => {
-    expect(sessionBranch({ branch: "worktree-calm-owl", worktreeName: null })).toBe(
-      "worktree-calm-owl",
-    );
-  });
-
-  // The name rebuilt from the index is a guess made at creation. Anything that
-  // checks out another branch inside the tree leaves it describing a branch the
-  // session is no longer on, and the PR tab hid itself over it.
-  it("lets git's own reading of HEAD outrank the guess", () => {
-    expect(
-      sessionBranch({ branch: "main", worktreeName: "calm-owl" }, "fix/thing"),
-    ).toBe("fix/thing");
-    expect(sessionBranch({ branch: "feature", worktreeName: null }, "fix/thing")).toBe(
-      "fix/thing",
-    );
-  });
-
-  // The relocated session runs in the project root, so HEAD there is whatever
-  // that shared checkout happens to be on — `main`, most of the time. Reading
-  // it took the PR tab away the moment a tree was settled.
-  it("ignores the shared checkout's HEAD once the worktree is gone", () => {
-    expect(
-      sessionBranch(
-        { branch: "worktree-calm-owl", worktreeName: null, worktreeRemoved: true },
-        "main",
-      ),
-    ).toBe("worktree-calm-owl");
-  });
-
-  // The read is per-session and lands a frame late, and a non-repo has no
-  // branch at all — so both fall back rather than drawing nothing.
-  it("falls back while there is no reading to use", () => {
-    expect(sessionBranch({ branch: "main", worktreeName: "calm-owl" }, null)).toBe(
-      "worktree-calm-owl",
-    );
-    expect(sessionBranch({ branch: "feature", worktreeName: null }, undefined)).toBe(
-      "feature",
     );
   });
 });

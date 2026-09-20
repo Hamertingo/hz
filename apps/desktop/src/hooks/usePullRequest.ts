@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { isSettling } from "@/lib/pr";
 import { branchChanged, inRepo, panelRead } from "@/lib/prSync";
-import type { MergeMethod, PrUnavailable, PullRequest } from "@/types/events";
+import type { MergeMethod, PrUnavailable, PullRequest, ReviewVerdict } from "@/types/events";
 
 /// How often to re-ask while something is still moving. Checks report on their
 /// own schedule and a CI run is the one thing here that changes under the
@@ -110,7 +110,57 @@ export type PrAction =
   /// Carries no branch. A fork's head is reported bare, so a name from here
   /// joined to this repo addresses a branch that merely shares it — the
   /// backend reads the head off the PR and refuses anything cross-repository.
-  | { kind: "delete_branch" };
+  | { kind: "delete_branch" }
+  /// Everything the reader writes, and each one carries the words or the
+  /// address it needs and nothing more: the backend takes a body, a thread id,
+  /// a verdict or a list of logins, never a composed request.
+  | { kind: "comment"; body: string }
+  | { kind: "reply"; threadId: string; body: string }
+  | { kind: "resolve"; threadId: string; resolved: boolean }
+  | { kind: "review"; number: number; verdict: ReviewVerdict; body: string }
+  | { kind: "reviewers"; logins: string[] }
+  | { kind: "close" };
+
+/// One write, dispatched by what it is.
+///
+/// A free function rather than a closure in the hook: the command names and
+/// their arguments are the whole of it, so a test can read this table without a
+/// React renderer, and the hook keeps only the acting flag and the refetch.
+export async function runPrAction(cwd: string, number: number, action: PrAction): Promise<void> {
+  switch (action.kind) {
+    case "merge":
+      return invoke("merge_pr", { cwd, number, method: action.method });
+    case "delete_branch":
+      return invoke("delete_branch", { cwd, number });
+    case "reopen":
+      return invoke("reopen_pr", { cwd, number });
+    case "close":
+      return invoke("close_pr", { cwd, number });
+    case "ready":
+      return invoke("mark_pr_ready", { cwd, number });
+    case "comment":
+      return invoke("comment_on_pr", { cwd, number, body: action.body });
+    case "reply":
+      // The thread's own id, not the PR number: a reply addresses the thread, and
+      // the command says so by taking nothing else that could be mistaken for it.
+      return invoke("reply_to_thread", { cwd, threadId: action.threadId, body: action.body });
+    case "resolve":
+      return invoke("set_thread_resolved", {
+        cwd,
+        threadId: action.threadId,
+        resolved: action.resolved,
+      });
+    case "review":
+      return invoke("submit_review", {
+        cwd,
+        number: action.number,
+        verdict: action.verdict,
+        body: action.body,
+      });
+    case "reviewers":
+      return invoke("request_reviewers", { cwd, number, logins: action.logins });
+  }
+}
 
 type State = {
   /// Every PR opened from this branch, open ones first. Usually one, sometimes
@@ -301,14 +351,10 @@ export function usePullRequest(
 
       setActing(true);
       try {
-        if (action.kind === "merge") {
-          await invoke("merge_pr", { cwd, number, method: action.method });
-        } else if (action.kind === "delete_branch") {
-          await invoke("delete_branch", { cwd, number });
-        } else {
-          const command = action.kind === "reopen" ? "reopen_pr" : "mark_pr_ready";
-          await invoke(command, { cwd, number });
-        }
+        // One switch rather than a branch per action: every one of these is a
+        // command name plus its arguments, and a reader adding a tenth should
+        // have to write one case and nothing else.
+        await runPrAction(cwd, number, action);
         commit(k, (prev) => ({ ...prev, error: null }));
         // Not key-guarded, and that is the difference from every other write
         // here: this one refreshes a *repo-wide* read that is true of the

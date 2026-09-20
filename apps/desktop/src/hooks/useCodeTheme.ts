@@ -11,7 +11,7 @@ import { readLocalStorage, writeLocalStorage } from "@/hooks/useLocalStorage";
 import { useTheme } from "@/hooks/useTheme";
 import { channel } from "@/lib/channel";
 
-const KEY = "ade.codeTheme";
+const KEY = "hz.codeTheme";
 
 /// Shared rather than per-hook state. Diffs and markdown code blocks both read
 /// this, and several of each are mounted at once — with `useLocalStorage`'s

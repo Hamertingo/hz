@@ -44,6 +44,7 @@ import type {
   PrComment,
   PrUnavailable,
   PullRequest,
+  ReviewVerdict,
 } from "@/types/events";
 
 /// Everything the panel needs, owned by `App` — see [usePullRequest]. The panel
@@ -77,6 +78,10 @@ const TONE_TEXT: Record<Tone, string> = {
 const UNAVAILABLE: Record<PrUnavailable["kind"], string> = {
   no_cli: "GitHub CLI (gh) is not installed.",
   not_authenticated: "GitHub CLI is not logged in. Run `gh auth login` to see pull requests here.",
+  // Short here and spelled out in Settings: the panel has one line, the
+  // section has the account, its scopes and the command that fixes them.
+  missing_permission:
+    "GitHub refused this read — the signed-in token is missing a permission hz needs. See Settings → Source control.",
   no_remote: "This directory has no GitHub remote.",
   other: "",
 };
@@ -84,8 +89,54 @@ const UNAVAILABLE: Record<PrUnavailable["kind"], string> = {
 /// Homebrew, because this app is macOS only and that is how `gh` arrives here.
 /// A reader without it has the command to search for, which is the same place
 /// GitHub's own install page would have sent them.
-const INSTALL_COMMAND = "brew install gh";
-const LOGIN_COMMAND = "gh auth login";
+export const INSTALL_COMMAND = "brew install gh";
+export const LOGIN_COMMAND = "gh auth login";
+
+/// A command the reader runs themselves, with the copy on it.
+///
+/// **Copied, never run.** macOS lets no app put text on another's prompt
+/// without an Accessibility grant, so the honest offer is "here is the command
+/// and here is somewhere to paste it" — a button that ran an install would be
+/// this app deciding what to execute in the reader's shell. The copy rides the
+/// command rather than sitting with the buttons around it because it acts on
+/// this string and nothing else.
+///
+/// Shared with the source-control settings row, which asks for the same thing
+/// in the same words: one place the reader can be told a command, one place
+/// that decides how. `pr-1` against `pl-2` — the button carries its own padding
+/// on the side the text does not.
+export function CommandChip({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch (err) {
+      console.error("failed to copy the command", err);
+      return;
+    }
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+  };
+
+  return (
+    <div className="flex items-center gap-1 rounded-md border border-border py-1 pr-1 pl-2 dark:border-input">
+      <code className="font-mono text-code text-foreground">{command}</code>
+      <button
+        type="button"
+        aria-label={`Copy ${command}`}
+        onClick={() => void copy()}
+        className="flex size-6 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
 
 /// How long "Copied" stands on the button, matching the composer notices that
 /// make the same offer.
@@ -108,7 +159,15 @@ export default function PrPanel({
   acting,
   act,
   refresh,
-}: PrPanelProps) {
+  only,
+}: PrPanelProps & {
+  /// Draw this one pull request and no other. The branch can carry several — a
+  /// stack, or the same work retargeted — and the page's detail pane is about
+  /// the row that was clicked, where the session's tab is about all of them.
+  only?: number;
+}) {
+  const shown = only === undefined ? prs : prs.filter((pr) => pr.number === only);
+
   if (!branch) {
     return <Empty>This session is not on a branch, so it has no pull request.</Empty>;
   }
@@ -116,14 +175,14 @@ export default function PrPanel({
   // An error only takes the pane when there is nothing to take it from. A
   // refresh that failed against rows already on screen is reported under the
   // header instead, where it can't hide what it failed to update.
-  if (!prs.length && (error?.kind === "no_cli" || error?.kind === "not_authenticated")) {
+  if (!shown.length && (error?.kind === "no_cli" || error?.kind === "not_authenticated")) {
     return <MissingCli kind={error.kind} cwd={cwd} loading={loading} refresh={refresh} />;
   }
-  if (!prs.length && error) {
+  if (!shown.length && error) {
     return <Empty tone="error">{UNAVAILABLE[error.kind] || errorText(error)}</Empty>;
   }
-  if (!prs.length && loading) return <Empty>Looking for a pull request…</Empty>;
-  if (!prs.length) {
+  if (!shown.length && loading) return <Empty>Looking for a pull request…</Empty>;
+  if (!shown.length) {
     return (
       <Empty>
         No pull request for <code className="text-foreground">{branch}</code>.
@@ -144,7 +203,7 @@ export default function PrPanel({
           </p>
         )}
 
-        {prs.map((pr, i) => (
+        {shown.map((pr, i) => (
           // Newest first, and the first one open: the backend sorts open PRs
           // ahead of settled ones, so row zero is the one being worked on and
           // opening it costs the reader nothing they didn't want.
@@ -152,7 +211,7 @@ export default function PrPanel({
             key={pr.number}
             pr={pr}
             defaultOpen={i === 0}
-            collapsible={prs.length > 1}
+            collapsible={shown.length > 1}
             acting={acting}
             act={act}
           />
@@ -182,7 +241,7 @@ function errorText(error: PrUnavailable): string {
 /// because that is the thing being taken; the terminal opens at the session's
 /// own directory, so what they paste runs against this repo.
 ///
-/// **Recheck rather than "restart Dray"**: `recheck_gh` throws away the cached
+/// **Recheck rather than "restart hz"**: `recheck_gh` throws away the cached
 /// absence, so an install made on this pane's say-so is found from this pane.
 /// It says when it still finds nothing, since a button that redraws the same
 /// screen reads as a broken button — the one thing a pane asking for an install
@@ -200,26 +259,10 @@ export function MissingCli({
   loading: boolean;
   refresh: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
   const [checking, setChecking] = useState(false);
   const [stillMissing, setStillMissing] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
 
   const command = kind === "no_cli" ? INSTALL_COMMAND : LOGIN_COMMAND;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-    } catch (err) {
-      console.error("failed to copy the command", err);
-      return;
-    }
-    setCopied(true);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), COPIED_MS);
-  };
 
   const recheck = async () => {
     // Logging in changes nothing about where `gh` is, so that half only asks
@@ -245,25 +288,11 @@ export function MissingCli({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6">
       <p className="max-w-64 text-balance text-center text-ui text-muted-foreground">
         {kind === "no_cli"
-          ? "This branch's pull requests belong here. Dray reads them through GitHub's CLI."
+          ? "This branch's pull requests belong here. hz reads them through GitHub's CLI."
           : "GitHub's CLI is here but not logged in."}
       </p>
 
-      {/* The copy rides the command rather than sitting with the buttons
-          below: it acts on this string and nothing else, where the row under
-          it is about where to put it. `pr-1` against `pl-2` — the button
-          carries its own padding on the side the text doesn't. */}
-      <div className="flex items-center gap-1 rounded-md border border-border py-1 pr-1 pl-2 dark:border-input">
-        <code className="font-mono text-code text-foreground">{command}</code>
-        <button
-          type="button"
-          aria-label={`Copy ${command}`}
-          onClick={() => void copy()}
-          className="flex size-6 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
+      <CommandChip command={command} />
 
       <div className="flex items-center gap-1.5">
         {/* Opens a terminal and nothing else — see [TERMINAL_OPENER]. Draws
@@ -283,7 +312,7 @@ export function MissingCli({
 
       {stillMissing && (
         <p className="max-w-64 text-balance text-center text-ui text-muted-foreground">
-          Still no <code className="text-foreground">gh</code> — Dray looks where your login shell
+          Still no <code className="text-foreground">gh</code> — hz looks where your login shell
           looks.
         </p>
       )}
@@ -421,6 +450,9 @@ function PrRow({
                   <CommentCard
                     key={`${comment.author}-${comment.createdAt}-${i}`}
                     comment={comment}
+                    sessionPr={pr.number}
+                    acting={acting}
+                    act={act}
                   />
                 ))}
               </div>
@@ -428,6 +460,22 @@ function PrRow({
               <p className="px-3 py-1 text-ui text-muted-foreground">Nothing left on it yet.</p>
             )}
           </Section>
+
+          {/* What a reviewer can do about it, then what anyone can say about it,
+              then who to ask — the order a review happens in. Drawn on every PR
+              rather than only on an open one: a merged pull request still takes
+              a follow-up sentence, and the review bar is the one thing here that
+              GitHub refuses on a settled PR, so it is the one thing gated. */}
+          {pr.state === "OPEN" && <ReviewBar pr={pr} acting={acting} act={act} />}
+
+          <Say
+            placeholder={`Comment on #${pr.number}`}
+            label="Comment"
+            disabled={acting}
+            onSend={(body) => act(pr.number, { kind: "comment", body })}
+          />
+
+          {pr.state === "OPEN" && <AskReviewers pr={pr} acting={acting} act={act} />}
         </div>
       )}
     </div>
@@ -471,7 +519,226 @@ function busyLabel(kind: PrAction["kind"]): string {
     reopen: "Reopening…",
     ready: "Marking ready…",
     delete_branch: "Deleting…",
+    close: "Closing…",
+    comment: "Posting…",
+    reply: "Replying…",
+    resolve: "Saving…",
+    review: "Sending…",
+    reviewers: "Asking…",
   }[kind];
+}
+
+/// One box the reader types a sentence into and sends to GitHub.
+///
+/// **One component for the three places words go** — the PR's conversation, a
+/// review thread, and the note under a review — because they are the same act,
+/// and the differences are the placeholder, the button's word and who is being
+/// answered. It owns its draft and clears it only once the write landed: a
+/// rejected `invoke` keeps the text where the reader can press again, which is
+/// the same bargain the composer makes.
+function Say({ 
+  placeholder,
+  label,
+  disabled,
+  onSend,
+  autoFocus = false,
+  rows = 2,
+}: {
+  placeholder: string;
+  label: string;
+  disabled: boolean;
+  onSend: (body: string) => Promise<void>;
+  autoFocus?: boolean;
+  rows?: number;
+}) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const empty = body.trim().length === 0;
+
+  const send = async () => {
+    if (busy || empty) return;
+    setBusy(true);
+    try {
+      await onSend(body);
+      setBody("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 px-3">
+      <textarea
+        autoFocus={autoFocus}
+        rows={rows}
+        value={body}
+        placeholder={placeholder}
+        spellCheck
+        onChange={(e) => setBody(e.currentTarget.value)}
+        // Enter sends and Shift+Enter is a newline — the composer's own rule,
+        // and the one every comment box on GitHub follows.
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+        className="w-full resize-none rounded-md border border-border bg-transparent px-2.5 py-1.5 text-ui outline-none placeholder:text-muted-foreground/60 focus:border-accent"
+      />
+      <div className="flex items-center justify-end">
+        <Button
+          size="sm"
+          className={BUSY}
+          disabled={disabled || busy || empty}
+          onClick={() => void send()}
+        >
+          {busy && <Spinner />}
+          {busy ? "Sending…" : label}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/// What the reviewer decided, in GitHub's own three words.
+///
+/// The verdict and the note travel together in one call because GitHub records
+/// them as one review: approving with a sentence and approving silently are
+/// different rows in the PR's history, and a reader who typed something meant it
+/// to be attached to the verdict they pressed.
+function ReviewBar({
+  pr,
+  acting,
+  act,
+}: {
+  pr: PullRequest;
+  acting: boolean;
+  act: (number: number, action: PrAction) => Promise<void>;
+}) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState<ReviewVerdict | null>(null);
+
+  const send = async (verdict: ReviewVerdict) => {
+    setBusy(verdict);
+    try {
+      await act(pr.number, { kind: "review", number: pr.number, verdict, body });
+      setBody("");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // A comment on the review itself is GitHub's rule: `--comment` with nothing to
+  // say is refused, and the refusal is GitHub's own sentence rather than ours.
+  const refusal = (verdict: ReviewVerdict) =>
+    acting || (verdict === "comment" && body.trim().length === 0);
+
+  return (
+    <section className="flex flex-col gap-2 px-3">
+      <div className="flex items-center gap-2">
+        <h4 className="text-ui font-medium text-muted-foreground">Review</h4>
+      </div>
+
+      <textarea
+        rows={2}
+        value={body}
+        placeholder="Say something with it, or nothing at all"
+        spellCheck
+        onChange={(e) => setBody(e.currentTarget.value)}
+        className="w-full resize-none rounded-md border border-border bg-transparent px-2.5 py-1.5 text-ui outline-none placeholder:text-muted-foreground/60 focus:border-accent"
+      />
+
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          className={BUSY}
+          disabled={refusal("comment")}
+          onClick={() => void send("comment")}
+        >
+          {busy === "comment" && <Spinner />}
+          Comment
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={BUSY}
+          disabled={acting}
+          onClick={() => void send("request_changes")}
+        >
+          {busy === "request_changes" && <Spinner />}
+          Request changes
+        </Button>
+        <Button
+          size="sm"
+          className={cn(MERGE_FILL, BUSY)}
+          disabled={acting}
+          onClick={() => void send("approve")}
+        >
+          {busy === "approve" && <Spinner />}
+          Approve
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/// Asking someone to look at it.
+///
+/// Logins, comma-separated, left exactly as typed beyond stripping the `@` — the
+/// panel has no list of the repo's collaborators and inventing one would be a
+/// read that costs a point for a field the reader can fill in from memory. A
+/// mistake comes back in GitHub's own words.
+function AskReviewers({
+  pr,
+  acting,
+  act,
+}: {
+  pr: PullRequest;
+  acting: boolean;
+  act: (number: number, action: PrAction) => Promise<void>;
+}) {
+  const [logins, setLogins] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const ask = async () => {
+    setBusy(true);
+    try {
+      await act(pr.number, { kind: "reviewers", logins: logins.split(",") });
+      setLogins("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="flex items-center gap-1.5 px-3">
+      <input
+        value={logins}
+        placeholder="Ask for a review — logins, comma separated"
+        spellCheck={false}
+        onChange={(e) => setLogins(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void ask();
+          }
+        }}
+        className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-ui outline-none placeholder:text-muted-foreground/60 focus:border-accent"
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        className={cn(BUSY, "shrink-0")}
+        disabled={acting || busy || logins.trim().length === 0}
+        onClick={() => void ask()}
+      >
+        {busy && <Spinner />}
+        {busy ? busyLabel("reviewers") : "Request"}
+      </Button>
+    </section>
+  );
 }
 
 /// The head branch, and the one button that removes it.
@@ -572,6 +839,7 @@ function Readiness({
 }) {
   const [method, setMethod] = useState<MergeMethod>("squash");
   const [confirming, setConfirming] = useState(false);
+  const [closing, setClosing] = useState(false);
 
   const readiness = mergeReadiness(pr);
   const ready = readiness.tone === "ready";
@@ -607,6 +875,44 @@ function Readiness({
               {acting ? busyLabel("reopen") : "Reopen"}
             </Button>
           )}
+
+          {/* Both ends for a PR that is still open: the merge, and the door out.
+              Closing used to be missing on the grounds that abandoning a pull
+              request is a decision with a discussion attached — and the
+              discussion is now answerable in this pane, so the trip to a browser
+              was the only thing left it was buying. Confirmed inline like the
+              branch delete, because it is not the same act as a comment. */}
+          {pr.state === "OPEN" &&
+            (closing ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => setClosing(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className={BUSY}
+                  disabled={acting}
+                  onClick={() => {
+                    setClosing(false);
+                    void act(pr.number, { kind: "close" });
+                  }}
+                >
+                  {acting && <Spinner />}
+                  {acting ? busyLabel("close") : "Close"}
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={acting}
+                className="text-muted-foreground"
+                onClick={() => setClosing(true)}
+              >
+                Close
+              </Button>
+            ))}
 
           {pr.state === "OPEN" &&
             (pr.isDraft ? (
@@ -809,12 +1115,27 @@ const VERDICT: Record<PrComment["kind"], { word?: string; tone?: string }> = {
 /// timeline stays a list of things people did rather than one of every sentence
 /// they wrote. A row that only holds file comments has no body at all, and is
 /// then the only thing naming who left them.
-function CommentCard({ comment }: { comment: PrComment }) {
+function CommentCard({
+  comment,
+  sessionPr,
+  acting,
+  act,
+}: {
+  comment: PrComment;
+  /// Which pull request this row belongs to — the thread's reply and its resolve
+  /// are addressed by the thread's own id, and this is here for the refetch's
+  /// sake rather than for those two.
+  sessionPr: number;
+  acting: boolean;
+  act: (number: number, action: PrAction) => Promise<void>;
+}) {
   const { word, tone } = VERDICT[comment.kind];
   const body = stripBotMarkers(comment.body);
   const replies = comment.replies;
+  const threadId = comment.threadId;
 
   const [open, setOpen] = useState(false);
+  const [replying, setReplying] = useState(false);
   const expandable = Boolean(body) || replies.length > 0;
   const preview = !open && Boolean(body);
   const count = !open && replies.length > 0;
@@ -876,6 +1197,55 @@ function CommentCard({ comment }: { comment: PrComment }) {
           {body && <Markdown className="text-ui">{body}</Markdown>}
 
           <Nest comments={replies} />
+
+          {/* A thread is the one kind of row that can be answered and settled,
+              and `threadId` is what says so: GitHub hands it to the comment that
+              opened the thread and to nothing else. The buttons are behind the
+              same disclosure as the conversation they act on, so the panel is
+              not a wall of Reply boxes. */}
+          {threadId && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={acting}
+                  onClick={() => setReplying((v) => !v)}
+                >
+                  {replying ? "Cancel" : "Reply"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={acting}
+                  className="ml-auto text-muted-foreground"
+                  onClick={() =>
+                    void act(sessionPr, {
+                      kind: "resolve",
+                      threadId,
+                      resolved: !comment.resolved,
+                    })
+                  }
+                >
+                  {comment.resolved ? "Unresolve" : "Resolve"}
+                </Button>
+              </div>
+
+              {replying && (
+                <Say
+                  autoFocus
+                  rows={2}
+                  placeholder="Reply on this thread"
+                  label="Reply"
+                  disabled={acting}
+                  onSend={async (text) => {
+                    await act(sessionPr, { kind: "reply", threadId, body: text });
+                    setReplying(false);
+                  }}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
     </article>

@@ -1,4 +1,4 @@
-# Dray
+# hz
 
 A desktop home for your coding agents. Tauri 2 app that wraps coding-agent CLIs
 — Claude Code and Codex — in a native chat UI: many sessions at once, each with
@@ -15,8 +15,8 @@ crates beside them, with no root workspace.
 | ------------------- | -------------------------------------------------------- |
 | `apps/desktop`      | The Tauri app. React 19 + Vite frontend, Rust backend.    |
 | `apps/web`          | Marketing site. Next.js App Router, deployed to Vercel.   |
-| `apps/cli`          | The `dray` CLI agents use to fan work out into sessions.  |
-| `crates/dray-proto` | Wire types shared by the CLI and the app.                |
+| `apps/cli`          | The `hz` CLI agents use to fan work out into sessions.  |
+| `crates/hz-proto` | Wire types shared by the CLI and the app.                |
 
 ## Getting started
 
@@ -51,18 +51,18 @@ cd apps/desktop/src-tauri && cargo test
 leaves only that module's types behind — always follow one with a bare
 `cargo test`.
 
-## The `dray` CLI
+## The `hz` CLI
 
-A standalone binary, not part of the app: it has to run on Linux, where no Dray
-app exists. It talks to the running app over a unix socket at `~/.dray/dray.sock`,
+A standalone binary, not part of the app: it has to run on Linux, where no hz
+app exists. It talks to the running app over a unix socket at `~/.hz/hz.sock`,
 which is how an agent inside one session creates, lists and messages others.
 
 ```bash
-curl -fsSL https://www.drayhq.com/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Hamertingo/hz/main/apps/web/public/install.sh | sh
 ```
 
-The install script also writes the CLI's skill into `~/.claude/skills/dray/` and
-`~/.codex/skills/dray/`; `dray update` re-runs it. The app installs nothing —
+The install script also writes the CLI's skill into `~/.claude/skills/hz/` and
+`~/.codex/skills/hz/`; `hz update` re-runs it. The app installs nothing —
 it names the command and the agent runs it.
 
 ## The embedded browser
@@ -70,7 +70,7 @@ it names the command and the agent runs it.
 Chromium through CEF, behind the `cef` cargo feature and macOS only, so an
 ordinary `cargo check` needs none of it. The bundle ships the five helper apps
 and **not** the framework — ~330MB that would ride every download — which the
-app fetches into `~/.dray/cef/<version>/` a few seconds after first launch.
+app fetches into `~/.hz/cef/<version>/` a few seconds after first launch.
 
 Working on it wants the CEF SDK plus cmake and ninja, with the dev layout laid
 down beside the debug binary first:
@@ -105,9 +105,9 @@ newest `cli-v*` tag itself, so these are never published as prereleases.
 
 ## Themes
 
-Four of the palettes Dray ships are ports of other people's work, used under
+Four of the palettes hz ships are ports of other people's work, used under
 the MIT licence and unchanged in intent — the colours are theirs, the token
-names are ours. Dray, the default, is our own.
+names are ours. hz, the default, is our own.
 
 | Theme                                                   | By                       |
 | ------------------------------------------------------- | ------------------------ |
@@ -158,7 +158,7 @@ Dictation in the composer is local, and it runs on
 on Apple Silicon.
 
 That engine is its own repository under the `handy-computer` org, published and
-licensed separately from the app below, and Dray depends on it the ordinary way
+licensed separately from the app below, and hz depends on it the ordinary way
 through Cargo. Updates arrive as crate versions; **nothing here tracks the Handy
 app, because none of it is vendored.**
 
@@ -177,8 +177,8 @@ repository under its MIT licence
 (`apps/desktop/src/assets/dictate-{start,stop}.wav`). They are the only Handy
 files in this tree.
 
-**What Dray did not take is the app.** Handy solves global hotkeys, injecting
-text into whatever window has focus, a tray and a history — none of which Dray
+**What hz did not take is the app.** Handy solves global hotkeys, injecting
+text into whatever window has focus, a tray and a history — none of which hz
 needs, because it owns the composer the words land in. The debt is to the engine
 and to the judgement about which models are worth offering, and Handy's own
 ranking is where this one's list started.

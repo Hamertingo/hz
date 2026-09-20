@@ -38,7 +38,7 @@ fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(TIMEOUT)
-            .user_agent(concat!("Dray/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("hz/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("reqwest client")
     })
@@ -329,7 +329,7 @@ pub async fn list_issues(
 /// first: the identifier renumbers when an issue moves team, so a session linked
 /// to `DRA-53` that has since become `ENG-12` reads as an issue that no longer
 /// exists. The identifier is the fallback and not the other way round because it
-/// is the *only* thing a blind link carries — `dray issue link DRA-53` writes the
+/// is the *only* thing a blind link carries — `hz issue link DRA-53` writes the
 /// identifier into both fields, so an `id` that is not a UUID names nothing on
 /// Linear's side and is skipped rather than asked about.
 ///
@@ -428,7 +428,7 @@ fn update_input(state_id: Option<&str>, priority: Option<IssuePriority>) -> Opti
         input.insert("priority".into(), json!(priority.to_wire()));
     }
 
-    (!input.is_empty()).then(|| Value::Object(input))
+    (!input.is_empty()).then_some(Value::Object(input))
 }
 
 pub async fn update_issue(
@@ -730,7 +730,7 @@ fn map_groups(data: &Value, field: &str) -> Vec<IssueGroup> {
 
     // Alphabetical: a filter menu is read by name, and Linear's own order here
     // is by creation, which nobody remembers.
-    groups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    groups.sort_by_key(|g| g.name.to_lowercase());
     groups
 }
 
@@ -747,7 +747,7 @@ mod tests {
             "id": "3fa1",
             "identifier": "DRA-53",
             "title": "Issue tracker integration",
-            "url": "https://linear.app/drayhq/issue/DRA-53",
+            "url": "https://linear.app/hzhq/issue/DRA-53",
             "priority": 2.0,
             "updatedAt": "2026-08-27T06:11:15.154Z",
             "description": "Long body the prompt never sees.",
@@ -831,7 +831,7 @@ mod tests {
     fn only_a_uuid_is_worth_asking_linear_about() {
         // What a resolved link records.
         assert!(is_stable_id("9c1a7f2e-0b64-4c3a-9f1d-7e5b2a8c4d61"));
-        // What a blind `dray issue link DRA-53` writes into the same field.
+        // What a blind `hz issue link DRA-53` writes into the same field.
         assert!(!is_stable_id("DRA-53"));
         assert!(!is_stable_id(""));
         // Right shape, wrong alphabet — a lookup on this can only 404.
@@ -1024,11 +1024,11 @@ mod tests {
     fn groups_come_back_alphabetical() {
         let data = json!({ "teams": { "nodes": [
             { "id": "2", "name": "web" },
-            { "id": "1", "name": "Dray" }
+            { "id": "1", "name": "hz" }
         ]}});
 
         let teams = map_groups(&data, "teams");
-        assert_eq!(teams[0].name, "Dray");
+        assert_eq!(teams[0].name, "hz");
         assert_eq!(teams[1].name, "web");
     }
 }

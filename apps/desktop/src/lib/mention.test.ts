@@ -297,6 +297,50 @@ describe("highlightSegments", () => {
     ]);
   });
 
+  /// The one block construct that *is* read, and the reason is a feature: a
+  /// citation is prompt text written as a markdown blockquote, so the transcript
+  /// has to know a quoted line from a sentence that happens to start with one.
+  it("reads a quoted line as a quotation", () => {
+    expect(highlightSegments("> quoted words\nand my sentence")).toEqual([
+      { kind: "quote", text: "> quoted words" },
+      { kind: "text", text: "\nand my sentence" },
+    ]);
+  });
+
+  /// An attachment's chip is one run: the mark, the name **and the size**, which
+  /// is what the chip draws under the name. Left outside the run, the size drew
+  /// beside the pill in the message's own colour — the chip looked broken rather
+  /// than furnished.
+  it("reads an attachment as one run, size included", () => {
+    expect(highlightSegments("📎 pasted-text.txt 148.5 KB")).toEqual([
+      { kind: "attachment", text: "📎 pasted-text.txt 148.5 KB" },
+    ]);
+    expect(highlightSegments("look 📎 a.txt 12 KB please")).toEqual([
+      { kind: "text", text: "look " },
+      { kind: "attachment", text: "📎 a.txt 12 KB" },
+      { kind: "text", text: " please" },
+    ]);
+  });
+
+  /// A sentence that happens to hold a number and a unit is not a size. The chip
+  /// ends at the name unless what follows is exactly what `formatBytes` writes.
+  it("does not swallow a sentence after the name", () => {
+    expect(highlightSegments("📎 a.txt and 2 MB of logs")).toEqual([
+      { kind: "attachment", text: "📎 a.txt" },
+      { kind: "text", text: " and 2 MB of logs" },
+    ]);
+    expect(highlightSegments("📎 a.txt 148.5 kilobytes")).toEqual([
+      { kind: "attachment", text: "📎 a.txt" },
+      { kind: "text", text: " 148.5 kilobytes" },
+    ]);
+  });
+
+  /// `>` is punctuation everywhere else, and prose full of chevrons must not be
+  /// swallowed a line at a time.
+  it("leaves a `>` that does not open a line alone", () => {
+    expect(highlightSegments("a > b\nc > d")).toEqual([{ kind: "text", text: "a > b\nc > d" }]);
+  });
+
   /// The reported shape: many openers before one bracket that cannot form a
   /// link. Each re-scanned to that same bracket before the memo covered it.
   it("stays linear on openers before an unusable bracket", () => {
@@ -319,6 +363,8 @@ describe("highlightSegments", () => {
     roundTrips("see [docs](https://example.com) and #DRA-53 in @src/a.ts");
     roundTrips("2 * 3 * 4 and snake_case_name and ```fence```");
     roundTrips("*unclosed and **also");
+    roundTrips("> quoted words\n\nmy sentence");
+    roundTrips("> a\n> b\n\nlook at @src/a.ts");
   });
 });
 
@@ -359,7 +405,7 @@ describe("splitMention", () => {
 
 
 describe("withLineBreaks", () => {
-  /// An agent relaying through `dray send` writes its message inside a shell
+  /// An agent relaying through `hz send` writes its message inside a shell
   /// string, where the escape is left uninterpreted, so the two characters
   /// arrive verbatim and the whole report drew as one paragraph.
   it("turns a literal backslash-n into a break", () => {

@@ -34,7 +34,7 @@ if (args[0] === "dev" && !args.some((a) => a === "-c" || a === "--config")) {
   const port = await freePort();
   // Read by `vite.config.ts` for the server it starts, and handed to Tauri as
   // the URL it loads. Both from this one value, so they cannot disagree.
-  env.DRAY_DEV_PORT = String(port);
+  env.HZ_DEV_PORT = String(port);
   console.log(`  Info dev server on port ${port}`);
   // Merged in order, so the port lands over whatever the dev flavour says.
   args.push("--config", "src-tauri/tauri.dev.conf.json");

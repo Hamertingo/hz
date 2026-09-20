@@ -1,0 +1,15 @@
+# What the dev watcher must not watch.
+#
+# Tauri rebuilds the app when anything under `src-tauri/` changes, and the
+# vendored agent writes *runtime state into its own install directory* — a
+# `.mcode-active/<pid>.json` claim file per session, and more beside it. Every
+# one of those reads as a source change, so the app rebuilt itself in a loop
+# while a session was running: `File resources/mcode/.mcode-active/… changed.
+# Rebuilding application…` on a timer, with the window reloading under the
+# reader.
+#
+# Ignored whole, and that is safe because nothing here is source this app
+# compiles: it is the CLI and the runtime it ships with, staged by
+# `scripts/vendor-mcode.sh` and copied into a release bundle as-is.
+
+resources/mcode

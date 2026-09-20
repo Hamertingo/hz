@@ -5,8 +5,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { startSurveys } from "@/lib/surveys";
 import type { SettingsView } from "@/types/events";
 
-/// The preferences the backend owns, as opposed to the ones kept in local
-/// storage — see `settings.rs` for why analytics can only live on that side.
+/// Reporting, as the settings dialog draws it — the one row that is not an
+/// ordinary preference (`src/lib/prefs.ts` reads those).
+///
+/// Answered by the backend because only it can: `app_started` is sent before the
+/// webview exists, so consent has to be readable without it. See `settings.rs`.
 ///
 /// Answers with the *effective* state rather than what is on disk, so a run the
 /// environment has forced off draws a switch that says so.

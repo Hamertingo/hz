@@ -3,13 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dray</title>
+    <title>hz</title>
     <script>
       // Runs before first paint so a stored theme never shows as a flash of the
       // default one. Kept in sync with src/lib/theme.ts by hand — it can't import.
+      //
+      // These three keys, and the view state beside them, are the ones that stay
+      // in local storage while the reader's preferences live in
+      // `~/.hz/settings.json`: nothing that runs before the first frame can await
+      // a command. src/hooks/useLocalStorage.ts lists them and says so.
+      //
+      // The old prefix rides along as a fallback: the rename of these keys is
+      // done by `adoptPreviousStorageKeys` in main.tsx, which runs *after* this
+      // script, so the first launch over a build that stored them lands here.
       try {
-        var t = localStorage.getItem("ade.theme") || "default";
-        var m = localStorage.getItem("ade.mode") || "light";
+        var stored = function (key) {
+          var v = localStorage.getItem("hz." + key);
+          return v === null ? localStorage.getItem("ade." + key) : v;
+        };
+        var t = stored("theme") || "default";
+        var m = stored("mode") || "light";
         var dark =
           m === "dark" ||
           (m === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
@@ -36,7 +49,7 @@
       // `coerceFontSizes` clamps, or an out-of-range value paints at the CSS
       // default here and jumps to the clamped size once React takes over.
       try {
-        var sizes = JSON.parse(localStorage.getItem("ade.fontSizes") || "{}");
+        var sizes = JSON.parse(stored("fontSizes") || "{}");
         ["chat", "code", "ui"].forEach(function (slot) {
           var px = sizes[slot];
           if (typeof px === "number" && isFinite(px)) {

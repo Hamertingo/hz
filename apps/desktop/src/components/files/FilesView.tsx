@@ -32,9 +32,9 @@ import { cn } from "@/lib/utils";
 
 type Side = "left" | "right";
 
-const SIDE_KEY = "ade.filesListSide";
-const WIDTH_KEY = "ade.filesListWidth";
-const SHOWN_KEY = "ade.filesListShown";
+const SIDE_KEY = "hz.filesListSide";
+const WIDTH_KEY = "hz.filesListWidth";
+const SHOWN_KEY = "hz.filesListShown";
 
 /// Right, against every other list in the app, and deliberately: the sidebar
 /// already holds the window's left edge, so a tree there puts two lists back to

@@ -147,7 +147,7 @@ export default function RoleDialog({
             {created ? "New responsibility" : "Edit responsibility"}
           </DialogTitle>
           <DialogDescription>
-            What this agent is here to do. Dray sends it to the agent whenever it
+            What this agent is here to do. hz sends it to the agent whenever it
             runs — an edit reaches every agent already carrying it.
           </DialogDescription>
         </DialogHeader>

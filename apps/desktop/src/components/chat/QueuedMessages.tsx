@@ -29,16 +29,18 @@ import { stripSenderPrefix } from "@/lib/relay";
 /// giving it its own shape would read as a different kind of thing.
 export default function QueuedMessages({
   messages,
-  /// Stops the running turn so the flush that follows it happens now. Drawn
-  /// only where waiting costs a whole turn, which is fx — see `Chat`.
+  /// Hands the held prompts into the running turn — `mcode/session/steer`, which
+  /// takes a message into a live turn rather than stopping it. What this used to
+  /// do was interrupt the turn, which is the only other way a held prompt reaches
+  /// the agent early and the one that throws the work in flight away.
   onSendNow,
 }: {
   messages: QueuedPrompt[];
   onSendNow?: () => void;
 }) {
   // Above the early return, since a hook cannot be conditional — and bound to
-  // the prop rather than to fx by name, so the chord exists exactly where the
-  // button does: on a harness that has one, with something held to send.
+  // the prop rather than to a harness by name, so the chord exists exactly where
+  // the button does: with a live turn and something held to send.
   useHotkey("queue.send", () => onSendNow?.(), { enabled: !!onSendNow && messages.length > 0 });
   // Read off the store the binding reads, so the hint cannot name a chord the
   // key no longer fires. Plain text rather than `ShortcutKeys`: a keycap is

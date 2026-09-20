@@ -1,7 +1,6 @@
 use crate::{
     attachments::Attachment,
     events::ApprovalPolicy,
-    harness::claude_code::commands::SlashCommand,
     models::{Effort, Model, ModelId},
     session::{Harness, QueuedMessage, SendOutcome, SessionManager},
     store::{SessionIndexItem, SessionSnapshot, SessionStatus},
@@ -28,6 +27,7 @@ pub mod cef;
 // what keeps its types in `events.ts` and its tests in a bare `cargo test`.
 #[cfg(target_os = "macos")]
 pub mod chromium;
+pub mod context;
 mod local_servers;
 pub mod docs;
 pub mod download;
@@ -38,6 +38,7 @@ pub mod git;
 pub mod github;
 #[path = "harness/harness.rs"]
 pub mod harness;
+pub mod identity;
 #[path = "issues/issues.rs"]
 pub mod issues;
 #[path = "models/models.rs"]
@@ -54,6 +55,12 @@ pub mod title;
 #[path = "transcription/transcription.rs"]
 pub mod transcription;
 pub mod updater;
+
+/// The rows the rules this crate states for itself are pinned against, and the
+/// same rows the frontend's suite reads. Test-only: nothing the app runs reads
+/// a fixture.
+#[cfg(test)]
+mod shared_rules;
 
 /// A command's failure as the frontend sees it: the outermost message, as a
 /// string. `anyhow::Error` cannot cross the bridge itself, and the alternative
@@ -86,6 +93,11 @@ impl serde::Serialize for Fail {
 }
 
 #[tauri::command]
+// **The parameter list is the wire shape**, which is why it is not a struct:
+// the webview calls this with flat camelCase keys, Tauri maps them onto these
+// names, and nesting them into one argument would change what every caller
+// sends. The nine settings among them mirror the composer's own controls.
+#[allow(clippy::too_many_arguments)]
 async fn send_msg(
     session_id: &str,
     prompt: &str,
@@ -108,6 +120,11 @@ async fn send_msg(
     // whatever role it was given, and `send_msg` ignores it otherwise.
     role_id: Option<String>,
     is_new_session: bool,
+    // The webview's own clock at the press, which is the only witness to it:
+    // a cold session's first prompt waits out the child's whole boot before it
+    // reaches this function, and the transcript is asked for the wait, not for
+    // the part of it that happened after the process was up.
+    sent_at: Option<String>,
     app: AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<SendOutcome, String> {
@@ -121,41 +138,46 @@ async fn send_msg(
 
     // Reported here rather than inside `SessionManager::send_msg`, which is the
     // chokepoint for *prompts* and not for people: the orchestration socket
-    // reaches that function directly, both to relay a `dray send` and to start
-    // a session `dray new` asked for, and an agent finishing at 3am would mark
+    // reaches that function directly, both to relay a `hz send` and to start
+    // a session `hz new` asked for, and an agent finishing at 3am would mark
     // the day active with nobody in the room. A Tauri command is reachable from
     // the webview alone, so getting here means somebody pressed send.
     analytics::active_day();
 
     manager
         .send_msg(
-            session_id,
-            prompt,
-            &attachment_paths,
-            // Nothing named, ever: the app tags its issues in the prompt
-            // text, the composer's `#` picker being the only route, so there is
-            // one rule on this side of the bridge. `--issue` on the CLI is the
-            // other caller, and it names them because a flag is not prose.
-            &[],
-            harness,
-            model,
-            effort,
-            permission_mode,
-            fast,
-            cwd,
-            branch,
-            use_worktree,
-            worktree_name,
-            // The composer offers no base ref: a worktree session created there
-            // is one the reader is starting fresh, and the picker already hides
-            // the branch list in worktree mode because `-w` would not honour it.
-            None,
-            role_id.as_deref(),
-            is_new_session,
-            // The composer never has a parent, and its prompts are the user's
-            // own; only the orchestration socket sets either.
-            None,
-            None,
+            crate::session::SendRequest {
+                session_id,
+                prompt,
+                attachment_paths: &attachment_paths,
+                // Nothing named, ever: the app tags its issues in the prompt
+                // text, the composer's `#` picker being the only route, so there
+                // is one rule on this side of the bridge. `--issue` on the CLI
+                // is the other caller, and it names them because a flag is not
+                // prose.
+                issue_ids: &[],
+                harness,
+                model,
+                effort,
+                permission_mode,
+                fast,
+                cwd,
+                branch,
+                use_worktree,
+                worktree_name,
+                // The composer offers no base ref: a worktree session created
+                // there is one the reader is starting fresh, and the picker
+                // already hides the branch list in worktree mode because `-w`
+                // would not honour it.
+                base_ref: None,
+                role_id: role_id.as_deref(),
+                is_new_session,
+                // The composer never has a parent, and its prompts are the
+                // user's own; only the orchestration socket sets either.
+                parent_session_id: None,
+                from: None,
+                sent_at: sent_at.as_deref(),
+            },
             &app,
         )
         .await
@@ -168,6 +190,17 @@ async fn send_msg(
 #[tauri::command]
 async fn read_attachments(paths: Vec<String>) -> Vec<Attachment> {
     attachments::read_attachments(paths).await
+}
+
+/// Parks text too large to sit in the composer and answers the attachment for
+/// the file it landed in, so the paste costs a path rather than a context
+/// window. See `attachments::write_pasted_text` for where it is kept and for how
+/// long.
+#[tauri::command]
+async fn write_pasted_text(text: String) -> Result<Attachment, String> {
+    attachments::write_pasted_text(&text)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Which agents can actually be run on this machine, and what to say about
@@ -219,7 +252,7 @@ async fn unavailable_reason(harness: harness::Harness) -> (String, bool) {
     // Asked before drivability, and the order is the whole of it. A CLI that is
     // not on the machine is missing whatever this build could do with it, and
     // the install command is the answer — the same one Claude and Codex give.
-    // Checking drivability first told a reader with no pi at all that Dray
+    // Checking drivability first told a reader with no pi at all that hz
     // cannot run pi, which is true, useless, and hides the one thing they could
     // have done about it.
     if !binpath::agent_installed(harness).await {
@@ -229,7 +262,7 @@ async fn unavailable_reason(harness: harness::Harness) -> (String, bool) {
         );
     }
 
-    (format!("Dray can't run {label} sessions yet."), false)
+    (format!("hz can't run {label} sessions yet."), false)
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]
@@ -266,49 +299,167 @@ struct AgentAvailability {
 /// ordinary state, and the picker draws its own empty row for it.
 #[tauri::command]
 async fn list_models(harness: Option<harness::Harness>) -> Vec<Model> {
-    // Defaulted rather than required so a caller that predates the second
-    // harness still gets the list it always got.
-    match harness.unwrap_or(harness::Harness::ClaudeCode) {
-        harness::Harness::Pi => harness::pi::models::list().await,
-        harness::Harness::Fx => harness::fx::models::list().await,
-        harness::Harness::Omp => harness::omp::models::list().await,
-        harness::Harness::Codex => harness::codex::models::list().await,
+    // Defaulted rather than required so a caller that predates the argument
+    // still gets a list.
+    match harness.unwrap_or(harness::Harness::Mcode) {
+        // The agent's own answer, read live off a short session and cached — an
+        // empty list on a machine that has never run it, which the picker draws
+        // as "mcode names the model until you pick one".
+        harness::Harness::Mcode => harness::mcode::models::all().await,
         other => models::models_for(other),
     }
 }
 
-/// Drops pi's cached model list, so the next read asks pi again.
+/// Drops the cached model list, so the next read probes again.
 ///
-/// For the refresh a reader asks for by hand: they have just logged a provider
-/// in, and waiting out the freshness window would read as the list being wrong.
+/// For the refresh a reader asks for by hand: they have just connected or
+/// removed a provider, and waiting out the freshness window would read as the
+/// picker being wrong.
 #[tauri::command]
 async fn refresh_models() {
-    harness::pi::models::forget();
-    // Not just `forget`: fx serves the subscription providers from static
-    // tables, so dropping the cache alone would still answer from a table. A
-    // manual Refresh means "ask fx again", so probe the active provider now.
-    harness::fx::models::refresh().await;
-    harness::codex::models::forget();
+    harness::mcode::models::forget();
 }
 
-/// Switches fx's active provider, which is what its model list is drawn from.
+/// Starts the agent child a session is about to need, so the reader's first
+/// prompt does not pay for its boot.
+///
+/// **The session id is named here because the child has to carry it.** `spawn`
+/// is where `HZ_SESSION_ID` is fixed, and the hz CLI reads it as the default
+/// session for `hz issue link` for the rest of that child's life — so a child
+/// parked without one would quietly lose that. The frontend mints the id when
+/// the composer first has something in it and hands the same one to `send_msg`.
+///
+/// **A hint, not a step.** Nothing is created here — no index entry, no session
+/// record — and `send_msg` spawns its own child when nothing is parked. So a
+/// reader who types and closes the composer leaves a process to be reaped, not
+/// a session; and a failure here costs a few seconds rather than the send.
 #[tauri::command]
-async fn set_fx_provider(provider: String) -> Result<(), String> {
-    harness::fx::models::set_provider(&provider)
+async fn prepare_session(
+    session_id: String,
+    cwd: String,
+    model: ModelId,
+    effort: Option<Effort>,
+    permission_mode: ApprovalPolicy,
+    app: AppHandle,
+) -> Result<(), String> {
+    // The same resolution the send does, so a park is opened on the model the
+    // composer is showing rather than on a spelling of it this build invented.
+    // A pick that is not in the live list is `None`, which leaves the CLI on its
+    // own default — the same answer `send_msg` gives, and the diff in
+    // `mcode::init` is what corrects it if the reader picks something else
+    // before sending.
+    let spec = harness::mcode::models::find(&model).await;
+
+    harness::mcode::prepare(
+        &session_id,
+        &cwd,
+        spec.as_ref(),
+        effort,
+        permission_mode,
+        &app,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Where models come from, as Settings draws it.
+///
+/// The agent's own provider list, read live rather than cached: a provider
+/// added in another window, or by the CLI itself, is one the reader will expect
+/// to see the moment they open the form. **Only the providers hz manages** —
+/// the CLI's own MiniMax account entries are dropped in
+/// [`providers::list`](harness::mcode::providers::list), since this app has no
+/// screen that could sign in to one.
+#[tauri::command]
+async fn list_providers() -> Result<Vec<harness::mcode::providers::Provider>, String> {
+    harness::mcode::providers::list()
         .await
         .map_err(|e| format!("{e:#}"))
 }
 
-/// The preferences Rust owns. Everything else the settings dialog draws is the
-/// frontend's own local storage — see [`settings`].
+/// The providers this build can set up for the reader in one step.
+///
+/// Fetched rather than hardcoded in the frontend: the URL and the dialect are
+/// facts about the agent's own gateway wiring, so they live beside the code
+/// that talks to it.
+#[tauri::command]
+async fn list_provider_presets() -> Vec<harness::mcode::providers::ProviderPreset> {
+    harness::mcode::providers::presets()
+}
+
+/// Adds a provider and hands back the list as it stands after.
+///
+/// The list rather than a bare `()` because the CLI mints the id from the name
+/// — `custom_provider:<slug>` — and a caller that guessed the slug would be
+/// guessing a rule the vendor owns. It also drops the cached model list on the
+/// way through, so the picker is drawn from the providers that exist now.
+#[tauri::command]
+async fn add_provider(
+    provider: harness::mcode::providers::NewProvider,
+) -> Result<Vec<harness::mcode::providers::Provider>, String> {
+    harness::mcode::providers::add(&provider)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn remove_provider(
+    provider_id: String,
+) -> Result<Vec<harness::mcode::providers::Provider>, String> {
+    harness::mcode::providers::remove(&provider_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Tests a provider, handing back the CLI's own sentence about what happened.
+#[tauri::command]
+async fn test_provider(provider_id: String, model: Option<String>) -> Result<String, String> {
+    harness::mcode::providers::test(&provider_id, model.as_deref())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// What the settings dialog draws about **reporting**; the other rows it draws
+/// are ordinary preferences and come from [`get_preferences`]. Both stores are
+/// described in [`settings`].
 ///
 /// Answers with the **effective** state, off `analytics::enabled`, not with
-/// what is on disk. The two differ whenever `DRAY_NO_ANALYTICS` is set, and a
+/// what is on disk. The two differ whenever `HZ_NO_ANALYTICS` is set, and a
 /// switch drawn from the file there would sit at `on` while nothing was being
 /// sent.
 #[tauri::command]
 async fn get_settings() -> settings::SettingsView {
     settings_view().await
+}
+
+/// Every preference the frontend owns, in one payload.
+///
+/// Read once from `src/lib/prefs.ts`, before its first render, which is what
+/// lets a pick paint on the first frame and lets these live outside the webview
+/// at all. Absent fields are `None` — see [`settings::Preferences`] for why
+/// that distinction is the migration's whole signal.
+#[tauri::command]
+async fn get_preferences() -> settings::Preferences {
+    settings::read().await.into()
+}
+
+/// Writes the preferences a batch names and leaves every other one alone.
+///
+/// A batch rather than a field, because the one caller that writes several at
+/// once is the migration — nine picks moving out of the webview — and half of
+/// them landing would leave a reader unable to tell which half. Answers with
+/// the file as it now stands, so a caller can keep what it did not name without
+/// a second read.
+#[tauri::command]
+async fn set_preferences(
+    patches: Vec<settings::PreferencesPatch>,
+) -> Result<settings::Preferences, Fail> {
+    // Through `settings::update` like every other write, so this shares the one
+    // lock and the one atomic rename: a batch cannot be interleaved with the
+    // install id minting itself, or with the analytics switch.
+    let next = settings::update(|next| settings::apply(patches, next)).await?;
+
+    Ok(next.into())
 }
 
 /// Persists the analytics opt-out. Every send reads the file, so the switch
@@ -385,41 +536,6 @@ async fn settings_view() -> settings::SettingsView {
         analytics_enabled: analytics::enabled().await,
         analytics_locked: analytics::env_opt_out(),
     }
-}
-
-/// The slash commands available in a directory, for the harness that will run
-/// there. Cached per directory in the backend, so the composer may call this
-/// whenever the project or the harness changes.
-///
-/// The harness is what makes this answer anything true. Every picker used to be
-/// filled from Claude Code's `initialize` whatever the session ran on, so a pi
-/// session offered `/compact`, `/dataviz` and 145 others pi has never heard of
-/// — and typing one sent it as a prompt, because pi expands no command it does
-/// not know.
-///
-/// Codex and fx answer with their **skills**, since the rest of what each draws
-/// behind a slash is TUI actions Dray already owns in its chrome. Codex is asked
-/// (`skills/list`); fx publishes nothing on the wire at all, so its roots are
-/// walked on disk. Only `Other` answers none, which is the honest picker for a
-/// CLI this build has never heard of.
-#[tauri::command]
-async fn list_slash_commands(cwd: &str, harness: Harness) -> Result<Vec<SlashCommand>, String> {
-    Ok(match harness {
-        Harness::ClaudeCode => harness::claude_code::commands::list_commands(cwd)
-            .await
-            .map_err(|e| e.to_string())?,
-        Harness::Pi => harness::pi::commands::list_commands(cwd).await,
-        Harness::Codex => harness::codex::commands::list_commands(cwd).await,
-        Harness::Fx => harness::fx::commands::list_commands(cwd).await,
-        // Empty, and that is a fact about the wire rather than about omp: it
-        // does not answer a request for its command list. It *pushes* one
-        // unprompted as `available_commands_update` — at startup and whenever
-        // the metadata changes — so the picker is filled from the reader's own
-        // stream once the transport lands, not asked for here. Drawing this as
-        // "publishes no slash commands" would be wrong: it publishes 54.
-        Harness::Omp => Vec::new(),
-        Harness::Other(_) => Vec::new(),
-    })
 }
 
 /// The committed side of the repo view's uncommitted list. Paired with a `None`
@@ -514,6 +630,22 @@ async fn fork_session(
     Ok(snapshot)
 }
 
+/// The agent's own reading of what its context window holds.
+///
+/// **The command, not a computed estimate.** `/context` is the agent's, it is
+/// answered inside the agent (no model call), and its answer carries the six
+/// categories — System prompt, Memory, Tools, Skills, Messages, Other — that its
+/// own TUI draws and that ACP does not otherwise send. `None` where there is
+/// nothing to report: no child up, or a child whose runtime has not counted a run
+/// yet.
+#[tauri::command]
+async fn context_snapshot(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<crate::context::ContextSnapshot>, String> {
+    manager.context_snapshot(&session_id).await
+}
+
 /// Stops the in-flight turn without killing the session — the CLI aborts its
 /// tools and streaming, ends the turn, and stays alive for the next prompt.
 #[tauri::command]
@@ -528,24 +660,6 @@ async fn interrupt_session(
         .map_err(|e| e.to_string())
 }
 
-/// Stops one background task without touching the rest of the session.
-///
-/// Not reachable through `interrupt_session`, which ends the turn and leaves
-/// every running task alone — a task is backgrounded to outlive its turn, so
-/// killing one is its own ask. Idempotent — the CLI answers success for a task
-/// it no longer holds.
-#[tauri::command]
-async fn stop_task(
-    session_id: &str,
-    task_id: &str,
-    manager: State<'_, SessionManager>,
-) -> Result<(), String> {
-    manager
-        .stop_task(session_id, task_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
 /// Takes back the newest prompt still held for a running turn, returning its
 /// text so the composer can restore it. `None` once the flush has written it —
 /// past that point the CLI owns the prompt and there is no way to retract it.
@@ -555,6 +669,24 @@ async fn cancel_queued(
     manager: State<'_, SessionManager>,
 ) -> Result<Option<QueuedMessage>, String> {
     Ok(manager.cancel_queued(session_id).await)
+}
+
+/// Hands the held prompts into the running turn and answers how many went.
+///
+/// The alternative to `interrupt_session`, which is the only other way a held
+/// prompt reaches the agent early — and which throws the turn away to do it. The
+/// session's own queue is emptied here rather than by the frontend, since the
+/// backend is what drained it.
+#[tauri::command]
+async fn steer_queued(
+    session_id: &str,
+    manager: State<'_, SessionManager>,
+    app: AppHandle,
+) -> Result<usize, String> {
+    manager
+        .steer_queued(session_id, &app)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Answers a permission request the agent is blocked on. `option_id` names one
@@ -613,6 +745,10 @@ pub fn run() {
     // Before the builder, so a panic while the app is still coming up — the
     // window nobody could report from — is covered like any other.
     analytics::install_panic_hook();
+
+    // And before the window, which is what opens the webview's storage under
+    // whichever identifier this build carries — see `identity`.
+    identity::adopt_previous_identity();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_macos_permissions::init())
@@ -681,7 +817,7 @@ pub fn run() {
             analytics::app_started();
             // The guaranteed half of `active_day`: `focus.ts` reports focus
             // *changes*, so a window that comes up already frontmost never
-            // reports gaining it, and somebody who opens Dray, works and quits
+            // reports gaining it, and somebody who opens hz, works and quits
             // without switching apps would go uncounted. Free to state beside
             // the other two sites — all three claim one daily key.
             analytics::active_day();
@@ -691,9 +827,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             send_msg,
             read_attachments,
+            write_pasted_text,
             list_models,
+            list_providers,
+            list_provider_presets,
+            add_provider,
+            remove_provider,
+            test_provider,
             refresh_models,
-            set_fx_provider,
+            prepare_session,
             agent_availability,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_open,
@@ -726,10 +868,11 @@ pub fn run() {
             local_servers::list_local_servers,
             get_settings,
             set_analytics_enabled,
+            get_preferences,
+            set_preferences,
             analytics_identity,
             track_feature,
             track_active_day,
-            list_slash_commands,
             files::warm_file_index,
             files::search_files,
             files::list_dir,
@@ -764,8 +907,9 @@ pub fn run() {
             remove_session_worktree,
             mark_session_idle,
             interrupt_session,
-            stop_task,
+            context_snapshot,
             cancel_queued,
+            steer_queued,
             respond_permission,
             answer_questions,
             notifications::notify_session,
@@ -782,11 +926,19 @@ pub fn run() {
             issues::update_issue,
             github::prs_for_branch,
             github::pr_marks,
+            github::list_pull_requests,
             github::merge_pr,
             github::delete_branch,
             github::reopen_pr,
             github::mark_pr_ready,
+            github::comment_on_pr,
+            github::reply_to_thread,
+            github::set_thread_resolved,
+            github::submit_review,
+            github::request_reviewers,
+            github::close_pr,
             github::recheck_gh,
+            github::source_control_state,
             quit::confirm_quit,
             quit::dismiss_quit,
             docs::read_doc,

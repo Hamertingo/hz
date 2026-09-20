@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import AssistantMessage from "@/components/chat/AssistantMessage";
 import Reasoning from "@/components/chat/Reasoning";
 import ToolCall from "@/components/chat/ToolCall";
@@ -6,6 +8,7 @@ import FileEdits from "@/components/chat/FileEdits";
 import { compactTokens, resetTime } from "@/lib/format";
 import { drawsFailure } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
+import type { TodoTask } from "@/lib/todo";
 import type { AgentEvent, FileEdit, ToolResult } from "@/types/events";
 
 /// A quiet single line for the events that are context rather than content.
@@ -36,10 +39,17 @@ function Notice({
 
 /// The one place event payloads become UI. Every variant is handled; the default
 /// arm exists for a payload kind from a newer backend than this build.
-export default function EventRow({
+///
+/// Memoised on identity, which holds because the events themselves come off a
+/// walk that is memoised — a delta adds none of them. A comparator is not the
+/// alternative: the `event` prop is a whole payload, so any compare narrower
+/// than `===` is a walk of that payload per row per render, to save the `switch`
+/// below.
+function EventRow({
   event,
   resultByCallId,
   editsByCallId,
+  todosByCallId,
   hideToolLabel = false,
   openTool = false,
   onOpenSession,
@@ -51,6 +61,9 @@ export default function EventRow({
   /// The edits each call made, so a patch draws one row rather than a header
   /// and a separate expander naming the same file again.
   editsByCallId?: Map<string, FileEdit[]>;
+  /// The plan as it stood at each call that moved it, so a todo row opens onto
+  /// the list rather than onto the mutation it came from.
+  todosByCallId?: Map<string, TodoTask[]>;
   /// Passed down by `ToolGroupRow`, whose header already names the tool.
   hideToolLabel?: boolean;
   /// Draws a tool call already expanded. Only the subagent panel sets it, for
@@ -91,6 +104,7 @@ export default function EventRow({
           rawInput={payload.rawInput}
           result={resultByCallId.get(payload.callId)}
           edits={editsByCallId?.get(payload.callId)}
+          todos={todosByCallId?.get(payload.callId)}
           hideLabel={hideToolLabel}
           defaultOpen={openTool}
         />
@@ -245,3 +259,5 @@ export default function EventRow({
       return null;
   }
 }
+
+export default memo(EventRow);

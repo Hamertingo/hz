@@ -154,7 +154,7 @@ fn normalize_space(space: Option<String>) -> Option<String> {
 }
 
 /// The edit [`retag_space`] makes, split from the file so it can be tested
-/// without a `~/.dray` to write into. Answers whether anything moved.
+/// without a `~/.hz` to write into. Answers whether anything moved.
 fn retag(projects: &mut [Project], from: &str, to: Option<String>) -> bool {
     let to = normalize_space(to);
     let mut moved = false;

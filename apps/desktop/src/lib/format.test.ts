@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { calendarDay } from "@/lib/format";
+import { calendarDay, clockTime, formatDuration } from "@/lib/format";
 
 /// Fixed so "today" is a known afternoon rather than whenever the suite runs —
 /// every case here is about which side of a midnight a timestamp falls on, and
@@ -51,5 +51,45 @@ describe("calendarDay", () => {
   /// — reads as today rather than as a negative day count.
   it("reads a future stamp as today", () => {
     expect(calendarDay(new Date(2026, 7, 28, 9, 0).toISOString())).toBe("Today");
+  });
+});
+
+describe("formatDuration", () => {
+  /// The decimal is the whole reason this exists: a fast turn and a slow one are
+  /// both "2s" with whole seconds, and the reader is looking at this to tell
+  /// them apart.
+  it("keeps a tenth of a second under a minute", () => {
+    expect(formatDuration(2300)).toBe("2.3s");
+    expect(formatDuration(9400)).toBe("9.4s");
+    expect(formatDuration(0)).toBe("0.0s");
+  });
+
+  it("drops the decimal once it is minutes", () => {
+    expect(formatDuration(60_000)).toBe("1m 0s");
+    expect(formatDuration(95_400)).toBe("1m 35s");
+  });
+
+  /// Nothing should reach this, and a clock step backwards would — so the
+  /// reading is a zero rather than a negative count.
+  it("never goes below zero", () => {
+    expect(formatDuration(-500)).toBe("0.0s");
+  });
+});
+
+describe("clockTime", () => {
+  /// Built from local components on purpose: the figure is read off the Date's
+  /// own local fields, so a fixture written in UTC would pass in UTC and fail
+  /// everywhere the machine is set to anything else.
+  it("draws the local wall clock, 24-hour and zero-padded", () => {
+    expect(clockTime(new Date(2026, 8, 19, 9, 5).toISOString())).toBe("09:05");
+    expect(clockTime(new Date(2026, 8, 19, 14, 32).toISOString())).toBe("14:32");
+    expect(clockTime(new Date(2026, 8, 19, 0, 0).toISOString())).toBe("00:00");
+    // Midnight belongs to the day it opens, not to noon — 24:00 on the clock
+    // face is the hour a reader is least able to disambiguate.
+    expect(clockTime(new Date(2026, 8, 19, 23, 59).toISOString())).toBe("23:59");
+  });
+
+  it("answers nothing for a stamp it cannot read", () => {
+    expect(clockTime("half past nine")).toBeNull();
   });
 });

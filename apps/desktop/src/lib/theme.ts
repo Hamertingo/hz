@@ -57,7 +57,7 @@ export const THEMES: Theme[] = [
   // falls back to, what the pre-paint script in index.html stamps, and what every
   // retired name (`neutral`, `shadcn`) lands on — renaming it would strand every
   // stored pick on a palette that no longer answers to what is written down.
-  { id: "default", label: "Dray", flatInFullscreen: true },
+  { id: "default", label: "hz", flatInFullscreen: true },
   {
     id: "catppuccin",
     label: "Catppuccin",
@@ -134,8 +134,8 @@ export function modeFor(name: ThemeName, mode: ThemeMode): ThemeMode {
 
 // Shared with the pre-paint script in index.html. Changing either key means
 // changing it there too, or the script and this module disagree for one frame.
-const THEME_KEY = "ade.theme";
-const MODE_KEY = "ade.mode";
+const THEME_KEY = "hz.theme";
+const MODE_KEY = "hz.mode";
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 

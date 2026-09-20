@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { usePreference } from "@/lib/prefs";
 import { cachedApps, DIR_OPENER, load, type Opener } from "@/lib/openWith";
 import type { ExternalApp } from "@/types/events";
 
@@ -8,7 +8,8 @@ import type { ExternalApp } from "@/types/events";
 ///
 /// The pick is the reader's own last choice, stored by bundle path rather than
 /// by name: two builds of one editor differ by path alone, and a name that
-/// stops matching would silently reseat the default on the wrong app.
+/// stops matching would silently reseat the default on the wrong app. It is a
+/// durable preference, so the pick survives a relaunch and a rebuild.
 ///
 /// What is offered, what stands in for a missing pick and what opening even
 /// *means* all differ between a directory and a file, so they travel together
@@ -17,7 +18,7 @@ import type { ExternalApp } from "@/types/events";
 /// ⌘-click in the transcript reached another.
 export function useOpenApps(opener: Opener = DIR_OPENER) {
   const [all, setApps] = useState<ExternalApp[]>(cachedApps);
-  const [picked, setPicked] = useLocalStorage<string | null>(opener.key, null);
+  const [picked, setPicked] = usePreference(opener.key, null);
   const apps = opener.choices(all);
 
   /// Asks again. Called on mount and whenever the menu opens — the panel this

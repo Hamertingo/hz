@@ -645,8 +645,8 @@
    using the palette's own token names throughout rather than colours picked to
    look close.
 
-   The one liberty: Dray's background is Catppuccin's `mantle` rather than `base`,
-   with `base` standing in as `--surface-raised`. Dray's ladder is tight near the
+   The one liberty: hz's background is Catppuccin's `mantle` rather than `base`,
+   with `base` standing in as `--surface-raised`. hz's ladder is tight near the
    bottom — background, inset chrome and card sit inside one narrow band — and
    starting at `base` leaves nothing real between it and `surface0`. Both are
    background tokens in the palette, so nothing is invented; the whole room is one
@@ -754,7 +754,7 @@
 
    **The foreground pair is deliberately not One Dark Pro's own, and this is the part
    worth reading.** Upstream's `editor.foreground` is `#abb2bf` at L 0.762, and its
-   description text sits at 0.566. Dray's dark ramp asks for 0.985 and 0.708 — so
+   description text sits at 0.566. hz's dark ramp asks for 0.985 and 0.708 — so
    taking the editor's values wholesale put *body prose* below the lightness this app
    uses for secondary labels, and every muted string in the chrome (`Pinned`, `All
    Projects`, a breadcrumb, a panel tab) below that again. It read as the theme being
@@ -797,7 +797,7 @@
 
    The page is `editor.background`, not the darker chrome Cobalt2 paints its sidebar
    with. That inverts how the theme dresses a VS Code window, deliberately: there the
-   navy is the surface you read, and in Dray the surface you read is the transcript,
+   navy is the surface you read, and in hz the surface you read is the transcript,
    which sits on `--background`. Taking the chrome colour instead would put the colour
    the theme is known for on cards and menus only.
 
@@ -812,7 +812,7 @@
    value in between to compromise on. So the outlier stands, on purpose.
 
    Comments here are blue and italic rather than grey — `--accent-thinking` is that
-   blue, since dimmed prose in a transcript is the nearest thing Dray has to one. */
+   blue, since dimmed prose in a transcript is the nearest thing hz has to one. */
 [data-theme="cobalt2"][data-mode="dark"] {
   --background: #193549; /* editor.background */
   --surface-raised: #243e51;
@@ -1026,6 +1026,85 @@
 .md-table-scroll:hover {
   scrollbar-color: color-mix(in oklab, var(--color-muted-foreground) 35%, transparent)
     transparent;
+}
+
+/* ── What rides on a message being written ───────────────────────────────────
+   An attachment is **a chip inside the text**, not a list beside it. t3code's
+   chip is `h-[1.41em] rounded-[0.5em] px-[0.5em] gap-[0.33em] border 34%/bg 11%`
+   with the file's mark at 1.17em — and this is that, with one difference the
+   textarea forces: **the pill holds nothing**. What the reader sees inside it is
+   the token's own run, laid out by the same rules the textarea lays it out by.
+
+   The alternative was tried and is what made it crooked: an inner row of
+   icon + label + × inside a box sized by the run clips itself, because the run
+   is as wide as its letters and the row needs whatever it needs. A shell with no
+   content cannot clip, and it is in register by construction rather than by
+   measurement.
+
+   Nothing here may gain layout — the mirror's whole contract is that its glyphs
+   land where the textarea's did, or the caret points at the wrong letter. Hence
+   an absolutely-positioned element with a real border on it: out of flow, so the
+   border is free. */
+.chip-anchor {
+  position: relative;
+}
+
+.chip {
+  --chip-accent: var(--accent-mention);
+
+  position: absolute;
+  /* **t3's own metric: `h-[1.41em]`, centred on the run.** A pill sized by its
+     insets grew with the font's line box (32px against a 21px run) and read as a
+     box drawn over the sentence rather than as a chip in it. */
+  top: 50%;
+  height: 1.41em;
+  transform: translateY(-50%);
+  /* Horizontal padding is the one thing the flow cannot hold, and it has to stay
+     **under half a space**: two chips side by side are separated by the space the
+     reader typed between them, and an inset wider than that makes one pill climb
+     over the other's name. */
+  /* **Nothing on the left.** The mirror clips at its own edge, so an overhang
+     there was cut off at the start of a line — a chip whose left border was
+     missing. The space before it is the gap; only the right side takes padding,
+     which is the side the caret comes from. */
+  inset-inline-start: 0;
+  inset-inline-end: -0.2em;
+  border: 1px solid color-mix(in oklab, var(--chip-accent) 38%, var(--border));
+  border-radius: 0.5em;
+  background-color: color-mix(in oklab, var(--chip-accent) 13%, transparent);
+  /* **The file's own mark, painted rather than placed.** It is the same SVG the
+     trays and the file rows draw, drawn here as a background over the character
+     that reserved its space — the paperclip, which is transparent. An element
+     with real size would be layout, and layout is the one thing this may not
+     touch. */
+  background-image: var(--chip-icon, none);
+  background-repeat: no-repeat;
+  background-position: 0.28em center;
+  background-size: 1.05em 1.05em;
+  /* The overlay lets clicks through to the textarea — that is what makes the
+     whole composer feel like one field, and it is how the caret gets to a token
+     the reader wants to delete. */
+  pointer-events: none;
+}
+
+
+/* The placeholder the mark is painted over: an emoji, laid out by the textarea
+   like every other glyph in the run, so the icon lands in the space the flow
+   itself reserved for it.
+
+   **`opacity`, not `color: transparent`.** A colour emoji is drawn with its own
+   palette and ignores the text colour, so `color` left the paperclip sitting
+   beside the icon it was meant to be. Transparency that a colour glyph obeys is
+   the only one that hides it — and it stays in the flow, because `display: none`
+   would take the space and slide the name under the icon. */
+.chip-mark {
+  opacity: 0;
+}
+
+/* The size, one step back from the name — t3's arrangement, and the same
+   reason: it qualifies the file rather than naming it. */
+.chip-size {
+  color: var(--muted-foreground);
 }
 
 @layer base {
@@ -1259,7 +1338,7 @@
      `[data-theme][data-mode]` is unlayered, and unlayered beats `@layer
      utilities` whatever the specificity says.
 
-     Two tokens, not one. Every theme Dray ships is dark, so the backdrop alone
+     Two tokens, not one. Every theme hz ships is dark, so the backdrop alone
      is three near-blacks a millimetre apart — true, and useless as a picker. The
      card wedge is what tells them apart, and it is the surface the reader is
      about to see under every card in the app. */

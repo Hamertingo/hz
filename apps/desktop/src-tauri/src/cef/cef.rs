@@ -35,7 +35,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub mod automation;
 
 const FRAMEWORK: &str = "Chromium Embedded Framework.framework";
-const HELPER: &str = "Dray Helper.app/Contents/MacOS/Dray Helper";
+const HELPER: &str = "hz Helper.app/Contents/MacOS/hz Helper";
 /// Fixed for now; a per-app free port and a per-session proxy come later.
 const DEBUG_PORT: i32 = 9333;
 
@@ -55,7 +55,7 @@ struct Tab {
     id: i32,
     session: String,
     browser: Browser,
-    /// Keeps `dray browser`'s DevTools observer attached for the tab's life.
+    /// Keeps `hz browser`'s DevTools observer attached for the tab's life.
     _devtools: Option<Registration>,
     /// The `NSView` CEF created, as a pointer. Main thread only.
     view: usize,
@@ -119,7 +119,7 @@ struct Paths {
 fn paths() -> Option<Paths> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    let dev = exe_dir.join("cef/Dray.app");
+    let dev = exe_dir.join("cef/hz.app");
     let bundle = if dev.join("Contents/Frameworks").is_dir() {
         dev
     } else {
@@ -140,7 +140,7 @@ fn dev_framework() -> Option<PathBuf> {
 /// Chromium holds a singleton lock on the root, so a dev build sharing the
 /// release app's would fail to initialize and exit the process.
 fn browser_dir() -> PathBuf {
-    let dir = if tauri::is_dev() { ".dray/browser-dev" } else { ".dray/browser" };
+    let dir = if tauri::is_dev() { ".hz/browser-dev" } else { ".hz/browser" };
     std::env::home_dir().unwrap_or_default().join(dir)
 }
 
@@ -220,7 +220,7 @@ fn start() -> Option<bool> {
         cache_path: path_str(&browser_dir().join("default")),
         ..Default::default()
     };
-    let mut cef_app = DrayApp::new();
+    let mut cef_app = hzApp::new();
     let ok = keeping_signal(libc::SIGCHLD, || {
         initialize(Some(args.as_main_args()), Some(&settings), Some(&mut cef_app), std::ptr::null_mut()) == 1
     });
@@ -340,9 +340,9 @@ extern "C" fn set_handling_send_event(_this: &AnyObject, _sel: Sel, value: Bool)
 
 /// The swapped-in `sendEvent:`. Marks the flag around the original, which is
 /// reachable under the selector this was registered as before the swap.
-extern "C" fn dray_send_event(this: &AnyObject, _sel: Sel, event: &NSEvent) {
+extern "C" fn hz_send_event(this: &AnyObject, _sel: Sel, event: &NSEvent) {
     let was = HANDLING_SEND_EVENT.swap(true, Ordering::Relaxed);
-    let _: () = unsafe { msg_send![this, draySendEvent: event] };
+    let _: () = unsafe { msg_send![this, hzSendEvent: event] };
     HANDLING_SEND_EVENT.store(was, Ordering::Relaxed);
 }
 
@@ -364,9 +364,9 @@ unsafe fn patch_nsapp(app: &NSApplication) {
     };
     add(sel!(isHandlingSendEvent), is_handling_send_event as *const (), c"B@:");
     add(sel!(setHandlingSendEvent:), set_handling_send_event as *const (), c"v@:B");
-    add(sel!(draySendEvent:), dray_send_event as *const (), c"v@:@");
+    add(sel!(hzSendEvent:), hz_send_event as *const (), c"v@:@");
     let original = class_getInstanceMethod(cls, sel!(sendEvent:));
-    let ours = class_getInstanceMethod(cls, sel!(draySendEvent:));
+    let ours = class_getInstanceMethod(cls, sel!(hzSendEvent:));
     if !original.is_null() && !ours.is_null() {
         method_exchangeImplementations(original as *mut _, ours as *mut _);
     }
@@ -407,11 +407,11 @@ fn start_pump(app: AppHandle) {
 }
 
 wrap_app! {
-    struct DrayApp;
+    struct hzApp;
 
     impl App {
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
-            Some(DrayBrowserProcessHandler::new())
+            Some(hzBrowserProcessHandler::new())
         }
 
         /// Dev builds are unsigned and rebuilt constantly, and macOS grants
@@ -430,7 +430,7 @@ wrap_app! {
 }
 
 wrap_browser_process_handler! {
-    struct DrayBrowserProcessHandler;
+    struct hzBrowserProcessHandler;
 
     impl BrowserProcessHandler {
         fn on_schedule_message_pump_work(&self, delay_ms: i64) {
@@ -552,7 +552,7 @@ fn create_tab(session: &str, url: &str, activate: bool) -> Result<(), String> {
         return Err("Chromium could not start".into());
     }
     let info = child_window_info()?;
-    let mut client = DrayClient::new(session.to_string(), activate);
+    let mut client = hzClient::new(session.to_string(), activate);
     let mut context = context_for(session);
     let ok = browser_host_create_browser(
         Some(&info),
@@ -636,7 +636,7 @@ fn refocus_webview(from: &NSView) {
 }
 
 /// Unhides a tab's view off-screen, so Chromium treats it as visible and
-/// delivers the input `dray browser` dispatches: a hidden `NSView` marks the
+/// delivers the input `hz browser` dispatches: a hidden `NSView` marks the
 /// widget hidden, and a hidden widget drops mouse and key events (measured:
 /// a page listener saw nothing). `apply_layout` puts it back.
 fn reveal(id: i32) {
@@ -655,29 +655,29 @@ fn reveal(id: i32) {
 }
 
 wrap_client! {
-    struct DrayClient {
+    struct hzClient {
         session: String,
         activate: bool,
     }
 
     impl Client {
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(DrayLifeSpan::new(self.session.clone(), self.activate))
+            Some(hzLifeSpan::new(self.session.clone(), self.activate))
         }
         fn display_handler(&self) -> Option<DisplayHandler> {
-            Some(DrayDisplay::new())
+            Some(hzDisplay::new())
         }
         fn load_handler(&self) -> Option<LoadHandler> {
-            Some(DrayLoad::new())
+            Some(hzLoad::new())
         }
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
-            Some(DrayKeyboard::new())
+            Some(hzKeyboard::new())
         }
     }
 }
 
 wrap_life_span_handler! {
-    struct DrayLifeSpan {
+    struct hzLifeSpan {
         session: String,
         activate: bool,
     }
@@ -748,12 +748,12 @@ wrap_life_span_handler! {
             let (Some(window_info), Some(client)) = (window_info, client) else { return 1 };
             let Ok(info) = child_window_info() else { return 1 };
             *window_info = info;
-            *client = Some(DrayClient::new(self.session.clone(), true));
+            *client = Some(hzClient::new(self.session.clone(), true));
             0
         }
 
         /// Handled here. Left to CEF, a close on a child view is delivered
-        /// to the window holding it — Dray's main window — which raised the
+        /// to the window holding it — hz's main window — which raised the
         /// app's own quit prompt for every tab closed. Answering `1` alone is
         /// not enough either: CEF then waits for the view hierarchy to be
         /// torn down, so the tab's view is pulled out of the window here and
@@ -816,7 +816,7 @@ fn update_tab(id: i32, f: impl FnOnce(&mut Tab)) {
 }
 
 wrap_display_handler! {
-    struct DrayDisplay;
+    struct hzDisplay;
 
     impl DisplayHandler {
         fn on_address_change(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
@@ -881,7 +881,7 @@ wrap_display_handler! {
     }
 }
 
-const PICK_PREFIX: &str = "__dray_pick__";
+const PICK_PREFIX: &str = "__hz_pick__";
 
 /// Tabs whose picker is running. An entry is spent by the first pick line,
 /// and dropped by a navigation or a close, since the script that would
@@ -943,11 +943,11 @@ struct PickStyles {
 /// Everything it needs to say goes out through `console.log` with
 /// `PICK_PREFIX`; see `on_console_message`. Re-running it replaces a live one.
 const PICK_JS: &str = r#"(() => {
-  if (window.__drayPick) window.__drayPick.stop();
+  if (window.__hzPick) window.__hzPick.stop();
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #f5c400;background:rgba(245,196,0,.12);border-radius:3px;transition:all 40ms;';
   document.documentElement.appendChild(box);
-  const say = (v) => console.log('__dray_pick__' + (v ? JSON.stringify(v) : 'null'));
+  const say = (v) => console.log('__hz_pick__' + (v ? JSON.stringify(v) : 'null'));
   const selectorOf = (el) => {
     const parts = [];
     for (let e = el, i = 0; e && e.nodeType === 1 && i < 5; e = e.parentElement, i++) {
@@ -1005,18 +1005,18 @@ const PICK_JS: &str = r#"(() => {
     document.removeEventListener('mouseup', block, opts);
     document.removeEventListener('keydown', key, opts);
     box.remove();
-    delete window.__drayPick;
+    delete window.__hzPick;
   };
   document.addEventListener('mousemove', move, opts);
   document.addEventListener('mousedown', block, opts);
   document.addEventListener('mouseup', block, opts);
   document.addEventListener('click', click, opts);
   document.addEventListener('keydown', key, opts);
-  window.__drayPick = { stop };
+  window.__hzPick = { stop };
 })();"#;
 
 wrap_load_handler! {
-    struct DrayLoad;
+    struct hzLoad;
 
     impl LoadHandler {
         fn on_loading_state_change(&self, browser: Option<&mut Browser>, is_loading: ::std::os::raw::c_int, can_go_back: ::std::os::raw::c_int, can_go_forward: ::std::os::raw::c_int) {
@@ -1112,7 +1112,7 @@ struct ForwardedKey {
 }
 
 wrap_keyboard_handler! {
-    struct DrayKeyboard;
+    struct hzKeyboard;
 
     impl KeyboardHandler {
         fn on_pre_key_event(
@@ -1307,7 +1307,7 @@ pub fn browser_pick(session_id: String, start: bool) -> Result<(), String> {
                 set.remove(&id);
             }
         }
-        let code = if start { PICK_JS } else { "window.__drayPick && window.__drayPick.stop()" };
+        let code = if start { PICK_JS } else { "window.__hzPick && window.__hzPick.stop()" };
         frame.execute_java_script(Some(&CefString::from(code)), None, 0);
     })
 }

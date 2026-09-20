@@ -1,17 +1,17 @@
 [package]
-name = "dray"
+name = "hz"
 version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Create and list Dray sessions from the command line."
-repository = "https://github.com/monorepo-labs/dray"
+description = "Create and list hz sessions from the command line."
+repository = "https://github.com/Hamertingo/hz"
 
 [[bin]]
-name = "dray"
+name = "hz"
 path = "src/main.rs"
 
 [dependencies]
-dray-proto = { path = "../../crates/dray-proto" }
+hz-proto = { path = "../../crates/hz-proto" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 

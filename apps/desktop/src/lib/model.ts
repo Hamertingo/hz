@@ -18,36 +18,17 @@ export function isUnsetModel(id: ModelId): boolean {
 /// What each harness opens on before its reader has picked anything, and what a
 /// session indexed without a model reads back as.
 ///
-/// The strong model where there is one, deliberately: the picker is one click
-/// away for anyone who wants cheaper, where a weak default costs a turn that
-/// has to be redone by hand. Mirrors `default_model_for` in `models/models.rs`
-/// — two readers that cannot call each other, so the rule is stated twice.
+/// Mirrors `default_model_for` in `models/models.rs` — two readers that cannot
+/// call each other, so the rule is stated twice.
 ///
-/// pi names none, and that is the honest answer rather than a gap. It is
-/// multi-provider, so any constant here might name a model the reader has no
-/// key for — and pi's own settings already say which one they want. The
+/// **mcode names none, and that is the honest answer rather than a gap.** It is
+/// multi-provider — a managed account's models and every BYOK provider the
+/// reader has configured — so any constant here might name a model they have no
+/// key for. The CLI's own settings already say which one they want, and the
 /// composer reads that back instead of seeding it.
 export const DEFAULT_MODEL_FOR: Record<Harness, ModelId> = {
-  claude_code: "opus",
-  codex: "gpt56_sol",
-  pi: UNSET_MODEL,
-  // Multi-provider like pi, and its settings file already names a model.
-  fx: UNSET_MODEL,
-  // The same answer again: 60+ providers, so any constant here could name one
-  // the reader has no key for. It has not been *reached* yet either way — the
-  // harness is not offered in the picker until the transport lands.
-  omp: UNSET_MODEL,
+  mcode: UNSET_MODEL,
 };
-
-/// The providers `fx provider` takes, in fx's own words. Fixed by fx's CLI
-/// (`fx provider <gateway|codex|grok>`), not discovered — the *models* are.
-/// `label` is fx's own full name for the tooltip; `short` is our own text for
-/// the segmented provider control, where three full names would not fit.
-export const FX_PROVIDERS: { id: string; label: string; short: string }[] = [
-  { id: "gateway", label: "Vercel AI Gateway", short: "Vercel" },
-  { id: "codex", label: "Codex subscription", short: "Codex" },
-  { id: "grok", label: "Grok subscription", short: "Grok" },
-];
 
 /// Which model each harness was last left on. Absent key = never picked one.
 export type ModelByHarness = Partial<Record<Harness, ModelId>>;
@@ -56,8 +37,8 @@ export type ModelByHarness = Partial<Record<Harness, ModelId>>;
 ///
 /// Per-harness because a model belongs to exactly one of them, so a single
 /// remembered pick can only ever be right for the harness that made it.
-/// Switching to Codex and back used to land on whichever model the new list
-/// happened to start with — a pick nobody made, and one that read as the
+/// Remembering one for both used to land a switch on whichever model the new
+/// list happened to start with — a pick nobody made, and one that read as the
 /// composer forgetting.
 export function rememberedModel(remembered: ModelByHarness, harness: Harness): ModelId {
   return remembered[harness] ?? DEFAULT_MODEL_FOR[harness];
@@ -65,7 +46,7 @@ export function rememberedModel(remembered: ModelByHarness, harness: Harness): M
 
 /// The model to run, given a pick and the list the current harness can run.
 ///
-/// A model belongs to exactly one harness, so a pick made under the other one
+/// A model belongs to exactly one harness, so a pick made under another one
 /// names something this harness cannot run — and the pick is stored, so it
 /// outlives the switch that made it. Every place that seeds the composer's
 /// model has to ask this: repairing only where the harness *changes* leaves the
@@ -77,107 +58,32 @@ export function rememberedModel(remembered: ModelByHarness, harness: Harness): M
 ///
 /// A pick it has to replace falls to the harness's default, not to whatever
 /// leads the list: the head of the list is a picker-ordering decision, and
-/// reading it as an answer is what put sessions on Fable and Sol.
+/// reading it as an answer is what put sessions on a model nobody chose.
 export function usableModel(models: Model[], picked: ModelId, harness: Harness): ModelId {
   if (models.length === 0 || models.some((m) => m.id === picked)) return picked;
 
   const fallback = DEFAULT_MODEL_FOR[harness];
 
-  // A harness naming no default answers the sentinel, never the head of the
-  // list: pi picks for itself, and the spawn omits the flag. A pick this list
-  // cannot run — the other harness's model, or one whose provider was logged
-  // out — falls to "let pi decide", where landing on the list's first model
-  // put a session on a model the reader never chose, with nothing on screen
-  // saying so. Same answer for the unset pick.
+  // mcode names no default, so this answers the unset sentinel rather than the
+  // head of the list: the spawn then omits `--model` and the CLI uses whatever
+  // its own settings say. Landing on the list's first model instead would put
+  // a session on a model the reader never chose, with nothing on screen saying
+  // so. The same answer for a model whose provider was logged out since, and
+  // for one recorded by a build that ran a different harness.
   if (isUnsetModel(fallback)) return UNSET_MODEL;
 
   return models.some((m) => m.id === fallback) ? fallback : models[0].id;
 }
 
-/// fx's model repair, per provider. fx lists one provider at a time, so a pick
-/// made under another provider names a model this list cannot run — and unlike
-/// [`usableModel`], the fall-back is not the unset sentinel outright but the
-/// model this provider was **last left on**, so switching providers and back
-/// returns to where you were. Only when that too is gone does it fall to the
-/// sentinel (fx picks for itself), never to the head of the list.
-///
-/// `picks` is the reader's last model per provider; the caller reads it, so this
-/// stays pure and testable.
-export function usableFxModel(
-  list: Model[],
-  picked: ModelId,
-  picks: Record<string, ModelId>,
-): ModelId {
-  if (list.length === 0 || list.some((m) => m.id === picked)) return picked;
-  const remembered = picks[list[0]?.provider ?? ""];
-  if (remembered && list.some((m) => m.id === remembered)) return remembered;
-  return UNSET_MODEL;
-}
-
-/// The provider serving this model, from the lists fx has answered so far, or
-/// `undefined` where none of them names it. What lets a session's model say
-/// which provider it belongs to without a field on the index for it.
-export function fxProviderOf(cache: Record<string, Model[]>, id: ModelId): string | undefined {
-  if (isUnsetModel(id)) return undefined;
-  return Object.keys(cache).find((provider) => cache[provider].some((m) => m.id === id));
-}
-
-/// The fx list the composer draws: the one serving `picked`, where the cache
-/// knows it, else `active` — the list fx's global provider last answered.
-///
-/// fx's provider is one setting for the whole machine, and the composer used to
-/// draw its list from that alone — so switching provider in one session put the
-/// new provider's thumb and rows under every other fx session's picker, drew
-/// their models as bare ids, and let ⇧⇥ cycle them onto the wrong provider.
-/// The pick is per session and names its provider, so the list follows it.
-export function fxListFor(
-  cache: Record<string, Model[]>,
-  picked: ModelId,
-  active: Model[],
-): Model[] {
-  const own = fxProviderOf(cache, picked);
-  if (!own || own === active[0]?.provider) return active;
-  return cache[own] ?? active;
-}
-
-/// The pick once fx's global list lands. Kept where the cache names its
-/// provider — that is a session's own model, and the read may be landing after
-/// the reader moved onto it from the session whose switch asked for it — else
-/// repaired against the landed list as [`usableFxModel`] does.
-export function landedFxModel(
-  cache: Record<string, Model[]>,
-  landed: Model[],
-  current: ModelId,
-  picks: Record<string, ModelId>,
-): ModelId {
-  return fxProviderOf(cache, current) ? current : usableFxModel(landed, current, picks);
-}
-
-/// The pick the moment a provider is switched to: repaired against that
-/// provider's cached list, or with none cached its last pick — the pick still
-/// has to leave the old provider, or [`fxListFor`] keeps drawing the old
-/// provider's list and the switch reads as having done nothing.
-export function seededFxModel(
-  cache: Record<string, Model[]>,
-  provider: string,
-  current: ModelId,
-  picks: Record<string, ModelId>,
-): ModelId {
-  const cached = cache[provider];
-  if (!cached?.length) return picks[provider] ?? UNSET_MODEL;
-  return usableFxModel(cached, current, picks);
-}
-
 /// The effort a model will actually run at, given what the reader last picked
 /// for it.
 ///
-/// A remembered pick outlives the answer that made it offerable, and fx is
-/// where that bites: its ladder is per model and only a live session can state
-/// it, so a level picked off the provider's guess can stop being on the list
-/// the moment a session reports the truth (DRA-221). Left unchecked the trigger
-/// names a level the menu beside it no longer offers, and the next send asks
-/// for it again — which is the state the reader complained about in the first
-/// place.
+/// A remembered pick outlives the answer that made it offerable, and mcode is
+/// where that bites: its ladder is per model and only a session states it, so a
+/// level picked while one model was selected can stop being offered the moment
+/// another is — which is why the level is checked against the model on screen
+/// rather than sent on trust. Left unchecked, the trigger names a level the
+/// menu beside it no longer offers, and the next send asks for it again.
 ///
 /// A model that takes no effort answers `null`, which is what hides the control
 /// entirely. Otherwise the first offered level of: the pick, the model's own
@@ -199,14 +105,76 @@ export function usableEffort(
   return model.efforts[model.efforts.length - 1];
 }
 
-/// The agents in the order the picker draws them, which is also the order ⌘⇧A
-/// steps through. One list: a chord visiting a harness the row cannot show, or
-/// skipping one it can, reads as the chord being broken.
-export const HARNESS_ORDER: Harness[] = ["claude_code", "codex", "pi", "fx", "omp"];
+/// The spelling ACP addresses a model by: `m:<provider>:<model>`, with a
+/// `:v:<variant>` tail where the model is served in more than one variant. The
+/// same marker `ModelRef::parse` in `harness/mcode/parser.rs` reads, and the only
+/// thing about a ref this side needs to know.
+const WIRE_PREFIX = "m:";
+const VARIANT_MARKER = ":v:";
 
-/// Where ⌘⇧A lands from `current`, wrapping. An unknown current steps onto the
-/// first, the same place the picker parks its thumb.
-export function nextHarness(current: Harness): Harness {
-  const i = HARNESS_ORDER.indexOf(current);
-  return HARNESS_ORDER[(i + 1) % HARNESS_ORDER.length];
+/// The model's own part of a wire ref: prefix, provider and variant taken off.
+///
+/// Mirrors that same Rust parse, and has to: **a provider's own name can carry a
+/// `:`** — `custom_provider:opencode-go` — which mcode escapes as `%3A` on the
+/// wire, so the provider is everything up to the first colon and the variant is
+/// matched from the end. The provider is dropped rather than drawn: it names who
+/// serves the model, and the picker draws it as the row's own heading.
+function nameInRef(ref: string): string {
+  const rest = ref.slice(WIRE_PREFIX.length);
+  const marker = rest.lastIndexOf(VARIANT_MARKER);
+  const head = marker === -1 ? rest : rest.slice(0, marker);
+  const separator = head.indexOf(":");
+
+  return (separator === -1 ? head : head.slice(separator + 1)).replace(/%3A/gi, ":");
+}
+
+/// Words, capitalised — the first letter only. `MiniMax-M3` is already spelled
+/// the way its maker spells it, so lowercasing the rest of a word is what would
+/// mangle a name that already reads as prose; `deepseek-v4.1-flash` has nothing
+/// to lose and gains its capitals.
+///
+/// A separator becomes a space, **except a dot between two digits**, which is
+/// the version it belongs to: `v4.1` is one word and `-` is the break in it.
+function prettify(name: string): string {
+  return name
+    .replace(/[._-]/g, (char: string, at: number, whole: string) =>
+      char === "." && /\d/.test(whole[at - 1] ?? "") && /\d/.test(whole[at + 1] ?? "")
+        ? "."
+        : " ",
+    )
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/// The name a model is drawn by, from however much the app knows about it.
+///
+/// Two folds, and both carry weight:
+///
+/// **A wire ref is not a name.** `label` is the agent's own words where it has
+/// them — but mcode repeats the *value* as the row's name when the agent states
+/// none, and the composer's trigger falls back to the id itself while the model
+/// list is still being read, so
+/// `m:custom_provider%3Aopencode-go:deepseek-v4.1-flash:v:thinking` reaches the
+/// screen on the ordinary path of a slow probe. That string is addressing: the
+/// prefix, the provider and the variant all name the *route* to the model, and
+/// the picker draws the variant as a control of its own. What is left is the
+/// model.
+///
+/// **Then it is prettified**, because an id is spelled for a parser and a name
+/// is read by a person. Presentation only: `Model.id` and `Model.arg` are what
+/// a pick sends, and neither is touched by this.
+export function modelLabel(raw: string): string {
+  return prettify(modelSlug(raw));
+}
+
+/// The agent's own spelling of a model, folded no further than out of the wire.
+///
+/// [`modelLabel`] is this with the capitals put on. The split exists for the one
+/// reader that matches on the *name* rather than reading it — the brand table,
+/// which keys off a vendor prefix and must see `deepseek-v4.1-flash` as the
+/// agent spelled it rather than as a sentence.
+export function modelSlug(raw: string): string {
+  return raw.startsWith(WIRE_PREFIX) ? nameInRef(raw) : raw;
 }

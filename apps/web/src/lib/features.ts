@@ -35,8 +35,8 @@ export const FEATURES: Feature[] = [
       "Sessions can message each other when you ask them to",
     ],
     video: {
-      src: "/orchestration-dray.mp4",
-      poster: "/posters/orchestration-dray.jpg",
+      src: "/orchestration-hz.mp4",
+      poster: "/posters/orchestration-hz.jpg",
       alt: "An agent fanning work out into several sessions, each nested under it in the sidebar",
     },
     quotes: ["mrterrycarson", "felipe__orlando"],
@@ -55,7 +55,7 @@ export const FEATURES: Feature[] = [
     video: {
       src: "/split-view.mp4",
       poster: "/posters/split-view.jpg",
-      alt: "Three sessions side by side in Dray, each streaming its own agent",
+      alt: "Three sessions side by side in hz, each streaming its own agent",
     },
     quotes: ["paakjong", "evilpsycho42"],
   },
@@ -69,9 +69,9 @@ export const FEATURES: Feature[] = [
       "Every issue — in progress, done, all of it — without leaving the app",
     ],
     video: {
-      src: "/linear-integration-dray.mp4",
-      poster: "/posters/linear-integration-dray.jpg",
-      alt: "Browsing Linear issues in Dray and reading one beside the session that works on it",
+      src: "/linear-integration-hz.mp4",
+      poster: "/posters/linear-integration-hz.jpg",
+      alt: "Browsing Linear issues in hz and reading one beside the session that works on it",
     },
     quotes: ["sreedotworld", "aguiarfilho_"],
   },
@@ -86,7 +86,7 @@ export const FEATURES: Feature[] = [
     ],
     video: {
       src: "/pull-request.mp4",
-      poster: "/posters/pull-request-dray.jpg",
+      poster: "/posters/pull-request-hz.jpg",
       alt: "Reviewing checks and comments on a session's pull request",
     },
     // Nothing here. `Quotes` draws no row for an empty list, so a feature
@@ -107,9 +107,9 @@ export const FEATURES: Feature[] = [
       "Every control has a shortcut, shown where you'd reach for it",
     ],
     video: {
-      src: "/speed-run-dray.mp4",
-      poster: "/posters/speed-run-dray.jpg",
-      alt: "A full session in Dray at speed, from prompt to reviewed diff",
+      src: "/speed-run-hz.mp4",
+      poster: "/posters/speed-run-hz.jpg",
+      alt: "A full session in hz at speed, from prompt to reviewed diff",
     },
     // The pair: two people, independently, on the thing this section claims.
     quotes: ["vcfgdev", "Sousinr"],

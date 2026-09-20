@@ -1,16 +1,22 @@
 {
-  "name": "ade",
+  "name": "hz",
   "private": true,
   "license": "Apache-2.0",
   "version": "0.0.0",
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "app": "pnpm --filter dray run app",
-    "tauri": "pnpm --filter dray run tauri",
-    "web": "pnpm --filter @dray/web run dev",
-    "build:app": "pnpm --filter dray run build",
-    "build:web": "pnpm --filter @dray/web run build",
-    "test": "pnpm --filter dray run test"
+    "app": "pnpm --filter hz run app",
+    "tauri": "pnpm --filter hz run tauri",
+    "web": "pnpm --filter @hz/web run dev",
+    "build:app": "pnpm --filter hz run build",
+    "build:web": "pnpm --filter @hz/web run build",
+    "test": "pnpm --filter hz run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14"
+  },
+  "dependencies": {
+    "@lobehub/icons-static-svg": "^1.95.0"
   }
 }

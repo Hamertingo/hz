@@ -3,7 +3,7 @@
 //! Five events — a launch, a day the app was used, a session starting, a
 //! feature being reached for the first time in a run, and something breaking —
 //! carrying no content and no identity beyond a random id minted on this
-//! machine. What they answer is how many people run Dray, on which version,
+//! machine. What they answer is how many people run hz, on which version,
 //! whether they come back, which of the things built here anybody actually
 //! uses, and whether the build is failing under them in a way nothing else
 //! would ever tell us.
@@ -82,7 +82,7 @@ fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(TIMEOUT)
-            .user_agent(concat!("Dray/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("hz/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("reqwest client")
     })
@@ -95,7 +95,7 @@ fn client() -> &'static reqwest::Client {
 /// more thing to keep in step with the file, and the read is one small file
 /// that nothing asks for on a hot path.
 ///
-/// The environment wins over the file in one direction only. `DRAY_NO_ANALYTICS`
+/// The environment wins over the file in one direction only. `HZ_NO_ANALYTICS`
 /// can turn reporting off; it cannot turn it on over a stored `false`.
 pub async fn enabled() -> bool {
     !env_opt_out() && settings::read().await.analytics_enabled
@@ -106,7 +106,7 @@ pub async fn enabled() -> bool {
 /// Read live rather than remembered, and in one place: two call sites reading
 /// the same variable is how the flag and the switch drawn from it drift apart.
 pub fn env_opt_out() -> bool {
-    std::env::var_os("DRAY_NO_ANALYTICS").is_some()
+    std::env::var_os("HZ_NO_ANALYTICS").is_some()
 }
 
 /// What the webview needs to speak to PostHog for itself.
@@ -157,7 +157,7 @@ pub async fn identity() -> Option<SurveyIdentity> {
     let mut person_properties = base_properties().clone();
 
     // How many sessions this install has ever held, so a survey can be aimed at
-    // somebody who has used Dray enough to have an opinion of it. PostHog has
+    // somebody who has used hz enough to have an opinion of it. PostHog has
     // no other way to know — nothing it receives counts sessions, and the index
     // is the only place the answer lives.
     //
@@ -257,14 +257,14 @@ fn claim_day(key: String, day: String) -> bool {
 /// Three call sites, each covering a hole the others leave. **Launch** is the
 /// only one guaranteed to fire: `focus.ts` seeds itself from
 /// `document.hasFocus()` and reports changes alone, so a window that comes up
-/// already frontmost never reports *gaining* focus and somebody who opens Dray,
+/// already frontmost never reports *gaining* focus and somebody who opens hz,
 /// works and quits without switching apps would go uncounted. **Focus gained**
 /// catches coming back to check on a session an agent is running, which reaches
 /// no prompt at all and is real use of an app about parallel agents. **The
 /// `send_msg` command** covers a reader who leaves the app open and frontmost
 /// across a date boundary — the *command*, not `SessionManager::send_msg` one
 /// call down, since the orchestration socket reaches that directly to relay a
-/// `dray send` and to start a session `dray new` asked for. A Tauri command is
+/// `hz send` and to start a session `hz new` asked for. A Tauri command is
 /// reachable from the webview alone, so it needs no gate to mean a person.
 ///
 /// The throttle is what makes a third site free rather than a third event: all

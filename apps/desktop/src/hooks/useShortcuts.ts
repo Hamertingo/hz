@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { channel } from "@/lib/channel";
-import { readLocalStorage, writeLocalStorage } from "@/hooks/useLocalStorage";
+import { readPreference, writePreference } from "@/lib/prefs";
 import {
   type Chord,
   defaultChord,
@@ -15,13 +15,15 @@ import {
 /// A module store, since every `useHotkey` reads it and every keycap draws
 /// from it: a per-hook copy would leave a tooltip naming the old chord after
 /// the settings tab moved it. Only overrides are stored, so a default that
-/// changes in a later build reaches everyone who never touched that row.
-const KEY = "ade.shortcuts";
+/// changes in a later build reaches everyone who never touched that row — and
+/// the rebindings are a durable preference, so a dev build and a released one
+/// share them (`src/lib/prefs.ts`).
+const KEY = "hz.shortcuts";
 const changed = channel<void>();
 let overrides: Partial<Record<ShortcutId, Chord>> | null = null;
 
 function store() {
-  if (!overrides) overrides = coerce(readLocalStorage<unknown>(KEY, null));
+  if (!overrides) overrides = coerce(readPreference(KEY, {}));
   return overrides;
 }
 
@@ -48,7 +50,7 @@ function coerce(raw: unknown): Partial<Record<ShortcutId, Chord>> {
 
 function commit(next: Partial<Record<ShortcutId, Chord>>) {
   overrides = next;
-  writeLocalStorage(KEY, next);
+  writePreference(KEY, next);
   changed.emit();
 }
 

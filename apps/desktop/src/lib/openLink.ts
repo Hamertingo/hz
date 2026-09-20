@@ -33,7 +33,7 @@ export function usePendingLink(): string | null {
   );
 }
 
-/// A click on a link asks first — in Dray or outside — since the two mean
+/// A click on a link asks first — in hz or outside — since the two mean
 /// different things and a click cannot say which. ⌘-click (Ctrl elsewhere)
 /// skips the question and leaves the app, the way it means "not here" in
 /// every browser's own tab strip.

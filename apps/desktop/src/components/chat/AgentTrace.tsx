@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -35,7 +35,13 @@ export function TraceIcon({ className }: { className?: string }) {
 ///
 /// A reader's own click wins over both, permanently: `manual` is a tri-state,
 /// so `null` means "following the work" and a boolean means they have decided.
-export default function AgentTrace({
+///
+/// Memoised, though its own props are the least stable of the set: `rows` is an
+/// array its caller has just built, and `icon` an element, so it can only be
+/// skipped where a caller has a reason to hand the same pair twice — a folded
+/// stretch with no rows behind it. It is memoised for those cases rather than
+/// as a general saving, and the compare is one shallow pass either way.
+function AgentTrace({
   active,
   done,
   working,
@@ -107,7 +113,13 @@ export default function AgentTrace({
         <ChevronRight
           className={cn(
             "size-3 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
-            "opacity-0 group-hover/trace:opacity-100",
+            // Dim rather than absent while the row is folded. The chevron is the
+            // only thing that says a settled trace opens at all, and a reader on
+            // a touch screen never hovers it — nor one on a keyboard, who would
+            // otherwise be tabbing onto a bare word. Hover and focus take it the
+            // rest of the way, so it still only *asks* to be looked at, never
+            // competes with the label it sits beside.
+            "opacity-50 group-hover/trace:opacity-100 group-focus-visible/trace:opacity-100",
             open && "rotate-90 opacity-100",
           )}
         />
@@ -142,3 +154,5 @@ export default function AgentTrace({
     </div>
   );
 }
+
+export default memo(AgentTrace);

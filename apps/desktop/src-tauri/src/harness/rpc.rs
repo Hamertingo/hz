@@ -64,11 +64,14 @@ pub fn spawn_writer(mut stdin: ChildStdin) -> mpsc::UnboundedSender<Outbound> {
     tx
 }
 
+/// The map a [`Pending`] wraps: a request id to the channel its answer lands on.
+type Waiters<K, E> = HashMap<K, oneshot::Sender<Result<Value, E>>>;
+
 /// The requests waiting on an answer, keyed by whatever id the harness mints.
 ///
 /// A std mutex: nothing awaits under it, and the read loop settling an answer
 /// must never park behind a request registering one.
-pub struct Pending<K, E>(Arc<Mutex<HashMap<K, oneshot::Sender<Result<Value, E>>>>>);
+pub struct Pending<K, E>(Arc<Mutex<Waiters<K, E>>>);
 
 impl<K, E> Clone for Pending<K, E> {
     fn clone(&self) -> Self {
@@ -82,9 +85,15 @@ impl<K, E> std::fmt::Debug for Pending<K, E> {
     }
 }
 
+impl<K: Eq + Hash, E> Default for Pending<K, E> {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
+
 impl<K: Eq + Hash, E: Display> Pending<K, E> {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(HashMap::new())))
+        Self::default()
     }
 
     /// Opens a slot for `id`, before its line is written — what closes the race

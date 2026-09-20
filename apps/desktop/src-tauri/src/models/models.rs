@@ -43,7 +43,7 @@ impl Effort {
         }
     }
 
-    /// The inverse, for a value arriving from outside the app — the `dray`
+    /// The inverse, for a value arriving from outside the app — the `hz`
     /// CLI's `--effort`. Strict for [`id_for_arg`]'s reason: a typo is worth
     /// reporting, where silently running a different effort is not.
     pub fn from_arg(alias: &str) -> Option<Self> {
@@ -145,14 +145,11 @@ impl<'de> Deserialize<'de> for ModelId {
 /// neither side can call the other.
 pub fn default_model_for(harness: Harness) -> Option<ModelId> {
     match harness {
-        Harness::ClaudeCode => Some(ModelId::new("opus")),
-        Harness::Codex => Some(ModelId::new("gpt56_sol")),
-        // Multi-provider, all three of them, so any constant here might name a
-        // model the reader has no key for. Their own settings already say.
-        Harness::Pi | Harness::Fx | Harness::Omp => None,
-        // No list to default out of, and nothing will spawn for it anyway, so
-        // there is no model to name — the same `None` pi takes, for a different
-        // reason.
+        // Multi-provider, so any constant here might name a model the reader has
+        // no key for and mcode's own settings already say which one they want.
+        // A wrapper overriding that is presumptuous, and a first run failing
+        // with "model not found" for a model nobody picked is worse.
+        Harness::Mcode => None,
         Harness::Other(_) => None,
     }
 }
@@ -169,6 +166,21 @@ pub struct Model {
     /// persisted value honest rather than preventing a crash.
     pub efforts: Vec<Effort>,
     pub default_effort: Option<Effort>,
+    /// The model without its variant, as the wire spells it (`m:<provider>:<model>`,
+    /// no `:v:` tail) — the key a picker groups rows by. Empty where the id is not
+    /// a wire ref at all, which reads as "do not group".
+    ///
+    /// mcode lists **one choice per variant**, so `minimax-m3` arrives as a single
+    /// row named `minimax-m3 · thinking` and a model with two variants arrives as
+    /// two rows. Grouping them here rather than in the frontend keeps the parse
+    /// where the wire format is: `:v:` is ACP's, not the picker's.
+    #[serde(default)]
+    pub base_id: String,
+    /// The variant's own name (`thinking`, `fast`), or empty where the id names
+    /// none. Drawn as the row's second control rather than glued to the model's
+    /// name — which is what `label` used to carry.
+    #[serde(default)]
+    pub variant: String,
     /// What `--model` receives, where that differs from the persisted id.
     ///
     /// The two genuinely differ — `gpt56_sol` on disk, `gpt-5.6-sol` on the
@@ -226,6 +238,10 @@ impl Model {
             arg: arg.into(),
             // One vendor each, so there is nothing for the picker to group by.
             provider: String::new(),
+            // Hand-written rows name a model outright: no wire id to split, and
+            // no variant for a control to pick between.
+            base_id: String::new(),
+            variant: String::new(),
             accepts_images: true,
             secondary: false,
             supports_fast: false,
@@ -373,6 +389,14 @@ pub(crate) fn every_codex_model() -> Vec<Model> {
     all
 }
 
+/// Every model this build lists, from both static tables.
+///
+/// One list because a model id names exactly one harness: their aliases do not
+/// overlap, so nothing here needs the harness to disambiguate.
+fn table_models() -> Vec<Model> {
+    claude_models().into_iter().chain(every_codex_model()).collect()
+}
+
 /// What the picker offers for a harness.
 ///
 /// Empty for the discovered-list harnesses, and that is this slice's shape
@@ -381,12 +405,13 @@ pub(crate) fn every_codex_model() -> Vec<Model> {
 /// unavailable until that probe exists, so an empty list cannot reach a picker.
 pub fn models_for(harness: Harness) -> Vec<Model> {
     match harness {
-        Harness::ClaudeCode => claude_models(),
-        Harness::Codex => codex_models(),
-        Harness::Pi | Harness::Fx | Harness::Omp => Vec::new(),
+        // Empty, and it is a shape rather than a gap: the list is answered by
+        // the agent and read live off a session, so it arrives from
+        // [`crate::harness::mcode::models`] rather than from here.
+        Harness::Mcode => Vec::new(),
         // Empty rather than a guess: this build cannot say what that harness
-        // runs, and offering Claude's list would let a picker set a model the
-        // session's own agent has never heard of.
+        // runs, and offering another harness's list would let a picker set a
+        // model the session's own agent has never heard of.
         Harness::Other(_) => Vec::new(),
     }
 }
@@ -410,9 +435,12 @@ pub fn runs_on(id: &ModelId, harness: Harness) -> bool {
     }
 
     match harness {
-        Harness::ClaudeCode => claude_models().iter().any(|m| &m.id == id),
-        Harness::Codex => every_codex_model().iter().any(|m| &m.id == id),
-        Harness::Pi | Harness::Fx | Harness::Omp => find_model(id).is_none(),
+        // By elimination: only the agent knows its own list, and that list
+        // changes with the reader's logins, so anything that is not another
+        // harness's alias is left to it. Enough for the job this does — keeping
+        // a Claude alias off an mcode spawn — and the CLI's own "model not
+        // found" names anything narrower.
+        Harness::Mcode => find_model(id).is_none(),
         // Nothing runs on a harness this build cannot spawn, and `false` is
         // the safe direction: it refuses a model rather than recording one
         // against a session that could never use it.
@@ -434,13 +462,10 @@ pub fn find_model(id: &ModelId) -> Option<Model> {
         return None;
     }
 
-    claude_models()
-        .into_iter()
-        .chain(every_codex_model())
-        .find(|m| &m.id == id)
+    table_models().into_iter().find(|m| &m.id == id)
 }
 
-/// The id for a `--model` alias arriving from outside the app — the `dray`
+/// The id for a `--model` alias arriving from outside the app — the `hz`
 /// CLI's own flag — or `None` where this harness cannot run it.
 ///
 /// Deliberately strict for the two harnesses with a table: an unrecognized
@@ -455,10 +480,9 @@ pub fn id_for_arg(alias: &str, harness: Harness) -> Option<ModelId> {
     }
 
     let id = match harness {
-        Harness::Pi | Harness::Fx | Harness::Omp => ModelId::new(alias),
-        _ => claude_models()
+        Harness::Mcode => ModelId::new(alias),
+        _ => table_models()
             .into_iter()
-            .chain(every_codex_model())
             .find(|m| m.arg == alias)
             .map(|m| m.id)?,
     };
@@ -491,85 +515,6 @@ mod tests {
     fn id(s: &str) -> ModelId {
         ModelId::new(s)
     }
-
-    /// A model dropped from the picker must still resume. The two lists differ
-    /// by exactly the retired models, and reading the offered one for "may this
-    /// run" is what would strand every session on an older generation.
-    #[test]
-    fn a_retired_model_still_runs_but_is_not_offered() {
-        assert!(runs_on(&id("gpt55"), Harness::Codex));
-        assert!(find_model(&id("gpt55")).is_some());
-        assert!(!models_for(Harness::Codex)
-            .iter()
-            .any(|m| m.id == id("gpt55")));
-    }
-
-    /// Every model the picker offers reasons — so a harness switch can never
-    /// land the composer on a model with no effort.
-    #[test]
-    fn the_offered_codex_models_are_the_current_family() {
-        let offered = models_for(Harness::Codex);
-
-        assert_eq!(
-            offered.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(),
-            ["Astra", "Sol", "Terra", "Luna"]
-        );
-        // Medium, where Claude's default is High. Cheap to state, and the one
-        // number a reader would otherwise have to open the picker to learn.
-        assert!(offered
-            .iter()
-            .all(|m| m.default_effort == Some(Effort::Medium)));
-
-        // Shift+Tab cycles the top level, so two is the budget here as well.
-        let cycled: Vec<&str> = offered
-            .iter()
-            .filter(|m| !m.secondary)
-            .map(|m| m.label.as_str())
-            .collect();
-        assert_eq!(cycled, ["Astra", "Sol"]);
-    }
-
-    /// `ultra` is per model, not per family — Codex reports it on Sol and Terra
-    /// and stops Luna at `max`. Offering it across the three would put a level
-    /// on the wire that the model refuses.
-    ///
-    /// It is also **not** a synonym for `max`: Codex describes `max` as maximum
-    /// reasoning depth and `ultra` as maximum reasoning *with automatic task
-    /// delegation*, and lists both on the same model.
-    #[test]
-    fn only_the_codex_models_that_report_ultra_offer_it() {
-        let tops: Vec<(String, Option<Effort>)> = codex_models()
-            .into_iter()
-            .map(|m| (m.label, m.efforts.last().copied()))
-            .collect();
-
-        assert_eq!(
-            tops,
-            [
-                ("Astra".to_string(), Some(Effort::Ultra)),
-                ("Sol".to_string(), Some(Effort::Ultra)),
-                ("Terra".to_string(), Some(Effort::Ultra)),
-                ("Luna".to_string(), Some(Effort::Max)),
-            ]
-        );
-
-        // Claude's list stops at max: its `ultracode` is a session boolean
-        // pairing xhigh with workflow orchestration, not a rung (DRA-140).
-        assert!(claude_models()
-            .iter()
-            .all(|m| !m.efforts.contains(&Effort::Ultra)));
-    }
-
-    /// Verified against the CLI: `--effort` on Haiku is accepted and ignored,
-    /// so this pins a UI/persistence rule, not a spawn failure.
-    #[test]
-    fn haiku_never_takes_an_effort() {
-        let haiku = find_model(&id("haiku")).unwrap();
-
-        assert_eq!(resolve_effort(&haiku, Some(Effort::Max)), None);
-        assert_eq!(resolve_effort(&haiku, None), None);
-    }
-
     #[test]
     fn unsupported_effort_falls_back_to_the_model_default() {
         let opus = find_model(&id("opus")).unwrap();
@@ -577,199 +522,6 @@ mod tests {
         assert_eq!(resolve_effort(&opus, Some(Effort::Low)), Some(Effort::Low));
         assert_eq!(resolve_effort(&opus, None), Some(Effort::High));
     }
-
-    /// The `arg` is what `--model` receives, and a **top-level** one must stay
-    /// a bare alias — a dated name there would freeze the picker's everyday
-    /// models to a generation that stops receiving updates.
-    ///
-    /// The rule binds one direction only: "More models" holds both shapes, an
-    /// alias for a model that is merely reached for less often (`haiku`) and a
-    /// pinned id for a generation the reader is asking not to be moved off
-    /// (`claude-fable-5`). Only the top level is alias-or-nothing.
-    #[test]
-    fn only_the_top_level_claude_models_are_bare_aliases() {
-        for model in claude_models().iter().filter(|m| !m.secondary) {
-            assert!(
-                !model.arg.contains('-'),
-                "{} is a dated id at the top level; that tier wants an alias",
-                model.arg
-            );
-        }
-
-        assert!(
-            claude_models()
-                .iter()
-                .any(|m| m.secondary && m.arg.contains('-')),
-            "nothing is pinned, so this test is asserting against an empty tier"
-        );
-    }
-
-    /// Shift+Tab cycles the top level in order, so its length is what decides
-    /// whether the chord beats opening the menu at all. Two is the budget.
-    #[test]
-    fn the_claude_shortcut_cycles_two_models() {
-        let cycled: Vec<String> = claude_models()
-            .into_iter()
-            .filter(|m| !m.secondary)
-            .map(|m| m.label)
-            .collect();
-
-        assert_eq!(cycled, ["Fable 5.1", "Opus 5"]);
-    }
-
-    /// The submenu is drawn in list order, so the order is the list's.
-    #[test]
-    fn more_models_runs_newest_family_first() {
-        let more: Vec<String> = claude_models()
-            .into_iter()
-            .filter(|m| m.secondary)
-            .map(|m| m.label)
-            .collect();
-
-        assert_eq!(more, ["Fable 5", "Sonnet 5", "Haiku 4.5"]);
-    }
-
-    /// The flag decides where a row is drawn and nothing else. A model reached
-    /// through the submenu has to spawn exactly like one reached at the top
-    /// level, or "More models" is a menu of models that cannot be run.
-    #[test]
-    fn a_model_under_more_still_runs() {
-        let more: Vec<Model> = claude_models().into_iter().filter(|m| m.secondary).collect();
-        assert!(!more.is_empty());
-
-        for model in more {
-            assert!(runs_on(&model.id, Harness::ClaudeCode));
-            assert!(find_model(&model.id).is_some());
-            assert_eq!(
-                id_for_arg(&model.arg, Harness::ClaudeCode),
-                Some(model.id.clone())
-            );
-        }
-    }
-
-    /// The persisted id and the CLI alias genuinely differ, and this is the
-    /// pair that proves the split earns its place. Reading one for the other
-    /// spawns with `gpt56_sol`, which Codex does not know.
-    #[test]
-    fn the_persisted_id_is_not_the_cli_alias() {
-        let sol = find_model(&id("gpt56_sol")).unwrap();
-
-        assert_eq!(sol.id.as_str(), "gpt56_sol");
-        assert_eq!(sol.arg, "gpt-5.6-sol");
-    }
-
-    /// Every id the old enum could write must still name its model, or a real
-    /// index entry loses the model it was started on.
-    ///
-    /// The spellings are `serde(rename_all = "snake_case")` applied to the
-    /// variants this replaced, which is what 240 entries on disk carry.
-    #[test]
-    fn every_shipped_id_still_resolves() {
-        for spelling in [
-            "opus",
-            "sonnet",
-            "fable",
-            "haiku",
-            "gpt6_astra",
-            "gpt56_sol",
-            "gpt56_terra",
-            "gpt56_luna",
-            "gpt55",
-            "gpt54",
-            "gpt54_mini",
-        ] {
-            let parsed: ModelId = serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
-
-            assert_eq!(parsed.as_str(), spelling);
-            assert!(
-                find_model(&parsed).is_some(),
-                "{spelling} no longer names a model"
-            );
-            assert_eq!(
-                serde_json::to_string(&parsed).unwrap(),
-                format!("\"{spelling}\""),
-                "{spelling} does not round-trip byte-identically"
-            );
-        }
-    }
-
-    /// Both spellings of "this build cannot name the model" have to read as one
-    /// value, or the sentinel drifts into two states that compare unequal —
-    /// and that comparison is what decides whether a live child is replaced.
-    #[test]
-    fn unknown_and_empty_are_one_sentinel() {
-        let from_old_enum: ModelId = serde_json::from_str("\"unknown\"").unwrap();
-        let from_a_fresh_entry: ModelId = serde_json::from_str("\"\"").unwrap();
-
-        assert_eq!(from_old_enum, from_a_fresh_entry);
-        assert_eq!(from_old_enum, ModelId::default());
-        assert!(from_old_enum.is_unset());
-        assert!(find_model(&from_old_enum).is_none());
-        assert!(!runs_on(&from_old_enum, Harness::Pi));
-    }
-
-    /// An index entry naming a model this build dropped must not fail the whole
-    /// index read, and must not reach a spawn either. It keeps its own spelling
-    /// rather than being folded into the sentinel — the id is what the session
-    /// was started on, and a later build that lists it again should find it.
-    #[test]
-    fn a_retired_model_reads_back_and_is_rejected() {
-        let dated: ModelId = serde_json::from_str("\"opus-4-1-20250805\"").unwrap();
-
-        assert_eq!(dated.as_str(), "opus-4-1-20250805");
-        assert!(find_model(&dated).is_none());
-    }
-
-    /// A typo is worth reporting for the two harnesses that have a table, and
-    /// cannot be reported for the one that does not.
-    #[test]
-    fn an_alias_resolves_only_where_its_harness_can_run_it() {
-        assert_eq!(
-            id_for_arg("opus", Harness::ClaudeCode),
-            Some(id("opus")),
-            "an alias must resolve to its persisted id, not to itself"
-        );
-        assert_eq!(id_for_arg("gpt-5.6-sol", Harness::Codex), Some(id("gpt56_sol")));
-
-        assert_eq!(id_for_arg("opus", Harness::Codex), None);
-        assert_eq!(id_for_arg("gpt-5.6-sol", Harness::ClaudeCode), None);
-        assert_eq!(id_for_arg("nope", Harness::ClaudeCode), None);
-
-        // pi takes any alias it is given, since only pi knows its own list.
-        assert_eq!(
-            id_for_arg("anthropic/claude-sonnet-4-5", Harness::Pi),
-            Some(id("anthropic/claude-sonnet-4-5"))
-        );
-        // Except another harness's, which is the one thing it can rule out.
-        assert_eq!(id_for_arg("opus", Harness::Pi), None);
-        assert_eq!(id_for_arg("", Harness::Pi), None);
-    }
-
-    /// pi names no default, and the other two must not lose theirs to the
-    /// `Option` that makes room for it.
-    #[test]
-    fn only_pi_has_no_default_model() {
-        assert_eq!(default_model_for(Harness::ClaudeCode), Some(id("opus")));
-        assert_eq!(default_model_for(Harness::Codex), Some(id("gpt56_sol")));
-        assert_eq!(default_model_for(Harness::Pi), None);
-
-        for harness in [Harness::ClaudeCode, Harness::Codex] {
-            let default = default_model_for(harness).unwrap();
-            assert!(
-                runs_on(&default, harness),
-                "{harness:?} defaults to a model it cannot run"
-            );
-            assert!(find_model(&default).is_some());
-        }
-    }
-}
-
-#[cfg(test)]
-mod wire_tests {
-    use super::*;
-
-    /// The frontend sends `effort: null` for a model with no levels; Tauri
-    /// deserializes command args from JSON, so this is the real shape.
     #[test]
     fn effort_round_trips_through_null() {
         let none: Option<Effort> = serde_json::from_str("null").unwrap();
@@ -807,30 +559,6 @@ mod wire_tests {
         assert_eq!(
             serde_json::to_string(&ModelId::new("opus")).unwrap(),
             "\"opus\""
-        );
-    }
-
-    /// Opus alone, which is the CLI's own gate rather than a taste — it refuses
-    /// fast mode to anything whose resolved model does not name `opus-5` or
-    /// `opus-4-8`. Pinned because `send_msg` clamps the pick against this: a row
-    /// wrongly marked here would persist `fast: true` on a session running at
-    /// ordinary speed, and `dray new` hands that down to every child.
-    #[test]
-    fn claude_offers_fast_mode_on_opus_alone() {
-        let offered: Vec<(String, bool)> = claude_models()
-            .into_iter()
-            .map(|m| (m.id.to_string(), m.supports_fast))
-            .collect();
-
-        assert_eq!(
-            offered,
-            [
-                ("fable".to_string(), false),
-                ("opus".to_string(), true),
-                ("claude-fable-5".to_string(), false),
-                ("sonnet".to_string(), false),
-                ("haiku".to_string(), false),
-            ]
         );
     }
 }

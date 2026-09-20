@@ -8,169 +8,28 @@ import type { Harness } from "@/types/events";
 /// surface whose job is to be quiet. It also lets one selected icon go
 /// `text-foreground` while the other stays muted, which is the whole of how the
 /// picker shows which agent is on.
-function ClaudeIcon({ className }: { className?: string }) {
+/// MiniMax Code's mark — a monogram, because the vendor's own art is not in
+/// this repository and a brand glyph traced from memory is worse than none.
+/// Drawn in `currentColor` like the marks this file used to hold, so it sits in
+/// a row of muted chrome rather than shouting over it.
+function MiniMaxIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
       className={cn("size-4 shrink-0", className)}
-      fill="currentColor"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
       role="img"
-      aria-label="Claude"
+      aria-label="MiniMax Code"
     >
-      <path d="M4.709 15.955l4.72-2.647.079-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.081-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z" />
+      <path d="M4 17V8l4 5 4-5v9" />
+      <path d="M16 17V8m0 5h4v4" />
     </svg>
   );
 }
 
-function OpenAiIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className={cn("size-4 shrink-0", className)}
-      fill="currentColor"
-      role="img"
-      aria-label="OpenAI"
-    >
-      <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.4590a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997z" />
-    </svg>
-  );
-}
-
-/// fx's own wordmark, the `fx` glyph from fx.sh's nav, redrawn on
-/// `currentColor`. The triangle it replaces was Vercel's — right while fx rode
-/// the gateway, wrong as fx's own mark now that the agent is the subject.
-///
-/// Its native viewBox is kept (`166.241 0 155.861 156`): the coordinates are
-/// the glyph's own, and rescaling to 24 to match the others buys nothing but
-/// rounding. `fill-rule="evenodd"` is load-bearing — the counter inside the
-/// glyph is a hole cut by a second contour in the one path, which the default
-/// `nonzero` fills in as a slightly wrong solid blob. Monochrome by design, so
-/// `brand` leaves it on `currentColor`.
-function FxIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="166.241 0 155.861 156"
-      className={cn("size-4 shrink-0", className)}
-      fill="currentColor"
-      role="img"
-      aria-label="fx"
-    >
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M237.89 0C243.18 0 249.38 1.42 253.03 3.07L255.09 4.01L250.08 18.63L247.68 17.75C244.9 16.72 241.94 15.8 238.49 15.8C234.98 15.8 232.79 16.56 231.08 18.32C229.23 20.23 227.63 23.64 226.23 29.76L226.23 29.76L226.23 29.76L225.14 34.85H241.67L260.43 34.95L260.69 34.95L260.84 35.17L278.85 61.63L296.74 34.95H320.87L291.68 76.74L322.1 119.75H299.33L299.18 119.55L241.14 40.48L239.35 49.4H222.07L205.69 127.21C203.93 135.71 201.19 142.84 196.78 147.87C192.27 153.01 186.2 155.75 178.34 155.75C174.18 155.75 170.75 155.11 167.91 154.11L166.24 153.52V137.18L166.9 137.4L169.53 138.28C172.18 139.16 174.41 139.8 177.14 139.8C178.53 139.8 179.7 139.53 180.73 138.98C181.76 138.43 182.68 137.6 183.52 136.44C185.3 133.99 186.72 130.13 187.9 124.67L203.76 49.4H189.87L191.76 39.44L192.04 39.35L206.82 34.47L208.15 28.64C210.52 18.21 213.77 10.94 218.71 6.32C223.74 1.61 230.13 0 237.89 0ZM273.99 99.08L260.07 120.25H234.54L261 82.02L273.99 99.08Z"
-      />
-    </svg>
-  );
-}
-
-/// pi's own mark, from its press kit, redrawn on `currentColor`. MIT,
-/// © Earendil Inc. & Contributors, credited in the root README beside the
-/// ported themes.
-///
-/// The primary logo rather than the badge: the badge carries its own `#09090b`
-/// rounded plate, which is a second surface inside a row of chrome that already
-/// has one. Two paths of flat geometry, kept at their native 800 viewBox — the
-/// coordinates are exact multiples of the grid the mark is drawn on, and
-/// rescaling to 24 to match the others buys nothing but rounding.
-///
-/// `fill-rule="evenodd"` is load-bearing: the P's counter is a hole cut by a
-/// second contour in the same path, and the default `nonzero` fills it in —
-/// which reads as a slightly wrong solid blob rather than as a bug.
-function PiIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 800 800"
-      className={cn("size-4 shrink-0", className)}
-      fill="currentColor"
-      role="img"
-      aria-label="pi"
-    >
-      <path
-        fillRule="evenodd"
-        d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-      />
-      <path d="M517.36 400H634.72V634.72H517.36Z" />
-    </svg>
-  );
-}
-
-/// omp's own mark, from `assets/icon.svg` in its repository, redrawn on
-/// `currentColor` with its connector left in omp's orange.
-///
-/// MIT, © Can Bölük and Stencil Labs, Inc. — the same fork the licence names
-/// beside Mario Zechner's, credited in the root README.
-///
-/// The shape is the fork made literal: where pi's mark is a P, omp's is that
-/// same bar and legs carrying a **plugin connector**. Flattening the whole
-/// thing to `currentColor` would leave a wordless row of marks with nothing
-/// saying which is which — see [`OMP_CONNECTOR`] for why this one keeps its
-/// colour where the other monochrome marks do not.
-///
-/// `fill-rule="evenodd"` is load-bearing on the connector: its two slots are
-/// holes cut by second and third contours in the same path, and the default
-/// `nonzero` fills them in — which reads as a solid blob rather than as a plug.
-///
-/// The original's rounded corners are square here, and that is the cost of the
-/// holes: a rounded rect cannot also carry a cut-out without a mask, and at the
-/// two sizes this is drawn at (14px in the picker, 12px on the trigger) a 3-unit
-/// radius on a 120-unit box is a fifth of a pixel.
-function OmpIcon({ className, brand }: { className?: string; brand?: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 120 90"
-      className={cn("size-4 shrink-0", className)}
-      fill="currentColor"
-      role="img"
-      aria-label="omp"
-    >
-      {/* The bar and the two legs: pi's skeleton, which the fork kept. */}
-      <rect x="10" y="8" width="100" height="12" rx="2" />
-      <rect x="25" y="20" width="12" height="62" rx="2" />
-      <rect x="75" y="20" width="12" height="45" rx="2" />
-      {/* Everything that is omp's own: the connector, and the two accent dots
-          the original sits on the bar. */}
-      <g className={cn(brand && OMP_CONNECTOR)}>
-        <path
-          fillRule="evenodd"
-          clipRule="evenodd"
-          d="M71 55H91V71H71ZM76 59H79V67H76ZM82 59H85V67H82Z"
-        />
-        <circle cx="18" cy="14" r="2" opacity="0.8" />
-        <circle cx="102" cy="14" r="2" opacity="0.8" />
-      </g>
-    </svg>
-  );
-}
-
-/// Claude's own rust. The one saturated colour allowed on these marks, and it
-/// is a brand constant rather than a theme token — no palette should be able to
-/// move it, and no other surface should be able to reach for it. OpenAI's mark
-/// has no counterpart: it is monochrome by design, so `brand` leaves it on
-/// `currentColor` and the row still reads as one set.
-const CLAUDE_RUST = "text-[#d97757]";
-
-/// omp's orange, and the deliberate second exception to the rule above.
-///
-/// The rule is about a row of marks staying quiet, and a plug the size of a
-/// pixel and a half does not threaten it — while monochrome would, because it
-/// would leave omp's mark as pi's mark. The two harnesses are forks of one
-/// another and their skeletons *are* the same drawing; the connector is the
-/// whole of what tells them apart at the size a wordless row draws them.
-///
-/// It is still a brand constant rather than a theme token, for
-/// [`CLAUDE_RUST`]'s reason, and it is applied only where `brand` is set — the
-/// agent picker and the composer's trigger. Drawn as a bullet in a row of muted
-/// chrome, the plug goes back to `currentColor` with the rest of it.
-const OMP_CONNECTOR = "text-[#f97316]";
-
-/// The mark for a harness, so a caller with a `Harness` in hand never has to
-/// branch on it. One place to add the third agent's.
-///
-/// `brand` where the mark is the subject — the agent picker, and the trigger
-/// that names which agent is running. Everywhere else it stays `currentColor`,
-/// so a mark used as a bullet in a row of muted chrome does not become the
-/// loudest thing on it.
 export default function AgentIcon({
   harness,
   className,
@@ -180,22 +39,11 @@ export default function AgentIcon({
   className?: string;
   brand?: boolean;
 }) {
-  switch (harness) {
-    case "codex":
-      return <OpenAiIcon className={className} />;
-    // Monochrome by design, like OpenAI's, so `brand` leaves it on
-    // `currentColor` and the row still reads as one set.
-    case "pi":
-      return <PiIcon className={className} />;
-    case "fx":
-      return <FxIcon className={className} />;
-    // omp's own mark, and not pi's — which is what a stand-in showed here
-    // until its own was drawn. The two are forks of one another, so their
-    // skeletons *are* the same drawing and only the connector tells them
-    // apart; pi's would leave a reader unable to say which agent a row is.
-    case "omp":
-      return <OmpIcon className={className} brand={brand} />;
-    default:
-      return <ClaudeIcon className={cn(brand && CLAUDE_RUST, className)} />;
-  }
+  // One agent, so there is nothing to switch on: the other four marks went with
+  // the harnesses that named them. `brand` is kept in the signature because
+  // every caller passes it and a mark with no second colour treats it the same
+  // as any other corner of muted chrome.
+  void harness;
+  void brand;
+  return <MiniMaxIcon className={className} />;
 }

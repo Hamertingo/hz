@@ -1,3 +1,4 @@
+import { todoTimeline, type TodoPlan, type TodoSource, type TodoTask } from "@/lib/todo";
 import { toolSummary } from "@/lib/tools";
 import type { AgentEvent, FileEdit, ToolResult, Usage } from "@/types/events";
 
@@ -84,6 +85,29 @@ type QuestionsAskedPayload = Extract<
 /// retired by the same `permission_decided`, so splitting them would mean two
 /// pending sets that have to stay ordered against each other.
 export type PendingAsk = PermissionRequestPayload | QuestionsAskedPayload;
+
+/// Every ask the log leaves unanswered, oldest first.
+///
+/// Split out of `buildTranscript` for the surface that draws one **beside the
+/// composer**: that needs the pending ask and nothing else, and building the
+/// whole transcript a second time to get it would be the expensive walk this
+/// app already memoises once per session. The two callers read the same rule, so
+/// the card in the transcript and the card at the composer can never disagree
+/// about which requests are live.
+export function pendingAsksOf(source: readonly AgentEvent[]): PendingAsk[] {
+  const asks: PendingAsk[] = [];
+  const answered = new Set<string>();
+
+  for (const event of source) {
+    const payload = event.payload;
+    if (payload.type === "permission_requested" || payload.type === "questions_asked") {
+      asks.push(payload);
+    }
+    if (payload.type === "permission_decided") answered.add(payload.requestId);
+  }
+
+  return asks.filter((ask) => !answered.has(ask.requestId));
+}
 
 export function isToolGroup(item: WorkItem): item is ToolGroup {
   return "kind" in item && item.kind === "tool_group";
@@ -571,6 +595,14 @@ const ABANDONED: ToolResult = {
   images: [],
 };
 
+/// The two arms a plan rides — a call and its result. Named rather than inlined
+/// in the filter because TypeScript only narrows a predicate it can see the type
+/// of, and `todoTimeline` takes exactly these two and nothing else.
+function isPlanSource(event: AgentEvent): event is AgentEvent & TodoSource {
+  const { type } = event.payload;
+  return type === "tool_call_started" || type === "tool_call_completed";
+}
+
 export function buildTranscript(
   source: AgentEvent[],
   /// Whether a child is actually running this session. A call with no result is
@@ -604,6 +636,18 @@ export function buildTranscript(
   /// they are one row: the call draws the header and this is what it opens
   /// onto. The join is `call_id`, which `file_edits` has always carried.
   editsByCallId: Map<string, FileEdit[]>;
+  /// The plan as it stood at each call that moved it, keyed by that call — the
+  /// same bargain as `editsByCallId`, for the same reason: a plan row is
+  /// history, and expanding it has to show the list as it was *then*.
+  ///
+  /// Read by [todoTimeline](../lib/todo.ts) rather than off `resultByCallId`
+  /// here, because the list rides the input on one harness and the result on
+  /// another and only that walk knows both.
+  todosByCallId: Map<string, TodoTask[]>;
+  /// Where the plan stands now, or null with no plan. Every surface outside the
+  /// transcript reads this — the strip above the composer, the panel's tab and
+  /// its `tabOrder` — so the list is walked once rather than per surface.
+  todoPlan: TodoPlan | null;
   /// Consent requests and questions still waiting on the user, oldest first.
   ///
   /// Lifted out of the turns on purpose. A subagent's request would otherwise
@@ -622,8 +666,6 @@ export function buildTranscript(
   // verdict.
   const open = new Set<string>();
   const abandoned = new Set<string>();
-  const asks: PendingAsk[] = [];
-  const answered = new Set<string>();
   const callById = new Map<string, AgentEvent>();
   for (const event of events) {
     if (event.payload.type === "tool_call_started") {
@@ -653,18 +695,9 @@ export function buildTranscript(
       for (const callId of open) abandoned.add(callId);
       open.clear();
     }
-    if (
-      event.payload.type === "permission_requested" ||
-      event.payload.type === "questions_asked"
-    ) {
-      asks.push(event.payload);
-    }
-    if (event.payload.type === "permission_decided") {
-      answered.add(event.payload.requestId);
-    }
   }
 
-  const pendingAsks = asks.filter((ask) => !answered.has(ask.requestId));
+  const pendingAsks = pendingAsksOf(events);
 
   // Whatever is still open at the end of the log is only pending while something
   // could still produce a result. With no child running, nothing can.
@@ -687,7 +720,10 @@ export function buildTranscript(
         done: false,
         background: false,
         usage: null,
-        inline: event.harness === "fx",
+        // Never inline: that mark is for a harness that reports nothing at all
+        // about a child, and mcode's spawning call is what its panel row is
+        // built from.
+        inline: false,
         events: [],
         spawn: null,
       };
@@ -751,6 +787,11 @@ export function buildTranscript(
 
   const mainThread = events.filter((event) => !event.subagent);
 
+  // Off the main thread only: a subagent's own todo extension keys its list to
+  // its own session, so letting one through would file a child's plan under the
+  // parent that is reading this one.
+  const todo = todoTimeline(mainThread.filter(isPlanSource));
+
   return {
     events: mainThread,
     // `subagentById` is keyed by the spawning call's id, so its key set is
@@ -765,6 +806,8 @@ export function buildTranscript(
     subagentById,
     resultByCallId,
     editsByCallId,
+    todosByCallId: todo.byCallId,
+    todoPlan: todo.plan,
     pendingAsks,
   };
 }

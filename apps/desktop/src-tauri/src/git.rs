@@ -94,7 +94,7 @@ pub async fn worktree_branch_names(cwd: &str) -> Vec<String> {
 /// its first segment, so any remote counts, not only `origin`. A remote whose
 /// own name holds a slash (`git remote add a/b …` is legal) is read as a nested
 /// branch and claims nothing; being exact there costs a `git remote` read on
-/// every session creation, for a shape Dray never pushes to.
+/// every session creation, for a shape hz never pushes to.
 fn parse_worktree_branch_names(raw: &str) -> Vec<String> {
     raw.lines()
         .filter_map(|line| {
@@ -139,7 +139,7 @@ pub struct RepoSummary {
 /// does not, and that is a fact about the filesystem.
 ///
 /// **A root that is itself a repository answers `[root]` and stops there.** That
-/// is every project Dray has today, so the caller's "more than one" test draws
+/// is every project hz has today, so the caller's "more than one" test draws
 /// nothing new; and it is also what keeps a vendored checkout or a submodule
 /// inside a normal repository out of the reader's repository control, where it
 /// is that repository's business rather than a workspace member.
@@ -319,7 +319,7 @@ pub async fn checkout_branch(cwd: &str, branch: &str, stash: bool) -> Result<Bra
     if stash {
         // Named so the entry is recognizable in `git stash list` weeks later,
         // next to whatever the user stashed by hand.
-        let msg = format!("dray: switching to {branch}");
+        let msg = format!("hz: switching to {branch}");
         run(cwd, &["stash", "push", "--include-untracked", "-m", &msg]).await?;
     }
 
@@ -394,7 +394,7 @@ fn parse_branches(raw: &str) -> Vec<String> {
 /// The blobs `add` writes are unreachable and a routine `git gc` collects them;
 /// a session's worth is a few dozen small loose objects.
 pub async fn snapshot_tree(cwd: &str) -> Option<String> {
-    let index = std::env::temp_dir().join(format!("dray-index-{}", Uuid::now_v7()));
+    let index = std::env::temp_dir().join(format!("hz-index-{}", Uuid::now_v7()));
     let tree = write_snapshot(cwd, &index).await;
     let _ = fs::remove_file(&index).await;
     tree
@@ -1096,7 +1096,7 @@ pub async fn log_commits(cwd: &str, limit: u32, skip: u32) -> Result<Vec<Commit>
 
 /// The commit this branch forked from, read out of the branch's own reflog.
 ///
-/// `claude -w` and `dray new --from` both create the branch with
+/// `claude -w` and `hz new --from` both create the branch with
 /// `git worktree add --no-track -B`, which writes `branch: Created from <base>`
 /// on first creation and `branch: Reset to <base>` when the branch already
 /// existed. The entry's own `%H` **is** the base commit, because the branch
@@ -1388,7 +1388,7 @@ pub struct WorktreeDisposition {
 /// The lock a `-p` session leaves behind.
 ///
 /// Claude Code locks a worktree at creation and — verified against v2.1.239 —
-/// a `-p` run does not release it on exit, so nearly every worktree Dray
+/// a `-p` run does not release it on exit, so nearly every worktree hz
 /// creates is still locked by a dead process. `git worktree remove --force`
 /// refuses a locked tree outright (exit 128, "use 'remove -f -f' to override
 /// or unlock first"), which makes unlocking a required step here rather than a
@@ -1448,7 +1448,7 @@ fn resolved(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Whether this path is a worktree **Dray created**, which is the only kind it
+/// Whether this path is a worktree **hz created**, which is the only kind it
 /// is allowed to delete.
 ///
 /// The guard is the path shape, not the index: an index entry is a record of
@@ -1597,7 +1597,7 @@ pub fn worktree_branch(name: &str) -> String {
 /// cannot do this: `claude -w` resolves the repo's default branch, fetches
 /// `origin/<it>` and passes *that* to `git worktree add`, and its flag surface
 /// exposes no base ref at all. So a session that has to start from existing
-/// work is one Dray makes the tree for and then spawns the child *into*, with
+/// work is one hz makes the tree for and then spawns the child *into*, with
 /// no `-w` at all.
 ///
 /// **A branch, never a detached HEAD.** Detaching would suit a session that
@@ -1609,7 +1609,7 @@ pub fn worktree_branch(name: &str) -> String {
 /// else about it.
 ///
 /// `-B` rather than `-b`, matching the CLI: a branch left behind by a tree
-/// deleted outside Dray would otherwise make that name fail forever, since the
+/// deleted outside hz would otherwise make that name fail forever, since the
 /// name is what the branch is derived from. It cannot clobber live work — git
 /// refuses to reset a branch another worktree holds, which is exactly the case
 /// where somebody is using it.
@@ -1673,7 +1673,7 @@ pub async fn remove_worktree(project_path: &str, worktree_path: &str, branch: Op
     let tree = PathBuf::from(worktree_path);
 
     if !is_managed_worktree(&project, &tree) {
-        bail!("{worktree_path} is not a worktree Dray created, so it will not be removed");
+        bail!("{worktree_path} is not a worktree hz created, so it will not be removed");
     }
 
     if let Some(reason) = worktree_disposition(worktree_path, project_path).await.locked_by {
@@ -1810,7 +1810,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("dray-repos-{name}-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-repos-{name}-{}", Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -1822,7 +1822,7 @@ mod tests {
             .collect()
     }
 
-    /// **The backward-compatibility argument, as a test.** Every project Dray
+    /// **The backward-compatibility argument, as a test.** Every project hz
     /// has today is a repository, so the caller's "more than one" test draws
     /// nothing new for any of them.
     ///
@@ -1912,7 +1912,7 @@ mod tests {
     /// command is reachable with a project whose directory has been removed.
     #[tokio::test]
     async fn a_missing_root_answers_nothing() {
-        let missing = std::env::temp_dir().join(format!("dray-gone-{}", Uuid::now_v7()));
+        let missing = std::env::temp_dir().join(format!("hz-gone-{}", Uuid::now_v7()));
 
         assert!(repos_under(missing.to_str().unwrap()).await.is_empty());
     }
@@ -2029,7 +2029,7 @@ mod tests {
     /// `--git-path` resolved against the wrong directory — and none of them
     /// show up in a string fixture.
     async fn scratch_repo() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("dray-gittest-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-gittest-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
         let at = dir.to_str().unwrap();
 
@@ -2246,7 +2246,7 @@ mod tests {
     }
 
     /// The name is what the branch is derived from, so a branch left behind by
-    /// a tree deleted outside Dray would make that name fail forever. `-B`
+    /// a tree deleted outside hz would make that name fail forever. `-B`
     /// resets it — and cannot reach a branch some worktree still holds, which
     /// is every case where the branch is somebody's live work.
     #[tokio::test]
@@ -2640,7 +2640,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_directory_that_is_not_a_repo_has_no_baseline() {
-        let dir = std::env::temp_dir().join(format!("dray-plain-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-plain-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
 
         // What keeps the panel hidden rather than erroring at the user.
@@ -2894,7 +2894,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_repo_with_no_commit_yet_diffs_against_the_empty_tree() {
-        let dir = std::env::temp_dir().join(format!("dray-unborn-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-unborn-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
         let at = dir.to_str().unwrap();
         run(at, &["init", "-q", "."]).await.unwrap();
@@ -2927,7 +2927,7 @@ mod tests {
         // what makes an empty uncommitted list empty.
         assert_eq!(snapshot_tree(at).await.as_deref(), Some(head.as_str()));
 
-        let empty = std::env::temp_dir().join(format!("dray-nonrepo-{}", Uuid::now_v7()));
+        let empty = std::env::temp_dir().join(format!("hz-nonrepo-{}", Uuid::now_v7()));
         fs::create_dir_all(&empty).await.unwrap();
         assert_eq!(head_tree(empty.to_str().unwrap()).await, None);
 
@@ -2964,7 +2964,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_directory_that_is_not_a_repo_has_no_history() {
-        let dir = std::env::temp_dir().join(format!("dray-nonrepo-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-nonrepo-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
 
         assert!(log_commits(dir.to_str().unwrap(), 50, 0).await.unwrap().is_empty());
@@ -3052,7 +3052,7 @@ mod tests {
         let dir = scratch_repo().await;
         let at = dir.to_str().unwrap();
 
-        let bare = std::env::temp_dir().join(format!("dray-origin-{}", Uuid::now_v7()));
+        let bare = std::env::temp_dir().join(format!("hz-origin-{}", Uuid::now_v7()));
         fs::create_dir_all(&bare).await.unwrap();
         run(bare.to_str().unwrap(), &["init", "-q", "--bare", "."])
             .await
@@ -3115,7 +3115,7 @@ mod tests {
         let dir = scratch_repo().await;
         let at = dir.to_str().unwrap();
 
-        let bare = std::env::temp_dir().join(format!("dray-origin-{}", Uuid::now_v7()));
+        let bare = std::env::temp_dir().join(format!("hz-origin-{}", Uuid::now_v7()));
         fs::create_dir_all(&bare).await.unwrap();
         run(bare.to_str().unwrap(), &["init", "-q", "--bare", "."])
             .await
@@ -3171,7 +3171,7 @@ mod tests {
     /// every other read here, never an error.
     #[tokio::test]
     async fn a_directory_that_is_not_a_repo_has_no_branch_history() {
-        let dir = std::env::temp_dir().join(format!("dray-nonrepo-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-nonrepo-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
 
         assert!(log_branch_commits(dir.to_str().unwrap(), 50, 0)
@@ -3238,7 +3238,7 @@ mod tests {
     async fn work_status_names_the_default_branch_without_its_remote() {
         let dir = scratch_repo().await;
         let at = dir.to_str().unwrap();
-        let remote = std::env::temp_dir().join(format!("dray-remote-{}", Uuid::now_v7()));
+        let remote = std::env::temp_dir().join(format!("hz-remote-{}", Uuid::now_v7()));
 
         fs::create_dir_all(&remote).await.unwrap();
         run(remote.to_str().unwrap(), &["init", "-q", "--bare", "."])
@@ -3266,7 +3266,7 @@ mod tests {
     async fn work_status_counts_commits_against_the_base_not_the_upstream() {
         let dir = scratch_repo().await;
         let at = dir.to_str().unwrap();
-        let remote = std::env::temp_dir().join(format!("dray-remote-{}", Uuid::now_v7()));
+        let remote = std::env::temp_dir().join(format!("hz-remote-{}", Uuid::now_v7()));
 
         fs::create_dir_all(&remote).await.unwrap();
         run(remote.to_str().unwrap(), &["init", "-q", "--bare", "."])
@@ -3310,7 +3310,7 @@ mod tests {
     async fn work_status_keeps_slashes_inside_the_default_branch_name() {
         let dir = scratch_repo().await;
         let at = dir.to_str().unwrap();
-        let remote = std::env::temp_dir().join(format!("dray-remote-{}", Uuid::now_v7()));
+        let remote = std::env::temp_dir().join(format!("hz-remote-{}", Uuid::now_v7()));
 
         fs::create_dir_all(&remote).await.unwrap();
         run(remote.to_str().unwrap(), &["init", "-q", "--bare", "."])
@@ -3345,7 +3345,7 @@ mod tests {
     /// error — the row hides on `branch` being `None`.
     #[tokio::test]
     async fn work_status_outside_a_repo_offers_nothing() {
-        let dir = std::env::temp_dir().join(format!("dray-plain-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-plain-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
 
         let status = work_status(dir.to_str().unwrap()).await;

@@ -9,7 +9,7 @@ import tailwindcss from "@tailwindcss/vite";
 const host = process.env.TAURI_DEV_HOST;
 // Set by `scripts/tauri.mjs`, which is the only place that can know the port
 // before either server starts. Absent under a bare `pnpm dev`.
-const devPort = Number(process.env.DRAY_DEV_PORT) || 1420;
+const devPort = Number(process.env.HZ_DEV_PORT) || 1420;
 
 const url = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
@@ -39,7 +39,7 @@ function fileIcons(): Plugin {
   };
 
   stage();
-  return { name: "dray-file-icons", buildStart: stage };
+  return { name: "hz-file-icons", buildStart: stage };
 }
 
 /// The branch this dev server was started on, for the dev badge to name.

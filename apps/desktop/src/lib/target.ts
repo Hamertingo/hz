@@ -26,7 +26,7 @@ export function valueToTarget(value: string): string | null {
 /// simply *is* `Project.path`, which is what the reader attached.
 ///
 /// For a project that is itself a repository this answers that repository, which
-/// is every project Dray had before workspaces existed. For a workspace whose
+/// is every project hz had before workspaces existed. For a workspace whose
 /// root is chosen it answers the directory holding the repositories, which is
 /// the workflow the root option exists for: one session reaching all of them.
 export function sessionTargetPath(

@@ -32,7 +32,7 @@ describe("sessionTargetPath", () => {
   });
 
   /// A project that is itself a repository names no repository, so the two
-  /// answers coincide — which is why every project Dray had before this sends
+  /// answers coincide — which is why every project hz had before this sends
   /// exactly the directory it always did.
   it("is the project path for a single-repository project", () => {
     expect(sessionTargetPath(ROOT, null)).toBe(ROOT);

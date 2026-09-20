@@ -1,11 +1,11 @@
 ---
-name: dray
-description: Create, list and message Dray sessions, and drive this session's browser, from the command line. Use when the user asks to work on several things at once — a batch of issues, tickets, or tasks — and each deserves its own agent, its own branch, and its own place in the sidebar; for checking on sessions you started and messaging between them; and whenever a page needs looking at or acting on — a dev server, a deployed site, docs — through `dray browser`, never a headless browser or a browser MCP.
+name: hz
+description: Create, list and message hz sessions, and drive this session's browser, from the command line. Use when the user asks to work on several things at once — a batch of issues, tickets, or tasks — and each deserves its own agent, its own branch, and its own place in the sidebar; for checking on sessions you started and messaging between them; and whenever a page needs looking at or acting on — a dev server, a deployed site, docs — through `hz browser`, never a headless browser or a browser MCP.
 ---
 
-# Dray sessions
+# hz sessions
 
-Dray runs coding agents in parallel, one chat per piece of work. The `dray` CLI
+hz runs coding agents in parallel, one chat per piece of work. The `hz` CLI
 creates those sessions from outside the app, so an agent in one session can fan
 work out into several.
 
@@ -23,13 +23,13 @@ genuinely independent: separate branches, separate PRs. Steps of one job belong
 in one session, and subagents already handle parallelism inside a turn.
 
 The other reason is **a web page**: checking the dev server you just changed,
-reading a docs site, filling a form, taking a screenshot. `dray browser` is the
+reading a docs site, filling a form, taking a screenshot. `hz browser` is the
 browser this session already has open in the app — see *Driving the browser*.
 
 ## Creating a session
 
 ```bash
-dray new "Fix the login redirect loop described in ENG-412"
+hz new "Fix the login redirect loop described in ENG-412"
 ```
 
 Prints the new session's id. It returns immediately — the session starts working
@@ -104,31 +104,31 @@ which is the choice they already made. Pass one only when the user named it,
 and pass it whole — `xai/grok-4.6`, not `grok-4.6`, since two providers can
 serve the same model name.
 
-**pi runs without a permission gate.** It has no approval system, and Dray's
+**pi runs without a permission gate.** It has no approval system, and hz's
 own is not built for it yet, so a pi session does what the model asks. Say so
 when you start one for work that writes.
 
 ### Tagging a session with its issue
 
 ```bash
-dray new --issue DRA-53 "Add the issue panel described in DRA-53"
-dray issue link DRA-53 --title "Add the issue panel" --url https://linear.app/acme/issue/DRA-53
-dray issue link DRA-53 DRA-54
-dray issue unlink DRA-54
+hz new --issue DRA-53 "Add the issue panel described in DRA-53"
+hz issue link DRA-53 --title "Add the issue panel" --url https://linear.app/acme/issue/DRA-53
+hz issue link DRA-53 DRA-54
+hz issue unlink DRA-54
 
-dray issue link <session-id> DRA-53 --title "Add the issue panel"
+hz issue link <session-id> DRA-53 --title "Add the issue panel"
 ```
 
 `link` and `unlink` tag **your own session** when you do not name one, so you
-never have to write `$DRAY_SESSION_ID` — and you must not, because Claude Code
+never have to write `$HZ_SESSION_ID` — and you must not, because Claude Code
 refuses a command naming an environment variable inside a worktree, which is
-where every session `dray new` creates runs. Name a session to tag one you
+where every session `hz new` creates runs. Name a session to tag one you
 spawned.
 
 A tagged session shows an **Issue** tab in the user's panel, and its prompt gains
 one line per issue: the identifier and the title, nothing else.
 
-`dray issue link` **writes down what you give it and asks the tracker nothing.**
+`hz issue link` **writes down what you give it and asks the tracker nothing.**
 So pass `--title` and `--url` — you have just read the issue and they cost you
 nothing, where without them the tag is a bare `#DRA-53` that links nowhere. They
 describe one issue, so name one issue when you use them.
@@ -143,12 +143,12 @@ title and the identifier and nothing behind them. `claude mcp list` says which
 servers are reachable.
 
 `--issue`, and a `#DRA-53` written into a prompt, are the other half and they
-*do* need the user to have connected a tracker in Dray — that is where the title
+*do* need the user to have connected a tracker in hz — that is where the title
 is looked up. If they have not, the tag stays plain text, the session still runs,
 and nothing fails. Report it rather than working around it.
 
-You can also write `#DRA-53` straight into a prompt — `dray new`, `dray send`, or
-the user's own composer. Dray resolves the tag and links it exactly as `--issue`
+You can also write `#DRA-53` straight into a prompt — `hz new`, `hz send`, or
+the user's own composer. hz resolves the tag and links it exactly as `--issue`
 does.
 
 ### Each session gets its own worktree
@@ -164,13 +164,13 @@ another session's.
 ### Basing a session on existing work
 
 ```bash
-dray new --from <session-id> "Review the work on this branch and report what you find"
-dray new --from feature/login "Write tests for the login flow on this branch"
+hz new --from <session-id> "Review the work on this branch and report what you find"
+hz new --from feature/login "Write tests for the login flow on this branch"
 ```
 
-`--from` takes a **session id** — the same id `dray ls` prints and `dray send`
+`--from` takes a **session id** — the same id `hz ls` prints and `hz send`
 takes — or a branch, tag or commit. Naming a session is the usual case: you have
-its id already, and you do not have to know how Dray names its branches.
+its id already, and you do not have to know how hz names its branches.
 
 This is what makes review possible. Spawn a session with a different model or a
 different harness, point it at yours with `--from`, and it gets its own checkout
@@ -194,28 +194,28 @@ Three things to know:
   directory, and `--from` is not it. Two agents writing to one checkout overwrite
   each other, and the changes panel cannot tell them apart.
 
-The line `dray new` prints says what it resolved: `Started "…" in worktree
+The line `hz new` prints says what it resolved: `Started "…" in worktree
 calm-owl, based on worktree-brisk-jade`. Worth reading back when you passed a
 session id, since the branch that id resolved to is something only the app knew.
 
 ## Listing sessions
 
 ```bash
-dray ls              # this project, human-readable
-dray ls --json       # machine-readable
-dray ls --all        # every project
+hz ls              # this project, human-readable
+hz ls --json       # machine-readable
+hz ls --all        # every project
 ```
 
 Each row carries the session id, title, status (`idle`, `in_progress`,
 `completed`), and branch. A session created by another one also says which —
 `spawned by <id>` in the table, `parentSessionId` in the JSON. This is how you
 check on sessions you started — nothing reports back on its own, so poll
-`dray ls` if you need to know when one finishes.
+`hz ls` if you need to know when one finishes.
 
 ## Messaging a session
 
 ```bash
-dray send <session-id> "Code review is done. Two findings, both fixed."
+hz send <session-id> "Code review is done. Two findings, both fixed."
 ```
 
 Works in both directions and between any two sessions:
@@ -229,7 +229,7 @@ queued and picked up at the next boundary — that is reported, and is not a
 failure.
 
 The receiving agent is told which session the message came from, and is given its
-id — so it can answer with `dray send <that-id>` without looking anything up.
+id — so it can answer with `hz send <that-id>` without looking anything up.
 Write it as a message to a colleague, not as a note to yourself.
 
 Send when there is something the other session genuinely needs. A message costs
@@ -237,30 +237,30 @@ it a whole turn, so "done" on its own is rarely worth one.
 
 ## Driving the browser
 
-Every session has its own browser, drawn in the app beside the chat. `dray
+Every session has its own browser, drawn in the app beside the chat. `hz
 browser` drives it: the user watches the same tabs you act on, and no other
 session's pages are reachable from here. The verbs are agent-browser's.
 
 ```bash
-dray browser open http://localhost:3000       # a page, in the active tab
-dray browser snapshot -i                      # what is on it, with @refs
-dray browser click @e4                        # a @ref or a CSS selector
-dray browser fill @e2 "hello"                 # fill clears first; type appends
-dray browser press Enter
-dray browser find role button click --name "Sign in"
-dray browser find text "Forgot password" click
-dray browser find label "Email" fill "me@example.com"
-dray browser get text                         # the page's text; or html, value, attr, title, url, count, box
-dray browser is visible ".toast"
-dray browser wait ".results"                  # or 1500, or --url /done, --text "Saved", --load load
-dray browser screenshot --full                # prints the PNG's path; a path of your own must be inside the checkout
+hz browser open http://localhost:3000       # a page, in the active tab
+hz browser snapshot -i                      # what is on it, with @refs
+hz browser click @e4                        # a @ref or a CSS selector
+hz browser fill @e2 "hello"                 # fill clears first; type appends
+hz browser press Enter
+hz browser find role button click --name "Sign in"
+hz browser find text "Forgot password" click
+hz browser find label "Email" fill "me@example.com"
+hz browser get text                         # the page's text; or html, value, attr, title, url, count, box
+hz browser is visible ".toast"
+hz browser wait ".results"                  # or 1500, or --url /done, --text "Saved", --load load
+hz browser screenshot --full                # prints the PNG's path; a path of your own must be inside the checkout
                                               # laid out at 1440×900 whatever the pane's width, or the last set viewport/device
-dray browser eval "document.title"
-dray browser console                          # what the page logged since last asked; `errors` for errors alone
-dray browser set device "iPhone 15"           # or: set viewport 375 667 — what screenshots are
+hz browser eval "document.title"
+hz browser console                          # what the page logged since last asked; `errors` for errors alone
+hz browser set device "iPhone 15"           # or: set viewport 375 667 — what screenshots are
                                               # laid out at; the pane on screen is left alone
-dray browser tab                              # list tabs; also: tab new [url], tab <id>, tab close [id]
-dray browser back                             # also: forward, reload, close
+hz browser tab                              # list tabs; also: tab new [url], tab <id>, tab close [id]
+hz browser back                             # also: forward, reload, close
 ```
 
 `snapshot` is the way to see a page: one line per element with a `@e<n>` ref
@@ -287,16 +287,16 @@ They can watch the sidebar.
 ## Staying current
 
 ```bash
-dray update
+hz update
 ```
 
 Resolves the newest release and stops there when it is the one already running,
 so this is cheap to run and safe to run often. Otherwise it downloads the new
 binary over the current one — and rewrites this skill, which ships inside that
-binary. So whatever you are reading always describes the `dray` you actually
+binary. So whatever you are reading always describes the `hz` you actually
 have.
 
-`dray update --force` installs the newest release even when it is the one you
+`hz update --force` installs the newest release even when it is the one you
 have, which repairs a damaged binary.
 
 The app and this CLI ship separately, so they can drift. When they disagree about
@@ -305,10 +305,10 @@ one is new — rather than doing something you cannot see is wrong. You do not n
 to know which flags need which version: run the command, and if the two disagree
 you get a refusal naming the cure. There are only two:
 
-- *"this dray CLI speaks protocol vN, the app speaks vM — run `dray update`"* —
+- *"this hz CLI speaks protocol vN, the app speaks vM — run `hz update`"* —
   you are behind. Run it, then retry the command. This is the common case and
   you can fix it yourself, in one step, without asking anyone.
-- *"… — update the Dray app"* — the **app** is behind. You cannot fix this from
+- *"… — update the hz app"* — the **app** is behind. You cannot fix this from
   here. Say so to the user, name the command you were trying to run, and stop.
   Do not work around it.
 
@@ -317,17 +317,17 @@ nothing was sent, so retrying after the fix is safe.
 
 ## When a command cannot reach the app
 
-Every `dray` command reaches the app over a unix socket — `ls` as much as `new` —
+Every `hz` command reaches the app over a unix socket — `ls` as much as `new` —
 so a failure to connect is one of three things, and the line tells you which.
 
-- **`permission denied reaching Dray at …`** — something blocked the connection,
+- **`permission denied reaching hz at …`** — something blocked the connection,
   usually a sandbox. If this command is sandboxed, retry this one command with
   escalated permissions; ask on that command alone, never for a sandbox-free
   shell. A retry refused the same way is the socket path's own permissions, which
   no escalation fixes — say so and name the path.
-- **`Dray isn't running. Start the app and try again.`** — the app is closed and
+- **`hz isn't running. Start the app and try again.`** — the app is closed and
   you cannot fix it from here. Only this sentence means that.
-- **`could not connect to Dray at …`** — the line names its own reason. Report it
+- **`could not connect to hz at …`** — the line names its own reason. Report it
   as written; it says nothing about whether the app is up.
 
 Nothing was created and nothing was sent in any of the three, so retrying after
@@ -335,12 +335,12 @@ the cure is safe.
 
 ## Limits
 
-- **`dray` does not write to the tracker.** Tagging records the link on the
+- **`hz` does not write to the tracker.** Tagging records the link on the
   session and nothing else: no status change, no comment, no attachment. If the
   user wants the issue moved or commented on, do it through the tracker's own
   MCP server. (The app's own issue panel has status and priority menus, but they
   are the user's to click — nothing here reaches them.)
-- **The browser is the session's own.** `dray browser` reaches the tabs of the
+- **The browser is the session's own.** `hz browser` reaches the tabs of the
   session running it and nothing else; downloads, file pickers and native
   dialogs are out of reach.
 - **No reading transcripts.** You can create, list and message. You cannot read
@@ -348,11 +348,11 @@ the cure is safe.
 - **Two levels deep.** A session you create may create sessions of its own; those
   may not. If you hit this, say so — the user can start the next batch from a
   top-level session.
-- **Dray must be running.** If it is not, `dray` says so in those words and
+- **hz must be running.** If it is not, `hz` says so in those words and
   exits non-zero. Only that sentence means it — see above, and do not read any
   other connection failure as the app being down.
 - **Nothing updates itself.** A CLI too old for the app is refused with a line
-  saying so; `dray update` is how that gets fixed. If the refusal says the *app*
+  saying so; `hz update` is how that gets fixed. If the refusal says the *app*
   is behind, tell the user — you cannot update it from here. Updating the app
   first is the smoother order for exactly that reason: it leaves the CLI behind,
   which is the half that can fix itself.

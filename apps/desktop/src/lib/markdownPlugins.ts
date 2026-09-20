@@ -30,7 +30,7 @@ const HARDEN = [
 /// `Markdown` hangs the cell's width cap on. The name is spelled again in
 /// `Markdown`'s class list — Tailwind only reads literal class strings, so the
 /// two cannot share the constant.
-export const TABLE_CELL_CLASS = "dray-table-cell";
+export const TABLE_CELL_CLASS = "hz-table-cell";
 
 /// Wraps each table cell's content in one block, so a width cap has an element
 /// it actually works on. A wide table is meant to scroll in its wrapper, not
@@ -79,14 +79,14 @@ export const REHYPE_PLUGINS = [
 /// spelled `[Footer.js](/Users/me/Footer.js)` has a label of its own that has to
 /// survive. `title` is what the reader wants on hover either way, so it is
 /// carrying a fact rather than being smuggled.
-export const FILE_PATH_CLASS = "dray-file-path";
+export const FILE_PATH_CLASS = "hz-file-path";
 
 /// Set beside [FILE_PATH_CLASS] on a run that was a markdown link before it was
 /// a file link, so it can be drawn as the link its author wrote rather than as
 /// a path found in a sentence. Two classes rather than one, because "is ours"
 /// and "was written as a link" are two facts and only the first decides whether
 /// this opens anything.
-export const FILE_LINK_CLASS = "dray-file-path-link";
+export const FILE_LINK_CLASS = "hz-file-path-link";
 
 /// Enough of hast to walk it. Typed here rather than pulled from `@types/hast`,
 /// which is not a dependency and would be one for four fields.

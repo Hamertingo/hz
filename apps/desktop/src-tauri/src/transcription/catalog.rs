@@ -1,4 +1,4 @@
-//! The models Dray offers, and which one it points a new reader at.
+//! The models hz offers, and which one it points a new reader at.
 //!
 //! A fixed list compiled into the binary rather than a manifest fetched at
 //! runtime: the set changes about as often as a release does, and a remote
@@ -8,7 +8,7 @@
 //! Weights come from Hugging Face rather than `blob.handy.computer`, which is
 //! the CDN [Handy](https://github.com/cjpais/Handy) publishes them through. The
 //! files are the same — these are the `handy-computer` org's own repos — but
-//! leaning on someone else's bandwidth for every Dray install is not ours to
+//! leaning on someone else's bandwidth for every hz install is not ours to
 //! spend. Pinned to a revision, so the URL keeps naming the bytes `sha256`
 //! describes even if the repo moves on.
 

@@ -17,42 +17,36 @@ import type { ApprovalPolicy, Harness } from "@/types/events";
 /// drawn like any other, which is the whole of the reader-facing surface.
 ///
 /// `plan` was offered and withdrawn. It was the one stance pi could enforce —
-/// `--tools read,grep,find,ls` at spawn, fixed for the process and covering
-/// extension tools too — but a lone read-only switch is not a permission mode,
-/// and beside it `bypassPermissions` named a bypass Dray does not perform. The
-/// enforcement stays in `pi.rs`, so a session already recorded `plan` still
-/// runs read-only rather than quietly running ungated.
+/// Which stances a harness actually has.
 ///
-/// fx exposes two modes over ACP — `ask` and `code` — and no bypass:
-/// `full-access` is neither a session mode nor reachable by env or flag on
-/// `fx acp`. So `auto` is the widest stance fx can run, and it is what an
-/// unhonoured one falls to there.
+/// Not every mode the app can record is one a CLI can run, and the two disagree
+/// per harness rather than in general — which is why this is stated rather than
+/// derived from one enum.
 const HONOURED: Partial<Record<Harness, ApprovalPolicy[]>> = {
-  codex: ["bypassPermissions", "manual", "auto"],
-  pi: [],
-  fx: ["manual", "auto"],
+  // mcode's own list, off a live `session/new`: `default` ("Ask"), `auto` and
+  // `bypassPermissions` ("Full access") as a session setting, plus `plan` as a
+  // session *mode* — see `mcode::set_mode`, which decides between the two.
+  //
+  // `acceptEdits` and `dontAsk` are **not** here: they are Claude Code's words
+  // and mcode has nothing between Ask and Auto to put them on.
+  // `permission_value_for` in `harness/mcode/mcode.rs` refuses them outright, so
+  // offering one from this picker would be a stance that fails at the send.
+  mcode: ["manual", "plan", "auto", "bypassPermissions"],
   // Empty for this slice, and it is a "not yet" rather than a "cannot" — omp
   // *does* have a native gate (`--approval-mode always-ask|write|yolo`) and
-  // raises its own approval card, which Dray already draws. What is missing is
-  // the mapping: which of its three corresponds to Dray's `auto`, and what
-  // `write` means precisely, is not verified against a capture. Promising a
-  // stance from the picker before that would set a session freer or stricter
-  // than the reader asked for.
-  //
-  // `omp.rs` enforces `plan` anyway, with `--tools read,grep,glob` — the one
-  // stance omp can make true by construction — so a session already recorded
-  // `plan` still runs read-only. OMP-PLAN.md §6 and slice 2 own the rest.
-  omp: [],
+  // raises its own approval card, which hz already draws. What is missing is
 };
 
 /// The stance a harness actually runs when handed one it does not honour.
 ///
-/// fx: a bypass falls to `auto`, the widest it can run. `plan` is narrower
-/// than anything fx has and falls the other way, to `manual` — fx.rs runs
-/// that as `ask`, and a spawned session inheriting `plan` must never come out
-/// freer than its parent.
-const FALLBACK: Partial<Record<Harness, (mode: ApprovalPolicy) => ApprovalPolicy>> = {
-  fx: (mode) => (mode === "plan" ? "manual" : "auto"),
+/// mcode: whatever a session arrives on that it does not honour — the `hz`
+/// CLI's flag, a role, a fork from a build with other harnesses — lands on
+/// `auto`, the widest stance it can run without a bypass.
+const FALLBACK: Record<Harness, (mode: ApprovalPolicy) => ApprovalPolicy> = {
+  // A stance arriving from somewhere else — the `hz` CLI's own flag, a role, a
+  // session forked from a build that had other harnesses — lands on `auto`,
+  // which is the widest mcode can run without a bypass.
+  mcode: () => "auto",
 };
 
 /// Whether this harness honours this stance.
@@ -76,5 +70,5 @@ export function honoursMode(harness: Harness, mode: ApprovalPolicy): boolean {
 /// pointed the other way, and the more alarming direction to be wrong in.
 export function stanceFor(harness: Harness, mode: ApprovalPolicy): ApprovalPolicy {
   if (honoursMode(harness, mode)) return mode;
-  return FALLBACK[harness]?.(mode) ?? "bypassPermissions";
+  return FALLBACK[harness](mode);
 }

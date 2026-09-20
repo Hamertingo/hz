@@ -117,7 +117,7 @@ export function PanelToggle({
 
 /// Which body the right panel is showing. This is the set, not the order —
 /// see `tabOrder`.
-export const PANEL_TABS = ["changes", "browser", "subagents", "pr", "issue", "docs"] as const;
+export const PANEL_TABS = ["changes", "browser", "todo", "subagents", "pr", "issue", "docs"] as const;
 
 export type PanelTab = (typeof PANEL_TABS)[number];
 
@@ -128,6 +128,10 @@ const LABELS: Record<PanelTab, string> = {
   // sentence saying there is nothing.
   browser: "Browser",
   subagents: "Subagents",
+  // Not "Todos": the app already calls this a plan everywhere it speaks about
+  // one — the strip's own line, `planLine`, the panel's header — and the tool's
+  // wire name is not something a reader ever sees.
+  todo: "Plan",
   // Singular, and not "Linear": the panel is about the work's issue whoever
   // tracks it, and a session usually carries one.
   issue: "Issue",
@@ -160,6 +164,7 @@ export function tabOrder({
   docs,
   issue,
   subagents,
+  todo,
 }: {
   pr: boolean;
   /// At least one markdown file is open in the pane — see
@@ -169,8 +174,16 @@ export function tabOrder({
   /// This session has spawned at least one subagent or background task. Absent
   /// otherwise, for the PR tab's reason — most sessions never spawn one.
   subagents: boolean;
+  /// This session has a plan — some agent opened a todo list on it. Absent
+  /// otherwise, for the same reason: most sessions never have one, and a tab
+  /// whose only content is "there is nothing here" is one the eye skips.
+  todo: boolean;
 }): readonly PanelTab[] {
   const tabs: PanelTab[] = pr ? ["pr", "changes", "browser"] : ["changes", "browser"];
+  // Hard against the pair above, since a plan is about the work this session is
+  // doing rather than something it read: the two windows onto the session's own
+  // state come first, and what it picked up along the way follows.
+  if (todo) tabs.push("todo");
   // After Changes, which is what keeps Issue immediately before Subagents.
   if (docs) tabs.push("docs");
   // Immediately before Subagents wherever it is drawn, so the row's order is
@@ -202,6 +215,8 @@ type RightPanelProps = {
   /// This session has spawned at least one subagent or background task. Absent
   /// otherwise, for the same reason.
   subagents?: boolean;
+  /// This session has a plan. Absent otherwise, for the same reason.
+  todo?: boolean;
   /// Re-reads whatever the active tab is showing, drawn at the far end of the
   /// tab row. One button rather than one per panel: it means the same thing
   /// everywhere, so it belongs to the frame and always sits in the same place.
@@ -232,6 +247,18 @@ type RightPanelProps = {
   /// what they act on; over a heading belonging to the thing underneath it, it
   /// cuts a title off its own body.
   heading?: string;
+  /// A strip of the caller's own tabs, drawn in place of the heading or the
+  /// session's row.
+  ///
+  /// **The frame owns the row; the caller brings what goes in it.** This pane's
+  /// tabs are the session's *views*, which the frame builds itself — but the
+  /// pull-requests page is the one pane whose tabs are not views at all: they
+  /// are the pull requests the reader has opened, and only that page knows what
+  /// they are. Everything around them stays the frame's — the drag region this
+  /// row is, the resize handle on its edge, the actions at its far end — and
+  /// `tab`/`onTabChange` are ignored while it is set, since there is no shared
+  /// row left to switch.
+  tabs?: React.ReactNode;
   children: React.ReactNode;
 };
 
@@ -268,16 +295,18 @@ export default function RightPanel({
   docs = false,
   issue = false,
   subagents = false,
+  todo = false,
   refresh,
   cwd,
   actions,
   heading,
+  tabs,
   children,
 }: RightPanelProps) {
-  const tabs = tabOrder({ pr, docs, issue, subagents });
+  const sessionTabs = tabOrder({ pr, docs, issue, subagents, todo });
   // 32rem, the width this pane opened at before it could be dragged.
   const { style, handle } = useResizable({
-    storageKey: "ade.rightPanelWidth",
+    storageKey: "hz.rightPanelWidth",
     initial: 512,
     min: 320,
     edge: "left",
@@ -309,7 +338,23 @@ export default function RightPanel({
         )}
         data-tauri-drag-region="deep"
       >
-        {heading ? (
+        {tabs ? (
+          // **The frame owns the row; the caller brings what goes in it.** The
+          // pane's own tabs are this session's views, which is what the frame
+          // draws — but the pull-requests page is the one pane whose tabs are
+          // not views at all, and it is the only thing that knows what they are.
+          // Everything around them stays the frame's: the drag region this row
+          // is, the resize handle on its edge, the actions at its far end.
+          //
+          // Scrolled rather than wrapped, the way the session's own row scrolled
+          // before the keycaps made wrapping necessary: a strip of open pull
+          // requests is a list the reader scrolled through to build, and a
+          // second line of tabs would move the pane's contents every time one
+          // was opened.
+          <div className="scrollbar-none flex h-full min-w-0 items-center gap-1 overflow-x-auto">
+            {tabs}
+          </div>
+        ) : heading ? (
           // Padded to sit where a tab's label would, so the pane's first line
           // lands on the same baseline whichever frame it is wearing.
           <span className="px-2 py-1 text-ui font-medium">{heading}</span>
@@ -331,7 +376,7 @@ export default function RightPanel({
                 the edge: those are reached for by position, where a tab can
                 still be scrolled to. */}
             <div className="flex h-full min-w-0 items-center gap-0.5 overflow-x-auto">
-              {tabs.map((value) => (
+              {sessionTabs.map((value) => (
                 <TabButton
                   key={value}
                   active={tab === value}

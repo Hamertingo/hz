@@ -1,4 +1,4 @@
-export const REPO = "https://github.com/monorepo-labs/dray";
+export const REPO = "https://github.com/Hamertingo/hz";
 
 /// `/releases/latest` redirects to whatever the newest stable release is, so
 /// the button needs no build-time lookup and can never point at a version that
@@ -12,17 +12,12 @@ export const DOWNLOAD = `${REPO}/releases/latest`;
 /// asset list when bumping.
 export const DOWNLOAD_SIZE = "32 MB";
 
-/// The person who builds it, on X — the nav's "Feedback" link and the
-/// footer's mark both. Most visitors arrive from a tweet, so this is the
-/// channel they are already on.
-///
-/// The product's own account (`x.com/dray_hq`) was here too and the footer
-/// pointed at it. It posts releases; somebody who reaches the bottom of this
-/// page is looking for a person, so both now go to the same place and there
-/// is no second constant to keep.
-export const FEEDBACK = "https://x.com/yogesharc";
+/// The person who builds it, on X — the nav's "Feedback" link and the footer's
+/// mark both. Most visitors arrive from a tweet, so this is the channel they
+/// are already on.
+export const FEEDBACK = "https://x.com/Hamerti015";
 
-export const COMPANY = "Monorepo Labs";
+export const COMPANY = "Hamerti";
 
 /// What the nav shows when GitHub cannot be asked. Bump it now and then so a
 /// rate-limited render does not undercount by much.

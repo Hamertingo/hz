@@ -1,9 +1,13 @@
 import type { Project } from "@/types/events";
 import { containingProject } from "@/lib/project";
 
-/// Where the active space is stored. Read outside React by `announce`, which
-/// fires from a listener registered once and so cannot hold hook state.
-export const SPACE_KEY = "ade.space";
+/// The key the active space is stored under — the name it had in the webview,
+/// now the key `src/lib/prefs.ts` reads and writes it by.
+///
+/// Read outside React by `announce`, which fires from a listener registered once
+/// and so cannot hold hook state: that read goes through `readLocalStorage`,
+/// which answers a moved key from `settings.json`.
+export const SPACE_KEY = "hz.space";
 
 /// Where spaces nobody has filled yet are stored.
 ///
@@ -13,7 +17,13 @@ export const SPACE_KEY = "ade.space";
 /// union of the two: the reader's own list, plus every name a project carries.
 /// A tag whose name was never declared still counts, which is what keeps a
 /// project filed on another machine from reading as filed nowhere.
-export const SPACE_LIST_KEY = "ade.spaces";
+///
+/// **Two records, and neither is derived from the other.** The declared list
+/// and the active pick are the frontend's, in `settings.json`; the tag is
+/// Rust's, in `projects.json` — see `settings.rs`, which says which side owns
+/// which field and why. [`spaceNames`] reads them as one set, and that is the
+/// only place they meet.
+export const SPACE_LIST_KEY = "hz.spaces";
 
 /// Every space there is, in the order the switcher walks them.
 ///

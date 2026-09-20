@@ -1,26 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Sliders } from "lucide-react";
+import { Check, Search, Sliders } from "lucide-react";
 import AgentIcon from "@/components/AgentIcon";
+import ModelMark from "@/components/ModelMark";
 import ModelLibraryDialog from "@/components/composer/ModelLibraryDialog";
-import { useAgentAvailability } from "@/hooks/useAgentAvailability";
-import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { useFanOutModels, toggleFanOutModel, clearFanOut } from "@/hooks/useModelFanOut";
+import { canFanOut, isFanOut } from "@/lib/fanOut";
+import { modelDisplayName } from "@/lib/modelBrand";
+import { usePreference } from "@/lib/prefs";
+import { cn } from "@/lib/utils";
 import {
   byProvider,
-  STARRED_MODELS_KEY,
+  discoveredList,
+  matchingRows,
+  type ModelRow,
+  rowModel,
+  rowOf,
+  MODEL_ROTATION_KEY,
+  modelRotation,
   topLevel,
   underMore,
-  usesShortlist,
-} from "@/lib/starredModels";
+} from "@/lib/modelRotation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -28,9 +39,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { invoke } from "@tauri-apps/api/core";
 import { offersFast } from "@/lib/fastMode";
-import { FX_PROVIDERS, HARNESS_ORDER, isUnsetModel } from "@/lib/model";
+import { isUnsetModel } from "@/lib/model";
 import type { Effort, Harness, Model, ModelId } from "@/types/events";
 
 const EFFORT_LABELS: Record<Effort, string> = {
@@ -42,18 +52,17 @@ const EFFORT_LABELS: Record<Effort, string> = {
   max: "Max",
 };
 
-/// Named as the reader knows them, not as the wire spells them. The label is
-/// the screen reader's alone — the row is marks, since two of them side by side
-/// say "pick one" in less space than two words do, and a tooltip repeating the
-/// name is longer than the row it hangs off.
-const AGENT_LABELS: Record<Harness, string> = {
-  claude_code: "Claude Code",
-  codex: "Codex",
-  pi: "pi",
-  fx: "fx",
-  omp: "omp",
+/// What a variant is called on screen, in the reader's words rather than the
+/// wire's.
+///
+/// `thinking` is the switch they turn on, and the empty variant — the id with a
+/// `:v:` and nothing after it — is the model running as it always does. A
+/// variant this table does not know is drawn as the wire spelled it, which is
+/// the only name anybody has for it.
+const VARIANT_LABELS: Record<string, string> = {
+  thinking: "Thinking",
+  "": "Default",
 };
-const AGENTS = HARNESS_ORDER.map((id) => ({ id, label: AGENT_LABELS[id] }));
 
 /// Next effort level for `model`, wrapping — what ⌘⇧E lands on. `null`
 /// where the model offers nothing to cycle, so the chord no-ops rather than
@@ -71,118 +80,36 @@ export function nextEffort(model: Model | undefined, current: Effort | null): Ef
   return cycle[(i + 1) % cycle.length];
 }
 
-/// fx's provider, as a segmented control at the top of the model menu.
+/// Which model the session runs and at what effort — one control, because the
+/// two are one decision.
 ///
-/// fx's list is its *active provider's*, and the provider is a global fx
-/// setting (`fx provider …`, written to `~/.fx/settings.json`). Beside the
-/// agent control and built the same way: a segmented control says "one of
-/// these" where stacked rows read as more models. Text, not icons — the
-/// providers have no brand mark here. The active one is read off the rows fx
-/// answered with.
+/// The agent used to sit in here as a row of its own, and no longer can: there
+/// is one, it is the child process, and a switch with a single position is a
+/// control that cannot be reached. Its mark stays on the trigger, where it names
+/// the agent at rest rather than only while the menu is open.
 ///
-/// Unlike the agent beside it, this is *not* creation-time. fx takes a provider
-/// switch in place and a switched session keeps it: the change persists onto
-/// fx's own session record, so a later `session/resume` comes back on it rather
-/// than on whatever the settings file names by then (`provider_switch.jsonl`).
-/// The session itself moves at the next send, where `fx::set_model` carries the
-/// provider across with the model — a model names its provider, and fx refuses
-/// one belonging to another.
+/// A model with variants is drawn as **one** row: the wire lists a variant as a
+/// choice of its own, but three rows reading `glm-5.3`, `glm-5.3 · thinking` is
+/// one idea drawn three times. The variant is the row's second control, beside
+/// the name, and the effort ladder is the third — see [`ModelRow`].
 ///
-/// **`aria-disabled`, never `disabled`, and the tooltip is the whole reason.**
-/// A `disabled` button fires no pointer events, so it can open no tooltip and
-/// swallows the hover on its way to any ancestor holding one — which leaves a
-/// dead control with nowhere to say why, the same trap the blocked update
-/// button documents. So the buttons stay live to the pointer and the click is
-/// guarded instead.
-function ProviderRow({
-  providers,
-  active,
-  current,
-  busy,
-  onPick,
-}: {
-  providers: readonly { id: string; short: string; label: string }[];
-  /// Index into `providers` of the one in force, or -1 before fx has said.
-  active: number;
-  current: string | undefined;
-  busy: boolean;
-  onPick: (id: string) => void;
-}) {
-  const row = (
-    <div
-      role="radiogroup"
-      aria-label="Provider"
-      // Dimmed on the track rather than per button, so the moving thumb goes
-      // with it — a lit thumb over dead buttons reads as one of them still
-      // being pressable.
-      className={`mb-1 flex items-center rounded-md bg-surface-well p-1 ${busy ? "opacity-45" : ""}`}
-    >
-      <div className="relative flex flex-1 items-center">
-        {/* The moving thumb, one segment wide, placed by index — the switch
-            slides across rather than blinking between pills. Hidden until a
-            provider is known, so first run reads as "none picked" rather than
-            the first segment being silently selected. */}
-        {active >= 0 && (
-          <span
-            aria-hidden
-            className="absolute top-0 left-0 h-6 rounded-sm bg-surface-thumb shadow-(--shadow-button) transition-transform duration-150 ease-out"
-            style={{
-              width: `${100 / providers.length}%`,
-              transform: `translateX(${active * 100}%)`,
-            }}
-          />
-        )}
-        {providers.map((provider) => (
-          <button
-            key={provider.id}
-            type="button"
-            role="radio"
-            aria-checked={provider.id === current}
-            aria-label={provider.label}
-            // A switch mid-turn would move the list and the pick under a prompt
-            // already running, and a queued prompt carries no live control
-            // change with it either. The turn is seconds to minutes, so waiting
-            // is the whole cure.
-            aria-disabled={busy}
-            onClick={() => !busy && onPick(provider.id)}
-            className="relative z-10 flex h-6 flex-1 items-center justify-center rounded-sm text-ui opacity-55 transition-opacity hover:opacity-100 aria-checked:opacity-100"
-          >
-            {provider.short}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-
-  if (!busy) return row;
-
-  // Only while the turn is running: a tooltip on a control that works would be
-  // one more thing to read on the way past it.
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{row}</TooltipTrigger>
-      {/* `max-w-none whitespace-nowrap` for the trigger tooltip's reason — the
-          menu is 202px and the default `max-w-xs` wraps a sentence this long
-          onto two rows. */}
-      <TooltipContent side="top" className="max-w-none whitespace-nowrap">
-        Provider can't be changed mid-stream
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-/// Which agent runs the session, which model it runs on, and at what effort —
-/// one control, because the three are one decision.
+/// **Shift-click builds a second thing.** Plain click picks one model, the way it
+/// always did. Shift-click adds the row to a fan-out set and leaves the menu
+/// open, and a send with two or more in it creates one session — and one
+/// worktree — per model. The whole machinery for that already existed (the
+/// worktree, the spawn, the nested sidebar rows); what was missing was a way to
+/// ask for it, so fan-out only happened when the agent itself called `hz new`.
 ///
-/// The agent used to sit in its own picker to the left. Folding it in costs
-/// nothing to reach (it is the first row of a menu that was already there) and
-/// buys the row a slot back, which the handoff row's three-button budget was
-/// already short of. It also puts the mark *on the trigger*, so the agent is
-/// readable at rest rather than only while the menu is open.
+/// The mark is the name's own colour, not a second check: a row can be the pick
+/// *and* in the set, and two glyphs would be two words for one state.
+///
+/// **Shift has to be caught on the way in, not in `onSelect`.** Radix fires a
+/// bare `CustomEvent` for a menu-item select — no `detail`, no `originalEvent` —
+/// so the modifier is gone by the time the handler runs. It is read off the item's
+/// own `pointerdown`/`pointermove`/`keydown` instead, which is also what makes a
+/// shift-Enter work.
 export default function ModelSelector({
   harness,
-  onHarnessChange,
-  canSwitchHarness,
   models,
   modelId,
   effort,
@@ -190,19 +117,16 @@ export default function ModelSelector({
   onFastChange,
   fastNote,
   isNewSession,
-  busy,
+  sessionId,
   onChange,
   onRefreshModels,
-  onReloadModels,
-  onSeedProvider,
+  onOpenProviderSettings,
   loadingModels = false,
 }: {
+  /// Which agent runs the session. Fixed for the life of the app, and read here
+  /// for what it decides rather than for anything to draw: whether the list is a
+  /// discovered one, and whether this agent has a fast mode to offer.
   harness: Harness;
-  onHarnessChange: (harness: Harness) => void;
-  /// The agent is the child process, so it is fixed once a session exists. The
-  /// row of icons goes with it; the trigger's own mark stays, since naming the
-  /// agent a session runs is worth a glyph whether or not it can change.
-  canSwitchHarness: boolean;
   models: Model[];
   modelId: ModelId;
   effort: Effort | null;
@@ -217,125 +141,85 @@ export default function ModelSelector({
   /// fx's fast mode is settled when its session is created and unreachable
   /// after, so the row it draws has to go once one exists.
   isNewSession: boolean;
-  /// Whether this session's turn is in flight. The provider switch is the one
-  /// control here that waits on it — everything else is a pick the send
-  /// applies, where this one moves the child the moment it is clicked.
-  busy: boolean;
+  /// Which composer's fan-out set this is. `null` before a session exists, the
+  /// same key `useDraft` and `useAttachments` use — the reader can set this up
+  /// on the empty state and it has to survive into the session it starts.
+  sessionId: string | null;
   onChange: (modelId: ModelId, effort: Effort | null) => void;
   /// Asks the harness for its list again, dropping the backend cache first.
-  /// Only pi has one that can change under the reader — the other two are
-  /// tables — so it is optional here.
+  /// Only a discovered list can change under the reader — the other kind is a
+  /// table — so it is optional here.
   onRefreshModels?: () => void;
-  /// Re-reads the current list *without* dropping the cache. The fx provider
-  /// switch uses it: the new provider's list is keyed server-side, so this
-  /// reads it cached rather than re-paying fx's startup on every hop.
-  onReloadModels?: () => void;
-  /// Shows a provider's cached fx models the instant it is picked, before the
-  /// fresh read lands. A provider never visited seeds nothing and waits.
-  onSeedProvider?: (provider: string) => void;
+  /// Opens the group where a provider is configured. Drawn only where there are
+  /// no models at all, which on a fresh install is the state the picker opens
+  /// in — an empty menu with no way out is the one dead end in this app.
+  onOpenProviderSettings?: () => void;
   loadingModels?: boolean;
 }) {
   // Controlled so a click on a submenu trigger can close the whole menu; Radix
   // otherwise keeps the parent open for the submenu it just opened on hover.
   const [open, setOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  // The provider fx is switching *to*, held so the segmented control moves the
-  // instant it is clicked: `fx provider` plus a re-read of the list is ~3s on a
-  // large provider, and a control that sits still that long reads as broken.
-  // Cleared when the refreshed list lands, which is when the real state governs.
-  const [pendingProvider, setPendingProvider] = useState<string | null>(null);
-  // Clear the optimistic thumb only once the *new* provider's list has landed,
-  // never on any list change: the switch fires a seed and then a reload, and an
-  // intermediate update still naming the old provider would otherwise clear the
-  // thumb and snap it back to where the switch came from. Also cleared when the
-  // reload settles on nothing — a provider with no models — so the thumb can't
-  // hang on a list that will never name it. A switch that errors clears it in
-  // the click's own catch.
-  useEffect(() => {
-    if (pendingProvider == null) return;
-    const landed = models[0]?.provider === pendingProvider;
-    const settledEmpty = models.length === 0 && !loadingModels;
-    if (landed || settledEmpty) setPendingProvider(null);
-  }, [models, pendingProvider, loadingModels]);
-
+  const [query, setQuery] = useState("");
+  // What a shift-click builds: one session and one worktree per model, all sent
+  // by the same press. Empty is the ordinary case.
+  const fanOut = useFanOutModels(sessionId);
+  const searchRef = useRef<HTMLInputElement>(null);
   // One copy, held here and handed down: the dialog and the menu both read it,
-  // and `useLocalStorage` is per-hook state rather than a store, so two
-  // mounted copies would desync the moment one of them wrote.
-  const [starred, setStarred] = useLocalStorage<ModelId[]>(STARRED_MODELS_KEY, []);
+  // and handing it down is what keeps them drawing the same rotation.
+  const [chosenRotation, setChosenRotation] = usePreference(MODEL_ROTATION_KEY, null);
+  // Resolved before anything reads it: nothing stored means every model, so a
+  // fresh install opens the library with every switch on and ⇧Tab cycling what
+  // the menu draws.
+  const rotation = useMemo(() => modelRotation(models, chosenRotation), [models, chosenRotation]);
 
-  const shortlisted = usesShortlist(harness);
-  // Shared with Shift+Tab, which cycles exactly what this draws — a chord
-  // landing on a model the menu never offered is the bug the sharing prevents.
-  const listed = useMemo(
-    () => topLevel(models, starred, harness, modelId),
-    [models, starred, harness, modelId],
+  // Every model the harness serves, the reader's rotation leading — see
+  // [`topLevel`]. Shared with Shift+Tab, which cycles the kept models plus the
+  // model the session is on: a chord landing on a model the menu never offered
+  // is the bug the sharing prevents, and a model with variants is one step
+  // there for the same reason it is one row here.
+  const rows = useMemo(() => topLevel(models, rotation, harness), [models, rotation, harness]);
+  const searched = useMemo(() => matchingRows(rows, query), [rows, query]);
+  const more = useMemo(
+    () => matchingRows(underMore(models, harness), query),
+    [models, harness, query],
   );
-  const more = useMemo(() => underMore(models, harness), [models, harness]);
-  // Headings earn their place only when two providers share the list — pi's
-  // multi-provider answer. fx serves one provider at a time, so its single
-  // group's heading names what nothing disputes and is dropped.
-  const providerGroups = useMemo(() => byProvider(listed), [listed]);
+  // Headings earn their place only when two providers share the list — a reader
+  // picking between two providers' models needs to know which is which. A single
+  // group's heading names what nothing disputes, so it is dropped.
+  const providerGroups = useMemo(() => byProvider(searched), [searched]);
+  // A discovered list is 37 models on one provider and more on several, which is
+  // not a list anybody reads top to bottom. A written list is a handful of rows
+  // hz named itself, where a search field would be chrome around three items.
+  const searchable = discoveredList(harness) && models.length > 0;
 
   const selected = models.find((m) => m.id === modelId) ?? null;
-  const activeAgent = AGENTS.findIndex((a) => a.id === harness);
-  // fx lists one provider at a time, so every row shares its provider — the
-  // active one, which is what the segmented control marks. A pending switch
-  // wins so the thumb moves at once; `undefined` before the first read, or when
-  // no provider is signed in, leaves the thumb hidden and nothing checked.
-  const currentProvider = pendingProvider ?? models[0]?.provider;
-  const activeProvider = FX_PROVIDERS.findIndex((p) => p.id === currentProvider);
-  // A switch whose new provider's list has not landed yet: the rows still name
-  // the *old* provider's models.
-  const awaitingProvider = pendingProvider != null && models[0]?.provider !== pendingProvider;
-  // A known provider's list lands in tens of ms, so blanking to a loading row
-  // on every switch only flashes. Wait a beat first: if the new list still has
-  // not arrived, the switch is a real probe (gateway, seconds long), and *that*
-  // is worth a loading state over a list still naming the old provider. A fast
-  // swap clears `awaitingProvider` before the timer, so its old rows hold for
-  // the one frame nobody sees.
-  const [switchStalled, setSwitchStalled] = useState(false);
+  // Read over the whole list rather than the menu's own rows: the variant is
+  // named beside the model on the trigger, and whether there is one to name is a
+  // fact about the model rather than about what the menu happens to be drawing.
+  const selectedRow = useMemo(() => rowOf(models, modelId), [models, modelId]);
+  // The variant is a qualifier on the name and drawn like the others, so it is
+  // held back where the model has no choice of them: 37 of mcode's 41 rows are
+  // `· thinking`, and a word repeated on every row says nothing.
+  const selectedVariant =
+    selectedRow && selectedRow.variants.length > 1 ? selected?.variant : undefined;
+
+  /// The trigger's own name. The model's where the list has it, and read off the
+  /// id where it does not — while the probe is still out, or where the recorded
+  /// pick is one the agent no longer serves. Never the wire's spelling of it: an
+  /// id is addressing, and `modelLabel` is what turns one into a name.
+  const selectedName = isUnsetModel(modelId)
+    ? "Select Model"
+    : modelDisplayName(selected?.label || modelId);
+
+  // Radix focuses the menu content itself when it opens, and the reader's first
+  // keystroke belongs in the search field. An `autoFocus` there cannot win — the
+  // content's own focus lands after the field mounts — so the field takes it back
+  // here, on the frame the menu opens. The arrow keys still walk the rows from
+  // it, since Radix reads them off the content.
   useEffect(() => {
-    if (!awaitingProvider) {
-      setSwitchStalled(false);
-      return;
-    }
-    const t = setTimeout(() => setSwitchStalled(true), 200);
-    return () => clearTimeout(t);
-  }, [awaitingProvider]);
-  const blanked = awaitingProvider && switchStalled;
-  const shown = blanked ? [] : listed;
-  // `null` until the first read lands, which is why the mark is drawn from an
-  // explicit `!a.available` rather than from "not found in the list": an
-  // unanswered read must mark nothing, not mark everything.
-  const availability = useAgentAvailability();
-
-  // Provider switches are serialized: each `set_fx_provider` is chained after
-  // the previous, so the settings file ends on the *last* click rather than
-  // whichever fx call happened to finish last. Only the latest click reloads or
-  // clears the thumb — a superseded click's completion is ignored, so a slow
-  // earlier switch can't reload the picker onto a provider the reader left.
-  const switchQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const latestProvider = useRef<string | null>(null);
-
-  const switchProvider = (id: string) => {
-    setPendingProvider(id);
-    // Cached rows on screen at once; the reload below refreshes them. A provider
-    // never visited seeds nothing and falls to the loading state instead.
-    onSeedProvider?.(id);
-    latestProvider.current = id;
-    switchQueue.current = switchQueue.current
-      .catch(() => {})
-      .then(() => invoke("set_fx_provider", { provider: id }))
-      .then(
-        () => {
-          if (latestProvider.current === id) onReloadModels?.();
-        },
-        (e) => {
-          console.error("[fx provider]", e);
-          if (latestProvider.current === id) setPendingProvider(null);
-        },
-      );
-  };
+    if (open && searchable) searchRef.current?.focus();
+  }, [open, searchable]);
 
   /// What a row would resolve to if clicked: the live effort for the model
   /// already selected, each other model's own default. Mirrors the resolution
@@ -343,70 +227,176 @@ export default function ModelSelector({
   const rowEffort = (model: Model): Effort | null =>
     model.id === modelId ? effort : model.defaultEffort;
 
-  const modelRow = (model: Model) =>
-    model.efforts.length ? (
-      // One row: hover opens the effort submenu (Radix's own behaviour), click
-      // picks the model and leaves its effort alone. Splitting the two into
-      // separate items would give the row two hover states.
-      <DropdownMenuSub key={model.id}>
+  /// One line per model, whatever the wire spent on it.
+  ///
+  /// Clicking picks the row as it stands — the variant it is already showing,
+  /// since a click says "run this model" and not "change how". The variant is
+  /// picked from the submenu, which is also how the row reads as one line: the
+  /// name, then the variant, then the effort, all qualifiers of the same thing
+  /// rather than two controls stacked.
+  const modelRow = (row: ModelRow) => {
+    const shown = rowModel(row, modelId);
+    const chosen = row.variants.some((m) => m.id === modelId);
+    const picked = isFanOut(fanOut, shown.id);
+    // The variant, named only where the model has a choice of them — and named
+    // in the reader's words, which is why the empty one reads `Default` and not
+    // as nothing at all.
+    const variant =
+      row.variants.length > 1 ? (VARIANT_LABELS[shown.variant] ?? shown.variant) : null;
+    const level = rowEffort(shown);
+
+    const body = (
+      <>
+        <ModelMark name={shown.label} />
+        {/* `min-w-0` on the name and `shrink-0` on what follows, or a long one
+            pushes the qualifiers out of the menu rather than truncating. The
+            tint is the fan-out's own mark: a row in the set that will run is
+            coloured, and it is the only thing on the row that is not the model's
+            own name for itself. */}
+        <span className={cn("min-w-0 truncate", picked && "text-accent-mention")}>
+          {modelDisplayName(shown.label)}
+        </span>
+        {(variant || level) && (
+          // Right-aligned rather than trailing the name: a qualified row and a
+          // plain one then start at the same place, and the name is what the eye
+          // scans down. Muted a step further than the name, since these qualify
+          // it rather than being part of it.
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground/60">
+            {variant}
+            {level && <span>{EFFORT_LABELS[level]}</span>}
+          </span>
+        )}
+      </>
+    );
+
+    // Nothing to open: one variant, and no effort levels on it. Plain item, no
+    // chevron promising a menu that would be empty.
+    if (row.variants.length < 2 && shown.efforts.length === 0) {
+      // Captured by the handlers below and read in `onSelect`, which Radix calls
+      // with an event that carries no modifier — see the note above.
+      let shift = false;
+
+      return (
+        <DropdownMenuItem
+          key={row.key}
+          className="text-ui"
+          onPointerDown={(event) => {
+            shift = event.shiftKey;
+          }}
+          onPointerMove={(event) => {
+            shift = event.shiftKey;
+          }}
+          onKeyDown={(event) => {
+            shift = event.shiftKey;
+          }}
+          onSelect={(event) => {
+            // Shift adds to the fan-out set instead of picking, and the menu
+            // stays open — the reader is building a list, and a menu that closed
+            // on the first shift-click would make that a trip per model.
+            // `preventDefault` is what stops Radix closing on select.
+            if (shift) {
+              event.preventDefault();
+              toggleFanOutModel(sessionId, shown.id);
+              return;
+            }
+            onChange(shown.id, null);
+          }}
+        >
+          {body}
+          {(chosen || picked) && (
+            <Check
+              className={cn("ml-auto size-3.5", picked && "text-accent-mention")}
+            />
+          )}
+        </DropdownMenuItem>
+      );
+    }
+
+    return (
+      <DropdownMenuSub key={row.key}>
         <DropdownMenuSubTrigger
           className="cursor-pointer gap-1 text-ui"
           // The picked model takes a check where the submenu chevron would sit,
           // no leading indent and no background tint fighting the hover.
-          // Unpicked rows keep the chevron that says "opens an effort submenu".
+          // Unpicked rows keep the chevron that says "opens a submenu".
           trailingIcon={
-            model.id === modelId ? <Check className="ml-auto size-3.5" /> : undefined
+            chosen || picked ? (
+              <Check className={cn("ml-auto size-3.5", picked && "text-accent-mention")} />
+            ) : undefined
           }
-          onClick={() => {
-            onChange(model.id, null);
+          onClick={(event) => {
+            // Shift on a row that has a submenu adds it rather than opening that
+            // submenu — the reader is choosing models, not variants.
+            if (event.shiftKey) {
+              event.preventDefault();
+              toggleFanOutModel(sessionId, shown.id);
+              return;
+            }
+            onChange(shown.id, null);
             setOpen(false);
           }}
         >
-          {model.label}
-          {rowEffort(model) && (
-            <span className="text-muted-foreground/60">
-              {EFFORT_LABELS[rowEffort(model)!]}
-            </span>
-          )}
+          {body}
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent>
-          {/* The chord lives here, on the control it drives, rather than on the
-              model trigger — that tooltip was carrying a shortcut for a thing
-              one level down. No word beside it and no rule under it: the levels
-              below say what it cycles, and a separator would draw a box round
-              a hint. */}
-          <div className="flex px-1.5 py-1">
-            <ShortcutKeys ids={["effort.next"]} />
-          </div>
-          {model.efforts.map((level) => (
+          {/* The variants first, then the ladder — and a rule only where both
+              are drawn, since the one level of a row that has no variants
+              needs no separation from itself. The ladder belongs to the variant
+              above it: only the running model's own ladder is ever stated, and
+              switching variant restates it. */}
+          {row.variants.map((option) => (
             <DropdownMenuItem
-              key={level}
+              key={option.id}
               className="text-ui"
               onSelect={() => {
-                onChange(model.id, level);
+                onChange(option.id, null);
                 setOpen(false);
               }}
             >
-              {EFFORT_LABELS[level]}
-              {level === rowEffort(model) && <Check className="ml-auto size-3.5" />}
+              {VARIANT_LABELS[option.variant] ?? option.variant}
+              {option.id === modelId && <Check className="ml-auto size-3.5" />}
+            </DropdownMenuItem>
+          ))}
+          {row.variants.length > 1 && shown.efforts.length > 0 && <DropdownMenuSeparator />}
+          {/* The ladder, with the chord that drives it. It lives on the control
+              it drives rather than on the model trigger — that tooltip was
+              carrying a shortcut for a thing one level down. No word beside it
+              and no rule under it: the levels below say what it cycles, and a
+              separator would draw a box round a hint. */}
+          {shown.efforts.length > 0 && (
+            <div className="flex px-1.5 py-1">
+              <ShortcutKeys ids={["effort.next"]} />
+            </div>
+          )}
+          {shown.efforts.map((option) => (
+            <DropdownMenuItem
+              key={option}
+              className="text-ui"
+              onSelect={() => {
+                onChange(shown.id, option);
+                setOpen(false);
+              }}
+            >
+              {EFFORT_LABELS[option]}
+              {option === level && <Check className="ml-auto size-3.5" />}
             </DropdownMenuItem>
           ))}
         </DropdownMenuSubContent>
       </DropdownMenuSub>
-    ) : (
-      // No submenu and no chevron for a model with no effort levels.
-      <DropdownMenuItem
-        key={model.id}
-        className="text-ui"
-        onSelect={() => onChange(model.id, null)}
-      >
-        {model.label}
-        {model.id === modelId && <Check className="ml-auto size-3.5" />}
-      </DropdownMenuItem>
     );
+  };
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu
+      open={open}
+      // The search is dropped on close: a query typed to find one model, still
+      // in the field an hour later, hides every other model and reads as a
+      // picker that lost them.
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery("");
+      }}
+    >
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
@@ -418,24 +408,45 @@ export default function ModelSelector({
               size="sm"
               className="gap-1 px-1.5 text-ui text-muted-foreground"
             >
-              <AgentIcon harness={harness} brand className="size-3.5" />
-              {/* Effort is a qualifier on the model, not part of its name, so it's
-                  held back a step rather than reading as one long label. */}
-              {/* The unset sentinel is not a name and there is no name to
-                  draw, so the placeholder stands in. The multi-provider
-                  harnesses reach this — pi, fx and omp: Dray names no default
-                  for them, and the spawn omits the flags so their own settings
-                  decide. */}
-              <span>{selected?.label ?? (isUnsetModel(modelId) ? "Select Model" : modelId)}</span>
-              {effort && (
-                <span className="text-muted-foreground/60">{EFFORT_LABELS[effort]}</span>
+              {/* **The model's mark, not the agent's.** One harness runs here and
+                  it is the child process, so a mark of *it* names the same thing
+                  on every session in the app — where the mark of the model is a
+                  second thing the button says, and the one the reader is looking
+                  at when they want to change it. The agent's own mark stays for
+                  the one state that has no model to draw: nothing picked yet. */}
+              {isUnsetModel(modelId) ? (
+                <AgentIcon harness={harness} brand className="size-3.5" />
+              ) : (
+                <ModelMark name={selected?.label || modelId} />
               )}
-              {/* The second qualifier on the model, drawn exactly like the
-                  first: its *presence* is what says fast mode is on, so colour
-                  would be a second way to say one thing — and an accent here
-                  competes with the yellow the sidebar spends on sessions
-                  wanting the reader. A glyph was the other try; among two words
-                  it read as a badge stuck on the label. */}
+              {/* Model, then the qualifiers on it — effort and the variant — each
+                  held back a step rather than reading as one long name. The
+                  unset sentinel is not a name and there is no name to draw, so
+                  the placeholder stands in. */}
+              {canFanOut(fanOut) ? (
+                // A fan-out send runs several models, so naming one of them
+                // would be a lie about what the button does. The count is the
+                // whole answer, and the models themselves are in the menu.
+                <span className="text-accent-mention">{fanOut.length} models</span>
+              ) : (
+                <>
+                  <span>{selectedName}</span>
+                  {selectedVariant !== undefined && (
+                    <span className="text-muted-foreground/60">
+                      {VARIANT_LABELS[selectedVariant] ?? selectedVariant}
+                    </span>
+                  )}
+                  {effort && (
+                    <span className="text-muted-foreground/60">{EFFORT_LABELS[effort]}</span>
+                  )}
+                </>
+              )}
+              {/* The last qualifier, drawn exactly like the others: its
+                  *presence* is what says fast mode is on, so colour would be a
+                  second way to say one thing — and an accent here competes with
+                  the yellow the sidebar spends on sessions wanting the reader. A
+                  glyph was the other try; among these words it read as a badge
+                  stuck on the label. */}
               {fast && <span className="text-muted-foreground/60">Fast</span>}
             </Button>
           </DropdownMenuTrigger>
@@ -452,142 +463,105 @@ export default function ModelSelector({
 
       <DropdownMenuContent
         align="start"
-        className="min-w-[202px]"
+        // **`max-h` of its own, because Radix's cap is the whole window.** A
+        // discovered list is 37 rows and grows with every provider the reader
+        // connects, so without this the menu opens as a column taller than the
+        // conversation behind it — which is what "gigante" was. Twenty-two rem
+        // is about eleven rows: enough to read, short enough to stay a menu, and
+        // the list scrolls inside it. `overscroll-contain` so a scroll that
+        // reaches the end does not carry on into the transcript.
+        className="max-h-[min(22rem,60vh)] w-auto min-w-[15rem] max-w-[22rem] overscroll-contain"
         // The trigger is also the tooltip trigger, so Radix returning focus to
         // it on close reopens the tooltip on that focus and leaves it stuck
         // until the next click. Don't refocus the trigger — the composer takes
         // focus back on its own.
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        {/* Not menu items: a segmented control says "one of these two" where
-            two stacked rows would read as two more models. Plain buttons, so
-            the menu stays open — switching agent and then picking one of its
-            models is one visit rather than two. `mb-1` is the whole separation
-            from the list below: a rule there drew a box round a control that is
-            already a different shape. */}
-        {canSwitchHarness && (
-          <div
-            role="radiogroup"
-            aria-label="Agent"
-            className="mb-1 flex items-center gap-1 rounded-md bg-surface-well p-1"
-          >
-            {/* The one moving part. A thumb under the marks, placed by index,
-                so switching reads as the selection sliding across rather than
-                one pill blinking out and another in. Unknown harness parks it
-                under the first mark rather than off the track.
+        {/* The way back to one model, and the only place the set is explained.
+            Drawn only while there is a set, like every other row here that would
+            otherwise say nothing. */}
+        {canFanOut(fanOut) && (
+          <>
+            <DropdownMenuItem
+              className="text-ui text-muted-foreground"
+              onSelect={() => {
+                clearFanOut(sessionId);
+                setOpen(false);
+              }}
+            >
+              Sending to {fanOut.length} models — back to one
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
 
-                `--surface-thumb` and a shadow, not `--accent`: the thumb has to
-                come up *past* the surface the menu is drawn at, out of the well
-                the track cuts. `--accent` is a white veil on glass, which over
-                a scrim is a few percent of light and read as nothing. */}
-            <div className="relative flex items-center">
-              <span
-                aria-hidden
-                className="absolute top-0 left-0 size-6 rounded-sm bg-surface-thumb shadow-(--shadow-button) transition-transform duration-150 ease-out"
-                style={{ transform: `translateX(${Math.max(activeAgent, 0) * 100}%)` }}
-              />
-              {/* Dimmed by opacity, not by colour. A muted-to-foreground ladder
-                  only moves a mark drawn in `currentColor`, so it lit Codex on
-                  hover and left Claude — which carries its own rust — sitting
-                  at one state forever. Opacity is the one dial both marks
-                  answer to. */}
-              {AGENTS.map((agent) => {
-                const missing = availability?.some(
-                  (a) => a.harness === agent.id && !a.available,
-                );
-                return (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={agent.id === harness}
-                    aria-label={
-                      missing ? `${agent.label} (not installed)` : agent.label
-                    }
-                    onClick={() => onHarnessChange(agent.id)}
-                    className="relative flex size-6 items-center justify-center rounded-sm opacity-55 transition-opacity hover:opacity-100 aria-checked:opacity-100"
-                  >
-                    <AgentIcon harness={agent.id} brand className="size-3.5" />
-                    {/* Marked, not disabled. Disabling leaves nowhere to say
-                        why — a tooltip is the only slot left, and the cure is
-                        two lines and two buttons. Picking it is what draws the
-                        notice under the composer, so the mark is an invitation
-                        to find out rather than a closed door.
+        {/* The list is every model the provider serves — 37 of them on one
+            opencode-go account — so it is searched rather than scanned.
 
-                        Drawn as a dot rather than a colour: the marks are
-                        brand art and already carry their own, so recolouring
-                        one says "Codex" more than it says "missing". */}
-                    {missing && (
-                      <span
-                        aria-hidden
-                        className="absolute -top-px -right-px size-1.5 rounded-full bg-destructive ring-1 ring-surface-well"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            {/* Inside the track, in the width the two marks leave: a hint you
-                have to hover to find is one nobody finds. */}
-            <ShortcutKeys ids={["harness.next"]} className="ml-auto pr-0.5" />
+            `onKeyDown` stops propagation, and that is load-bearing rather than
+            tidiness: Radix binds its own typeahead to the menu content, so a
+            character typed here would be read as "jump to the row starting with
+            it" and the caret would leave the field on the first letter of the
+            first search. */}
+        {searchable && (
+          <div className="flex h-8 items-center gap-2 px-1.5">
+            <Search className="size-3.5 shrink-0 text-muted-foreground" />
+            <Input
+              ref={searchRef}
+              value={query}
+              placeholder="Search models"
+              spellCheck={false}
+              onKeyDown={(event) => event.stopPropagation()}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              // The base input's own fill, border and ring are the dialog's
+              // look rather than a menu row's, so all three are turned off —
+              // `dark:bg-transparent` as well, since that rule is the more
+              // specific one and a plain override reads as removed in source
+              // while the fill stays on screen.
+              className="h-full rounded-none border-0 bg-transparent p-0 text-ui shadow-none focus-visible:ring-0 dark:bg-transparent"
+            />
           </div>
         )}
 
-        {/* fx's list is its *active provider's*, and the provider is a global
-            fx setting (`fx provider …`, written to `~/.fx/settings.json`).
-            Beside the agent control and built the same way: a segmented control
-            says "one of these" where stacked rows read as more models. Text,
-            not icons — the providers have no brand mark here. The active one is
-            read off the rows fx answered with.
-
-            Unlike the agent beside it, this is *not* creation-time. fx takes a
-            provider switch in place, and a switched session keeps it: the
-            change persists onto fx's own session record, so a later
-            `session/resume` comes back on it rather than on whatever the
-            settings file names by then (`provider_switch.jsonl`). The session
-            itself moves at the next send, where `fx::set_model` carries the
-            provider across with the model — a model names its provider, and fx
-            refuses one belonging to another. */}
-        {harness === "fx" && (
-          <ProviderRow
-            providers={FX_PROVIDERS}
-            active={activeProvider}
-            current={currentProvider}
-            busy={busy}
-            onPick={switchProvider}
-          />
-        )}
-
-        {/* Grouped only where a heading says something: pi answers with a
-            provider per model, and a reader picking between two providers'
-            models needs to know which is which. A one-provider list — fx, or
-            any harness with a single vendor — draws its rows flat, the heading
-            naming what the agent mark on the trigger already said. */}
-        {shortlisted && providerGroups.length > 1 && !blanked
+        {/* Grouped only where a heading says something: a list can answer with
+            models per provider, and a reader picking between two providers'
+            models needs to know which is which. A one-provider list draws its
+            rows flat, the heading naming what nothing disputes. */}
+        {providerGroups.length > 1
           ? providerGroups.map((group) => (
               <div key={group.provider}>
                 <p className="px-2 pt-1.5 pb-0.5 text-ui text-muted-foreground">
                   {group.provider}
                 </p>
-                {group.models.map(modelRow)}
+                {group.rows.map(modelRow)}
               </div>
             ))
-          : shown.map(modelRow)}
+          : searched.map(modelRow)}
 
-        {/* The agent control keeps this menu open on purpose, so a switch to an
-            agent whose list is a *read* rather than a table lands here with
-            nothing to draw. A row saying so holds the menu's shape and names
-            the wait; collapsing to nothing and springing back is the glitch
-            this replaces. Not a `DropdownMenuItem` — there is nothing to
-            select, and one would take arrow focus. */}
-        {shown.length === 0 && (
-          <p className="px-2 py-1.5 text-ui text-muted-foreground">
-            {loadingModels || blanked
-              ? "Loading models…"
-              : models.length === 0
-                ? "No models available"
-                : "No models shortlisted yet"}
-          </p>
+        {/* The list is a *read* rather than a table on a discovered harness, so
+            the picker can be open with nothing to draw while the probe is out.
+            A row saying so holds the menu's shape and names the wait;
+            collapsing to nothing and springing back is the glitch this
+            replaces. Not a `DropdownMenuItem` — there is nothing to select, and
+            one would take arrow focus. */}
+        {searched.length === 0 && (
+          <div className="flex flex-col items-start gap-2 px-2 py-1.5">
+            <p className="text-ui text-muted-foreground">
+              {models.length > 0
+                ? `Nothing matches “${query}”.`
+                : loadingModels
+                  ? "Loading models…"
+                  : "No models yet — the agent has no provider configured"}
+            </p>
+            {/* **The one empty state with a way out.** Nothing else in this app
+                is a fresh install's dead end: every other control has a
+                default, and this is the one the reader has to fill in. */}
+            {!loadingModels && models.length === 0 && onOpenProviderSettings && (
+              <Button variant="secondary" size="sm" onClick={onOpenProviderSettings}>
+                Add a provider
+              </Button>
+            )}
+          </div>
         )}
 
         {/* Straight under the models it qualifies, and above "More models",
@@ -641,9 +615,9 @@ export default function ModelSelector({
 
         {/* A submenu rather than a second block under a heading, because the
             rows below are not a category the reader is choosing *between* —
-            they are the ones they will not open this menu for. Folding them
-            away is what keeps Shift+Tab's cycle two presses long, and the
-            cycle skips exactly what lives here. */}
+            they are the ones they will not open this menu for. Shift+Tab's
+            cycle skips exactly what lives here, which is the other half of
+            keeping the chord short. */}
         {more.length > 0 && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="text-ui text-muted-foreground">
@@ -655,14 +629,19 @@ export default function ModelSelector({
 
         {/* No rule above it. The row is already a different shape to the models
             over it — muted, and the one thing in the menu carrying a glyph — so
-            a line there drew a box round the difference rather than making it. */}
-        {shortlisted && (
+            a line there drew a box round the difference rather than making it.
+
+            The editor for the reader's stars, and the only thing it is for:
+            every model here is pickable whether or not it is in the rotation, and
+            the rotation is what leads the menu and what Shift+Tab cycles. A list of three
+            models needs no such editor, which is why a written one has none. */}
+        {discoveredList(harness) && (
           <DropdownMenuItem
             className="cursor-pointer gap-2 text-ui text-muted-foreground"
             onSelect={() => setLibraryOpen(true)}
           >
             <Sliders className="size-3.5" />
-            Choose models…
+            Star models…
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -670,16 +649,16 @@ export default function ModelSelector({
       <ModelLibraryDialog
         open={libraryOpen}
         // Opening the library closed the menu (it opens from a menu item), so
-        // closing it drops the reader back with nothing open — one shortlist
-        // edit and they have to reopen the picker to actually pick. Reopen the
-        // menu on close, where the freshly-starred models are waiting.
+        // closing it drops the reader back with nothing open — one star to set
+        // and they have to reopen the picker to actually pick. Reopen the menu
+        // on close, where the rotation is now leading.
         onOpenChange={(next) => {
           setLibraryOpen(next);
           if (!next) setOpen(true);
         }}
         models={models}
-        starred={starred}
-        onStarredChange={setStarred}
+        rotation={rotation}
+        onRotationChange={setChosenRotation}
         onRefresh={() => onRefreshModels?.()}
         loading={loadingModels}
       />

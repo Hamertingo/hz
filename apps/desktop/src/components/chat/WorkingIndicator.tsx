@@ -1,13 +1,21 @@
-import { useState } from "react";
-
 import { TraceIcon } from "@/components/chat/AgentTrace";
 import { compactTokens } from "@/lib/format";
 
-/// "Thinking" is one of these rather than a label the harness switches on. It is
-/// accurate often enough, and a word that changes under the reader — Working
-/// becoming Thinking a second later — draws more attention to itself than the
-/// distinction is worth. Nobody is waiting to be told which kind of wait this is.
-const LABELS = ["Working", "Cooking", "Brewing", "Thinking"];
+/// One word, always, rather than one drawn per wait. A label that changes under
+/// the reader — Working becoming Cooking a second later — says nothing about
+/// what the agent is doing, and draws more attention to itself than the
+/// distinction was ever worth.
+///
+/// **"Working", not "Thinking", and that is a correction.** This row draws where
+/// nothing of the model's output is on screen yet, so it has no evidence of what
+/// the wait is — and whether a model shares its reasoning is per turn, not per
+/// model: probed against the same prompt nine times on the one gateway this is
+/// developed on, one run streamed no reasoning at all, and four of nine sessions
+/// in the app's own logs carry none. Saying "Thinking" there promised a trace
+/// that then never arrived, which reads as the app losing it. The word for a wait
+/// the app cannot see into is the one that is true of every wait; the reasoning
+/// block says "Thinking" itself, over words that actually streamed.
+const LABEL = "Working";
 
 /// The gap-filler for every stretch where the agent is busy and the transcript
 /// has nothing to show — the wait before a turn's first output, and the wait
@@ -19,11 +27,6 @@ export default function WorkingIndicator({
   /// and "0 tokens" reads as stalled rather than as starting.
   tokens?: number;
 }) {
-  // Picked once per mount, so it's one word per wait rather than one per render.
-  // The indicator unmounts as soon as content takes over, so each wait still
-  // draws its own word.
-  const [label] = useState(() => LABELS[Math.floor(Math.random() * LABELS.length)]);
-
   return (
     <div className="flex items-center gap-2" aria-live="polite">
       {/* The trace's own glyph, so the live row and the header a trace settles
@@ -35,7 +38,7 @@ export default function WorkingIndicator({
         <TraceIcon className="size-3.5" />
       </span>
 
-      <span className="shimmer-text text-chat">{label}</span>
+      <span className="shimmer-text text-chat">{LABEL}</span>
 
       {/* Dimmer than the label and deliberately unshimmered: the count is the
           one part of this row that is really moving, so it doesn't need the

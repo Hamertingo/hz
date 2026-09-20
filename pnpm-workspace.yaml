@@ -1,5 +1,11 @@
 packages:
   - "apps/*"
+  # **Not a workspace package.** The agent is vendored source, not something this
+  # workspace builds or links against: it carries its own lockfile, its own
+  # tsconfigs and a native dependency npm has to be told to run. Installing it
+  # from here would pull that whole tree into the root `node_modules` both apps
+  # resolve through — the one thing the root manifest exists to prevent.
+  - "!apps/agent"
 
 allowBuilds:
   # Arrives under posthog-js. Its postinstall only prints a funding notice, so

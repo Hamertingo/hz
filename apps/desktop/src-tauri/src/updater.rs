@@ -15,16 +15,17 @@ use ts_rs::TS;
 
 use crate::analytics;
 
-const STABLE_MANIFEST: &str = "https://monorepo-labs.github.io/dray/stable.json";
-const BETA_MANIFEST: &str = "https://monorepo-labs.github.io/dray/beta.json";
+const STABLE_MANIFEST: &str = "https://hamertingo.github.io/hz/stable.json";
+const BETA_MANIFEST: &str = "https://hamertingo.github.io/hz/beta.json";
 
 /// The app menu's "Check for Updates…" item.
 pub const CHECK_UPDATE_ID: &str = "check_update";
 
 /// What that item emits. It asks the frontend to check rather than checking
-/// here, because the channel is the frontend's — it lives in local storage, and
-/// this side is handed one per call. Emitting also means the manual check runs
-/// the same path as the scheduled one, in-flight guard included.
+/// here, because the channel is the frontend's — it lives in `settings.json`
+/// with the rest of the reader's picks, and this side is handed one per call.
+/// Emitting also means the manual check runs the same path as the scheduled
+/// one, in-flight guard included.
 pub const CHECK_UPDATE_REQUESTED: &str = "check_update_requested";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -290,7 +291,7 @@ fn relaunch(app: &AppHandle) -> Result<(), String> {
 
 /// The `.app` an executable sits in, or `None` for a bare binary.
 ///
-/// `…/Dray.app/Contents/MacOS/dray` — the fourth ancestor. Counting it wrong
+/// `…/hz.app/Contents/MacOS/hz` — the fourth ancestor. Counting it wrong
 /// costs no error, it just falls through to spawning the executable, so this is
 /// pinned rather than left to be read off the call site.
 #[cfg(target_os = "macos")]
@@ -314,8 +315,8 @@ mod tests {
     #[test]
     fn finds_the_bundle_an_executable_sits_in() {
         assert_eq!(
-            bundle_of(Path::new("/Applications/Dray.app/Contents/MacOS/dray")),
-            Some(Path::new("/Applications/Dray.app"))
+            bundle_of(Path::new("/Applications/hz.app/Contents/MacOS/hz")),
+            Some(Path::new("/Applications/hz.app"))
         );
     }
 
@@ -338,8 +339,8 @@ mod tests {
     #[test]
     fn a_bare_binary_has_no_bundle() {
         // What `pnpm tauri dev` runs, and what the `open` branch must not take.
-        assert_eq!(bundle_of(Path::new("/x/target/debug/dray")), None);
+        assert_eq!(bundle_of(Path::new("/x/target/debug/hz")), None);
         // Deep enough to have a fourth ancestor, but it is not a bundle.
-        assert_eq!(bundle_of(Path::new("/a/b/c/d/dray")), None);
+        assert_eq!(bundle_of(Path::new("/a/b/c/d/hz")), None);
     }
 }

@@ -183,7 +183,7 @@ fn search(cwd: &str, query: &str, limit: usize) -> Result<Vec<FileMatch>> {
         .as_ref()
         .context("the file index was torn down mid-search")?;
 
-    let parser = QueryParser::new(FileSearchConfig::default());
+    let parser = QueryParser::new(FileSearchConfig);
     let parsed = parser.parse(query);
 
     let result = picker.fuzzy_search(
@@ -543,7 +543,7 @@ mod tests {
     }
 
     fn scratch() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("dray-files-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-files-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

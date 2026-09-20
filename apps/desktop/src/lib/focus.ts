@@ -24,14 +24,14 @@ function set(next: boolean) {
 try {
   void getCurrentWindow()
     .onFocusChanged(({ payload }) => set(payload))
-    .catch(useDomEvents);
+    .catch(listenToDomFocus);
 } catch {
   // `getCurrentWindow` reads a global the plain browser doesn't have, so this
   // throws rather than rejecting under `pnpm dev`.
-  useDomEvents();
+  listenToDomFocus();
 }
 
-function useDomEvents() {
+function listenToDomFocus() {
   window.addEventListener("focus", () => set(true));
   window.addEventListener("blur", () => set(false));
 }

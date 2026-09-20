@@ -1,0 +1,11 @@
+Context: live
+Model: custom_provider:opencode-go/deepseek-v4.1-flash
+Budget: 21,243 / 1,000,000 tokens (2%)
+Compaction: never
+Components:
+- System prompt: 1,720 tokens
+- Memory: 0 tokens
+- Tools: 8,458 tokens
+- Skills: 2,486 tokens
+- Messages: 194 tokens
+- Other: 8,385 tokens

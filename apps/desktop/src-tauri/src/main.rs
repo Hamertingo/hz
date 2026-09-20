@@ -3,5 +3,5 @@
 
 #[tokio::main]
 async fn main() {
-    ade_lib::run()
+    hz_lib::run()
 }

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(which omp pi 2>&1; echo \"---\"; ls -la ~/.omp/agent/ 2>&1 | head -20; echo \"--- PI ---\"; ls -la ~/.pi/agent/ 2>&1 | head -20; echo \"--- VERSIONS ---\"; omp --version 2>&1 | head -3; pi --version 2>&1 | head -3)",
+      "Shell(omp:*)",
+      "Shell(echo \"===== PI HELP: session/rpc flags =====\"; pi --help 2>&1 | grep -iE \"session|mode|thinking|append|tools|provider|model|resume\" ; echo; echo \"===== OMP: does --session exist? =====\"; omp --mode rpc --session /tmp/nope-xyz.jsonl --no-session </dev/null 2>&1 | head -20; echo \"exit=$?\"; echo; echo \"===== OMP: unknown flag probe =====\"; omp --definitely-not-a-flag 2>&1 | head -5)",
+      "Shell(sed:*)",
+      "Shell(grep:*)",
+      "Shell(cd /tmp && rm -f dray-probe.jsonl; echo \"=== A) --session accepted? ===\"; printf '%s\\n' '{\"id\":\"d1\",\"type\":\"get_state\"}' > /tmp/req.txt; (cat /tmp/req.txt; sleep 8) | timeout 25 omp --mode rpc --session /tmp/dray-probe.jsonl 2>&1 | head -c 1500; echo; echo \"--- file created? ---\"; ls -la /tmp/dray-probe.jsonl 2>&1; echo; echo \"=== B) --no-session, full handshake ===\"; (cat /tmp/req.txt; sleep 8) | timeout 25 omp --mode rpc --no-session 2>/dev/null | grep -E '\"(ready|response)\"' | head -c 3000)",
+      "Shell(printf '%s\\n' '{\"id\":\"d1\",\"type\":\"get_state\"}' | cat - /dev/zero | head -c 200000 > \"$COMMANDCODE_SCRATCHPAD/req.txt\" 2>/dev/null; ls -la \"$COMMANDCODE_SCRATCHPAD\")"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  },
+  "tasteLearning": false
+}

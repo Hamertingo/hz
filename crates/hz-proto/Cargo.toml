@@ -1,9 +1,9 @@
 [package]
-name = "dray-proto"
+name = "hz-proto"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Wire types for the socket between the Dray app and the dray CLI."
+description = "Wire types for the socket between the hz app and the hz CLI."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

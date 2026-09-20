@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Image } from "lucide-react";
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 
 import SessionAvatar from "@/components/SessionAvatar";
 import FileLink from "@/components/chat/FileLink";
@@ -37,7 +37,7 @@ import type { ImageRef, IssueRef, MessageSender } from "@/types/events";
 /// it; unwrapped, the image is its own edge. They stay inside this component and
 /// on its column, so the change is only what the reader sees.
 ///
-/// A message relayed by `dray send` keeps the user's side of the transcript —
+/// A message relayed by `hz send` keeps the user's side of the transcript —
 /// whoever wrote it, it is not this session's assistant speaking — and is named
 /// above the bubble instead of being drawn as a second kind of speech. The name
 /// comes off the event's own `from` field and never out of the text: the model
@@ -51,7 +51,15 @@ import type { ImageRef, IssueRef, MessageSender } from "@/types/events";
 /// it. The URL comes off the event's own `issues` and never out of the text, so
 /// a tag naming an issue that never resolved stays coloured and inert instead
 /// of becoming a link to nowhere.
-export default function UserMessage({
+///
+/// Memoised, and the row it protects is the most expensive of the small ones:
+/// every render re-runs the mention, path, line-break and brand scans over the
+/// prompt. All of its props are the prompt's own fields — strings, and the two
+/// arrays the event payload owns — plus the opener, so identity holds across the
+/// deltas of a running turn. A comparator is not the alternative: the text is
+/// scanned from scratch either way, so a compare would pay for a scan it is
+/// trying to avoid.
+function UserMessage({
   text,
   images = [],
   issues = [],
@@ -179,6 +187,22 @@ export default function UserMessage({
                 );
               }
 
+              if (segment.kind === "quote") {
+                // The `>` stays, dimmed, and the words take the quote's colour —
+                // the same split a mention makes. The mark is how a reader knows
+                // these are somebody else's words and not their own, and dropping
+                // it would leave a paragraph of muted prose with no reason given.
+                // Inline rather than a block, because every run here shares one
+                // `whitespace-pre-wrap` span and a block would break the line box
+                // the bubble's own breaks are drawn in.
+                return (
+                  <span key={i} className={SEGMENT_COLOR.quote}>
+                    <span className="opacity-45">{"> "}</span>
+                    {segment.text.slice(2)}
+                  </span>
+                );
+              }
+
               // A path the reader typed rather than mentioned. Drawn the way a
               // mention is — `@` and the filename, the directory on the tooltip
               // — since the two name the same thing and a deep path is most of
@@ -279,3 +303,5 @@ export default function UserMessage({
     </div>
   );
 }
+
+export default memo(UserMessage);

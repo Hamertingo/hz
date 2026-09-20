@@ -1,0 +1,70 @@
+# The desktop app's test gate. Everything the app ships is checked here and
+# nowhere else: release.yml is tag-only (so a broken main never gets caught),
+# and release-cli.yml tests only the CLI crate — the app's Rust tests, its
+# vitest suite and its `tsc` type-check had no CI at all before this.
+#
+# The one thing a reader would otherwise get wrong: `cargo test` runs
+# *unfiltered*. Passing a filter — `cargo test git::`, any `--` tail — makes
+# ts-rs regenerate `src/types/events.ts` with only the types whose exports
+# actually ran, so the frontend build on that branch fails for everyone who
+# pulls it. Leave the command bare.
+name: app
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "crates/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/app.yml"
+      # The gate runs inside this action; a change to it can break the gate.
+      - ".github/actions/desktop-setup/**"
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "crates/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/app.yml"
+      - ".github/actions/desktop-setup/**"
+
+# Nothing here writes anything but a status check.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    # A wedged build would otherwise hold the runner for GitHub's six-hour cap.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Everything the release and warm-cache jobs use: node/pnpm/Rust with
+      # both Apple targets, the cargo cache, and the CEF build tools. Its last
+      # step is `pnpm install --frozen-lockfile` at the repo root, so the
+      # install is not repeated below.
+      - uses: ./.github/actions/desktop-setup
+
+      # `tsc && vite build`. Two jobs in one: it is the type-check gate, and it
+      # writes the `dist/` that the Rust step below needs on disk — the cargo
+      # build runs `tauri::generate_context!()`, which reads `frontendDist`
+      # from tauri.conf.json at compile time and fails when it is missing.
+      - name: Type-check and build the frontend
+        run: pnpm --filter hz run build
+
+      - name: Run the frontend tests
+        run: pnpm --filter hz run test
+
+      # Lint only — no formatter is configured, and biome.jsonc says why. This
+      # catches the class of mistake a reader cannot see either: an unused
+      # import, a `==`, a hook called conditionally.
+      - name: Lint the frontend
+        run: pnpm --filter hz run lint
+
+      # Bare, never filtered — see the header. A filtered run rewrites
+      # src/types/events.ts with a partial type set and breaks the frontend
+      # build for anyone who pulls the branch.
+      - name: Run the Rust tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test

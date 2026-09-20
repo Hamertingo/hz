@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  For the five `Dray Helper` apps CEF runs its renderer, GPU, plugin and
+  For the five `hz Helper` apps CEF runs its renderer, GPU, plugin and
   alert processes in. Signed by scripts/cef-helpers.sh, not by Tauri's
   bundler, which knows nothing about them.
 

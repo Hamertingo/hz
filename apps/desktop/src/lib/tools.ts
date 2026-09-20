@@ -99,6 +99,13 @@ const TOOL_VERBS: Record<string, Verbs> = {
   WebFetch: ["Fetching", "Fetched", "page"],
   WebSearch: ["Searching web", "Searched web", "query"],
   AskUserQuestion: ["Asking", "Asked", "question"],
+  // The plan tools — Claude Code's `TodoWrite` and the `todo` an extension
+  // registers on pi and omp. One verb pair for one act, whichever harness sent
+  // the call, and the noun is what a *run* of them counts: the run's own header
+  // carries progress instead of a count when a snapshot is to hand, and falls
+  // back to this.
+  todo: ["Planning", "Planned", "task"],
+  TodoWrite: ["Planning", "Planned", "task"],
   // "Reading", not "Launching". A skill is a document the agent goes and reads
   // — the row sits beside the skill's own name, so "Read Skill pdf" says what
   // happened where "Launched skill" suggested something was started and left
@@ -132,6 +139,14 @@ const TOOL_VERBS: Record<string, Verbs> = {
   grep: ["Searching", "Searched", "pattern"],
   find: ["Searching", "Searched", "pattern"],
   ls: ["Listing", "Listed", "directory"],
+
+  // mcode's own, which covers most of the block above already — `read`,
+  // `write`, `edit`, `bash` and `grep` are the same names. These three are the
+  // ones it spells differently: `glob` where pi says `find`, `todowrite` for
+  // the plan it keeps, and `task` for the nested agent it spawns.
+  glob: ["Searching", "Searched", "pattern"],
+  todowrite: ["Planning", "Planned", "task"],
+  task: ["Delegating", "Delegated", "task"],
 
   // fx's own, snake_cased. `shell` above already covers its command tool.
   read_file: ["Reading", "Read", "file"],

@@ -1247,49 +1247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dray"
-version = "0.20.6"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "cef",
- "chrono",
- "cpal",
- "dray-proto",
- "fff-search",
- "futures-util",
- "libc",
- "notify",
- "notify-rust",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "reqwest 0.12.28",
- "rubato",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-macos-permissions",
- "tauri-plugin-opener",
- "tauri-plugin-updater",
- "tokio",
- "transcribe-cpp",
- "ts-rs",
- "uuid",
-]
-
-[[package]]
-name = "dray-proto"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2226,6 +2183,49 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "hz"
+version = "0.20.6"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "cef",
+ "chrono",
+ "cpal",
+ "fff-search",
+ "futures-util",
+ "hz-proto",
+ "libc",
+ "notify",
+ "notify-rust",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "reqwest 0.12.28",
+ "rubato",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-macos-permissions",
+ "tauri-plugin-opener",
+ "tauri-plugin-updater",
+ "tokio",
+ "transcribe-cpp",
+ "ts-rs",
+ "uuid",
+]
+
+[[package]]
+name = "hz-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

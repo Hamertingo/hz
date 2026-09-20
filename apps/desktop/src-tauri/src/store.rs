@@ -8,6 +8,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
+    context::ContextReading,
     events::{now_rfc3339, AgentEvent, AgentEventPayload, ApprovalPolicy},
     issues::IssueRef,
     models::{Effort, ModelId},
@@ -92,7 +93,7 @@ pub struct SessionIndexItem {
     /// has exactly one of them — Claude Code's `fastMode` flag setting, Codex's
     /// `priority` service tier, fx's `fast_mode` — and a two-valued switch is
     /// the honest shape for all three. A variant is also what an older build
-    /// sharing `~/.dray` cannot spell, which fails the line and reads the whole
+    /// sharing `~/.hz` cannot spell, which fails the line and reads the whole
     /// index as no sessions at all; `false` is what a bool degrades to there,
     /// which is a session running at ordinary speed and nothing worse.
     ///
@@ -121,7 +122,7 @@ pub struct SessionIndexItem {
     /// two ids and this is the mapping between them.
     ///
     /// Ours stays primary — it keys the index, the log filename, the
-    /// attachments directory and every `dray` address, and all of those are
+    /// attachments directory and every `hz` address, and all of those are
     /// written *before* the child answers. This is read by resume alone.
     #[serde(default)]
     pub thread_id: Option<String>,
@@ -151,6 +152,25 @@ pub struct SessionIndexItem {
     /// failing to parse is *every session* gone.
     #[serde(default)]
     pub role_id: Option<String>,
+    /// The newest context reading the agent has given for this session, with the
+    /// moment it was taken.
+    ///
+    /// **Kept because a session outlives its child.** The reading is a question
+    /// only a live agent can answer — `/context` is a prompt, and the rows are
+    /// computed from runtime state ACP never sends — so a session reopened after
+    /// a restart has no way to ask one, and the panel fell back to hz's own
+    /// estimate of the conversation's text: a worse answer, drawn where the
+    /// reader had seen the agent's own rows a moment before. This is that answer
+    /// kept, and the panel draws it, stamped, until a live reading replaces it.
+    ///
+    /// `skip_serializing_if` so an entry without one stays byte-identical to what
+    /// shipped, and `serde(default)` for the reason every field here has it: the
+    /// index is parsed as one `Vec`, so a field an older entry lacks failing to
+    /// parse is *every session* gone. An older build reading this keeps it — the
+    /// flatten below carries keys it does not know — so the round trip through a
+    /// shared `~/.hz` is lossless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_reading: Option<crate::context::ContextReading>,
     pub created: String,
     pub modified: String,
     pub archived: bool,
@@ -158,7 +178,7 @@ pub struct SessionIndexItem {
     /// Every key this build does not know, carried through untouched.
     ///
     /// The index is rewritten **whole**, and `INDEX_LOCK` is an in-process
-    /// mutex — so two Dray builds sharing `~/.dray` do not merely race, they
+    /// mutex — so two hz builds sharing `~/.hz` do not merely race, they
     /// downgrade each other's schema. The older one round-trips all 200-odd
     /// entries through *its* struct and silently drops every field it cannot
     /// represent. Observed: a released 0.8.2 running beside a dev build erased
@@ -194,17 +214,23 @@ pub struct SessionSnapshot {
 
 static INDEX_LOCK: Mutex<()> = Mutex::const_new(());
 
-/// `~/.dray`, creating it if this is the first run. If `~/.automedon` exists
-/// from before the app's rename and `~/.dray` doesn't yet, the old directory
-/// is moved into place so a rename never orphans a user's session history.
+/// `~/.hz`, creating it if this is the first run. A directory left behind by an
+/// earlier name of the app is moved into place when `~/.hz` doesn't exist yet,
+/// so a rename never orphans a user's session history.
 pub async fn get_home_app_dir() -> Result<PathBuf> {
     let home = std::env::home_dir().context("could not resolve home directory")?;
-    let path = home.join(".dray");
+    let path = home.join(".hz");
 
     if !fs::try_exists(&path).await.unwrap_or(false) {
-        let legacy = home.join(".automedon");
-        if fs::try_exists(&legacy).await.unwrap_or(false) {
-            fs::rename(&legacy, &path).await?;
+        // Newest first, and the first one found wins: a reader who came through
+        // both names has all of their history in the newer directory, which
+        // leaves the older one empty and worth ignoring.
+        for legacy in [".dray", ".automedon"] {
+            let legacy = home.join(legacy);
+            if fs::try_exists(&legacy).await.unwrap_or(false) {
+                fs::rename(&legacy, &path).await?;
+                break;
+            }
         }
     }
 
@@ -236,7 +262,7 @@ async fn restrict_to_owner(path: &PathBuf) {
     }
 }
 
-/// `~/.dray/sessions`, creating it if needed.
+/// `~/.hz/sessions`, creating it if needed.
 pub async fn get_sessions_dir() -> Result<PathBuf> {
     let path = get_home_app_dir().await?.join("sessions");
 
@@ -245,7 +271,7 @@ pub async fn get_sessions_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
-/// `~/.dray/pi-sessions`, creating it if needed.
+/// `~/.hz/pi-sessions`, creating it if needed.
 pub async fn get_pi_sessions_dir() -> Result<PathBuf> {
     let path = get_home_app_dir().await?.join("pi-sessions");
 
@@ -257,9 +283,9 @@ pub async fn get_pi_sessions_dir() -> Result<PathBuf> {
 /// Where pi writes this session's own transcript.
 ///
 /// pi's resume handle is the *file*, not an id it adopts: it mints its own
-/// session id and reports it back, so the path is the one thing Dray gets to
+/// session id and reports it back, so the path is the one thing hz gets to
 /// choose and the one thing a resume needs. Its own directory rather than
-/// beside Dray's `<id>.jsonl` logs, because two unrelated formats under one
+/// beside hz's `<id>.jsonl` logs, because two unrelated formats under one
 /// name pattern can only be told apart by whoever remembers the difference.
 pub async fn pi_session_file(session_id: &str) -> Result<PathBuf> {
     Ok(get_pi_sessions_dir()
@@ -267,41 +293,11 @@ pub async fn pi_session_file(session_id: &str) -> Result<PathBuf> {
         .join(format!("{session_id}.jsonl")))
 }
 
-/// Copies pi's transcript onto a fork's own path, which for pi *is* the fork.
-///
-/// pi's resume handle is the file, so a fork spawned on this copy opens holding
-/// the whole conversation and needs no CLI-side step at all — verified live: pi
-/// on a copied file reports the new path, counts the parent's messages and
-/// quotes its first prompt back.
-///
-/// The copy keeps pi's own session id inside it, so two files name one pi
-/// session. That collides with nothing: pi's id is not an address anything here
-/// uses — Dray's own id is — and pi reports the *file* as what it resumed.
-///
-/// A source that cannot be read is a failure, and the caller decides whether
-/// that matters: only a pi session has a transcript, so the fork path calls
-/// this for pi alone.
-///
-/// Probing first and answering "nothing to do" was the first shape, and it was
-/// wrong in the one case worth catching. A pi parent whose file is missing or
-/// unreadable would fork into a session showing the parent's whole conversation
-/// on screen over an empty pi context: it reads as a working fork and answers
-/// as a blank one.
-pub async fn copy_pi_session_file(from: &str, to: &str) -> Result<()> {
-    let source = pi_session_file(from).await?;
-    let destination = pi_session_file(to).await?;
-    fs::copy(&source, &destination)
-        .await
-        .with_context(|| format!("could not copy {}", source.display()))?;
-
-    Ok(())
-}
-
 /// Removes pi's transcript for a session being deleted.
 ///
 /// A second file per session, so a second thing to delete — without this a
 /// deleted pi session leaves its whole conversation on disk under
-/// `~/.dray/pi-sessions/`, which is every file the agent read and wrote in it.
+/// `~/.hz/pi-sessions/`, which is every file the agent read and wrote in it.
 /// Nothing would ever read it again, since the index entry naming it is gone.
 ///
 /// A missing file is success, not an error: every non-pi session has none, and
@@ -316,7 +312,7 @@ pub async fn delete_pi_session_file(session_id: &str) -> Result<()> {
     }
 }
 
-/// `~/.dray/omp-sessions`, creating it if needed.
+/// `~/.hz/omp-sessions`, creating it if needed.
 ///
 /// Its own directory rather than pi's, and the formats are why: omp forked the
 /// wire protocol but not the store, and its session file opens with a
@@ -335,7 +331,7 @@ pub async fn get_omp_sessions_dir() -> Result<PathBuf> {
 ///
 /// omp's resume handle is the *file*, not an id it adopts — verified live: two
 /// spawns on one path report the same `sessionId`, and `--resume <path>` reports
-/// it too. So the path is the one thing Dray gets to choose and the one thing a
+/// it too. So the path is the one thing hz gets to choose and the one thing a
 /// resume needs, exactly as for pi.
 pub async fn omp_session_file(session_id: &str) -> Result<PathBuf> {
     Ok(get_omp_sessions_dir()
@@ -343,37 +339,11 @@ pub async fn omp_session_file(session_id: &str) -> Result<PathBuf> {
         .join(format!("{session_id}.jsonl")))
 }
 
-/// Copies omp's transcript onto a fork's own path, which for omp *is* the fork.
-///
-/// pi's bargain, and omp inherits it: the resume handle is the file, so a fork
-/// spawned on this copy opens holding the whole conversation and needs no
-/// CLI-side step at all. That is why `caps().fork_needs_cli` is `false` for both
-/// — where Claude Code has a second half only the CLI can perform, this has
-/// none.
-///
-/// The copy keeps omp's own session id inside it, so two files name one omp
-/// session. That collides with nothing: the id is not an address anything here
-/// uses — Dray's own id is — and omp reports the *file* as what it resumed.
-///
-/// A source that cannot be read is a failure rather than a quiet no-op, for pi's
-/// reason: a parent whose file is missing would fork into a session showing the
-/// parent's whole conversation on screen over an empty context, which reads as a
-/// working fork and answers as a blank one.
-pub async fn copy_omp_session_file(from: &str, to: &str) -> Result<()> {
-    let source = omp_session_file(from).await?;
-    let destination = omp_session_file(to).await?;
-    fs::copy(&source, &destination)
-        .await
-        .with_context(|| format!("could not copy {}", source.display()))?;
-
-    Ok(())
-}
-
 /// Removes omp's transcript for a session being deleted.
 ///
 /// A second file per session, so a second thing to delete — without this a
 /// deleted omp session leaves its whole conversation on disk under
-/// `~/.dray/omp-sessions/`.
+/// `~/.hz/omp-sessions/`.
 ///
 /// A missing file is success, not an error: every non-omp session has none, and
 /// so does an omp session whose child never started.
@@ -400,7 +370,7 @@ pub async fn read_index() -> Result<Vec<SessionIndexItem>> {
 }
 
 /// One JSON file, read whole. A missing or blank file is the default — the
-/// convention every file under `~/.dray` shares, since "nothing written yet"
+/// convention every file under `~/.hz` shares, since "nothing written yet"
 /// is the ordinary state on a fresh install and never an error.
 pub async fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T> {
     let contents = match fs::read_to_string(path).await {
@@ -453,7 +423,7 @@ pub async fn list_session_index_items(
 /// candidates is on disk.
 ///
 /// **A managed worktree is never the answer, even where it is the recorded
-/// project and still on disk.** `dray new` used to record the *caller's* own
+/// project and still on disk.** `hz new` used to record the *caller's* own
 /// worktree as the project, and that caller is usually a live session — so
 /// taking `project_path` at its word would move this session into another
 /// session's checkout, which is the one thing a worktree per session exists to
@@ -476,12 +446,12 @@ fn surviving_root(item: &SessionIndexItem, dir_exists: impl Fn(&str) -> bool) ->
     .map(str::to_string)
 }
 
-/// The project root a session belongs to, which is **never a worktree Dray
-/// manages**: an entry filed under one is a mis-filed record, since `dray new`
+/// The project root a session belongs to, which is **never a worktree hz
+/// manages**: an entry filed under one is a mis-filed record, since `hz new`
 /// used to record the caller's own tree as the new session's project.
 ///
 /// Both places that move a session out of its worktree need this — the backfill
-/// below and [`relocate_session_to_project`], which is Dray's own delete. The
+/// below and [`relocate_session_to_project`], which is hz's own delete. The
 /// delete had it wrong and the backfill could not heal it: it rewrote `cwd` to
 /// `project_path` unconditionally, and the result *exists*, so the pass that
 /// repairs a missing `cwd` never looks at it again.
@@ -490,7 +460,7 @@ fn project_root_of(project_path: &str) -> &str {
 }
 
 /// The project a `<project>/.claude/worktrees/<name>` path belongs to, or
-/// `None` where the path is not a worktree **Dray manages**.
+/// `None` where the path is not a worktree **hz manages**.
 ///
 /// `<name>` has to be a *direct* child, which is the same reading
 /// `git::is_managed_worktree` takes before it deletes one, and for the
@@ -570,6 +540,8 @@ impl SessionIndexItem {
             // and it is read at spawn, so assigning one before the first prompt
             // is the same as having had it all along.
             role_id: None,
+            // Nothing has asked the agent yet.
+            context_reading: None,
             created: now.clone(),
             modified: now,
             archived: false,
@@ -655,6 +627,12 @@ impl SessionIndexItem {
             // copies the text — this is the same id, so an edit to the role
             // reaches the fork too.
             role_id: self.role_id.clone(),
+            // Deliberately not inherited, unlike the fields around it. A reading
+            // counts one runtime's own state, and the fork's is a different
+            // session id, its own memory and its own first turn — the parent's
+            // numbers would be a copy that looks measured and is not. The fork
+            // sends immediately, and its own reading arrives with that turn.
+            context_reading: None,
             created: now.clone(),
             modified: now,
             archived: false,
@@ -996,6 +974,47 @@ pub async fn set_session_flags(
     Ok(Some(updated))
 }
 
+/// Records the newest context reading the agent gave for a session.
+///
+/// Written on the index rather than into the session's log because it is not
+/// something the conversation did — it is the newest answer to a question about
+/// it, and only the newest is worth keeping. `modified` is left alone for
+/// [`set_session_flags`]'s reason: it orders the sidebar, and reading the context
+/// must not jump the row to the top of it.
+///
+/// A session missing from the index is not an error. The answer arrived; there is
+/// simply nowhere to file it, and the panel already holds it in memory.
+pub async fn record_context_reading(session_id: &str, reading: ContextReading) -> Result<()> {
+    let _guard = INDEX_LOCK.lock().await;
+
+    let mut sessions = read_index().await?;
+    if !put_context_reading(&mut sessions, session_id, reading) {
+        return Ok(());
+    }
+
+    write_session_index(&sessions).await
+}
+
+/// Files a reading on the session it belongs to, answering whether the index
+/// held that one.
+///
+/// Split out from the write so the *matching* is testable without an `index.json`
+/// on disk: a reading filed against the wrong entry, or dropped because the id
+/// was compared wrongly, leaves the panel showing the estimate for a session the
+/// agent had just answered for — and nothing about the write would say so.
+fn put_context_reading(
+    sessions: &mut [SessionIndexItem],
+    session_id: &str,
+    reading: ContextReading,
+) -> bool {
+    let Some(item) = sessions.iter_mut().find(|i| i.session_id == session_id) else {
+        return false;
+    };
+
+    item.context_reading = Some(reading);
+    true
+}
+
 /// Records an issue against a session, answering with the list as written.
 ///
 /// An issue already linked is *replaced* rather than appended: re-tagging is how
@@ -1005,7 +1024,7 @@ pub async fn set_session_flags(
 /// Matched on the tracker's own id **or** the human identifier, within a
 /// tracker — the same reading [`unlink_session_issue`] takes, and for a sharper
 /// reason. The two write different things into `id`: a resolved link carries
-/// Linear's UUID, while one written blind (`dray issue link`, or a tag no key
+/// Linear's UUID, while one written blind (`hz issue link`, or a tag no key
 /// could be found for) carries the identifier itself. Keyed on `id` alone,
 /// `DRA-53` linked blind and `DRA-53` resolved a moment later are two rows for
 /// one issue. Neither spelling can collide with the other — one is a UUID.
@@ -1237,11 +1256,11 @@ pub async fn clear_role_from_sessions(role_id: &str) -> Result<usize> {
 /// rather than anything destructive.
 ///
 /// It also repairs the entries that shape cannot describe: a tree removed by
-/// anything but Dray's own delete leaves `cwd` naming a directory that is gone,
+/// anything but hz's own delete leaves `cwd` naming a directory that is gone,
 /// and every `git` and `gh` spawned there then fails with ENOENT before the
 /// binary is reached. See [`surviving_root`] for where those go.
 ///
-/// Those get `worktree_removed` too, including the mis-filed `dray new` entries
+/// Those get `worktree_removed` too, including the mis-filed `hz new` entries
 /// that were never worktree sessions at all — so `session_branch` answers their
 /// recorded branch, which is the *caller's*, and their PR tab draws the caller's
 /// PR. That is the same false positive the shape rule above can produce,
@@ -1363,7 +1382,7 @@ pub async fn set_session_thread_id(session_id: &str, thread_id: &str) -> Result<
 
 /// A level no shipped build can spell, written as one every build can.
 ///
-/// An older Dray sharing `~/.dray` deserializes `effort` as its own closed
+/// An older hz sharing `~/.hz` deserializes `effort` as its own closed
 /// `Effort`, and serde fails a line on an unknown *variant* where it tolerates
 /// an unknown field. The index is one JSON array, so that failed line is the
 /// whole file: a single session on `ultra` would read as **no sessions at all**
@@ -1487,7 +1506,7 @@ pub async fn list_session_events(session_id: &str) -> Result<Vec<AgentEvent>> {
 /// fork's own attachment directory. Returns what the fork will replay.
 ///
 /// The rewrite is what makes the copy stand alone. `ImageRef.path` names a file
-/// under `~/.dray/attachments/<session-id>/`, so a log copied verbatim would
+/// under `~/.hz/attachments/<session-id>/`, so a log copied verbatim would
 /// draw its pictures out of the parent's directory — and deleting the parent
 /// takes that directory with it, blanking images in a session that outlived it.
 ///
@@ -1528,7 +1547,7 @@ pub async fn copy_session_log(from: &str, to: &str, from_cwd: &str) -> Result<Ve
 }
 
 /// Rewrites a copied log to belong to `to`. Split out from the copy so it can be
-/// tested without a `~/.dray` to write into.
+/// tested without a `~/.hz` to write into.
 fn repoint_events(
     events: &mut [AgentEvent],
     to: &str,
@@ -1749,7 +1768,7 @@ mod tests {
     /// by this one.
     ///
     /// This is the failure it exists for, and it is not hypothetical: a
-    /// released 0.8.2 sharing `~/.dray` with a dev build rewrote the whole
+    /// released 0.8.2 sharing `~/.hz` with a dev build rewrote the whole
     /// index through its own struct and erased `threadId` from every Codex
     /// session, which turned live work into "this session has no Codex thread
     /// to resume". Without the catch-all, the assert below is what breaks.
@@ -1806,7 +1825,7 @@ mod tests {
                 "id": "b8f1e0aa-0000-4000-8000-000000000001",
                 "identifier": "DRA-53",
                 "title": "Add the issue panel",
-                "url": "https://linear.app/drayhq/issue/DRA-53",
+                "url": "https://linear.app/hzhq/issue/DRA-53",
             }],
             "parentSessionId": "0198c0de-dead-7000-8000-00000000f00d",
             // Present-and-null, which is what an agent with no role writes. The
@@ -1926,7 +1945,7 @@ mod tests {
     /// The whole reason `ultra` is not written as itself. Serde tolerates an
     /// unknown *field* and fails a line on an unknown *variant*, and the index
     /// is one array — so one session on `ultra` would read as **no sessions**
-    /// in a release build sharing `~/.dray` with this one.
+    /// in a release build sharing `~/.hz` with this one.
     #[test]
     fn an_older_build_reads_every_session_beside_an_ultra_one() {
         let written =
@@ -2053,6 +2072,97 @@ mod tests {
         assert_eq!(item.permission_mode, ApprovalPolicy::Auto);
     }
 
+    /// A reading lands on the session that asked for it, and on no other.
+    #[test]
+    fn a_reading_is_filed_against_the_session_that_asked() {
+        let mut sessions = vec![
+            test_index_item("one"),
+            test_index_item("two"),
+        ];
+        let reading = ContextReading {
+            ts: "2026-09-19T15:04:00.000Z".into(),
+            snapshot: crate::context::ContextSnapshot {
+                live: true,
+                model: "m".into(),
+                used: Some(21_243),
+                max: Some(1_000_000),
+                compaction: Some("never".into()),
+                components: vec![],
+            },
+        };
+
+        assert!(put_context_reading(&mut sessions, "two", reading.clone()));
+        assert_eq!(sessions[0].context_reading, None);
+        assert_eq!(sessions[1].context_reading, Some(reading));
+
+        // A session the index does not hold is nothing to file, not an error —
+        // the panel already has the answer in hand.
+        assert!(!put_context_reading(&mut sessions, "absent", ContextReading {
+            ts: "t".into(),
+            snapshot: crate::context::ContextSnapshot {
+                live: false,
+                model: "m".into(),
+                used: None,
+                max: None,
+                compaction: None,
+                components: vec![],
+            },
+        }));
+    }
+
+    fn test_index_item(id: &str) -> SessionIndexItem {
+        SessionIndexItem::new(
+            id,
+            Harness::Mcode,
+            "/p",
+            "/p",
+            None,
+            None,
+            "t",
+            ModelId::default(),
+            None,
+            ApprovalPolicy::Auto,
+            false,
+            None,
+        )
+    }
+
+    /// **A reading is a field on the entry, so it rides the whole-file
+    /// rewrite.** That rewrite is where fields get lost — the index is parsed as
+    /// one `Vec` and written whole — so what has to hold is that a kept reading
+    /// comes back out of it with the numbers the panel draws, and that an entry
+    /// with none is written exactly as it was before the field existed.
+    #[test]
+    fn a_context_reading_survives_the_indexs_whole_file_rewrite() {
+        let with_reading = r#"{"sessionId":"a","harness":"mcode","cwd":"/p","projectPath":"/p",
+            "branch":null,"worktreeName":null,"title":"t","created":"c","modified":"m",
+            "archived":false,"pinned":false,"contextReading":{"ts":"2026-09-19T15:04:00.000Z",
+            "snapshot":{"live":true,"model":"deepseek-v4.1-flash","used":21243,"max":1000000,
+            "compaction":"never","components":[{"label":"Tools","tokens":8458}]}}}"#;
+
+        let item: SessionIndexItem = serde_json::from_str(with_reading).unwrap();
+        let reading = item.context_reading.clone().expect("the reading reads");
+        assert_eq!(reading.ts, "2026-09-19T15:04:00.000Z");
+        assert_eq!(reading.snapshot.used, Some(21_243));
+        assert_eq!(reading.snapshot.components[0].label, "Tools");
+
+        let rewritten = serde_json::to_string(&item).unwrap();
+        let back: SessionIndexItem = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(back.context_reading, item.context_reading);
+
+        // An entry that never had one neither gains a key nor fails to read —
+        // which is every entry on a machine that has not opened the panel.
+        let without = with_reading
+            .split(",\"contextReading\"")
+            .next()
+            .expect("the fixture has the reading last")
+            .to_string()
+            + "}";
+        let plain: SessionIndexItem = serde_json::from_str(&without).unwrap();
+        assert_eq!(plain.context_reading, None);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("contextReading"));
+    }
+
     #[test]
     fn legacy_index_entry_reads_as_no_pending_fork() {
         let legacy = r#"{"sessionId":"a","harness":"claude_code","cwd":"/p","projectPath":"/p",
@@ -2086,17 +2196,19 @@ mod tests {
         };
         let file = format!(
             "[{},{},{}]",
-            entry("a", "claude_code"),
+            entry("a", "mcode"),
             entry("b", "some_future_agent"),
-            entry("c", "codex")
+            // A harness this build used to run, written by a build that still
+            // did — the case the tolerant read exists for.
+            entry("c", "claude_code")
         );
 
         let items: Vec<SessionIndexItem> = serde_json::from_str(&file).expect("reads");
 
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].harness, Harness::ClaudeCode);
+        assert_eq!(items[0].harness, Harness::Mcode);
         assert_eq!(items[1].harness, Harness::Other("some_future_agent"));
-        assert_eq!(items[2].harness, Harness::Codex);
+        assert_eq!(items[2].harness, Harness::Other("claude_code"));
 
         // And written back as it arrived, so an old build rewriting the index
         // leaves a newer build's sessions exactly as it found them.
@@ -2120,7 +2232,7 @@ mod tests {
     /// `worktree add -B`, which resets the branch and takes its commits along.
     #[test]
     fn a_fork_records_its_parent_whichever_harness_it_is_on() {
-        for harness in [Harness::ClaudeCode, Harness::Pi] {
+        for harness in [Harness::Mcode, Harness::Mcode] {
             let parent = SessionIndexItem::new(
                 "parent",
                 harness,
@@ -2143,13 +2255,12 @@ mod tests {
             );
         }
 
+        // `session/fork` answers a whole new session on the CLI's side, so
+        // there is nothing left for hz to perform — where `fork_needs_cli` true
+        // would have the first send do the forking and the row wait for it.
         assert!(
-            Harness::ClaudeCode.caps().fork_needs_cli,
-            "its conversation is forked lazily, on the first send"
-        );
-        assert!(
-            !Harness::Pi.caps().fork_needs_cli,
-            "copying the session file is the whole of pi's fork"
+            !Harness::Mcode.caps().fork_needs_cli,
+            "session/fork answers a whole session; nothing is left to do here"
         );
     }
 
@@ -2160,7 +2271,7 @@ mod tests {
     fn forking_in_place_inherits_the_tree_without_owning_it() {
         let mut parent = SessionIndexItem::new(
             "parent",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p/.claude/worktrees/wt",
             "/p",
             Some("wt"),
@@ -2200,7 +2311,7 @@ mod tests {
     fn forking_a_relocated_session_in_place_keeps_its_branch_authoritative() {
         let mut parent = SessionIndexItem::new(
             "parent",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p",
             "/p",
             Some("wt"),
@@ -2224,62 +2335,44 @@ mod tests {
         assert!(!elsewhere.worktree_removed);
     }
 
-    /// The four cases `sessionBranch` in `pr.ts` is tested on, so `--from` and
-    /// the PR tab cannot come to disagree about which branch a session is on.
+    /// A session's branch, every row of `shared_rules.json`'s `sessionBranch`
+    /// table — the same rows `sessionBranch` in `pr.ts` is tested on, so
+    /// `--from` and the PR tab cannot come to disagree about which branch a
+    /// session is on.
     #[test]
     fn a_sessions_branch_reads_the_same_way_the_pr_tab_reads_it() {
-        let worktree = SessionIndexItem::new(
-            "a",
-            Harness::ClaudeCode,
-            "/p/.claude/worktrees/calm-owl",
-            "/p",
-            Some("calm-owl"),
-            Some("main"),
-            "hi",
-            ModelId::new("opus"),
-            None,
-            ApprovalPolicy::Auto,
-            false,
-            None,
-        );
-        // The name the CLI mints, which `new` already wrote into the field.
-        assert_eq!(
-            session_branch(&worktree, None).as_deref(),
-            Some("worktree-calm-owl")
-        );
-        // Git's own reading outranks the guess: anything checking out another
-        // branch inside the tree leaves the record describing one it left.
-        assert_eq!(
-            session_branch(&worktree, Some("fix/thing")).as_deref(),
-            Some("fix/thing")
-        );
+        for row in crate::shared_rules::rules().session_branch {
+            // Built with no worktree name, which is what makes the row's
+            // `branch` column the whole of what the record holds: `new` would
+            // otherwise derive it from the name, and the column is what the
+            // record holds *at read time*. The frontend's session object can be
+            // older than that write and rebuilds the name there — the one shape
+            // this side has no case for.
+            let mut item = SessionIndexItem::new(
+                "s",
+                Harness::Mcode,
+                "/p",
+                "/p",
+                None,
+                row.branch.as_deref(),
+                "hi",
+                ModelId::new("opus"),
+                None,
+                ApprovalPolicy::Auto,
+                false,
+                None,
+            );
+            item.worktree_removed = row.worktree_removed;
 
-        let plain = SessionIndexItem::new(
-            "b",
-            Harness::ClaudeCode,
-            "/p",
-            "/p",
-            None,
-            Some("feature"),
-            "hi",
-            ModelId::new("opus"),
-            None,
-            ApprovalPolicy::Auto,
-            false,
-            None,
-        );
-        assert_eq!(session_branch(&plain, None).as_deref(), Some("feature"));
-
-        // Relocated: `cwd` is the shared project root, so HEAD there answers
-        // what that checkout is on and never where this session's work landed.
-        let mut settled = worktree.clone();
-        settled.worktree_name = None;
-        settled.cwd = settled.project_path.clone();
-        settled.worktree_removed = true;
-        assert_eq!(
-            session_branch(&settled, Some("main")).as_deref(),
-            Some("worktree-calm-owl")
-        );
+            assert_eq!(
+                session_branch(&item, row.observed.as_deref()).as_deref(),
+                row.expected.as_deref(),
+                "branch {:?}, removed {}, observed {:?}",
+                row.branch,
+                row.worktree_removed,
+                row.observed
+            );
+        }
     }
 
     /// A fork is a copy, so it sits exactly where the original sits: beside its
@@ -2290,7 +2383,7 @@ mod tests {
     fn a_fork_keeps_its_source_place_in_the_spawn_chain() {
         let mut spawned = SessionIndexItem::new(
             "spawned",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p",
             "/p",
             None,
@@ -2320,7 +2413,7 @@ mod tests {
     fn forking_into_a_worktree_takes_a_tree_and_branch_of_its_own() {
         let parent = SessionIndexItem::new(
             "parent",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p",
             "/p",
             None,
@@ -2371,8 +2464,8 @@ mod tests {
     /// directory goes blank the moment the parent is deleted.
     #[test]
     fn a_copied_log_belongs_to_the_fork_that_replays_it() {
-        let from_dir = Path::new("/home/.dray/attachments/parent");
-        let to_dir = Path::new("/home/.dray/attachments/child");
+        let from_dir = Path::new("/home/.hz/attachments/parent");
+        let to_dir = Path::new("/home/.hz/attachments/child");
 
         let image = |path: &str| ImageRef {
             path: Some(path.to_string()),
@@ -2382,7 +2475,7 @@ mod tests {
         let event = |payload| AgentEvent {
             id: "e1".into(),
             session_id: "parent".into(),
-            harness: Harness::ClaudeCode,
+            harness: Harness::Mcode,
             seq: 0,
             ts: "t".into(),
             turn_id: None,
@@ -2394,7 +2487,7 @@ mod tests {
         let mut events = vec![
             event(AgentEventPayload::UserMessage {
                 text: "look at this".into(),
-                images: vec![image("/home/.dray/attachments/parent/a.png")],
+                images: vec![image("/home/.hz/attachments/parent/a.png")],
                 issues: vec![],
                 baseline: None,
                 queued: false,
@@ -2422,7 +2515,7 @@ mod tests {
                     exit_code: None,
                     duration_ms: None,
                     images: vec![
-                        image("/home/.dray/attachments/parent/b.png"),
+                        image("/home/.hz/attachments/parent/b.png"),
                         // Not ours to move: an image the archive never took.
                         image("/tmp/elsewhere.png"),
                     ],
@@ -2454,8 +2547,8 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                "/home/.dray/attachments/child/a.png",
-                "/home/.dray/attachments/child/b.png",
+                "/home/.hz/attachments/child/a.png",
+                "/home/.hz/attachments/child/b.png",
                 "/tmp/elsewhere.png",
             ]
         );
@@ -2466,7 +2559,7 @@ mod tests {
         let item = |id: &str, archived: bool| {
             let mut i = SessionIndexItem::new(
                 id,
-                Harness::ClaudeCode,
+                Harness::Mcode,
                 "/p",
                 "/p",
                 None,
@@ -2510,7 +2603,7 @@ mod tests {
     fn a_worktree_session_records_the_branch_its_work_lands_on() {
         let item = SessionIndexItem::new(
             "a",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p/.claude/worktrees/calm-owl",
             "/p",
             Some("calm-owl"),
@@ -2560,7 +2653,7 @@ mod tests {
         let session = |cwd: &str, branch: Option<&str>, worktree: Option<&str>| {
             SessionIndexItem::new(
                 "a",
-                Harness::ClaudeCode,
+                Harness::Mcode,
                 cwd,
                 "/p",
                 worktree,
@@ -2596,7 +2689,7 @@ mod tests {
         );
     }
 
-    /// A tree removed by anything but Dray's own delete leaves `cwd` naming a
+    /// A tree removed by anything but hz's own delete leaves `cwd` naming a
     /// directory that is gone, and every `git` and `gh` the session runs then
     /// fails with ENOENT before the binary is reached — which reaches the
     /// reader as the PR panel saying it could not run `gh` while the sidebar's
@@ -2606,7 +2699,7 @@ mod tests {
         let session = |cwd: &str, project: &str, worktree: Option<&str>| {
             SessionIndexItem::new(
                 "a",
-                Harness::ClaudeCode,
+                Harness::Mcode,
                 cwd,
                 project,
                 worktree,
@@ -2623,7 +2716,7 @@ mod tests {
         let mut items = vec![
             // The tree went without the index hearing about it.
             session("/p/.claude/worktrees/calm-owl", "/p", Some("calm-owl")),
-            // `dray new` recorded the caller's own worktree as the project, so
+            // `hz new` recorded the caller's own worktree as the project, so
             // both fields dangle and only the shape says where the repo is.
             session(
                 "/p/.claude/worktrees/gone",
@@ -2653,7 +2746,7 @@ mod tests {
         );
     }
 
-    /// Dray's own delete used to set `cwd = project_path` flat, so a session
+    /// hz's own delete used to set `cwd = project_path` flat, so a session
     /// whose project was the caller's tree landed in that caller's checkout —
     /// and the backfill could never heal it, since the result exists.
     #[test]
@@ -2666,7 +2759,7 @@ mod tests {
         );
     }
 
-    /// A path is only a worktree Dray manages where `<name>` is a direct child,
+    /// A path is only a worktree hz manages where `<name>` is a direct child,
     /// so an ordinary repository that happens to sit below such a segment is
     /// left to speak for itself rather than redirected to an ancestor.
     #[test]
@@ -2694,7 +2787,7 @@ mod tests {
     fn a_repair_never_lands_in_another_sessions_worktree() {
         let mut items = vec![SessionIndexItem::new(
             "a",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/repo/.claude/worktrees/caller/.claude/worktrees/mine",
             "/repo/.claude/worktrees/caller",
             None,
@@ -2719,7 +2812,7 @@ mod tests {
     fn snapshot_flattens_index_fields_beside_events() {
         let item = SessionIndexItem::new(
             "a",
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p",
             "/p",
             None,

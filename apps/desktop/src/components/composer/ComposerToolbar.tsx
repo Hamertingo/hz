@@ -10,13 +10,16 @@ import PermissionSelector, {
 import ProjectSelector from "@/components/composer/ProjectSelector";
 import RepoSelector from "@/components/composer/RepoSelector";
 import RolePicker from "@/components/RolePicker";
+import StashBadge from "@/components/composer/StashBadge";
 import WorktreeToggle from "@/components/composer/WorktreeToggle";
 import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
+  AgentEvent,
   ApprovalPolicy,
   BranchList,
+  ContextReading,
   Effort,
   Harness,
   Model,
@@ -28,7 +31,6 @@ import type {
 type ComposerToolbarProps = {
   /// Creation-time only, like project and branch: it decides which child runs.
   harness: Harness;
-  onHarnessChange: (harness: Harness) => void;
 
   models: Model[];
   modelId: ModelId;
@@ -42,8 +44,7 @@ type ComposerToolbarProps = {
   fastNote: string | null;
   onModelChange: (modelId: ModelId, effort: Effort | null) => void;
   onRefreshModels: () => void;
-  onReloadModels: () => void;
-  onSeedProvider: (provider: string) => void;
+  onOpenProviderSettings?: () => void;
   loadingModels: boolean;
 
   permissionMode: ApprovalPolicy;
@@ -99,16 +100,21 @@ type ComposerToolbarProps = {
   /// How full the model's context is, or `null` before any turn has reported
   /// it. Sits at the far end of the row rather than among the pickers: it
   /// reports rather than sets, and nothing here changes it.
-  contextUsage: { used: number; max: number } | null;
+  contextUsage: { used: number; max: number; costUsd: number | null } | null;
+
+  /// The session's events, for the panel's own accounting. Read only while that
+  /// panel is open — see `ContextMeter`.
+  events: readonly AgentEvent[];
+
+  /// The last context reading this session's agent gave, off its index entry.
+  contextReading: ContextReading | null;
+
+  /// The session whose agent is asked for a reading, or `null` before one exists.
+  sessionId: string | null;
 
   /// Where the session runs is fixed at creation, so the last three controls
   /// only exist before one starts.
   isNewSession: boolean;
-
-  /// Whether this session's turn is in flight. Only the fx provider switch
-  /// reads it — it is the one control here that moves the child on the click
-  /// rather than at the next send.
-  busy: boolean;
 };
 
 /// The composer's control row. Model and permission change a running session in
@@ -118,7 +124,6 @@ type ComposerToolbarProps = {
 /// the caller's, since only the caller knows which side of it the row sits on.
 export default function ComposerToolbar({
   harness,
-  onHarnessChange,
   models,
   modelId,
   effort,
@@ -127,8 +132,7 @@ export default function ComposerToolbar({
   onFastChange,
   onModelChange,
   onRefreshModels,
-  onReloadModels,
-  onSeedProvider,
+  onOpenProviderSettings,
   loadingModels,
   permissionMode,
   onPermissionModeChange,
@@ -154,8 +158,10 @@ export default function ComposerToolbar({
   onToggleWorktree,
   onAttach,
   contextUsage,
+  events,
+  contextReading,
+  sessionId,
   isNewSession,
-  busy,
 }: ComposerToolbarProps) {
   return (
     <div className="flex min-w-0 items-center gap-0.5 px-1">
@@ -180,10 +186,10 @@ export default function ComposerToolbar({
         </TooltipContent>
       </Tooltip>
 
+      <StashBadge sessionId={sessionId} />
+
       <ModelSelector
         harness={harness}
-        onHarnessChange={onHarnessChange}
-        canSwitchHarness={isNewSession}
         models={models}
         modelId={modelId}
         effort={effort}
@@ -191,11 +197,12 @@ export default function ComposerToolbar({
         fastNote={fastNote}
         onFastChange={onFastChange}
         isNewSession={isNewSession}
-        busy={busy}
+        // The fan-out set is keyed by composer, exactly as the draft and the
+        // attachments are — `null` before a session exists.
+        sessionId={sessionId}
         onChange={onModelChange}
         onRefreshModels={onRefreshModels}
-        onReloadModels={onReloadModels}
-        onSeedProvider={onSeedProvider}
+        onOpenProviderSettings={onOpenProviderSettings}
         loadingModels={loadingModels}
       />
 
@@ -291,7 +298,19 @@ export default function ComposerToolbar({
           whole middle of the row and this stays pinned to the right edge. */}
       {contextUsage && (
         <div className="ml-auto">
-          <ContextMeter used={contextUsage.used} max={contextUsage.max} />
+          {/* **Keyed by session, because a reading belongs to one.** The panel
+              holds what its own ask fetched, and this row survives a session
+              switch — unkeyed, the reading of the session the reader just left
+              would be drawn as current under the one they just arrived at. */}
+          <ContextMeter
+            key={sessionId ?? "new"}
+            sessionId={sessionId}
+            used={contextUsage.used}
+            max={contextUsage.max}
+            costUsd={contextUsage.costUsd}
+            events={events}
+            stored={contextReading}
+          />
         </div>
       )}
     </div>

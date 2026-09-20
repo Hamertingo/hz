@@ -55,7 +55,7 @@ export function useGlass(fullscreen: boolean) {
   // dark blur and went grey — the whole reason light's `--vibrancy-alpha` sat at
   // 92%. This is the fix App.css said could not come from the CSS side. App-wide,
   // which is what `set_theme` is on macOS: traffic lights, menu bar and native
-  // dialogs follow Dray's mode rather than the system's.
+  // dialogs follow hz's mode rather than the system's.
   //
   // `null` is not a spelling of "whatever is on screen", and passing
   // `resolvedMode` unconditionally breaks the case that distinction exists for:

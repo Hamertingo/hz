@@ -19,7 +19,7 @@ import { dismissLink, resolveLink, usePendingLink } from "@/lib/openLink";
 ///
 /// One dialog for the whole app, fed by `openLink`'s store, since links are
 /// rendered by Streamdown and the user bubble several components below
-/// anything that could hold the state. Return opens in Dray — the common
+/// anything that could hold the state. Return opens in hz — the common
 /// answer — and the whole URL is shown, wrapping rather than truncating: the
 /// host is the reason to show it and the tail is where a link lies.
 export default function LinkDialog() {
@@ -49,7 +49,7 @@ export default function LinkDialog() {
         <AlertDialogHeader>
           <AlertDialogTitle>Open this link?</AlertDialogTitle>
           <AlertDialogDescription>
-            In Dray's browser, or in your default browser.
+            In hz's browser, or in your default browser.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="max-h-32 min-w-0 overflow-y-auto rounded-md bg-muted p-3 font-mono text-ui break-all">
@@ -76,7 +76,7 @@ export default function LinkDialog() {
             System browser
           </Button>
           <AlertDialogAction ref={action} onClick={() => resolveLink(false)}>
-            Open in Dray
+            Open in hz
             <CornerDownLeft data-icon="inline-end" className="opacity-70" />
           </AlertDialogAction>
         </AlertDialogFooter>

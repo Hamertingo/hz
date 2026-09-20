@@ -16,6 +16,7 @@
 /// while typing that goes plain once sent — or the reverse — reads as a bug in
 /// whichever surface the reader noticed second.
 import { findPromptPaths } from "@/lib/filePath";
+import { ATTACHMENT_MARK, ATTACHMENT_SIZE } from "@/lib/attachmentToken";
 import { OPENERS, parseIdentifier } from "@/lib/issue";
 import { parseSlashCommand } from "@/lib/slash";
 
@@ -31,7 +32,15 @@ export type Segment = {
     | "code"
     | "strike"
     | "link"
-    | "path";
+    | "path"
+    /// A line of a quotation, from a citation pinned to the draft. It arrives as
+    /// prompt text — a markdown blockquote — so the transcript draws the quote
+    /// the reader sent rather than a row of chevrons.
+    | "quote"
+    /// An attachment's chip: the paperclip the composer writes into the draft and
+    /// the name after it. Painted as a pill by the composer's mirror and as plain
+    /// words everywhere else — see `attachmentToken`.
+    | "attachment";
   text: string;
   /// What sits between an inline mark's delimiters, for the surface that draws
   /// the mark rather than the markup. `text` keeps the delimiters, which is what
@@ -74,6 +83,16 @@ export const SEGMENT_COLOR: Record<Segment["kind"], string> = {
   // A bare path is the same thing a mention is — a file to open — so it takes
   // the same colour rather than inventing a second one for one idea.
   path: "text-accent-mention",
+  // Muted, which is what a quotation is drawn in everywhere else in this app.
+  // A colour and nothing more: the composer's overlay lays out the raw `> ` and
+  // must not move a glyph, so the weight of the quote is the transcript's own
+  // business — see `UserMessage`.
+  quote: "text-muted-foreground",
+  // The same blue a file mention takes, because an attachment is a file mention
+  // a moment early. The pill itself is `.chip-inline`, which the *mirror* adds —
+  // this is only what the transcript draws, where the paperclip and the name are
+  // ordinary words in a sentence.
+  attachment: "text-accent-mention",
 };
 
 /// Punctuation a sentence puts after a URL, not in it. A closing paren stays
@@ -121,7 +140,7 @@ export function splitMention(text: string): { dir: string; name: string } {
 /// dropped a character would slide every glyph after it out of register, and
 /// what the reader typed is what the textarea has to keep holding.
 ///
-/// The sender is why this exists. An agent relaying through `dray send` writes
+/// The sender is why this exists. An agent relaying through `hz send` writes
 /// its message inside a shell string, where `\n` is left uninterpreted, so the
 /// two characters arrive verbatim and the whole report drew as one paragraph.
 /// Applied before anything is segmented, so a mark cannot span the break and a
@@ -380,6 +399,46 @@ export function highlightSegments(text: string): Segment[] {
 
   for (; i < text.length; i += 1) {
     const opener = text[i];
+
+    // An attachment's chip: the paperclip the composer writes, the name, and the
+    // size the chip shows under it. **A shape rule, not a lookup** — this walk
+    // knows nothing about which files are attached, and the mirror is the surface
+    // that checks a run against the set it is holding.
+    //
+    // The size is part of the run because it is part of the *chip*: left outside,
+    // it drew beside the pill in the message's own colour, which is how it looked
+    // broken rather than included. `formatBytes` spells it, and nothing else in a
+    // prompt looks like it. `📎` is two code units, hence the `startsWith`.
+    if (text.startsWith(ATTACHMENT_MARK, i) && text[i + ATTACHMENT_MARK.length] === " ") {
+      const from = i;
+      let end = i + ATTACHMENT_MARK.length + 1;
+      while (end < text.length && !/\s/.test(text[end])) end += 1;
+
+      const size = ATTACHMENT_SIZE.exec(text.slice(end));
+      if (size) end += size[0].length;
+
+      if (i > plainFrom) segments.push({ kind: "text", text: text.slice(plainFrom, i) });
+      segments.push({ kind: "attachment", text: text.slice(from, end) });
+      plainFrom = end;
+      i = end - 1;
+      continue;
+    }
+
+    // A quoted line, which is how a citation arrives: the prompt carries it as a
+    // markdown blockquote. **The only block construct this reads**, and it is
+    // here because nothing inline can say "quotation" — a `>` at the start of a
+    // line is otherwise punctuation, and a reader cannot tell one from a chevron.
+    // Whole lines, so the run is a slice of the draft and the round trip holds.
+    if (opener === ">" && (i === 0 || text[i - 1] === "\n") && text[i + 1] === " ") {
+      const end = text.indexOf("\n", i);
+      const stop = end === -1 ? text.length : end;
+      if (i > plainFrom) segments.push({ kind: "text", text: text.slice(plainFrom, i) });
+      segments.push({ kind: "quote", text: text.slice(i, stop) });
+      plainFrom = stop;
+      i = stop - 1;
+      continue;
+    }
+
     if (opener === "h" && (i === 0 || SPACE.test(text[i - 1]) || OPENERS.includes(text[i - 1]))) {
       const url = urlAt(text, i);
       if (!url) continue;

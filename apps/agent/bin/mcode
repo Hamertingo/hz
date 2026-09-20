@@ -1,0 +1,29 @@
+#!/bin/sh
+# The agent, run from the source tree this repository owns.
+#
+# hz ships the CLI it runs rather than borrowing one off the reader's PATH, so
+# there is nothing to install before the app works. Two ways to run, in order:
+#
+# 1. **From this tree**, once its dependencies exist — `npm install --omit=dev`
+#    here, with the install-script approval the CLI's own error message spells
+#    out, because one of them is a native SQLite binding npm blocks by default.
+#    That is the setup for *working on the agent*, not for running the app.
+# 2. **From the tree staged for the bundle**, which `scripts/vendor-mcode.sh`
+#    installs with the CLI and its runtime and which is what a release ships.
+#    Reached whenever this tree has no `node_modules` — the ordinary state on a
+#    machine that only wants the app to work.
+#
+# usage: apps/agent/bin/mcode acp
+set -e
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+STAGED="$HERE/../desktop/src-tauri/resources/mcode/bin/mcode"
+
+if [ -d "$HERE/node_modules" ] && [ ! -x "$STAGED" ]; then
+  exec node "$HERE/dist/cli.js" "$@"
+fi
+
+if [ -x "$STAGED" ]; then
+  exec "$STAGED" "$@"
+fi
+
+exec node "$HERE/dist/cli.js" "$@"

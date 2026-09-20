@@ -111,7 +111,8 @@ export function openInFiles(sid: string | null, path: string, line?: number): vo
 
   if (open.some((file) => file.path === path)) {
     patch(sid, path, (file) => ({ ...file, line, reveal: file.reveal + 1 }));
-    return write(sid, { active: path });
+    write(sid, { active: path });
+    return;
   }
 
   write(sid, {

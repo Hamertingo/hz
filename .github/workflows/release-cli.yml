@@ -1,7 +1,7 @@
-# Builds and publishes the `dray` CLI.
+# Builds and publishes the `hz` CLI.
 #
 # Separate from the app's release for a reason, not just tidiness: the two ship
-# on their own schedules and the CLI has to run on linux, where there is no Dray
+# on their own schedules and the CLI has to run on linux, where there is no hz
 # app at all. `cli-v*` tags keep them from colliding — the app's pipeline reads
 # `v*` and writes the updater manifests on the `updates` branch, none of which
 # this touches.
@@ -50,14 +50,14 @@ jobs:
       # The shared crate too — it is a separate cargo project, so the CLI's own
       # test run does not cover it.
       - name: Test the protocol crate
-        working-directory: crates/dray-proto
+        working-directory: crates/hz-proto
         run: cargo test
 
       - name: Test the CLI
         working-directory: apps/cli
         run: cargo test
 
-      # `dray update` stops early when the resolved tag equals `cli-v` plus its
+      # `hz update` stops early when the resolved tag equals `cli-v` plus its
       # own `CARGO_PKG_VERSION`, so the two being equal is a contract now rather
       # than a convention. A tag pushed ahead of the crate version would ship a
       # binary that reads as out of date forever and reinstalls on every run.
@@ -117,8 +117,8 @@ jobs:
         working-directory: apps/cli
         run: |
           set -euo pipefail
-          archive="dray-${{ matrix.target }}.tar.gz"
-          tar -czf "$archive" -C "target/${{ matrix.target }}/release" dray
+          archive="hz-${{ matrix.target }}.tar.gz"
+          tar -czf "$archive" -C "target/${{ matrix.target }}/release" hz
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$archive" > "$archive.sha256"
           else
@@ -128,10 +128,10 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dray-${{ matrix.target }}
+          name: hz-${{ matrix.target }}
           path: |
-            apps/cli/dray-${{ matrix.target }}.tar.gz
-            apps/cli/dray-${{ matrix.target }}.tar.gz.sha256
+            apps/cli/hz-${{ matrix.target }}.tar.gz
+            apps/cli/hz-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
 
   publish:

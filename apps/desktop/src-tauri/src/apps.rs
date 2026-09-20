@@ -141,7 +141,7 @@ fn search_dirs() -> Vec<PathBuf> {
 fn installed(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
     let mut found = HashMap::new();
     for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
         for entry in entries.flatten() {
@@ -205,7 +205,7 @@ fn read_icon(bundle: &Path) -> Option<String> {
     let icon = icns_path(bundle).and_then(|icns| {
         // A temp file rather than stdout: `sips` writes the paths it worked on
         // to stdout and only ever writes the image to a path.
-        let out = std::env::temp_dir().join(format!("dray-appicon-{}.png", uuid::Uuid::now_v7()));
+        let out = std::env::temp_dir().join(format!("hz-appicon-{}.png", uuid::Uuid::now_v7()));
         let ok = Command::new("sips")
             .args(["-s", "format", "png", "-Z", "64"])
             .arg(&icns)
@@ -277,7 +277,7 @@ fn detect() -> Vec<ExternalApp> {
 ///
 /// Re-scanned on every call rather than held for the process: the walk is a
 /// handful of `read_dir`s, and only the icons are dear enough to cache — so an
-/// editor installed while Dray is running shows up the next time the panel
+/// editor installed while hz is running shows up the next time the panel
 /// asks, instead of needing a restart the way the slash-command cache does.
 #[tauri::command]
 pub async fn list_open_apps() -> Vec<ExternalApp> {
@@ -370,7 +370,7 @@ pub async fn open_login_terminal(harness: Harness, cwd: String) -> Result<(), St
         command
     );
 
-    let path = std::env::temp_dir().join(format!("dray-login-{}.command", uuid::Uuid::now_v7()));
+    let path = std::env::temp_dir().join(format!("hz-login-{}.command", uuid::Uuid::now_v7()));
     write_script(&path, &script)
         .map_err(|err| format!("could not write the login script: {err}"))?;
 
@@ -493,7 +493,7 @@ mod tests {
     /// last. Icons are not read, so nothing spawns.
     #[test]
     fn resolves_in_table_order_with_finder_last() {
-        let tmp = std::env::temp_dir().join(format!("dray-apps-{}", uuid::Uuid::now_v7()));
+        let tmp = std::env::temp_dir().join(format!("hz-apps-{}", uuid::Uuid::now_v7()));
         let apps_dir = bundle(&tmp, "Applications");
         // Deliberately created in the order that would be wrong if read_dir
         // order leaked through.
@@ -516,7 +516,7 @@ mod tests {
     /// Services. A `HashMap` insert in the other order would silently flip it.
     #[test]
     fn first_directory_wins() {
-        let tmp = std::env::temp_dir().join(format!("dray-apps-{}", uuid::Uuid::now_v7()));
+        let tmp = std::env::temp_dir().join(format!("hz-apps-{}", uuid::Uuid::now_v7()));
         let system = bundle(&tmp, "Applications");
         let user = bundle(&tmp, "home/Applications");
         let expected = bundle(&system, "Zed.app");
@@ -533,7 +533,7 @@ mod tests {
     /// count to pin. Kept because detection failing silently — an empty menu —
     /// is the one failure here that looks exactly like "nothing is installed".
     ///
-    /// `cargo test -p dray --lib apps -- --ignored --nocapture`
+    /// `cargo test -p hz --lib apps -- --ignored --nocapture`
     #[test]
     #[ignore = "reports what is installed; asserts nothing"]
     fn report_detected_apps() {

@@ -1,20 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Check,
-  CheckCheck,
-  ChevronDown,
-  CircleDashed,
-  CircleDot,
-  GitBranchPlus,
-  Unlink,
-  Inbox,
-  Pin,
-  Plus,
-  Search,
-  Settings,
-  Trash2,
-  Undo2,
-} from "lucide-react";
+import { Check, CheckCheck, ChevronDown, CircleDashed, CircleDot, GitBranchPlus, GitPullRequest, Inbox, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
 
 import PrStateIcon, { prStateLabel } from "@/components/PrStateIcon";
@@ -113,10 +98,14 @@ type SidebarProps = {
   /// not move the selection — coming back from it lands on the session that was
   /// open before.
   onOpenIssues: () => void;
+  onOpenPrs: () => void;
   /// The issues page is the thing on screen, so the row draws as the current
   /// one. Read here rather than derived from the selection, which the page
   /// deliberately leaves alone.
   issuesOpen: boolean;
+  /// The pull-requests page, on the same terms: what is on screen, not what is
+  /// selected.
+  prsOpen: boolean;
   onSetFlags: (
     sessionId: string,
     flags: { archived?: boolean; pinned?: boolean },
@@ -807,7 +796,7 @@ function SpaceSwitcher({
 /// On `main` it stays bare: that is the common case, and naming the default
 /// branch is a word the reader skips every time to reach the one that matters.
 /// A worktree's branch is already `worktree-<name>`, so the prefix goes and the
-/// badge names the tree the way the sidebar and `dray ls` do — stripped after
+/// badge names the tree the way the sidebar and `hz ls` do — stripped after
 /// the `main` test, or a tree named `main` would read as no branch at all.
 function devBadgeLabel(branch: string | null): string {
   if (branch === null || branch === "" || branch === "main") return "Dev";
@@ -855,7 +844,9 @@ export default function Sidebar({
   splitLearned,
   onNewSession,
   onOpenIssues,
+  onOpenPrs,
   issuesOpen,
+  prsOpen,
   onSetFlags,
   onFork,
   onDelete,
@@ -882,7 +873,7 @@ export default function Sidebar({
   // its floor as well as its default: narrower, the rows' timestamps and marks
   // start eating the title they sit beside, so this only ever widens.
   const { style, handle } = useResizable({
-    storageKey: "ade.sidebarWidth",
+    storageKey: "hz.sidebarWidth",
     initial: 240,
     min: 240,
     edge: "right",
@@ -1069,6 +1060,22 @@ export default function Sidebar({
           <CircleDot />
           Issues
           <ShortcutKeys ids={["issues.open"]} className="ml-auto" />
+        </Button>
+
+        {/* And the other list a reader comes here for. The session's own tab
+            answers "where did this branch's work land"; this answers "what is
+            open in this repository", which is the question when the branch in
+            front of them has no pull request at all. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenPrs}
+          data-active={prsOpen || undefined}
+          className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground"
+        >
+          <GitPullRequest />
+          Pull requests
+          <ShortcutKeys ids={["prs.open"]} className="ml-auto" />
         </Button>
 
         {/* The button *becomes* the field, on the same row at the same height:

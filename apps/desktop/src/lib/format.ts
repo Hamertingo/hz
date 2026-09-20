@@ -105,3 +105,32 @@ export function basename(path: string): string {
   const parts = path.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || path;
 }
+
+/// How long a turn took, for the line under it.
+///
+/// **One decimal under a minute, because the small end is the point.** A 2.3s
+/// turn and a 2.8s one are different experiences and rounding both to "2s"
+/// hides exactly the difference a reader is looking at this to see. Past a
+/// minute nobody reads a tenth, so that is where the decimal goes.
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+/// The wall clock a stamp fell at, local and 24-hour: `14:32`.
+///
+/// Beside the duration under a turn, which answers "how long" and leaves "when"
+/// unsaid — the same pair every chat bubble carries. **Read off the Date's own
+/// local components rather than `toLocaleTimeString`**, or the shape would
+/// follow the machine's ICU data: an en-US box would draw `2:32 PM` where the
+/// column beside it is already a fixed-width figure, and no test could pin what
+/// this returns on anybody else's laptop. `null` for a stamp that cannot be
+/// read, which is the caller's cue to draw nothing.
+export function clockTime(iso: string): string | null {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  const hh = String(at.getHours()).padStart(2, "0");
+  const mm = String(at.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}

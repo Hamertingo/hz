@@ -363,11 +363,11 @@ impl std::fmt::Display for IssueUnavailable {
         match self {
             Self::NotConnected => write!(
                 f,
-                "Dray is not connected to an issue tracker. Connect Linear in Dray's settings."
+                "hz is not connected to an issue tracker. Connect Linear in hz's settings."
             ),
             Self::Unauthorized => write!(
                 f,
-                "Linear rejected the stored key. Reconnect it in Dray's settings."
+                "Linear rejected the stored key. Reconnect it in hz's settings."
             ),
             Self::Offline(detail) => write!(f, "Could not reach Linear: {detail}"),
             Self::Other(detail) => write!(f, "{detail}"),
@@ -379,7 +379,7 @@ impl std::error::Error for IssueUnavailable {}
 
 // ── the connection ───────────────────────────────────────────────────────────
 
-/// Where the key lives: `~/.dray/credentials.json`, `0600`.
+/// Where the key lives: `~/.hz/credentials.json`, `0600`.
 ///
 /// **Not the OS keychain, and that was a considered retreat.** macOS ties a
 /// keychain grant to the exact binary that asked for it, so every rebuild is a
@@ -390,7 +390,7 @@ impl std::error::Error for IssueUnavailable {}
 ///
 /// What the retreat costs is worth stating plainly: this key is readable by
 /// anything running as the user, where a keychain entry is not. What makes it
-/// tolerable is the company it keeps — `~/.dray` is `0700` and already holds
+/// tolerable is the company it keeps — `~/.hz` is `0700` and already holds
 /// every transcript, which is to say every file the agent has read or written
 /// on this machine. A read-only issue-tracker key is not the most sensitive
 /// thing in that directory by a wide margin. `gh`, `npm` and `aws` all make the
@@ -420,7 +420,7 @@ async fn credentials_path() -> Result<PathBuf, String> {
     get_home_app_dir()
         .await
         .map(|dir| dir.join(CREDENTIALS_FILE))
-        .map_err(|e| format!("could not open the Dray directory: {e}"))
+        .map_err(|e| format!("could not open the hz directory: {e}"))
 }
 
 async fn read_credentials() -> HashMap<String, String> {
@@ -428,13 +428,32 @@ async fn read_credentials() -> HashMap<String, String> {
         return HashMap::new();
     };
 
-    // A file that exists and cannot be read or parsed reads as no key, which
-    // presents as "not connected" and is curable by connecting again. Absent
-    // is the ordinary case, and `read_json` says nothing about it.
-    crate::store::read_json(&path).await.unwrap_or_else(|e| {
-        eprintln!("[credentials read err] {e:#}");
-        HashMap::new()
-    })
+    // Absent is the ordinary case and says nothing; a file that exists and
+    // cannot be read at all reads as no key, which presents as "not connected"
+    // and is curable by connecting again.
+    let Ok(raw) = tokio::fs::read_to_string(&path).await else {
+        return HashMap::new();
+    };
+
+    // **A value that is not a string is skipped, not fatal.** Every key this app
+    // writes is a string, and anything else in the file belongs to something
+    // that does not read it — measured: an agent child whose data directory an
+    // inherited `MAVIS_DATA_DIR` had pointed at hz's own wrote its nested
+    // provider-credential shape here, and every launch after that reported a
+    // parse failure and read as "not connected" with the app's own key sitting
+    // unread beside the stranger's. The cure is the data directory being pinned
+    // where the agent is spawned (`harness::agent_env`); this is the half that
+    // keeps one bad file from costing a working connection.
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .map(|object| {
+            object
+                .into_iter()
+                .filter_map(|(key, value)| value.as_str().map(|text| (key, text.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The key for a tracker, or `None` for one nothing is stored under.
@@ -466,7 +485,7 @@ async fn write_credentials(next: &HashMap<String, String>) -> Result<(), String>
 }
 
 /// Takes the path so a test can round-trip against a tempdir and read the mode
-/// back, rather than writing into the real `~/.dray`.
+/// back, rather than writing into the real `~/.hz`.
 async fn write_credentials_at(
     path: &std::path::Path,
     next: &HashMap<String, String>,
@@ -554,7 +573,7 @@ async fn delete_key(tracker: IssueTracker) -> Result<(), String> {
 /// say, and a transcript that had to strip its own prompt back apart is a
 /// pattern match waiting to eat somebody's sentence.
 pub fn tag_text(issue: &IssueRef) -> String {
-    // A link made without a title — `dray issue link` writes down what it is
+    // A link made without a title — `hz issue link` writes down what it is
     // given — leaves the identifier standing alone rather than a trailing
     // space nobody typed. Matches `issueTag` in issue.ts, which has to agree
     // with this or a tag reads one way in the composer and another once sent.
@@ -633,7 +652,7 @@ pub struct ExpandedTags {
 /// The prompt as the model will see it, and every issue it is against.
 ///
 /// Two sources, one answer: the `#ABC-123` tags already in the text, and
-/// identifiers named outright — `dray new --issue`, the only caller that does.
+/// identifiers named outright — `hz new --issue`, the only caller that does.
 /// A named issue that is not already tagged in the text
 /// is **appended as a tag**, in the same `#DRA-53 Title` form the composer's
 /// picker writes, so there is one shape a tag takes and one thing the
@@ -653,13 +672,13 @@ pub struct ExpandedTags {
 /// model a prompt with no mention of the work at all, and answered identically
 /// to success — the caller asked for a session about `DRA-53` and got one about
 /// nothing. So a named issue that could not be resolved is appended bare and
-/// linked bare, exactly as `dray issue link` writes one. Absent metadata is an
+/// linked bare, exactly as `hz issue link` writes one. Absent metadata is an
 /// ordinary state here, not an error.
 ///
 /// Sequential rather than concurrent: a prompt carries a handful of tags at
 /// most, and one at a time keeps the order they were written in.
 /// A link with the identifier and nothing else — what is written down when the
-/// tracker could not be asked, and what `dray issue link` writes when its caller
+/// tracker could not be asked, and what `hz issue link` writes when its caller
 /// passes no `--title`. `tag_text` drops the trailing space for one of these and
 /// `issueUrl` reads the empty address as none, so it draws as coloured text
 /// rather than a button opening nowhere.
@@ -948,7 +967,7 @@ pub async fn update_issue(
 ///
 /// **The whole reason this command exists.** Linear's uploads live behind the
 /// same auth the API does, so the `<img src>` in a description resolves to a
-/// 401 and the webview draws its broken-image box — which reads as "Dray cannot
+/// 401 and the webview draws its broken-image box — which reads as "hz cannot
 /// show this" rather than "this needs a key". Fetching here and handing back a
 /// `data:` URL is what makes an image in an issue an image on screen.
 ///
@@ -1038,7 +1057,7 @@ mod tests {
         );
         assert_eq!(out.linked.len(), 1);
         assert_eq!(out.linked[0].identifier, "DRA-53");
-        // Bare — an identifier and no more, exactly as `dray issue link` writes
+        // Bare — an identifier and no more, exactly as `hz issue link` writes
         // one with no `--title`.
         assert!(out.linked[0].title.is_empty());
         assert!(out.linked[0].url.is_empty());
@@ -1104,7 +1123,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!(
-            "dray-credentials-{}-{}",
+            "hz-credentials-{}-{}",
             std::process::id(),
             uuid::Uuid::now_v7()
         ));
@@ -1149,30 +1168,56 @@ mod tests {
         );
     }
 
+    /// The identifier shape, word by word out of `shared_rules.json` — the same
+    /// rows the frontend's `parseIdentifier` is tested on, because the two
+    /// answer one question in common: this side decides what gets *linked* and
+    /// that one decides what is *painted*, and a word one counts as a tag and
+    /// the other does not is a tag drawn as plain text or a link to nowhere.
+    ///
+    /// Each row goes through [`issue_tags`] too, which is the whole of what this
+    /// side reads a prompt with. The frontend has no such function — it paints
+    /// the tag the caret sits in (`highlightSegments` in `highlight.ts`), which
+    /// keeps the case as typed and keeps every repeat — so the *scanner*'s own
+    /// cases stay hand-written below.
     #[test]
-    fn a_number_alone_is_not_an_identifier() {
-        assert!(issue_tags("#53").is_empty());
-        assert!(issue_tags("#1-2").is_empty());
-        assert!(issue_tags("#DRA-").is_empty());
+    fn an_identifier_is_the_shape_the_frontend_paints() {
+        for row in crate::shared_rules::rules().identifier {
+            assert_eq!(
+                parse_identifier(&row.text).as_deref(),
+                row.expected.as_deref(),
+                "{} on its own",
+                row.text
+            );
+
+            // And the same word inside a sentence is one tag or none, which is
+            // the question the two sides actually ask of it.
+            let prompt = format!("fix #{} please", row.text);
+            let wanted: Vec<String> = row.expected.clone().into_iter().collect();
+            assert_eq!(issue_tags(&prompt), wanted, "{prompt}");
+        }
     }
 
     /// A tag is an address and a title, and that is the whole of what the model
     /// is handed. Pinned so nobody "improves" it into a context dump — the agent
     /// has the tracker's own MCP server for the rest.
     ///
-    /// The frontend writes this exact string when a row is picked
-    /// ([applyIssue](../../../src/lib/issue.ts)), so the two are pinned on both
-    /// sides: a tag picked from the menu and one appended by `--issue` have to
-    /// be the same thing, or the transcript draws two shapes for one idea.
+    /// The rows are the fixture's, and the frontend's `issueTag` reads them too:
+    /// a tag picked from the menu and one appended by `--issue` have to be one
+    /// shape, or the transcript draws two things for one idea. A title that is
+    /// *only* whitespace is the one input the two disagree on — this trims it
+    /// ([`tag_text`] drops it as blank) and `issueTag` truth-tests it, writing
+    /// the spaces out — so it is deliberately not a row.
     #[test]
     fn a_tag_is_an_identifier_and_a_title() {
-        let text = tag_text(&issue_ref("DRA-53", "Issue tracker integration"));
+        for row in crate::shared_rules::rules().tag {
+            let text = tag_text(&issue_ref(&row.identifier, &row.title));
 
-        assert_eq!(text, "#DRA-53 Issue tracker integration");
-        assert!(
-            !text.contains("http"),
-            "no urls: the identifier is the address"
-        );
+            assert_eq!(text, row.expected, "{} / {:?}", row.identifier, row.title);
+            assert!(
+                !text.contains("http"),
+                "no urls: the identifier is the address"
+            );
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ import type { Project } from "@/types/events";
 /// documents for bundle names, where `Cloudflare WARP.app` matched as `Warp.app`.
 ///
 /// A path that is itself an attached project answers that project, so every
-/// session Dray had before workspaces existed reads exactly as it did.
+/// session hz had before workspaces existed reads exactly as it did.
 export function containingProject(projects: Project[], path: string): Project | null {
   let best: Project | null = null;
 

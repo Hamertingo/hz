@@ -1,7 +1,8 @@
-/// Where split groups are stored. Frontend-only, like the space list: a group
-/// is a way of looking at sessions, so losing one costs the view and never the
-/// work.
-export const GROUPS_KEY = "ade.splitGroups";
+/// Where split groups are stored. View state rather than a preference, so it
+/// stays in the webview's own store: a group is a way of looking at sessions,
+/// and losing one costs the view and never the work — unlike the space list,
+/// which is the reader's own filing and lives in `settings.json`.
+export const GROUPS_KEY = "hz.splitGroups";
 
 export type SplitGroup = {
   /// Names the group — "Group 3" — and survives other groups dissolving.

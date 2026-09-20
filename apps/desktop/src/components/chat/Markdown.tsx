@@ -60,7 +60,7 @@ function codePlugin(pair: CodeThemePair) {
 // tabbed to either.
 const CONTROLS = { table: false, code: { copy: true, download: false } };
 
-// A link asks where to open — Dray's browser or the system one — through
+// A link asks where to open — hz's browser or the system one — through
 // the app-wide `LinkDialog`. ⌘-click skips the question and leaves the app.
 function Anchor({ href, children, ...rest }: React.ComponentProps<"a">) {
   return (
@@ -183,7 +183,7 @@ function MarkdownImpl({
         // styling reads in one place. Break-word rather than anywhere: only a
         // word wider than the whole cap breaks — a file path in a cell — so a
         // column can never collapse below its longest ordinary word.
-        "[&_.dray-table-cell]:max-w-md [&_.dray-table-cell]:wrap-break-word",
+        "[&_.hz-table-cell]:max-w-md [&_.hz-table-cell]:wrap-break-word",
         // The header cell's `whitespace-nowrap` has to lift, or a capped
         // header column overflows instead of wrapping.
         "[&_th]:whitespace-normal",

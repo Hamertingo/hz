@@ -1,0 +1,11 @@
+# Taste
+- Prefers to communicate in Portuguese (pt-BR). Confidence: 0.7
+- Gives terse, high-level instructions (often a one-line task, then just "continua") and expects the agent to investigate the codebase and targets autonomously before asking. Confidence: 0.5
+- Wants investigation conclusions in a structured form: relevant files, relevant functions, the end-to-end flow, a direct verdict, and one objective recommendation. Confidence: 0.55
+- Prefers verifying real behavior empirically before designing or writing code — captured this by choosing live protocol captures (running the target binary, dumping real frames) over guessing from docs or assumptions. Confidence: 0.6
+- Comfortable with the plan-document-first path (e.g. PLAN.md in the repo, slicing work before editing code) for substantial features. Confidence: 0.5
+- Wants read-only investigation before any implementation: explicitly instructs to investigate first and NOT write implementation code or modify files until a conclusion is presented. Confidence: 0.8
+- Insists on locating mechanisms in the real source (clone the repo at the exact version, grep/read the actual implementations) rather than guessing plausible API/command names or shipping trial-and-error workarounds. Confidence: 0.7
+- Prefers minimal upstream-compatible changes when the target tool lacks a needed capability, with the smallest necessary diff and its maintenance cost spelled out (rather than forking or patching the vendor's CLI). Confidence: 0.65
+- Does not want commits made until explicitly asked ("não faça commit ainda"); expects changes left uncommitted/staged for review first. Confidence: 0.8
+- Wants review-ready deliverables scoped to exactly what was requested (e.g. only the diff, the drafted text, and the list of affected files) — flags any side edits beyond the stated scope so they can be reverted. Confidence: 0.6

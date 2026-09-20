@@ -1,7 +1,7 @@
 //! CEF's subprocess. Chromium runs its renderer, GPU and utility work in
 //! child processes, and on macOS each is a separate app bundle beside the
 //! framework — this binary, copied under five names. It loads the framework
-//! and hands control to CEF; nothing of Dray's runs here.
+//! and hands control to CEF; nothing of hz's runs here.
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ const FRAMEWORK: &str = "Chromium Embedded Framework.framework";
 fn main() {
     let args = cef::args::Args::new();
     // CEF hands every child the browser's `framework_dir_path` as this
-    // switch, and a release's framework lives in `~/.dray/cef`, not beside
+    // switch, and a release's framework lives in `~/.hz/cef`, not beside
     // the helper. The bundle-relative path is the dev layout's.
     let framework = std::env::args()
         .find_map(|a| a.strip_prefix("--framework-dir-path=").map(PathBuf::from))

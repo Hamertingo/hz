@@ -188,7 +188,7 @@ function patchReady(sid: string, path: string, next: (body: Ready) => Ready) {
 
 /// What a click on a path in the transcript does.
 ///
-/// Neither kind leaves Dray any more: markdown opens in the Docs panel, which
+/// Neither kind leaves hz any more: markdown opens in the Docs panel, which
 /// renders and edits it, and everything else opens in the Files view, which
 /// highlights it and takes the line the link named. A file this app can already
 /// show is not one to leave the app for — and the reader who wants their own
@@ -199,7 +199,11 @@ function patchReady(sid: string, path: string, next: (body: Ready) => Ready) {
 /// module is about the apps on this machine, and having it reach into a panel's
 /// store would put this rule somewhere it cannot be read from.
 export function openPath(sid: string | null, path: string, line?: number): void {
-  if (isMarkdownPath(path)) return openDoc(sid, path);
+  if (isMarkdownPath(path)) {
+    openDoc(sid, path);
+    return;
+  }
+
   openInFiles(sid, path, line);
 }
 
@@ -215,7 +219,10 @@ export function openDoc(sid: string | null, path: string): void {
   opened += 1;
   const { docs } = state(sid);
 
-  if (find(sid, path)) return write(sid, { activePath: path });
+  if (find(sid, path)) {
+    write(sid, { activePath: path });
+    return;
+  }
 
   write(sid, {
     docs: [...docs, { path, mode: "view", body: { status: "loading" } }],

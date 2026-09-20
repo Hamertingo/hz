@@ -82,7 +82,7 @@ function start() {
       }),
     );
   });
-  // `dray browser screenshot` opening and closing its shutter. The view
+  // `hz browser screenshot` opening and closing its shutter. The view
   // hides for the shot and the page's own still stands in its place, so the
   // reflow the capture needs happens where nobody is looking. Nothing is
   // drawn on top of that still: it is the page pixel for pixel, so the
@@ -380,7 +380,7 @@ export type Snapshot = { sessionId: string; url: string | null };
 let snapshot: Snapshot | null = null;
 let capturing = false;
 
-/// The session whose page `dray browser screenshot` is photographing, or
+/// The session whose page `hz browser screenshot` is photographing, or
 /// `null`. The capture lays the page out at the asked-for size, which is a
 /// visible reflow in the pane the reader is watching — so the view hides
 /// for the shot and the page's own still is drawn in its place. The still

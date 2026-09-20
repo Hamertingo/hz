@@ -75,7 +75,14 @@ export function issueSpan(text: string, caret: number): IssueSpan | null {
 /// and the composer's overlay stays in register with the textarea underneath
 /// because there is nothing painted that isn't really there.
 export function issueTag(identifier: string, title: string): string {
-  return title ? `#${identifier} ${title}` : `#${identifier}`;
+  // **Trimmed**, because `tag_text` trims and the two have to write one shape:
+  // a title of nothing but spaces is *no* title here, not a tag with three
+  // spaces hanging off it. The shared fixture found this — a whitespace-only
+  // title wrote `#DRA-53` on one side and `#DRA-53   ` on the other, and the
+  // trailing spaces would have reached the model as part of the prompt.
+  const named = title.trim();
+
+  return named ? `#${identifier} ${named}` : `#${identifier}`;
 }
 
 /// The text with the tag at `span` replaced, and where the caret goes after.
@@ -119,7 +126,7 @@ export function parseIdentifier(text: string): string | null {
 /// plain coloured text rather than becoming a link to nowhere.
 export function issueUrl(issues: IssueRef[], identifier: string): string | null {
   // An empty URL is as good as none, and reaches here whenever a link was made
-  // by `dray issue link` with no `--url`: the app writes down what the caller
+  // by `hz issue link` with no `--url`: the app writes down what the caller
   // gave it and asks the tracker nothing, so the field can simply be blank.
   // Left unchecked, the tag becomes a button that opens nowhere.
   return issues.find((issue) => issue.identifier === identifier)?.url || null;

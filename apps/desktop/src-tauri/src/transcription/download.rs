@@ -45,7 +45,7 @@ pub struct DownloadProgress {
     pub cancelled: bool,
 }
 
-/// `~/.dray/models/`, created on demand.
+/// `~/.hz/models/`, created on demand.
 ///
 /// Beside the sessions and attachments rather than in the OS cache directory:
 /// these are hundreds of megabytes the reader chose to download, and a cache is

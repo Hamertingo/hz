@@ -1,16 +1,31 @@
-//! Preferences Rust has to know before the frontend exists.
+//! Preferences that are facts about the reader, not about the window.
 //!
-//! Only one lives here, and timing is the whole reason: `app_started` is sent
-//! from `setup`, so a preference kept in the webview's local storage — where
-//! `ade.diffStyle` and every other pick lives — could not be consulted until
-//! after the one event it governs had already gone. **Anything the frontend can
-//! read for itself belongs there, not here**, or this file becomes a second
-//! settings store free to disagree with the first.
+//! **The reader's picks live here**: the composer's row, a model's star, every
+//! rebinding, which editor a click opens, which space is up. They are the
+//! answers that have to be the same in a dev build and a released one, survive
+//! clearing site data, and be readable by something that is not the webview.
+//! The frontend reads all of them in one command before its first render
+//! (`src/lib/prefs.ts`), which is what makes a store owned by this side
+//! affordable for values the UI draws.
+//!
+//! **The window's own state stays in the webview's local storage**: which panel
+//! is folded, how wide it is, what a diff looks like, and the three keys the
+//! pre-paint script in `index.html` reads (`hz.theme`, `hz.mode`,
+//! `hz.fontSizes`). A read that must land before the first frame cannot await a
+//! command, and a palette that arrives a frame late is a flash of the default
+//! one. Both halves are listed in `src/hooks/useLocalStorage.ts`, which is the
+//! file a reader opening one of those keys will be looking at.
+//!
+//! The composite picks — the composer's row, the rebindings — are stored
+//! **verbatim**: their shape is the frontend's, nothing on this side reads
+//! them, and a second spelling of a shape here could only disagree with the
+//! first.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::Mutex;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -18,6 +33,7 @@ use uuid::Uuid;
 use crate::{
     issues::TrackerAccount,
     store::{get_home_app_dir, read_json, write_atomic},
+    updater::UpdateChannel,
 };
 
 /// Serializes writers. The file is rewritten whole, so a concurrent writer
@@ -54,13 +70,77 @@ pub struct AppSettings {
     pub linear_account: Option<TrackerAccount>,
     /// Which speech-to-text model and microphone to use.
     ///
-    /// Here rather than in the webview's local storage, unlike every other
-    /// composer pick, because Rust is what reads it: the recording commands
-    /// resolve the model and device themselves, and a value the backend has to
-    /// ask the frontend for is a value that can be missing when a keypress
-    /// needs it.
+    /// Here rather than inside [`AppSettings::composer_prefs`], beside the rest
+    /// of the composer's picks, because Rust is what reads it: the recording
+    /// commands resolve the model and device themselves, and a value the
+    /// backend has to ask the frontend for is a value that can be missing when
+    /// a keypress needs it.
     #[serde(default)]
     pub transcription: TranscriptionSettings,
+    /// The composer's sticky row: which agent, the model picked on each, effort
+    /// per model, permission stance, worktree and role defaults, fast mode.
+    ///
+    /// Stored verbatim, and every field of it is listed where it means
+    /// something — `ComposerPrefs` in `src/hooks/useComposerPrefs.ts`.
+    #[serde(default)]
+    pub composer_prefs: Option<Value>,
+    /// The models the reader keeps in their rotation, in their own order — or
+    /// `None`, which means **every model the agent serves**. A fact about the
+    /// reader rather than about a session, so it is stored with them instead of on
+    /// an index entry a session could be handed away with.
+    ///
+    /// **Not carried over from `starredModels`, and that is deliberate.** The
+    /// field this replaces held a *shortlist*: the few models a reader had picked
+    /// out of a list the picker otherwise drew in full. The meaning is now the
+    /// opposite — everything is in the rotation unless it is switched off — so a
+    /// shortlist read here would leave a reader who had chosen two models with
+    /// exactly two rows switched on under a heading that says everything is.
+    /// Absent is the honest reading of a file that build wrote, and it costs the
+    /// reader a pick they can make again in one click.
+    #[serde(default)]
+    pub model_rotation: Option<Vec<String>>,
+    /// The reader's rebindings, keyed by shortcut id. Only overrides, so a
+    /// default that changes in a later build still reaches everyone who never
+    /// touched that row.
+    ///
+    /// Verbatim for the same reason as `composer_prefs`: the ids and the chord
+    /// shape are `src/lib/shortcuts.ts`'s.
+    #[serde(default)]
+    pub shortcuts: Option<Value>,
+    /// Which release channel the updater follows. Read on this side only to be
+    /// handed back — the check that uses it runs in the frontend.
+    #[serde(default)]
+    pub update_channel: Option<UpdateChannel>,
+    /// Which app a session's working directory is opened in, by bundle path.
+    ///
+    /// The path and not the name: two builds of one editor differ by path
+    /// alone, and a name that stopped matching would silently reseat.
+    #[serde(default)]
+    pub open_with: Option<String>,
+    /// Which app a *filename* in the transcript opens in, by bundle path. Its
+    /// own preference — that one holds terminals and Finder too.
+    #[serde(default)]
+    pub open_file_with: Option<String>,
+    /// Which terminal hz opens for a command the reader runs themselves, by
+    /// bundle path.
+    #[serde(default)]
+    pub run_in_terminal: Option<String>,
+    /// The space the reader is looking at, or `None` for every project.
+    ///
+    /// Nothing on this side reads it. **A space is two records and neither is
+    /// derived from the other**: its *membership* is the tag on the project in
+    /// `projects.json` (this side's, see `crate::projects`), and which one is
+    /// *up* is this pick, read by the frontend's `activeSpace` in
+    /// `src/lib/space.ts` beside those tags. So a rename moves the tags and a
+    /// switch moves this, and neither is a copy of the other.
+    #[serde(default)]
+    pub space: Option<String>,
+    /// The spaces the reader has declared, in the order the switcher walks
+    /// them. A space is made before it holds anything, and one holding nothing
+    /// is exactly what has no project to carry its tag — see
+    /// [`crate::projects::Project::space`].
+    #[serde(default)]
+    pub spaces: Option<Vec<String>>,
 }
 
 /// The transcription picks. Model and device mean "not chosen" when absent.
@@ -107,6 +187,15 @@ impl Default for AppSettings {
             install_id: None,
             linear_account: None,
             transcription: TranscriptionSettings::default(),
+            composer_prefs: None,
+            model_rotation: None,
+            shortcuts: None,
+            update_channel: None,
+            open_with: None,
+            open_file_with: None,
+            run_in_terminal: None,
+            space: None,
+            spaces: None,
         }
     }
 }
@@ -124,6 +213,116 @@ pub struct SettingsView {
     /// Effective, not stored — the environment is already folded in.
     pub analytics_enabled: bool,
     pub analytics_locked: bool,
+}
+
+/// Every preference the frontend owns, as the file holds them.
+///
+/// One payload for all of them, read once before the first render: a command
+/// per key would be a round trip per picker to draw the app. **Every field is
+/// `None` where the file says nothing**, which is what a build that has just
+/// moved these out of the webview's store reads to tell a key the file already
+/// answers for from one still to adopt; a field that is present has been
+/// answered for, whether or not the frontend would read the same value back.
+///
+/// Not [`AppSettings`] itself: that carries the install id and the Linear
+/// account, and neither is the webview's business.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct Preferences {
+    /// See [`AppSettings::composer_prefs`].
+    pub composer_prefs: Option<Value>,
+    /// See [`AppSettings::model_rotation`].
+    pub model_rotation: Option<Vec<String>>,
+    /// See [`AppSettings::shortcuts`].
+    pub shortcuts: Option<Value>,
+    /// See [`AppSettings::update_channel`].
+    pub update_channel: Option<UpdateChannel>,
+    /// See [`AppSettings::open_with`].
+    pub open_with: Option<String>,
+    /// See [`AppSettings::open_file_with`].
+    pub open_file_with: Option<String>,
+    /// See [`AppSettings::run_in_terminal`].
+    pub run_in_terminal: Option<String>,
+    /// See [`AppSettings::space`].
+    pub space: Option<String>,
+    /// See [`AppSettings::spaces`].
+    pub spaces: Option<Vec<String>>,
+}
+
+impl From<AppSettings> for Preferences {
+    fn from(settings: AppSettings) -> Self {
+        Self {
+            composer_prefs: settings.composer_prefs,
+            model_rotation: settings.model_rotation,
+            shortcuts: settings.shortcuts,
+            update_channel: settings.update_channel,
+            open_with: settings.open_with,
+            open_file_with: settings.open_file_with,
+            run_in_terminal: settings.run_in_terminal,
+            space: settings.space,
+            spaces: settings.spaces,
+        }
+    }
+}
+
+/// One preference to change, and what to change it to.
+///
+/// **A patch names one preference, and that is what makes an update partial**:
+/// the command takes a batch of these, and nothing a batch does not name is
+/// touched. `None` clears what a patch does name — the active space going away
+/// when the last thing filed under it is renamed out, which has to be sayable,
+/// since "no space" is not a value a space can hold.
+///
+/// Tagged rather than a struct of optional fields so that a name that does not
+/// exist is an error rather than a field that silently writes nothing, and so
+/// that the value each one carries is typed where it is declared.
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(tag = "field", content = "value", rename_all = "camelCase")]
+pub enum PreferencesPatch {
+    /// See [`AppSettings::composer_prefs`].
+    ComposerPrefs(Option<Value>),
+    /// See [`AppSettings::model_rotation`].
+    ModelRotation(Option<Vec<String>>),
+    /// See [`AppSettings::shortcuts`].
+    Shortcuts(Option<Value>),
+    /// See [`AppSettings::update_channel`].
+    UpdateChannel(Option<UpdateChannel>),
+    /// See [`AppSettings::open_with`].
+    OpenWith(Option<String>),
+    /// See [`AppSettings::open_file_with`].
+    OpenFileWith(Option<String>),
+    /// See [`AppSettings::run_in_terminal`].
+    RunInTerminal(Option<String>),
+    /// See [`AppSettings::space`].
+    Space(Option<String>),
+    /// See [`AppSettings::spaces`].
+    Spaces(Option<Vec<String>>),
+}
+
+/// Applies every preference a batch names, and no others.
+///
+/// One read, one edit and one write under one hold of the lock, for the reason
+/// [`crate::projects::retag_space`] is one call rather than one per project: a
+/// run of writes half of which landed would leave the file describing two
+/// different worlds. The migration is exactly such a run — nine picks moved out
+/// of the webview at once — and a reader who lost half of them would have no
+/// way to tell which half.
+pub fn apply(patches: Vec<PreferencesPatch>, settings: &mut AppSettings) {
+    for patch in patches {
+        match patch {
+            PreferencesPatch::ComposerPrefs(value) => settings.composer_prefs = value,
+            PreferencesPatch::ModelRotation(value) => settings.model_rotation = value,
+            PreferencesPatch::Shortcuts(value) => settings.shortcuts = value,
+            PreferencesPatch::UpdateChannel(value) => settings.update_channel = value,
+            PreferencesPatch::OpenWith(value) => settings.open_with = value,
+            PreferencesPatch::OpenFileWith(value) => settings.open_file_with = value,
+            PreferencesPatch::RunInTerminal(value) => settings.run_in_terminal = value,
+            PreferencesPatch::Space(value) => settings.space = value,
+            PreferencesPatch::Spaces(value) => settings.spaces = value,
+        }
+    }
 }
 
 /// Reads `settings.json`, **failing closed**.
@@ -154,17 +353,20 @@ pub async fn read() -> AppSettings {
 
 /// The fail-closed answer. Spelled out rather than reusing `Default` so the two
 /// can never be confused: the default is opted *in*, and this is its opposite.
+///
+/// A file that cannot be understood has no preferences to answer with either,
+/// and every one of them reads as "never picked" — the same reading a fresh
+/// install gives. Only consent has a fail-closed direction; a model nobody
+/// picked is not a decision anybody can be counted as having reversed.
 fn opted_out() -> AppSettings {
     AppSettings {
         analytics_enabled: false,
-        install_id: None,
-        linear_account: None,
-        transcription: TranscriptionSettings::default(),
+        ..AppSettings::default()
     }
 }
 
 /// Takes the directory so a test can round-trip against a tempdir rather than
-/// the real `~/.dray`.
+/// the real `~/.hz`.
 async fn read_from(dir: &Path) -> Result<AppSettings> {
     read_json(&path_in(dir)).await
 }
@@ -298,7 +500,7 @@ mod tests {
 
     fn tempdir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "dray-settings-{}-{}",
+            "hz-settings-{}-{}",
             std::process::id(),
             uuid::Uuid::now_v7()
         ));
@@ -339,8 +541,7 @@ mod tests {
         let off = AppSettings {
             analytics_enabled: false,
             install_id: Some("2f1c…".into()),
-            linear_account: None,
-            transcription: TranscriptionSettings::default(),
+            ..AppSettings::default()
         };
 
         write_to(&dir, &off).await.unwrap();
@@ -458,5 +659,122 @@ mod tests {
         write_to(&dir, &AppSettings::default()).await.unwrap();
 
         assert!(!dir.join("settings.json.tmp").exists());
+    }
+
+    /// A batch of patches, as the frontend sends one.
+    fn patches(json: &str) -> Vec<PreferencesPatch> {
+        serde_json::from_str(json).unwrap()
+    }
+
+    /// The partial update in one direction: a preference a batch does not name
+    /// is one it must not touch, or starring a model would put the reader's
+    /// space out.
+    #[test]
+    fn a_batch_leaves_the_preferences_it_does_not_name() {
+        let mut settings = AppSettings {
+            space: Some("work".into()),
+            open_with: Some("/Applications/Zed.app".into()),
+            ..AppSettings::default()
+        };
+
+        apply(
+            patches(r#"[{"field": "modelRotation", "value": ["opus"]}]"#),
+            &mut settings,
+        );
+
+        assert_eq!(settings.model_rotation, Some(vec!["opus".to_string()]));
+        assert_eq!(settings.space.as_deref(), Some("work"));
+        assert_eq!(settings.open_with.as_deref(), Some("/Applications/Zed.app"));
+    }
+
+    /// And in the other, which is the direction a `false`-defaulted flag would
+    /// quietly get wrong: `null` clears a preference rather than leaving it.
+    /// The active space is the case — nothing is up once the last thing filed
+    /// under it has been renamed out.
+    #[test]
+    fn a_patch_can_clear_a_preference() {
+        let mut settings = AppSettings {
+            space: Some("work".into()),
+            ..AppSettings::default()
+        };
+
+        apply(patches(r#"[{"field": "space", "value": null}]"#), &mut settings);
+
+        assert_eq!(settings.space, None);
+    }
+
+    /// A name nothing answers to is an error, not a field that silently writes
+    /// nothing — the whole reason this is a tagged enum rather than a struct
+    /// whose fields are all optional.
+    #[test]
+    fn an_unknown_preference_is_refused() {
+        assert!(
+            serde_json::from_str::<Vec<PreferencesPatch>>(
+                r#"[{"field": "spaec", "value": null}]"#
+            )
+            .is_err()
+        );
+
+        // A patch that names a preference and gives no value for it is clearing
+        // it, which is what `null` says — there is no third reading of a
+        // field with nothing in it.
+        assert_eq!(
+            patches(r#"[{"field": "space"}]"#),
+            vec![PreferencesPatch::Space(None)]
+        );
+    }
+
+    /// And a value the preference cannot hold is refused at the parse too, so a
+    /// bad write changes nothing at all rather than half of a batch.
+    #[test]
+    fn a_value_the_preference_cannot_hold_is_refused() {
+        assert!(
+            serde_json::from_str::<Vec<PreferencesPatch>>(r#"[{"field": "spaces", "value": 3}]"#)
+                .is_err()
+        );
+        assert!(serde_json::from_str::<Vec<PreferencesPatch>>(
+            r#"[{"field": "updateChannel", "value": "nightly"}]"#
+        )
+        .is_err());
+    }
+
+    /// What the frontend reads back is what it wrote, through the file rather
+    /// than in memory — and a preference nobody has ever picked is absent
+    /// rather than defaulted, since absent is what the migration moves on.
+    #[tokio::test]
+    async fn the_preferences_read_back_are_the_ones_that_were_written() {
+        let dir = tempdir();
+        let mut settings = AppSettings::default();
+        apply(
+            patches(
+                r#"[{"field": "space", "value": "work"}, {"field": "spaces", "value": ["work", "home"]}, {"field": "updateChannel", "value": "beta"}, {"field": "modelRotation", "value": ["opus"]}, {"field": "composerPrefs", "value": {"fast": true}}]"#,
+            ),
+            &mut settings,
+        );
+        write_to(&dir, &settings).await.unwrap();
+
+        let read: Preferences = read_from(&dir).await.unwrap().into();
+
+        assert_eq!(read.space.as_deref(), Some("work"));
+        assert_eq!(read.spaces, Some(vec!["work".to_string(), "home".to_string()]));
+        assert_eq!(read.update_channel, Some(UpdateChannel::Beta));
+        assert_eq!(read.model_rotation, Some(vec!["opus".to_string()]));
+        assert_eq!(read.composer_prefs, Some(serde_json::json!({ "fast": true })));
+        assert_eq!(read.open_with, None);
+        assert_eq!(read.shortcuts, None);
+    }
+
+    /// A file written before the preferences lived here — every build up to
+    /// this one — must read as a reader who has never picked anything, which is
+    /// what tells the frontend there is a webview copy of each to adopt. Failing
+    /// the parse instead would read as opted out and take consent with it.
+    #[tokio::test]
+    async fn a_file_predating_the_preferences_reads_without_them() {
+        let dir = tempdir();
+        std::fs::write(path_in(&dir), r#"{"analyticsEnabled": true}"#).unwrap();
+
+        let read: Preferences = read_from(&dir).await.unwrap().into();
+
+        assert_eq!(read, Preferences::default());
     }
 }

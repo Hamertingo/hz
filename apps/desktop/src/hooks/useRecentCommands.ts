@@ -2,7 +2,7 @@ import { useCallback } from "react";
 
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 
-const KEY = "ade.recentCommands";
+const KEY = "hz.recentCommands";
 /// Enough to survive a stretch of one-off commands without the list becoming a
 /// record of everything ever typed. The picker shows fewer than this.
 const KEPT = 20;

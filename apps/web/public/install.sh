@@ -1,20 +1,20 @@
 #!/bin/sh
-# Installs the `dray` CLI and its Claude Code skill.
+# Installs the `hz` CLI and its Claude Code skill.
 #
 # Deliberately POSIX sh, not bash: this is piped into whatever /bin/sh is, and
 # on a minimal linux image that is dash rather than bash.
 #
-#   curl -fsSL https://www.drayhq.com/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Hamertingo/hz/main/apps/web/public/install.sh | sh
 #
 # Honours:
-#   DRAY_INSTALL_DIR      where the binary lands (default ~/.local/bin)
-#   DRAY_VERSION          a specific release tag (default: the newest cli-v* one)
-#   DRAY_CURRENT_VERSION  the tag already installed; stop if it is the newest one
+#   HZ_INSTALL_DIR      where the binary lands (default ~/.local/bin)
+#   HZ_VERSION          a specific release tag (default: the newest cli-v* one)
+#   HZ_CURRENT_VERSION  the tag already installed; stop if it is the newest one
 
 set -eu
 
-REPO="monorepo-labs/dray"
-INSTALL_DIR="${DRAY_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="Hamertingo/hz"
+INSTALL_DIR="${HZ_INSTALL_DIR:-$HOME/.local/bin}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -27,7 +27,7 @@ detect_target() {
   case "$os" in
     Darwin) os_part="apple-darwin" ;;
     Linux)  os_part="unknown-linux-gnu" ;;
-    *) die "unsupported OS: $os. dray builds for macOS and Linux." ;;
+    *) die "unsupported OS: $os. hz builds for macOS and Linux." ;;
   esac
 
   case "$arch" in
@@ -72,7 +72,7 @@ fi
 # `/releases/latest/download/` cannot serve here: the app and the CLI publish
 # into the same repo and both ship non-prerelease, so that URL belongs to
 # whichever went out most recently, and an app release there carries no
-# `dray-*.tar.gz` at all.
+# `hz-*.tar.gz` at all.
 #
 # The API answers newest-first, so the first match wins and nothing has to sort
 # versions — `sort -V` is not portable anyway. `tr` splits a compact response
@@ -91,14 +91,14 @@ resolve_version() {
 # From the binary itself rather than downloaded separately, so the skill can
 # never describe a version of the CLI other than the one installed.
 #
-# Called on the up-to-date path too: `dray update` re-running this script is the
+# Called on the up-to-date path too: `hz update` re-running this script is the
 # only thing that rewrites the skill on disk, so stopping early must not be the
 # one route that leaves a deleted or stale one in place.
 install_skill() {
-  if "$INSTALL_DIR/dray" skill install; then
+  if "$INSTALL_DIR/hz" skill install; then
     :
   else
-    say "Note: the skill could not be installed. Run 'dray skill install' by hand."
+    say "Note: the skill could not be installed. Run 'hz skill install' by hand."
   fi
 }
 
@@ -106,44 +106,44 @@ TARGET=$(detect_target)
 
 # `latest` is spelled as a request to resolve, not as a tag: it used to build a
 # `/releases/latest/download/` URL, which is the trap above.
-VERSION="${DRAY_VERSION:-}"
+VERSION="${HZ_VERSION:-}"
 if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
-  say "Finding the latest dray release…"
+  say "Finding the latest hz release…"
   VERSION=$(resolve_version) || VERSION=""
   # No falling back to an older pin: a rate-limited or unreachable API quietly
   # installing something ancient is the failure mode this replaced.
-  [ -n "$VERSION" ] || die "could not find a dray release.
-    Set DRAY_VERSION to a tag from https://github.com/$REPO/releases and re-run."
+  [ -n "$VERSION" ] || die "could not find a hz release.
+    Set HZ_VERSION to a tag from https://github.com/$REPO/releases and re-run."
   say "Latest is $VERSION."
 
-  # Inside the resolve branch alone, so an explicit DRAY_VERSION stays what it
+  # Inside the resolve branch alone, so an explicit HZ_VERSION stays what it
   # has always been: a forced install of exactly that tag, reinstall and
   # downgrade included.
   #
   # The caller supplies the tag rather than this script reading it off the
-  # binary, because the caller is the binary — `dray update` knows its own
-  # version and nothing here can ask for it without guessing which `dray` on
+  # binary, because the caller is the binary — `hz update` knows its own
+  # version and nothing here can ask for it without guessing which `hz` on
   # disk is the one that ran.
-  if [ -n "${DRAY_CURRENT_VERSION:-}" ] && [ "$VERSION" = "$DRAY_CURRENT_VERSION" ]; then
-    say "dray $VERSION is already installed."
+  if [ -n "${HZ_CURRENT_VERSION:-}" ] && [ "$VERSION" = "$HZ_CURRENT_VERSION" ]; then
+    say "hz $VERSION is already installed."
     # Guarded here rather than inside the function: on the install path the
     # binary was just written, so a failure there is worth the note it prints.
-    if [ -x "$INSTALL_DIR/dray" ]; then
+    if [ -x "$INSTALL_DIR/hz" ]; then
       install_skill
     fi
     exit 0
   fi
 fi
 
-URL="https://github.com/$REPO/releases/download/$VERSION/dray-$TARGET.tar.gz"
+URL="https://github.com/$REPO/releases/download/$VERSION/hz-$TARGET.tar.gz"
 
 TMP=$(mktemp -d)
 # Runs on failure too, so a half-finished install leaves nothing behind.
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-say "Downloading dray ($TARGET)…"
-fetch "$URL" "$TMP/dray.tar.gz" || die "could not download $URL"
-fetch "$URL.sha256" "$TMP/dray.tar.gz.sha256" || die "could not download the checksum for $URL"
+say "Downloading hz ($TARGET)…"
+fetch "$URL" "$TMP/hz.tar.gz" || die "could not download $URL"
+fetch "$URL.sha256" "$TMP/hz.tar.gz.sha256" || die "could not download the checksum for $URL"
 
 # Before unpacking, not after: everything past this point treats the archive as
 # trusted, and the last step runs a binary out of it.
@@ -153,8 +153,8 @@ fetch "$URL.sha256" "$TMP/dray.tar.gz.sha256" || die "could not download the che
 # signature and does not pretend to be — an attacker who can replace the release
 # asset can replace this file too. Signing is the next step up and wants a key
 # with somewhere safe to live.
-EXPECTED=$(cut -d' ' -f1 < "$TMP/dray.tar.gz.sha256")
-ACTUAL=$(sha256 "$TMP/dray.tar.gz")
+EXPECTED=$(cut -d' ' -f1 < "$TMP/hz.tar.gz.sha256")
+ACTUAL=$(sha256 "$TMP/hz.tar.gz")
 
 [ -n "$EXPECTED" ] || die "the published checksum was empty; refusing to install."
 
@@ -166,19 +166,19 @@ fi
 
 say "Checksum verified."
 
-tar -xzf "$TMP/dray.tar.gz" -C "$TMP" || die "could not unpack the download"
-[ -f "$TMP/dray" ] || die "the archive did not contain a dray binary"
+tar -xzf "$TMP/hz.tar.gz" -C "$TMP" || die "could not unpack the download"
+[ -f "$TMP/hz" ] || die "the archive did not contain a hz binary"
 
 mkdir -p "$INSTALL_DIR"
-chmod +x "$TMP/dray"
+chmod +x "$TMP/hz"
 # `mv` within one filesystem is atomic, so an upgrade never leaves a truncated
 # binary where a working one was. Falls back to cp across filesystems.
-mv "$TMP/dray" "$INSTALL_DIR/dray" 2>/dev/null || {
-  cp "$TMP/dray" "$INSTALL_DIR/dray"
-  chmod +x "$INSTALL_DIR/dray"
+mv "$TMP/hz" "$INSTALL_DIR/hz" 2>/dev/null || {
+  cp "$TMP/hz" "$INSTALL_DIR/hz"
+  chmod +x "$INSTALL_DIR/hz"
 }
 
-say "Installed $INSTALL_DIR/dray"
+say "Installed $INSTALL_DIR/hz"
 
 install_skill
 
@@ -195,4 +195,4 @@ case ":$PATH:" in
 esac
 
 say ""
-say "Done. Run 'dray --help' to get started, with the Dray app running."
+say "Done. Run 'hz --help' to get started, with the hz app running."

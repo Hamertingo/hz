@@ -1,12 +1,12 @@
 [package]
-name = "dray"
+name = "hz"
 version = "0.20.6"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 license = "Apache-2.0"
 # Two binaries once the helper exists; `tauri dev` runs `cargo run` bare.
-default-run = "dray"
+default-run = "hz"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,7 +14,7 @@ default-run = "dray"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "ade_lib"
+name = "hz_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -36,9 +36,9 @@ uuid = { version = "1.16", features = ["v4", "v7"] }
 # Generates the TS mirror of the event model; `cargo test` writes ../src/types/.
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 # `kill(pid, 0)`: whether the process named in a worktree lock is still alive,
-# which is what separates a lock Dray may clear from one it must not.
+# which is what separates a lock hz may clear from one it must not.
 libc = "0.2"
-dray-proto = { path = "../../../crates/dray-proto" }
+hz-proto = { path = "../../../crates/hz-proto" }
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 fff-search = "0.10.3"
@@ -119,11 +119,11 @@ version = "0.3"
 optional = true
 
 # CEF's renderer, GPU and utility processes run this instead of the app.
-# Copied five times into `Contents/Frameworks/Dray Helper*.app` by the bundle
+# Copied five times into `Contents/Frameworks/hz Helper*.app` by the bundle
 # step; a single binary, since only the bundle name tells them apart.
 [[bin]]
-name = "dray-helper"
-path = "src/bin/dray_helper.rs"
+name = "hz-helper"
+path = "src/bin/hz_helper.rs"
 required-features = ["cef"]
 
 [dev-dependencies]

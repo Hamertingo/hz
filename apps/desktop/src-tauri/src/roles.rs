@@ -1,11 +1,11 @@
 //! Roles: a standing responsibility an agent carries.
 //!
-//! **A role is not a harness's idea.** It belongs to Dray and is the same
+//! **A role is not a harness's idea.** It belongs to hz and is the same
 //! sentence whichever CLI runs it — so it rides whatever *each* harness already
 //! appends to its own instructions rather than replacing any of them. See
 //! [`instructions_for`] for the seam and each harness's `init` for the wiring.
 //!
-//! **One role per session, and a session is the agent.** Dray has no separate
+//! **One role per session, and a session is the agent.** hz has no separate
 //! Agent entity: `SessionIndexItem` already carries the harness, model, effort,
 //! stance and project that describe a running agent, so `role_id` joins them.
 //!
@@ -224,33 +224,17 @@ pub async fn instructions_for(session_id: &str) -> Option<String> {
 /// carrying it. That is the whole cross-harness promise, and this function is
 /// where it is kept.
 ///
-/// The heading exists so a model can tell Dray's standing instruction for the
+/// The heading exists so a model can tell hz's standing instruction for the
 /// agent from anything the reader typed. It is not a replacement for any native
 /// instruction: every harness appends this *after* what it already sends.
 pub fn section(instructions: &str) -> String {
     format!("## Role\n\n{}", instructions.trim())
 }
 
-/// [`section`] for a session, or `None` when there is nothing to send.
-///
-/// The seam every harness calls, at its own spawn. Synchronous resolution is
-/// [`instructions_for`]; this is what a spawn wants.
-pub async fn section_for(session_id: &str) -> Option<String> {
-    instructions_for(session_id).await.map(|text| section(&text))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn scoped(path: &str) -> Role {
-        Role {
-            id: "r".into(),
-            name: "Scoped".into(),
-            instructions: "…".into(),
-            project_path: Some(path.into()),
-        }
-    }
 
     /// A role written before the field existed still parses — which for a
     /// whole-file store is the difference between one role and none.

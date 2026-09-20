@@ -45,7 +45,7 @@ export default function QuitDialog() {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Quit Dray?</AlertDialogTitle>
+          <AlertDialogTitle>Quit hz?</AlertDialogTitle>
           <AlertDialogDescription>
             Running tasks will stop. They pick up where they left off next time.
           </AlertDialogDescription>

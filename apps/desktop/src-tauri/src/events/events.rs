@@ -160,7 +160,7 @@ pub enum AgentEventPayload {
         /// it inside the running one and emits a single `result` for both.
         #[serde(default)]
         queued: bool,
-        /// The Dray session that relayed this prompt, when one did.
+        /// The hz session that relayed this prompt, when one did.
         ///
         /// `None` — the ordinary case — means the user typed it. Carried as a
         /// field rather than named in `text` because the transcript draws the
@@ -481,7 +481,7 @@ pub enum AgentEventPayload {
 
 impl AgentEventPayload {
     /// Every archived picture this payload points at. Both arms hold paths under
-    /// `~/.dray/attachments/<session-id>/`, so anything moving a log between
+    /// `~/.hz/attachments/<session-id>/`, so anything moving a log between
     /// sessions has to repoint them — see
     /// [`copy_session_log`](crate::store::copy_session_log).
     pub fn images_mut(&mut self) -> &mut [ImageRef] {
@@ -710,7 +710,7 @@ pub struct ToolResult {
     pub exit_code: Option<i32>,
     pub duration_ms: Option<u64>,
     /// Pictures the tool handed back — a `Read` of a screenshot, an MCP tool
-    /// that answers in images. Archived under `~/.dray/attachments` before the
+    /// that answers in images. Archived under `~/.hz/attachments` before the
     /// event is written, so this carries a path and never the bytes: the CLI
     /// sends the same image twice on one line and a session of screenshots was
     /// 12MB of base64 in a 14MB log.
@@ -851,20 +851,6 @@ pub enum ApprovalPolicy {
     BypassPermissions,
 }
 
-impl ApprovalPolicy {
-    /// The `--permission-mode` flag value. Total, unlike the inbound direction:
-    /// the frontend always sends a real mode, so there is nothing to omit.
-    pub fn as_arg(self) -> &'static str {
-        match self {
-            ApprovalPolicy::Plan => "plan",
-            ApprovalPolicy::Manual => "manual",
-            ApprovalPolicy::Auto => "auto",
-            ApprovalPolicy::DontAsk => "dontAsk",
-            ApprovalPolicy::BypassPermissions => "bypassPermissions",
-        }
-    }
-}
-
 /// What the CLI *reports* in `system/init`, which is a wider set than it
 /// accepts: `default` names the harness's own prompting stance, and
 /// `--permission-mode` rejects that name while offering `manual` for the same
@@ -890,12 +876,30 @@ pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-/// Unix seconds → RFC3339, for wire fields carrying an epoch timestamp where
-/// this model uses strings — Claude Code's `resetsAt`, notably.
-pub fn rfc3339_from_unix(secs: i64) -> String {
-    chrono::DateTime::from_timestamp(secs, 0)
-        .unwrap_or_default()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+/// When a prompt happened, from the reader's own clock where the caller has one.
+///
+/// A prompt is stamped with the moment Enter was pressed rather than the moment
+/// this process got round to writing it, and the gap between those two is the
+/// thing the transcript means to show: a cold session's first prompt waits out
+/// the child's whole boot before it is even written, which read as a 2s turn
+/// under a 7s wait.
+///
+/// Normalized to the same shape as [`now_rfc3339`], so the log holds one format
+/// however the caller spelled the offset. A stamp that cannot be parsed is the
+/// writer's mistake and reads as no stamp at all — entering it as text would put
+/// a `NaN` in the reader's arithmetic while looking like a time in the log.
+pub fn prompt_ts(sent_at: Option<&str>) -> String {
+    sent_at
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        // `to_rfc3339_opts` keeps the offset it was handed, so a stamp written
+        // in local time would land in the log in local time while every
+        // neighbouring event is UTC. Converting first is what makes "the same
+        // shape" true rather than nearly true.
+        .map(|at| {
+            at.with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        })
+        .unwrap_or_else(now_rfc3339)
 }
 
 impl AgentEvent {
@@ -1008,22 +1012,6 @@ mod tests {
         assert_eq!(s, serde_json::to_string(&back).unwrap());
     }
 
-    /// Every settable mode's wire name is also its flag value, so persisting a
-    /// mode and passing it to `--permission-mode` can't drift apart.
-    #[test]
-    fn every_settable_policy_matches_its_cli_arg() {
-        for p in [
-            ApprovalPolicy::Plan,
-            ApprovalPolicy::Manual,
-            ApprovalPolicy::Auto,
-            ApprovalPolicy::DontAsk,
-            ApprovalPolicy::BypassPermissions,
-        ] {
-            let json = serde_json::to_string(&p).unwrap();
-            assert_eq!(json, format!("\"{}\"", p.as_arg()));
-        }
-    }
-
     /// `acceptEdits` was a settable stance and is not one any more. Sessions
     /// started under it are on disk, and one index entry that fails to
     /// deserialize takes the whole file with it — so the name has to keep
@@ -1058,5 +1046,33 @@ mod tests {
     #[test]
     fn default_policy_is_auto() {
         assert_eq!(ApprovalPolicy::default(), ApprovalPolicy::Auto);
+    }
+
+    /// A prompt's stamp is the reader's, and what reaches the log is this
+    /// process's own format whatever the caller sent.
+    ///
+    /// The reader's duration is a subtraction of two stamps, so a stamp the
+    /// frontend spelled differently is not a cosmetic difference — and one it
+    /// cannot spell at all must read as "now" rather than entering the log as
+    /// text that `Date.parse` turns into `NaN`.
+    #[test]
+    fn a_prompt_stamp_is_normalized_and_never_enters_unreadable() {
+        assert_eq!(
+            prompt_ts(Some("2026-09-19T07:01:26.601Z")),
+            "2026-09-19T07:01:26.601Z"
+        );
+        // A local offset is the same instant written another way.
+        assert_eq!(
+            prompt_ts(Some("2026-09-19T09:01:26.601+02:00")),
+            "2026-09-19T07:01:26.601Z"
+        );
+
+        for stamp in [None, Some(""), Some("half past nine")] {
+            let at = prompt_ts(stamp);
+            assert!(
+                chrono::DateTime::parse_from_rfc3339(&at).is_ok(),
+                "{stamp:?} produced {at}, which nothing can read back"
+            );
+        }
     }
 }

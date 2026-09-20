@@ -30,7 +30,7 @@ const BITS: u16 = 16;
 const CHANNELS: u16 = 1;
 const HEADER_LEN: usize = 44;
 
-/// `~/.dray/recordings/`, created on demand.
+/// `~/.hz/recordings/`, created on demand.
 ///
 /// Beside the models and transcripts rather than in the OS temp directory,
 /// which the system is entitled to empty without asking — the whole point of

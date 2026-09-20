@@ -89,12 +89,11 @@ export default function DiffView({
           fill ? "h-full" : "max-h-96",
         )}
       >
-        {sides.oldText !== null &&
-          sides.oldText.split("\n").map((line, i) => (
-            <div key={`-${i}`} className="text-destructive">
-              -{line}
-            </div>
-          ))}
+        {sides.oldText?.split("\n").map((line, i) => (
+          <div key={`-${i}`} className="text-destructive">
+            -{line}
+          </div>
+        ))}
         {sides.newText.split("\n").map((line, i) => (
           <div key={`+${i}`} className="text-accent-add">
             +{line}

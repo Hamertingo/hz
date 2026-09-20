@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { ChevronRight } from "lucide-react";
 import Orb from "@/components/Orb";
 
@@ -11,7 +12,13 @@ import { cn } from "@/lib/utils";
 /// The row says what the agent is doing and nothing else. Its tool name is
 /// harness vocabulary ("Task", "local_bash") that names the mechanism rather
 /// than the work, and a step count says something happened without saying what.
-export default function SubagentRow({
+///
+/// Memoised on identity. The `run` comes out of the walk's own map, so it holds
+/// still across the deltas of an unrelated turn and this row is skipped; it
+/// changes exactly when the run reports something, which is when the row must
+/// redraw. A comparator would be comparing a run's whole event list to answer
+/// what identity answers.
+function SubagentRow({
   run,
   onOpen,
 }: {
@@ -55,3 +62,5 @@ export default function SubagentRow({
     </button>
   );
 }
+
+export default memo(SubagentRow);

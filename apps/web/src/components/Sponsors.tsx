@@ -20,8 +20,8 @@ export function Sponsors({ className }: { className?: string }) {
   return (
     <section className={`text-center ${className ?? ""}`}>
       {/* The heading says who these two are, not what their money buys.
-          It read "Dray stays free and open source thanks to its sponsors",
-          which is not true — Dray was always free and stays free either way,
+          It read "hz stays free and open source thanks to its sponsors",
+          which is not true — hz was always free and stays free either way,
           and a credit line that overstates itself is worth less than none.
           What the names are actually doing here is vouching.
 

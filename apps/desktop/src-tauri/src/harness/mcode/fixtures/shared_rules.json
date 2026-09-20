@@ -1,0 +1,167 @@
+{
+  "about": "Inputs and the answers to them, for the rules both languages state for themselves: Rust for the CLI and the index, TypeScript for the webview, neither able to call the other. Read by `cargo test` through `src-tauri/src/shared_rules.rs` and by the frontend suite through the same file (src/lib/pr.test.ts, src/lib/mcode.test.ts, src/lib/issue.test.ts), so the two implementations are held to one table instead of two hand-copied sets of cases. NOT a capture of mcode's stdio, unlike every other file in this directory.",
+  "sessionBranch": [
+    {
+      "branch": "worktree-calm-owl",
+      "worktreeRemoved": false,
+      "observed": null,
+      "expected": "worktree-calm-owl"
+    },
+    {
+      "branch": "worktree-calm-owl",
+      "worktreeRemoved": false,
+      "observed": "fix/thing",
+      "expected": "fix/thing"
+    },
+    {
+      "branch": "feature",
+      "worktreeRemoved": false,
+      "observed": "fix/thing",
+      "expected": "fix/thing"
+    },
+    {
+      "branch": "feature",
+      "worktreeRemoved": false,
+      "observed": null,
+      "expected": "feature"
+    },
+    {
+      "branch": "feature",
+      "worktreeRemoved": false,
+      "observed": "",
+      "expected": "feature"
+    },
+    {
+      "branch": "feature",
+      "worktreeRemoved": false,
+      "expected": "feature"
+    },
+    {
+      "branch": null,
+      "worktreeRemoved": false,
+      "observed": null,
+      "expected": null
+    },
+    {
+      "branch": "worktree-calm-owl",
+      "worktreeRemoved": true,
+      "observed": "main",
+      "expected": "worktree-calm-owl"
+    },
+    {
+      "branch": "worktree-calm-owl",
+      "worktreeRemoved": true,
+      "observed": null,
+      "expected": "worktree-calm-owl"
+    },
+    {
+      "branch": null,
+      "worktreeRemoved": true,
+      "observed": "main",
+      "expected": null
+    }
+  ],
+  "fastMode": [
+    {
+      "harness": "mcode",
+      "support": "none",
+      "offered": false
+    }
+  ],
+  "stance": [
+    {
+      "stance": "plan",
+      "honoured": true,
+      "permissionValue": "default",
+      "acpMode": "plan"
+    },
+    {
+      "stance": "manual",
+      "honoured": true,
+      "permissionValue": "default",
+      "acpMode": null
+    },
+    {
+      "stance": "auto",
+      "honoured": true,
+      "permissionValue": "auto",
+      "acpMode": null
+    },
+    {
+      "stance": "bypassPermissions",
+      "honoured": true,
+      "permissionValue": "bypassPermissions",
+      "acpMode": null
+    },
+    {
+      "stance": "dontAsk",
+      "honoured": false,
+      "permissionValue": null,
+      "acpMode": null
+    }
+  ],
+  "identifier": [
+    {
+      "text": "DRA-53",
+      "expected": "DRA-53"
+    },
+    {
+      "text": "dra-53",
+      "expected": "DRA-53"
+    },
+    {
+      "text": "DRA-53),",
+      "expected": "DRA-53"
+    },
+    {
+      "text": "fff",
+      "expected": null
+    },
+    {
+      "text": "53",
+      "expected": null
+    },
+    {
+      "text": "1-2",
+      "expected": null
+    },
+    {
+      "text": "DRA-",
+      "expected": null
+    },
+    {
+      "text": "DRA53",
+      "expected": null
+    },
+    {
+      "text": "-53",
+      "expected": null
+    },
+    {
+      "text": "D_RA-5",
+      "expected": null
+    }
+  ],
+  "tag": [
+    {
+      "identifier": "DRA-53",
+      "title": "One",
+      "expected": "#DRA-53 One"
+    },
+    {
+      "identifier": "DRA-53",
+      "title": "Issue tracker integration",
+      "expected": "#DRA-53 Issue tracker integration"
+    },
+    {
+      "identifier": "DRA-53",
+      "title": "",
+      "expected": "#DRA-53"
+    },
+    {
+      "identifier": "DRA-53",
+      "title": "   ",
+      "expected": "#DRA-53"
+    }
+  ]
+}

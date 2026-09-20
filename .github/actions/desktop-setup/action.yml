@@ -54,7 +54,7 @@ runs:
     # build can read from; a tag build saving would write under its own ref
     # that nothing reads again. The version bump in every release changes
     # Cargo.lock, so the exact key misses once per release by design and the
-    # prefix restore carries the tree across; only `dray` itself moved.
+    # prefix restore carries the tree across; only `hz` itself moved.
     - id: cache
       uses: actions/cache/restore@v4
       with:

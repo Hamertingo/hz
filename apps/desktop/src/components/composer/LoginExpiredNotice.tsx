@@ -44,10 +44,15 @@ export default function LoginExpiredNotice({
   agent,
   cwd,
   onHandled,
+  onOpenSettings,
 }: {
   agent: AgentAvailability;
   cwd: string;
   onHandled: () => void;
+  /// Opens the Agent tab, which is where a login is actually fixed now. The
+  /// agent ships inside the app, so there is no command to hand a reader and no
+  /// terminal for one to run in.
+  onOpenSettings: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +126,18 @@ export default function LoginExpiredNotice({
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        {/* **A command exists only for an agent that is not ours.** The one hz
+            ships is addressed by the app rather than by the reader, so the
+            copy/terminal pair is replaced by the place the setup actually
+            lives — Settings, where a provider is connected. */}
+        {!agent.loginCommand && (
+          <Button variant="secondary" size="sm" onClick={onOpenSettings}>
+            Open Settings
+          </Button>
+        )}
+
+        {agent.loginCommand && (
+          <>
         <Button variant="ghost" size="sm" onClick={() => void copy()}>
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           {copied ? "Copied" : "Copy command"}
@@ -154,6 +171,8 @@ export default function LoginExpiredNotice({
             {error ?? `Runs ${agent.loginCommand} in Terminal`}
           </TooltipContent>
         </Tooltip>
+          </>
+        )}
       </div>
     </div>
   );

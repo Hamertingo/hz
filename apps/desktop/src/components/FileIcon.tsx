@@ -2,6 +2,17 @@ import { getIconForFilePath } from "vscode-material-icons";
 
 import { cn } from "@/lib/utils";
 
+/// Where a path's Material mark is served from.
+///
+/// Split out from the component because the composer needs the *URL* and not the
+/// element: a chip inside a textarea's mirrored text cannot hold an `<img>`, so
+/// the mark is painted as a background image over the placeholder character that
+/// reserved its space. One function, so the two ways of drawing the same mark
+/// cannot name different files.
+export function fileIconUrl(path: string): string {
+  return `/file-icons/${getIconForFilePath(path)}.svg`;
+}
+
 /// The Material file glyph for a path — a React mark on `.tsx`, the TS mark on
 /// `.ts`, and so on down to a plain sheet for anything unrecognized.
 ///
@@ -14,11 +25,9 @@ import { cn } from "@/lib/utils";
 /// monochrome chrome around them: colour is the whole reason to prefer them over
 /// one generic glyph, since it makes a file's type readable before its name is.
 export default function FileIcon({ path, className }: { path: string; className?: string }) {
-  const name = getIconForFilePath(path);
-
   return (
     <img
-      src={`/file-icons/${name}.svg`}
+      src={fileIconUrl(path)}
       alt=""
       aria-hidden
       draggable={false}

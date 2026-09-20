@@ -1,17 +1,17 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 
 import AssistantMessage from "@/components/chat/AssistantMessage";
 import BackgroundTasksIndicator from "@/components/chat/BackgroundTasksIndicator";
 import CheckpointRail, { type Checkpoint } from "@/components/chat/CheckpointRail";
 import ApiRetryIndicator from "@/components/chat/ApiRetryIndicator";
+import AssistantSelectionToolbar from "@/components/chat/AssistantSelectionToolbar";
 import CompactingIndicator from "@/components/chat/CompactingIndicator";
 import PermissionRequest from "@/components/chat/PermissionRequest";
 import QueuedMessages from "@/components/chat/QueuedMessages";
 import QuestionRequest from "@/components/chat/QuestionRequest";
 import Reasoning from "@/components/chat/Reasoning";
 import WorkingIndicator from "@/components/chat/WorkingIndicator";
-import StreamingToolCall from "@/components/chat/StreamingToolCall";
 import TurnBlock from "@/components/chat/TurnBlock";
 import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
@@ -21,10 +21,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChatSessionContext } from "@/hooks/useChatSession";
+import { addCitation } from "@/hooks/useCitations";
 import { useHotkey } from "@/hooks/useHotkey";
+import { useLingeringCards } from "@/hooks/useLingeringCards";
 import type { ApiRetryState, QueuedPrompt, StreamingBlock, Working } from "@/hooks/useSessions";
 import { toolArgument } from "@/lib/tools";
-import { buildTranscript, type PendingAsk } from "@/lib/transcript";
+import { buildTranscript } from "@/lib/transcript";
 import { firstMount, grow, mountedTurns } from "@/lib/turnWindow";
 import type { SessionSnapshot } from "@/types/events";
 
@@ -33,7 +35,7 @@ type ChatProps = {
   streamingBlock: StreamingBlock | null;
   onOpenSubagent: (id: string) => void;
   /// Opens the session that relayed a prompt into this one, for the avatar a
-  /// `dray send` message draws. Selecting the session is all it does — the same
+  /// `hz send` message draws. Selecting the session is all it does — the same
   /// thing clicking its sidebar row does.
   onOpenSession: (sessionId: string) => void;
   /// Opens the subagent panel on no particular run — what the background-task
@@ -72,7 +74,11 @@ type ChatProps = {
   /// yet. Rendered here rather than built from the log, because a held prompt is
   /// deliberately unpersisted until it is delivered.
   queuedMessages?: QueuedPrompt[];
-  onSendNow?: () => void;
+  /// Hands this session's held prompts into its running turn. Taken by session
+  /// id rather than closed over by the caller, because in a split the panes share
+  /// one object of these callbacks — each pane knows which session it is drawing,
+  /// and the shell does not.
+  onSendNow?: (sessionId: string) => void;
   /// Both side panes are open, so the pane is at its narrowest and the rail sits
   /// close to the text. Passed in rather than measured here: the shell owns those
   /// two toggles, and the rail overlays the transcript at every width anyway — so
@@ -86,20 +92,6 @@ type ChatProps = {
   /// stop listening — otherwise it scrolls a pane nobody can see.
   active?: boolean;
 };
-
-/// How long an answered permission card holds its place before going.
-///
-/// Answering one and being asked the next are two separate events, so they land
-/// in two commits. Removing the card on the first collapses the transcript by a
-/// card's height, and the second grows it straight back — at the bottom of a
-/// pinned scroller that reads as everything above lurching down and bouncing up.
-/// Waiting one beat lets the replacement arrive in the same commit, turning two
-/// jumps into one small resize.
-///
-/// Only tuned against the fast case, which is the one that jitters: a gap longer
-/// than this still clears the card first, and reads as two separate things
-/// happening because it is.
-const CARD_EXIT_MS = 500;
 
 /// How far below the top of the pane a turn has to start before it stops being
 /// the one being read. Matches the content's own top padding, so the turn whose
@@ -119,31 +111,22 @@ const RAIL_MIN = 2;
 /// cannot appear while the transcript is still following its own bottom.
 const AT_BOTTOM_PX = 40;
 
-/// The cards to draw: the live set, but one beat behind when it empties.
-function useLingeringCards(pending: PendingAsk[]): PendingAsk[] {
-  const [shown, setShown] = useState(pending);
-
-  // Identity changes on every event, so the effect keys off the ids instead —
-  // re-running it per event would set state in a loop.
-  const key = pending.map((request) => request.requestId).join(" ");
-  const latest = useRef(pending);
-  latest.current = pending;
-
-  useEffect(() => {
-    // Arrivals are never delayed; the agent is blocked on them.
-    if (latest.current.length > 0) {
-      setShown(latest.current);
-      return;
-    }
-
-    const timer = setTimeout(
-      () => setShown((prev) => (prev.length === 0 ? prev : [])),
-      CARD_EXIT_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [key]);
-
-  return shown;
+/// A callback prop with an identity that outlives the render that made it.
+///
+/// `App` hands this pane its openers as arrows written inline in JSX, so their
+/// identity changes on every one of its renders — and a streaming turn renders
+/// `App` once per delta. Passed straight down they are what stops `memo` on a
+/// row from ever hitting: a row's other props are stable, its two callbacks are
+/// not, and that is the whole shallow compare failed two hundred times over a
+/// small turn. The wrapper is created once and reads the newest callback
+/// through a ref — the same bargain `useHotkey` makes with its handler — so the
+/// row keeps one identity while still calling what the parent last rendered
+/// with. The tidier fix is `useCallback` where the arrows are written, which is
+/// `App` and out of this pane's hands.
+function useStableCallback<A extends unknown[]>(fn: (...args: A) => void) {
+  const latest = useRef(fn);
+  latest.current = fn;
+  return useCallback((...args: A) => latest.current(...args), []);
 }
 
 export default function Chat({
@@ -154,6 +137,7 @@ export default function Chat({
   onOpenSubagentPanel,
   onRespondPermission,
   onAnswerQuestions,
+  onSendNow,
   busy = false,
   working = null,
   backgroundTaskCount = 0,
@@ -161,7 +145,6 @@ export default function Chat({
   compacting = false,
   apiRetry = null,
   queuedMessages = [],
-  onSendNow,
   crowded = false,
   rail = true,
   active = true,
@@ -182,12 +165,34 @@ export default function Chat({
     if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX);
   };
 
-  const { events, turns, subagentById, resultByCallId, editsByCallId, pendingAsks } = useMemo(
-    () => buildTranscript(session?.events ?? [], busy, liveTaskIds),
-    [session?.events, busy, liveTaskIds],
-  );
+  // The walk is keyed on the session's own event array, and a delta never
+  // touches it: deltas go to the preview block, and `useSessions` only rebuilds
+  // `events` when a real event lands. So every `Turn`, `WorkItem` and `Map` this
+  // produces keeps its identity across a whole streaming turn, which is what
+  // lets the `memo` on the rows below hit.
+  //
+  // That memo is the row-level answer, and a comparator is deliberately not:
+  // the walk rebuilds a `Turn` and its `WorkItem`s wholesale the moment one
+  // event lands, so a row props-deep compare would have to walk a turn's entire
+  // event list to notice — more work than the re-render it saves, on every row,
+  // on every event. Memoize the walk and identity does the rest.
+  const { events, turns, subagentById, resultByCallId, editsByCallId, todosByCallId, pendingAsks } =
+    useMemo(
+      () => buildTranscript(session?.events ?? [], busy, liveTaskIds),
+      [session?.events, busy, liveTaskIds],
+    );
 
   const cards = useLingeringCards(pendingAsks);
+
+  // The two openers every row takes, frozen for the life of the pane so a row's
+  // props can compare equal across a delta. See `useStableCallback`.
+  const openSubagent = useStableCallback(onOpenSubagent);
+  const openSession = useStableCallback(onOpenSession);
+  // Frozen for the same reason: `QueuedMessages` binds a chord on this prop, and
+  // the handler is re-created by the hook above on every session event.
+  const sendNow = useStableCallback(() => {
+    if (session) onSendNow?.(session.sessionId);
+  });
 
   // One tick per prompt. A turn with no prompt — a resumed log truncated
   // mid-conversation, or the promptless `init` a background subagent's
@@ -218,20 +223,10 @@ export default function Chat({
   const streamingThinking =
     streamingBlock?.type === "thinking" ? streamingBlock.text : "";
 
-  // A tool call the model is still composing. Unlike the two above this is
-  // non-empty from the first frame — the block announces its tool before any
-  // argument arrives, and having only the name is exactly the case the preview
-  // exists to cover.
-  const streamingTool =
-    streamingBlock?.type === "tool_use" && streamingBlock.name
-      ? { name: streamingBlock.name, partialJson: streamingBlock.text }
-      : null;
-
   // Kept a string rather than a boolean: the scroll-pin effect below takes this
   // as a dependency, and prose re-pinning per delta depends on the value
-  // changing as it grows. The tool preview is one fixed-height row, so a
-  // constant is right for it — it only has to differ from "".
-  const streamingAny = streamingText || streamingThinking || (streamingTool ? "tool" : "");
+  // changing as it grows.
+  const streamingAny = streamingText || streamingThinking;
 
   // The turn the indicator belongs to, or null when nothing is waiting on
   // output.
@@ -259,7 +254,7 @@ export default function Chat({
   // A retry suppresses it for exactly that reason, and it matters more here:
   // attempts run to 10, so this is the longest blank stretch a turn has, and it
   // is the one the reader most needs a real explanation of rather than a word
-  // picked at random.
+  // standing in for one.
   //
   // An open request — for consent or for an answer — suppresses it for the same
   // reason a compaction does, and now more strongly: the card renders outside
@@ -277,7 +272,9 @@ export default function Chat({
   // preview is still growing, or a tool block has opened with arguments
   // streaming into it, so something on screen is moving. fx's is not, and there
   // is no way to tell its stalled preview from its slow one.
-  const orbRidesPreview = session?.harness === "fx";
+  // Never: mcode streams no partial tool arguments — the row lands whole, on
+  // the update that carries them — so there is no preview for the orb to ride.
+  const orbRidesPreview = false;
 
   const waitingTurn =
     busy &&
@@ -335,7 +332,9 @@ export default function Chat({
   });
   const mounted =
     mount.sessionId === session?.sessionId ? mount.start : firstMount(turns.length);
-  const shownTurns = mountedTurns(turns, mounted);
+  // Memoised because `mountedTurns` copies, and a delta must not re-copy the
+  // window it is about to hand to rows whose props have not moved.
+  const shownTurns = useMemo(() => mountedTurns(turns, mounted), [turns, mounted]);
   const backfilling = mounted > 0;
 
   // Where the oldest mounted turn sat before a step lands, for the
@@ -539,6 +538,17 @@ export default function Chat({
     if (active && session) scrollToBottom();
   });
 
+  // The context leaves read — a `@mention`, a file link, `Markdown` itself — sit
+  // several components down, and a context value is a prop: rebuilt per render,
+  // it re-renders every consumer of it whatever `memo` they carry. That is what
+  // was reaching past the rows and re-rendering each `Markdown` on every delta.
+  // `null` for both is the resting state, so the no-session fallback is the
+  // context's own.
+  const chatSession = useMemo(
+    () => ({ cwd: session?.cwd ?? null, sessionId: session?.sessionId ?? null }),
+    [session?.cwd, session?.sessionId],
+  );
+
   // With no session there is no transcript to draw; AppShell centers the
   // composer and skips this pane entirely.
   if (!session) return null;
@@ -551,7 +561,7 @@ export default function Chat({
     //
     // The session rides a context because the things that read it are leaves — a
     // `@mention` and a file link, several components down. See `useChatSession`.
-    <ChatSessionContext value={{ cwd: session.cwd, sessionId: session.sessionId }}>
+    <ChatSessionContext value={chatSession}>
       <div className="relative h-full">
         <div
           ref={scrollRef}
@@ -569,8 +579,9 @@ export default function Chat({
                   subagentById={subagentById}
                   resultByCallId={resultByCallId}
                   editsByCallId={editsByCallId}
-                  onOpenSubagent={onOpenSubagent}
-                  onOpenSession={onOpenSession}
+                  todosByCallId={todosByCallId}
+                  onOpenSubagent={openSubagent}
+                  onOpenSession={openSession}
                   // Both cover the wait for output, and on every harness but fx
                   // never at once — `waitingTurn` requires no streaming text
                   // there. Inside the block so they sit at the gap the committed
@@ -588,11 +599,6 @@ export default function Chat({
                             // multi-line preview keeps growing live; it collapses
                             // to one line once committed.
                             <Reasoning text={streamingThinking} encrypted={false} streaming />
-                          ) : streamingTool ? (
-                            // Must come before the text arm: a tool block leaves
-                            // `streamingText` empty, so falling through would
-                            // render an empty message where the row belongs.
-                            <StreamingToolCall {...streamingTool} />
                           ) : (
                             <AssistantMessage text={streamingText} streaming />
                           ))}
@@ -606,48 +612,51 @@ export default function Chat({
               </div>
             ))}
 
-            {cards.map((ask) =>
-              ask.type === "questions_asked" ? (
-                <QuestionRequest
-                  key={ask.requestId}
-                  questions={ask.questions}
-                  onAnswer={(answers) =>
-                    onAnswerQuestions(session.sessionId, ask.requestId, answers)
-                  }
-                  // The pane the composer serves is the one whose card may
-                  // take the caret.
-                  autoFocus={active}
-                />
-              ) : (
-                <PermissionRequest
-                  key={ask.requestId}
-                  // The agent writes a description for nearly every call; the
-                  // tool's own name is the floor, so the card always has a subject.
-                  description={
-                    ask.description ?? ask.title ?? ask.displayName ?? ask.toolName
-                  }
-                  argument={toolArgument(ask.input)}
-                  options={ask.options}
-                  onRespond={(optionId) =>
-                    onRespondPermission(session.sessionId, ask.requestId, optionId)
-                  }
-                />
-              ),
-            )}
+            {/* Only where this pane has no composer. The focused pane's asks are
+                drawn beside the composer instead (`PendingAskPanel`) — one card
+                per request, in the place the reader is looking. In a split, an
+                unfocused pane has no composer to sit beside, so it keeps the
+                transcript's own copy rather than showing nothing at all. */}
+            {!active &&
+              cards.map((ask) =>
+                ask.type === "questions_asked" ? (
+                  <QuestionRequest
+                    key={ask.requestId}
+                    questions={ask.questions}
+                    onAnswer={(answers) =>
+                      onAnswerQuestions(session.sessionId, ask.requestId, answers)
+                    }
+                    autoFocus={false}
+                  />
+                ) : (
+                  <PermissionRequest
+                    key={ask.requestId}
+                    // The agent writes a description for nearly every call; the
+                    // tool's own name is the floor, so the card always has a subject.
+                    description={
+                      ask.description ?? ask.title ?? ask.displayName ?? ask.toolName
+                    }
+                    argument={toolArgument(ask.input)}
+                    options={ask.options}
+                    onRespond={(optionId) =>
+                      onRespondPermission(session.sessionId, ask.requestId, optionId)
+                    }
+                  />
+                ),
+              )}
 
-            {/* fx alone: it takes one prompt per turn, so a held message waits
-                out the whole turn on screen. Every other harness hands its queue
-                over at the next tool boundary, seconds away, where stopping the
-                turn to save that wait costs more than the wait.
+            {/* mcode takes one prompt per turn, so a held message waits out the
+                whole turn on screen. The bubble's own button is the way out of
+                that wait.
 
-                Gated on `active` as well, which in a split is the focused pane
-                and on screen. `onSendNow` interrupts the *selected* session, so
-                an unfocused pane's button would stop somebody else's turn — and
-                the chord rides the same prop, so four mounted transcripts would
+                Gated on `active`, which in a split is the focused pane and on
+                screen. `onSendNow` stops the *selected* session's turn, so an
+                unfocused pane's button would stop somebody else's — and the
+                chord rides the same prop, so four mounted transcripts would
                 otherwise bind it four times. */}
             <QueuedMessages
               messages={queuedMessages}
-              onSendNow={session.harness === "fx" && active ? onSendNow : undefined}
+              onSendNow={active ? sendNow : undefined}
             />
 
             {backgroundTaskCount > 0 && (
@@ -712,6 +721,16 @@ export default function Chat({
           />
         )}
       </div>
+
+      {/* Only for the pane the composer serves. In a split the composer sits
+          under the focused pane, so a selection quoted from the other one would
+          be pinned to a draft it does not belong to. */}
+      {active && (
+        <AssistantSelectionToolbar
+          scroller={scrollRef}
+          onCite={(quote) => addCitation(session?.sessionId ?? null, quote)}
+        />
+      )}
     </ChatSessionContext>
   );
 }

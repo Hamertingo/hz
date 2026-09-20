@@ -7,6 +7,7 @@
 //! an error, since this is a side view and never the reason the app is open.
 
 use anyhow::Result;
+use serde_json::json;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path, process::Stdio, sync::LazyLock};
@@ -82,6 +83,15 @@ pub struct PrComment {
     /// any: a PR's own conversation is flat, so a reply is either part of a
     /// review thread or it is a new comment.
     pub replies: Vec<PrComment>,
+    /// GitHub's node id for the review thread this comment opens, on the one
+    /// comment that does open one.
+    ///
+    /// **Carried so the panel can answer a thread and settle one.** Both are
+    /// GraphQL mutations keyed on this id and on nothing else — not on the PR
+    /// number, not on the path, not on the line, all three of which a reply or a
+    /// resolve has no way to address. `None` everywhere that is not a thread
+    /// root, which is every timeline row.
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -103,7 +113,7 @@ pub struct PullRequest {
     pub head_ref_exists: bool,
     /// Whether the head branch lives in a fork rather than in this repo.
     ///
-    /// `head_ref_name` is bare either way — a PR from `alice/dray:feature`
+    /// `head_ref_name` is bare either way — a PR from `alice/hz:feature`
     /// reports `feature` — so the name cannot be told apart from a branch of
     /// our own, and joining it to this repo's slug addresses a *different*
     /// branch that merely shares its name. Unknown reads as `true`, because
@@ -171,7 +181,7 @@ impl MergeMethod {
 /// charges on the shape asked for, not on what comes back: nested `first`s
 /// multiply, so one connection at `20 × 50 × 50` reserved a thousand thread
 /// comments and cost 11 points per read *of a branch with no PR at all* —
-/// 2640 an hour at the settling poll, which is how two Dray instances alone
+/// 2640 an hour at the settling poll, which is how two hz instances alone
 /// drained the 5000/hour budget and every agent's own `gh` call started
 /// failing (DRA-247). Only a connection's *parents* multiply, so the fifty
 /// replies under each thread are a leaf and cost nothing; thirty threads is
@@ -196,7 +206,7 @@ fragment pr on PullRequest{
  author{login avatarUrl}
  comments(first:50){nodes{author{login avatarUrl} body createdAt url}}
  reviews(first:50){nodes{id author{login avatarUrl} body submittedAt state}}
- reviewThreads(first:30){nodes{isResolved path line comments(first:50){nodes{author{login avatarUrl} body createdAt url pullRequestReview{id}}}}}
+ reviewThreads(first:30){nodes{id isResolved path line comments(first:50){nodes{author{login avatarUrl} body createdAt url pullRequestReview{id}}}}}
  commits(last:1){nodes{commit{statusCheckRollup{contexts(first:50){nodes{
    __typename
    ... on StatusContext{context state targetUrl avatarUrl}
@@ -422,6 +432,9 @@ struct RawReview {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawThread {
+    /// GitHub's node id, which every reply and every resolve addresses.
+    #[serde(default)]
+    id: Option<String>,
     #[serde(default)]
     is_resolved: bool,
     #[serde(default)]
@@ -531,6 +544,7 @@ impl RawComment {
             path: None,
             resolved: false,
             replies: Vec::new(),
+            thread_id: None,
         }
     }
 }
@@ -557,6 +571,7 @@ impl RawThread {
             None => path,
         });
         root.resolved = self.is_resolved;
+        root.thread_id = self.id.filter(|id| !id.is_empty());
         root.replies = comments.map(|c| c.map(CommentKind::Comment)).collect();
 
         Some((review, root))
@@ -698,6 +713,9 @@ impl RawPr {
                 path: None,
                 resolved: false,
                 replies,
+                // A review is not a thread: only a review *comment* opens one,
+                // and the mutation that answers a thread takes that thread's id.
+                thread_id: None,
             })
         }));
 
@@ -758,6 +776,17 @@ pub enum PrUnavailable {
     NotAuthenticated,
     /// Not a git repository, or one with no GitHub remote.
     NoRemote,
+    /// **Signed in, and refused anyway.** A token that authenticates but cannot
+    /// read what the page asks for — a fine-grained PAT without *Commit
+    /// statuses* or *Checks*, or an app installation without the repository.
+    ///
+    /// Its own variant because it is its own failure and the two neighbours are
+    /// both wrong for it: nothing is missing from the machine, and the reader is
+    /// signed in. Carries nothing, **deliberately** — GitHub answers this with
+    /// one error per field path, so the raw text is a list of a dozen
+    /// `repository.pullRequests.nodes.N.…` strings with the actual reason
+    /// nowhere in it, which is what the panel used to print.
+    MissingPermission,
     /// Anything else, carrying `gh`'s own sentence.
     Other(String),
 }
@@ -775,6 +804,11 @@ impl PrUnavailable {
 
         if lower.contains("gh auth login") || lower.contains("authentication token") {
             Self::NotAuthenticated
+        } else if lower.contains("resource not accessible")
+            || lower.contains("not accessible by personal access token")
+            || lower.contains("not accessible by integration")
+        {
+            Self::MissingPermission
         } else if lower.contains("not a git repository")
             || lower.contains("no git remotes")
             || lower.contains("none of the git remotes")
@@ -798,9 +832,23 @@ const NO_CLI: &str = "GitHub CLI (gh) not found.";
 /// logged in, no remote, no such repo — and rewording them would only make them
 /// less like what the user sees in their own terminal.
 async fn gh(cwd: &str, args: &[&str]) -> Result<String, String> {
+    gh_with_stdin(cwd, args, None).await
+}
+
+/// [`gh`] with something written to its stdin.
+///
+/// The body of a comment, a review or a thread reply goes down the pipe rather
+/// than through argv: prose is of any length and holds anything, and an argument
+/// is neither. `gh`'s `--body-file -` and `gh api --input -` are the two doors
+/// that take it.
+///
+/// `None` keeps stdin null, which is what every read wants: `gh` prompts when it
+/// cannot decide something on its own, and a prompt written to a pipe nobody
+/// reads is a command that never returns.
+async fn gh_with_stdin(cwd: &str, args: &[&str], input: Option<&str>) -> Result<String, String> {
     let bin = binpath::gh().await.ok_or(NO_CLI)?;
 
-    // A worktree removed outside Dray leaves the session's `cwd` naming a
+    // A worktree removed outside hz leaves the session's `cwd` naming a
     // directory that is gone, and the spawn then fails with ENOENT *before*
     // `gh` is reached — which reads as `gh` itself being missing. The startup
     // backfill repairs the entry, so this is the window before the next launch.
@@ -808,7 +856,8 @@ async fn gh(cwd: &str, args: &[&str]) -> Result<String, String> {
         return Err(format!("{cwd} no longer exists."));
     }
 
-    let out = Command::new(bin)
+    let mut command = Command::new(bin);
+    command
         .args(args)
         .current_dir(cwd)
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -816,8 +865,31 @@ async fn gh(cwd: &str, args: &[&str]) -> Result<String, String> {
         // written to a pipe nobody reads is a command that never returns.
         .env("GH_PROMPT_DISABLED", "1")
         .env("GH_NO_UPDATE_NOTIFIER", "1")
-        .stdin(Stdio::null())
-        .output()
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|e| format!("could not run gh: {e}"))?;
+
+    if let Some(text) = input {
+        // Written from its own task: `gh` streams its answer as it reads, and
+        // filling the pipe before draining the other end is a deadlock on
+        // anything bigger than one pipe buffer.
+        let mut stdin = child.stdin.take().ok_or("gh closed its input")?;
+        let body = text.to_string();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(body.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        });
+    }
+
+    let out = child
+        .wait_with_output()
         .await
         .map_err(|e| format!("could not run gh: {e}"))?;
 
@@ -888,6 +960,156 @@ pub async fn prs_for_branch(
             Err(PrUnavailable::NoRemote)
         }
         answer => answer,
+    }
+}
+
+// ── what this machine can do with source control ─────────────────────────────
+
+/// Git and GitHub as one read, for the settings section that explains them.
+///
+/// **About the machine, not about a checkout**, and that is the whole reason it
+/// is not another `cwd`-taking command: every other read here answers for one
+/// repository, and the questions a reader has when pull requests will not load —
+/// is `gh` even here, who is it signed in as, what may that token read — are
+/// answered once for the whole app.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct SourceControlState {
+    /// `git --version`'s own words, or `None` where git is not on the PATH.
+    pub git: Option<String>,
+    /// `None` where the CLI is not installed at all.
+    pub gh: Option<GhAccount>,
+}
+
+/// Who `gh` is signed in as, and what its credential may read.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct GhAccount {
+    /// Where the credential came from — `keyring` for `gh auth login`, or the
+    /// name of the variable when a token was handed in from the environment.
+    /// **The distinction matters to the cure**: one is refreshed with
+    /// `gh auth refresh`, the other has to be regenerated where it was made.
+    pub token_source: Option<String>,
+    pub host: Option<String>,
+    pub login: Option<String>,
+    /// As `gh` reports them, split on the commas it separates them with. Empty
+    /// for a token that carries no scopes at all, which is every fine-grained
+    /// personal access token — its permissions are on GitHub, not in here.
+    pub scopes: Vec<String>,
+    /// **`gh`'s own sentence where it found a credential and was refused**,
+    /// which is the state a reader is in when the token is there and wrong.
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn source_control_state() -> SourceControlState {
+    SourceControlState {
+        git: git_version().await,
+        gh: gh_account().await,
+    }
+}
+
+/// `git --version`, or `None` where there is no git to run. Not an error: a
+/// machine without git is a machine hz cannot do much on, and the row says so.
+async fn git_version() -> Option<String> {
+    let out = Command::new("git").arg("--version").output().await.ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    out.status.success().then_some(text).filter(|t| !t.is_empty())
+}
+
+/// Who `gh` is signed in as, or `None` where the CLI is not installed.
+async fn gh_account() -> Option<GhAccount> {
+    let bin = binpath::gh().await?;
+    let out = Command::new(bin)
+        .args(["auth", "status", "--json", "hosts"])
+        // The same pair every other `gh` call here sets, for the same reason: a
+        // prompt written to a pipe nobody reads is a command that never returns,
+        // and the update notifier pollutes what this parses.
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .ok()?;
+
+    // **Read from the document, never from the exit code.** `gh auth status`
+    // exits non-zero when it found no credential, and prints the same JSON
+    // either way — so a status read off the code would call a signed-out machine
+    // broken rather than signed out.
+    Some(read_gh_account(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The active host entry out of `gh auth status --json hosts`.
+///
+/// Split out so the shapes are pinned without a `gh` on the machine: there are
+/// three that matter, and two of them are not the happy one. Logged out is
+/// `{"hosts":{}}`; a credential that was refused is a second entry with
+/// `state: "error"` and a message; and a machine with both an environment token
+/// and a keyring login carries **two entries for one host**, of which only one
+/// has `active: true`.
+fn read_gh_account(json: &str) -> GhAccount {
+    let blank = GhAccount {
+        token_source: None,
+        host: None,
+        login: None,
+        scopes: Vec::new(),
+        error: None,
+    };
+
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(json) else {
+        return GhAccount {
+            error: Some("gh answered something this build does not read".to_string()),
+            ..blank
+        };
+    };
+
+    // Every host's entries, flattened. Logged out is `{"hosts":{}}`, which
+    // leaves this empty and answers the blank below.
+    let entries: Vec<&serde_json::Value> = payload
+        .get("hosts")
+        .and_then(|hosts| hosts.as_object())
+        .map(|hosts| hosts.values().filter_map(|value| value.as_array()).flatten().collect())
+        .unwrap_or_default();
+
+    // The active one, or the first — `gh` marks exactly one entry per host
+    // active, and a machine carrying both an environment token and a keyring
+    // login answers with two entries for one host.
+    let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.get("active").and_then(|active| active.as_bool()) == Some(true))
+        .or_else(|| entries.first())
+    else {
+        return blank;
+    };
+
+    let text = |key: &str| {
+        entry
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(String::from)
+    };
+
+    GhAccount {
+        token_source: text("tokenSource"),
+        host: text("host"),
+        login: text("login"),
+        scopes: text("scopes")
+            .map(|scopes| {
+                scopes
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|scope| !scope.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        error: text("error"),
     }
 }
 
@@ -1197,6 +1419,324 @@ async fn merged_state(cwd: &str, number: u64) -> Option<bool> {
     Some(value.get("state")?.as_str()? == "MERGED")
 }
 
+/// Which pull requests a listing wants.
+///
+/// GitHub's three states plus "all", because a page that only ever showed open
+/// ones could not answer "did this land?" — the question the panel exists for,
+/// asked about work that is not on screen.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "snake_case")]
+pub enum PrListState {
+    All,
+    Open,
+    Closed,
+    Merged,
+}
+
+impl PrListState {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::Merged => "merged",
+        }
+    }
+}
+
+/// One row of the pull-request page: what a *list* needs, and nothing that only
+/// a detail read can answer.
+///
+/// Deliberately not [`PullRequest`]. A page shows fifty rows and a detail pane
+/// shows one: asking for the full shape fifty times is fifty comment trees and
+/// fifty check lists nobody scrolls. What a row cannot answer — the checks
+/// themselves, the conversation, the threads — the detail read answers, and the
+/// page uses the same `prs_for_branch` for it that the session's own tab does.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct PrListItem {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    /// `OPEN`, `CLOSED` or `MERGED`, GitHub's own word.
+    pub state: String,
+    pub is_draft: bool,
+    pub author: String,
+    pub avatar: Option<String>,
+    pub head_ref_name: String,
+    pub base_ref_name: String,
+    pub updated_at: String,
+    /// When it was opened. The list can be ordered by age, and `updatedAt` cannot
+    /// answer that: a year-old pull request touched this morning is the newest by
+    /// one and the oldest by the other.
+    pub created_at: String,
+    pub additions: u32,
+    pub deletions: u32,
+    pub changed_files: u32,
+    pub review_decision: Option<String>,
+    pub mergeable: String,
+    pub merge_state_status: String,
+    /// The tip commit's checks, folded to one word — the same fold the sidebar's
+    /// marks use, for the same reason: a row has space for running or failing,
+    /// not for fifty contexts.
+    pub checks_state: PrChecksState,
+    /// Everyone asked to review it — people by login, teams by slug.
+    ///
+    /// This is what the page's "waiting on you" grouping asks about, and it is
+    /// why the grouping is done here rather than with three `gh` calls: one
+    /// listing plus the viewer's own login (cached for the process) answers
+    /// "mine", "waiting on me" and "everything else" without a spawn per group.
+    pub review_requests: Vec<String>,
+    /// What the repository has filed it under.
+    ///
+    /// Carried because the page's own filter menu wants them and a label is the
+    /// one narrowing GitHub cannot answer for: `--label` exists on `gh pr list`,
+    /// and a filter that re-read the host on every tick would be a spawn per
+    /// click against labels the listing already holds.
+    pub labels: Vec<PrLabel>,
+}
+
+/// One label, as a row draws it: the name, and the colour so the dot beside it
+/// is the one GitHub shows rather than a shade this app invented.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct PrLabel {
+    pub name: String,
+    /// Six hex digits without the `#`, or `None` for a label with no colour set.
+    pub color: Option<String>,
+}
+
+/// The rows and who is asking.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct PrListPage {
+    pub items: Vec<PrListItem>,
+    /// The signed-in account, or `None` where `gh` would not say — in which case
+    /// nothing is filed under the reader's own name and every row lands under
+    /// Others, which is the honest answer rather than a guess.
+    pub viewer: Option<String>,
+}
+
+/// The fields a page row is built from, as `gh pr list --json` names them.
+///
+/// `statusCheckRollup` is the one that is not a scalar: `gh` passes the GraphQL
+/// connections through, so the contexts carry their own `__typename` and land on
+/// the same [`RawCheck`] the panel's query does.
+const LIST_FIELDS: &str = "number,title,url,state,isDraft,author,headRefName,baseRefName,updatedAt,additions,deletions,changedFiles,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup,reviewRequests,labels";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawListItem {
+    number: u64,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    is_draft: bool,
+    #[serde(default)]
+    author: Option<RawAuthor>,
+    #[serde(default)]
+    head_ref_name: String,
+    #[serde(default)]
+    base_ref_name: String,
+    #[serde(default)]
+    updated_at: String,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    additions: u32,
+    #[serde(default)]
+    deletions: u32,
+    #[serde(default)]
+    changed_files: u32,
+    #[serde(default)]
+    review_decision: Option<String>,
+    #[serde(default)]
+    mergeable: String,
+    #[serde(default)]
+    merge_state_status: String,
+    /// The contexts themselves, not a rolled-up verdict — `gh` reports the array
+    /// for this field either way, and folding them here is the same code the
+    /// panel's own read uses.
+    #[serde(default)]
+    status_check_rollup: Option<Vec<RawCheck>>,
+    #[serde(default)]
+    review_requests: Option<Vec<RawReviewRequest>>,
+    #[serde(default)]
+    labels: Option<Vec<RawLabel>>,
+}
+
+#[derive(Deserialize)]
+struct RawReviewRequest {
+    #[serde(default)]
+    login: Option<String>,
+    #[serde(default)]
+    slug: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawLabel {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    color: Option<String>,
+}
+
+impl RawListItem {
+    fn map(self) -> PrListItem {
+        let checks: Vec<PrCheck> = self
+            .status_check_rollup
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(RawCheck::map)
+            .collect();
+
+        PrListItem {
+            number: self.number,
+            title: self.title,
+            url: self.url,
+            state: self.state,
+            is_draft: self.is_draft,
+            author: login(&self.author),
+            avatar: avatar(&self.author),
+            head_ref_name: self.head_ref_name,
+            base_ref_name: self.base_ref_name,
+            updated_at: self.updated_at,
+            created_at: self.created_at,
+            additions: self.additions,
+            deletions: self.deletions,
+            changed_files: self.changed_files,
+            review_decision: self.review_decision.filter(|decision| !decision.is_empty()),
+            mergeable: self.mergeable,
+            merge_state_status: self.merge_state_status,
+            checks_state: fold_checks(&checks),
+            review_requests: self
+                .review_requests
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|request| request.login.or(request.slug))
+                .filter(|who| !who.is_empty())
+                .collect(),
+            labels: self
+                .labels
+                .unwrap_or_default()
+                .into_iter()
+                // A label with no name is not a label: `gh` reports the colour
+                // alone for a repository that has one, and a nameless dot is a
+                // row that cannot be told from its neighbour.
+                .filter(|label| !label.name.is_empty())
+                .map(|label| PrLabel {
+                    name: label.name,
+                    color: label.color.filter(|color| !color.is_empty()),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Fifty contexts folded to the one word a row has room for.
+///
+/// Failing outranks running, which is the order a reader would pick if they had
+/// to: a red row is the one to open, and a check still going says so on the
+/// detail pane a second later.
+fn fold_checks(checks: &[PrCheck]) -> PrChecksState {
+    if checks
+        .iter()
+        .any(|check| matches!(check.state, CheckState::Failure))
+    {
+        return PrChecksState::Failing;
+    }
+    if checks
+        .iter()
+        .any(|check| matches!(check.state, CheckState::Pending))
+    {
+        return PrChecksState::Running;
+    }
+    PrChecksState::Clear
+}
+
+/// The signed-in account, for deciding which rows are the reader's own.
+///
+/// Cached for the process: a login does not change while the app is running, and
+/// this is one `gh` spawn on a page that already spends one per listing.
+async fn viewer_login(cwd: &str) -> Option<String> {
+    static VIEWER: LazyLock<Mutex<HashMap<String, Option<String>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    if let Some(hit) = VIEWER.lock().await.get(cwd) {
+        return hit.clone();
+    }
+
+    let login = gh(cwd, &["api", "user", "-q", ".login"])
+        .await
+        .ok()
+        .map(|out| out.trim().to_string())
+        .filter(|login| !login.is_empty());
+
+    VIEWER.lock().await.insert(cwd.to_string(), login.clone());
+    login
+}
+
+/// The pull-request page's listing: every pull request one repository has, in
+/// whatever state the filter asks for.
+///
+/// `gh pr list` rather than the GraphQL query the panel uses, and the difference
+/// is the question: the panel asks about *one branch* and wants every comment on
+/// it, where a page asks about a repository and wants the rows. `gh`'s own
+/// subcommand pages, filters and searches for us, which is a query language on a
+/// page that has a search box.
+#[tauri::command]
+pub async fn list_pull_requests(
+    cwd: String,
+    state: PrListState,
+    search: Option<String>,
+) -> Result<PrListPage, PrUnavailable> {
+    let listing = list_pull_requests_inner(&cwd, state, search)
+        .await
+        .map_err(unavailable)?;
+
+    Ok(listing)
+}
+
+async fn list_pull_requests_inner(
+    cwd: &str,
+    state: PrListState,
+    search: Option<String>,
+) -> Result<PrListPage, String> {
+    let mut args = vec![
+        "pr",
+        "list",
+        "--state",
+        state.flag(),
+        "--limit",
+        "50",
+        "--json",
+        LIST_FIELDS,
+    ];
+
+    let query = search.unwrap_or_default();
+    let query = query.trim();
+    if !query.is_empty() {
+        args.extend(["--search", query]);
+    }
+
+    let out = gh(cwd, &args).await?;
+    let raw: Vec<RawListItem> =
+        serde_json::from_str(&out).map_err(|e| format!("could not read that listing: {e}"))?;
+
+    Ok(PrListPage {
+        items: raw.into_iter().map(RawListItem::map).collect(),
+        viewer: viewer_login(cwd).await,
+    })
+}
+
 /// Deletes a merged or closed PR's head branch from the remote, and nothing
 /// else.
 ///
@@ -1277,6 +1817,195 @@ pub async fn mark_pr_ready(cwd: String, number: u64) -> Result<(), String> {
     gh(&cwd, &["pr", "ready", &number.to_string()]).await.map(|_| ())
 }
 
+// ── saying something ─────────────────────────────────────────────────────────
+//
+// Everything below puts words on GitHub rather than reading them, which is the
+// line this panel used to draw and no longer does: the reader is already in the
+// conversation with the reviewer, and making them open a browser to answer a
+// thread they are looking at is a trip for nothing. What each one writes is
+// still the *reader's* text, passed through untouched — nothing here composes a
+// sentence the reader did not type.
+
+/// Posts a comment on the PR's own conversation.
+///
+/// The body travels on stdin rather than in argv: it is prose of any length, may
+/// hold anything, and argv is a place a long argument and a shell metacharacter
+/// both end badly. `gh` reads `--body-file -` for exactly this.
+#[tauri::command]
+pub async fn comment_on_pr(cwd: String, number: u64, body: String) -> Result<(), String> {
+    gh_with_stdin(
+        &cwd,
+        &["pr", "comment", &number.to_string(), "--body-file", "-"],
+        Some(&body),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// Answers one inline review thread.
+///
+/// A GraphQL mutation rather than a `gh` subcommand: `gh pr comment` speaks for
+/// the whole pull request and cannot address a thread, and the REST endpoint for
+/// a thread reply wants a review id the panel does not have. The thread's node id
+/// is the one thing that names it.
+///
+/// The whole request body goes in on stdin — document and variables together —
+/// because that is what `gh api graphql --input -` takes: one JSON value, so a
+/// query with braces in it never meets a shell or an argument parser.
+#[tauri::command]
+pub async fn reply_to_thread(cwd: String, thread_id: String, body: String) -> Result<(), String> {
+    graphql(
+        &cwd,
+        "mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}",
+        json!({ "id": thread_id, "body": body }),
+    )
+    .await
+}
+
+/// Settles a thread, or opens it again.
+///
+/// One function for the pair because GitHub's two mutations differ only in their
+/// name, and the panel's button is one toggle: a row that is resolved offers
+/// "Unresolve" and a row that is not offers "Resolve".
+#[tauri::command]
+pub async fn set_thread_resolved(
+    cwd: String,
+    thread_id: String,
+    resolved: bool,
+) -> Result<(), String> {
+    let mutation = if resolved {
+        "resolveReviewThread"
+    } else {
+        "unresolveReviewThread"
+    };
+    let query = format!(
+        "mutation($id:ID!){{{mutation}(input:{{threadId:$id}}){{thread{{id isResolved}}}}}}"
+    );
+
+    graphql(&cwd, &query, json!({ "id": thread_id })).await
+}
+
+/// One GraphQL request, document and variables in one body on stdin.
+async fn graphql(cwd: &str, query: &str, variables: serde_json::Value) -> Result<(), String> {
+    gh_with_stdin(cwd, &["api", "graphql", "--input", "-"], Some(&graphql_body(query, variables)))
+        .await
+        .map(|_| ())
+}
+
+/// The one JSON value `gh api graphql --input -` takes: the document and its
+/// variables together.
+///
+/// Split out because this is the half that fails *silently* when it drifts: a
+/// body with the query at the wrong key is a request GitHub answers with a
+/// schema error about a variable that was never defined, which reads as our
+/// query being wrong rather than as our envelope being wrong.
+fn graphql_body(query: &str, variables: serde_json::Value) -> String {
+    json!({ "query": query, "variables": variables }).to_string()
+}
+
+/// What the reviewer decided.
+///
+/// GitHub's own three, and they are not interchangeable: approving a PR and
+/// leaving a comment on it are different acts in the repo's history, and a
+/// "request changes" blocks the merge where a comment does not.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewVerdict {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewVerdict {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Approve => "--approve",
+            Self::RequestChanges => "--request-changes",
+            Self::Comment => "--comment",
+        }
+    }
+}
+
+/// Submits a review on the PR, with whatever the reader wrote with it.
+///
+/// `gh pr review` rather than the GraphQL `addPullRequestReview`: it resolves the
+/// head commit itself, and one spawn is the whole operation. A bodyless
+/// *comment* is refused by `gh` — that is GitHub's rule, not this panel's, and
+/// the error it returns says so in its own words.
+#[tauri::command]
+pub async fn submit_review(
+    cwd: String,
+    number: u64,
+    verdict: ReviewVerdict,
+    body: String,
+) -> Result<(), String> {
+    let arg = number.to_string();
+    let mut args = vec!["pr", "review", &arg, verdict.flag()];
+
+    // Only when there is something to say: `--body-file -` with an empty stdin
+    // is an empty review body, which for an approval is a body GitHub records as
+    // blank rather than as none.
+    if !body.trim().is_empty() {
+        args.extend(["--body-file", "-"]);
+        return gh_with_stdin(&cwd, &args, Some(&body)).await.map(|_| ());
+    }
+
+    gh(&cwd, &args).await.map(|_| ())
+}
+
+/// Asks people to review it. Logins, as GitHub spells them.
+///
+/// `gh pr edit --add-reviewer` takes the list comma-joined, and it is the same
+/// call whether the reader names one person or three — a second command for the
+/// singular would be a second place for the join to go wrong.
+#[tauri::command]
+pub async fn request_reviewers(cwd: String, number: u64, logins: Vec<String>) -> Result<(), String> {
+    let people = clean_logins(logins);
+    if people.is_empty() {
+        return Err("Name at least one reviewer.".into());
+    }
+
+    gh(
+        &cwd,
+        &[
+            "pr",
+            "edit",
+            &number.to_string(),
+            "--add-reviewer",
+            &people.join(","),
+        ],
+    )
+    .await
+    .map(|_| ())
+}
+
+/// Logins as GitHub spells them: trimmed, without the `@` a reader pastes from
+/// a profile, and with the empties a trailing comma leaves behind dropped.
+///
+/// `gh` takes the list comma-joined and refuses the whole call on one bad name,
+/// so a stray space would fail the request rather than be ignored.
+fn clean_logins(logins: Vec<String>) -> Vec<String> {
+    logins
+        .into_iter()
+        .map(|login| login.trim().trim_start_matches('@').to_string())
+        .filter(|login| !login.is_empty())
+        .collect()
+}
+
+/// Closes the PR, keeping it open as reopenable rather than deleting a branch.
+///
+/// **This panel used to refuse to close one**, on the grounds that abandoning a
+/// pull request is a decision with a discussion attached to it. What changed is
+/// where the discussion is: the reader can now answer it in the panel, so the
+/// one thing left that they had to open a browser for was saying no. The branch
+/// is deliberately untouched — [`delete_branch`] is its own button, and a close
+/// is not a cleanup.
+#[tauri::command]
+pub async fn close_pr(cwd: String, number: u64) -> Result<(), String> {
+    gh(&cwd, &["pr", "close", &number.to_string()]).await.map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1292,6 +2021,104 @@ mod tests {
         read_prs(FIXTURE).expect("fixture parses").pop().expect("one PR")
     }
 
+    /// **Signed in and refused is its own answer**, and the reason it has to be
+    /// is the text: GitHub answers one permission failure with one error per
+    /// field path, so what reaches this classifier is a list of
+    /// `repository.pullRequests.nodes.N.…` strings with the actual reason
+    /// nowhere in it. Printed as written it is a screenful of noise that says
+    /// nothing; told apart, it is a sentence naming the cure.
+    #[test]
+    fn a_refused_token_is_not_the_same_as_no_token() {
+        let refused = PrUnavailable::classify(
+            "GraphQL: Resource not accessible by personal access token \
+             (repository.pullRequests.nodes.0.statusCheckRollup.nodes.0.commit.statusCheckRollup.contexts.nodes.0), \
+             Resource not accessible by personal access token (repository.pullRequests.nodes.1.…)"
+                .to_string(),
+        );
+        assert!(matches!(refused, PrUnavailable::MissingPermission));
+
+        // An app installation rather than a token — same refusal, same cure.
+        assert!(matches!(
+            PrUnavailable::classify("Resource not accessible by integration".to_string()),
+            PrUnavailable::MissingPermission
+        ));
+
+        // The neighbour it must not be mistaken for: a credential that is not
+        // there at all is a different screen with a different command on it.
+        assert!(matches!(
+            PrUnavailable::classify(
+                "To get started with GitHub CLI, please run: gh auth login".to_string()
+            ),
+            PrUnavailable::NotAuthenticated
+        ));
+        assert!(matches!(
+            PrUnavailable::classify("HTTP 401: Bad credentials".to_string()),
+            PrUnavailable::Other(_)
+        ));
+    }
+
+    /// The three shapes `gh auth status --json hosts` answers with, and two of
+    /// them are not the happy one.
+    #[test]
+    fn the_signed_in_account_is_read_off_whichever_entry_is_active() {
+        // Signed in through `gh auth login`.
+        let account = read_gh_account(
+            r#"{"hosts":{"github.com":[
+              {"state":"success","active":true,"host":"github.com","login":"Hamertingo",
+               "tokenSource":"keyring","scopes":"gist, read:org, repo, workflow","gitProtocol":"https"}
+            ]}}"#,
+        );
+        assert_eq!(account.login.as_deref(), Some("Hamertingo"));
+        assert_eq!(account.host.as_deref(), Some("github.com"));
+        assert_eq!(account.token_source.as_deref(), Some("keyring"));
+        assert_eq!(account.scopes, vec!["gist", "read:org", "repo", "workflow"]);
+        assert_eq!(account.error, None);
+
+        // **Two entries for one host, and only one of them is in use.** A token
+        // handed in from the environment sits beside a keyring login, and
+        // reading the first would name whichever happened to be written first.
+        let account = read_gh_account(
+            r#"{"hosts":{"github.com":[
+              {"state":"error","error":"Bad credentials","active":true,"host":"github.com",
+               "login":"","tokenSource":"GH_TOKEN","gitProtocol":"https"},
+              {"state":"success","active":false,"host":"github.com","login":"Hamertingo",
+               "tokenSource":"keyring","scopes":"repo","gitProtocol":"https"}
+            ]}}"#,
+        );
+        assert_eq!(account.login, None);
+        assert_eq!(account.token_source.as_deref(), Some("GH_TOKEN"));
+        assert_eq!(account.error.as_deref(), Some("Bad credentials"));
+        assert!(account.scopes.is_empty());
+
+        // **The shape a shell exporting `GITHUB_TOKEN` produces**, which is the
+        // quietest way to be signed in as the wrong account: two entries, the
+        // environment one active and *successful*, and no `scopes` key on it at
+        // all — a fine-grained token reports none. Reading only the login would
+        // say "signed in as Hamertingo" and stop, which is true of both.
+        let account = read_gh_account(
+            r#"{"hosts":{"github.com":[
+              {"state":"success","active":true,"host":"github.com","login":"Hamertingo",
+               "tokenSource":"GITHUB_TOKEN","gitProtocol":"https"},
+              {"state":"success","active":false,"host":"github.com","login":"Hamertingo",
+               "tokenSource":"keyring","scopes":"gist, read:org, repo, workflow","gitProtocol":"https"}
+            ]}}"#,
+        );
+        assert_eq!(account.login.as_deref(), Some("Hamertingo"));
+        assert_eq!(account.token_source.as_deref(), Some("GITHUB_TOKEN"));
+        assert!(account.scopes.is_empty(), "a fine-grained token reports no scopes");
+        assert_eq!(account.error, None);
+
+        // Logged out: no host at all, which is not an error.
+        let account = read_gh_account(r#"{"hosts":{}}"#);
+        assert_eq!(account.login, None);
+        assert_eq!(account.error, None);
+        assert_eq!(account.host, None);
+
+        // A `gh` that answered something else entirely says so, rather than
+        // reading as a machine that is merely signed out.
+        assert!(read_gh_account("not json").error.is_some());
+    }
+
     #[test]
     fn reads_both_check_shapes() {
         let pr = parse();
@@ -1305,6 +2132,113 @@ mod tests {
     /// Both shapes hide the image in a different place — `avatarUrl` on a
     /// status context, `checkSuite.app.logoUrl` on a run — and a check with
     /// neither is what the panel falls back to a glyph for.
+    /// The envelope `gh api graphql --input -` takes, pinned because getting it
+    /// wrong is a *silent* failure: a body with the document under the wrong key
+    /// is answered with a schema error about a variable nobody defined, which
+    /// reads as our query being wrong.
+    #[test]
+    fn the_graphql_body_carries_the_document_and_its_variables() {
+        let body = graphql_body("mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}", json!({ "id": "THREAD_1" }));
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("valid json");
+
+        assert!(parsed["query"].as_str().unwrap().contains("resolveReviewThread"));
+        assert_eq!(parsed["variables"]["id"], "THREAD_1");
+    }
+
+    /// A login arrives as a reader typed or pasted it. `gh` refuses the whole
+    /// call over one bad name, so the cleaning is what decides whether asking
+    /// three people works.
+    #[test]
+    fn logins_are_trimmed_of_the_at_sign_and_the_empties() {
+        let cleaned = clean_logins(vec![
+            " alice".into(),
+            "@bob".into(),
+            String::new(),
+            "  ".into(),
+            "carol,".into(),
+        ]);
+
+        assert_eq!(cleaned, vec!["alice", "bob", "carol,"]);
+    }
+
+    /// The three verdicts are GitHub's own flags, and a wrong one is a review
+    /// that never landed — the button would look like it worked.
+    #[test]
+    fn each_verdict_is_its_own_flag() {
+        assert_eq!(ReviewVerdict::Approve.flag(), "--approve");
+        assert_eq!(ReviewVerdict::RequestChanges.flag(), "--request-changes");
+        assert_eq!(ReviewVerdict::Comment.flag(), "--comment");
+    }
+
+    /// The page's row, from a hand-written listing.
+    ///
+    /// Hand-written because no capture of `gh pr list --json` exists: what is
+    /// pinned here is what `gh` documents, and the three places a row can go
+    /// wrong silently — the check fold, an empty `reviewDecision` that means
+    /// "no review required" rather than a decision named "", and a team request
+    /// that carries a `slug` where a person carries a `login`.
+    #[test]
+    fn a_listing_row_folds_its_checks_and_its_review_requests() {
+        let raw: Vec<RawListItem> = serde_json::from_str(
+            r#"[
+              {
+                "number": 7, "title": "Add the page", "url": "https://x/7",
+                "state": "OPEN", "isDraft": false,
+                "author": { "login": "alice", "avatarUrl": "https://a/alice.png" },
+                "headRefName": "feature", "baseRefName": "main",
+                "updatedAt": "2026-09-19T00:00:00Z",
+                "additions": 12, "deletions": 3, "changedFiles": 4,
+                "reviewDecision": "", "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
+                "statusCheckRollup": [
+                  { "__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": null,
+                    "checkSuite": { "workflowRun": null, "app": null } },
+                  { "__typename": "StatusContext", "context": "ci", "state": "PENDING", "targetUrl": null, "avatarUrl": null }
+                ],
+                "reviewRequests": [ { "login": "bob" }, { "slug": "platform" } ],
+                "labels": [ { "name": "bug", "color": "d73a4a" }, { "name": "", "color": "ffffff" } ]
+              }
+            ]"#,
+        )
+        .expect("a documented listing parses");
+
+        let item = raw.into_iter().next().expect("one row").map();
+
+        assert_eq!(item.number, 7);
+        assert_eq!(item.author, "alice");
+        assert_eq!(item.review_requests, vec!["bob", "platform"]);
+        // An empty string is `gh` saying the repo requires no review, not a
+        // decision whose name is empty.
+        assert_eq!(item.review_decision, None);
+        // One pending check and one that passed: the row says running.
+        assert_eq!(item.checks_state, PrChecksState::Running);
+        // The nameless one is dropped rather than drawn as a dot with nothing to
+        // read: a label the reader cannot tell from its neighbour is chrome.
+        assert_eq!(item.labels.len(), 1);
+        assert_eq!(item.labels[0].name, "bug");
+        assert_eq!(item.labels[0].color.as_deref(), Some("d73a4a"));
+    }
+
+    /// A failure outranks a run still going — the red row is the one to open.
+    #[test]
+    fn a_failure_outranks_a_pending_check() {
+        let check = |state: CheckState| PrCheck {
+            name: "c".into(),
+            state,
+            url: None,
+            workflow: None,
+            avatar: None,
+        };
+
+        assert_eq!(
+            fold_checks(&[check(CheckState::Pending), check(CheckState::Failure)]),
+            PrChecksState::Failing
+        );
+        assert_eq!(fold_checks(&[check(CheckState::Pending)]), PrChecksState::Running);
+        assert_eq!(fold_checks(&[check(CheckState::Success)]), PrChecksState::Clear);
+        // Nothing asked for is not a failure.
+        assert_eq!(fold_checks(&[]), PrChecksState::Clear);
+    }
+
     #[test]
     fn every_check_carries_its_reporter_image() {
         let pr = parse();
@@ -1581,7 +2515,7 @@ mod tests {
         assert_eq!(deleted[0].head_ref_name, "fix/thing");
     }
 
-    /// A fork's head is reported bare — `feature`, not `alice/dray:feature` —
+    /// A fork's head is reported bare — `feature`, not `alice/hz:feature` —
     /// so joining it to this repo's slug addresses *our* `feature` and deletes
     /// the wrong branch while the fork's survives. Verified against the live
     /// API on a real cross-repo PR (`cli/cli#13807`): `headRefName` came back

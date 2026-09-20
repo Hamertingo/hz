@@ -1,4 +1,5 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
+import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from "react";
 
 import AgentTrace from "@/components/chat/AgentTrace";
 import AssistantMessage from "@/components/chat/AssistantMessage";
@@ -6,14 +7,22 @@ import EventRow from "@/components/chat/EventRow";
 import SubagentRow from "@/components/chat/SubagentRow";
 import ToolGroupRow from "@/components/chat/ToolGroupRow";
 import UserMessage from "@/components/chat/UserMessage";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { clockTime, formatDuration } from "@/lib/format";
 import { GROUP_MIN, isToolGroup, segmentWork, type SubagentRun, type Turn, type TurnSegment, type WorkItem } from "@/lib/transcript";
-import type { FileEdit, ToolResult } from "@/types/events";
+import type { TodoTask } from "@/lib/todo";
+import type { AgentEvent, FileEdit, ToolResult } from "@/types/events";
 
 type TurnBlockProps = {
   turn: Turn;
   subagentById: Map<string, SubagentRun>;
   resultByCallId: Map<string, ToolResult>;
   editsByCallId?: Map<string, FileEdit[]>;
+  /// The plan as it stood at each call that moved it, so a plan row expands
+  /// onto the list rather than onto the mutation it came from. Same bargain as
+  /// `editsByCallId` and read off the same walk.
+  todosByCallId?: Map<string, TodoTask[]>;
   onOpenSubagent: (id: string) => void;
   /// Opens the session that relayed a prompt, for a `user_message` that carries
   /// a sender. Reaches both the turn's own prompt and any queued one inside it.
@@ -36,6 +45,11 @@ type TurnBlockProps = {
 /// by the time this counts. Keeping this at or above `GROUP_MIN` is what stops a
 /// run too short to group from collapsing a turn on its own.
 const COLLAPSE_MIN = 3;
+
+/// How long the check mark stands in for the copy glyph. Matches the table's
+/// control, since the two are the same gesture one row apart and a different
+/// lifetime would read as one of them being broken.
+const COPIED_MS = 2000;
 
 // Tune either constant freely, but not past the other: this throws on load
 // rather than letting the pairing silently reintroduce ungrouped repeats inside
@@ -61,13 +75,30 @@ function segmentLabel(seg: TurnSegment) {
   return parts.join(" · ") || plural(seg.rows, "step");
 }
 
+/// The two empties the folded view reuses: rows a stretch has none of, and the
+/// segment list of a turn too short to fold. Both are one shared array rather
+/// than a fresh `[]` per render, so a prop that means "nothing" compares equal
+/// to the last one — `AgentTrace` is memoised, and an empty literal would be the
+/// single prop that stopped the row it heads from ever being skipped.
+const NO_ROWS: ReactNode[] = [];
+const NO_SEGMENTS: TurnSegment[] = [];
+
 /// One turn: the user's prompt, a collapsed summary of the work, and the final
 /// answer. Expanding reveals the intermediate steps.
-export default function TurnBlock({
+///
+/// Memoised, and it is the prop identity that does it — `turn`, the four `Map`s
+/// and the two callbacks all keep theirs across a streaming turn's renders, so a
+/// delta re-renders the one block whose `footer` changed and skips the rest of
+/// the transcript. Nothing here compares props deeply, and nothing should: a
+/// `Turn` is rebuilt by every walk, so a comparator would have to walk the whole
+/// event list behind it to answer the question identity already answers — see
+/// the walk's own memo in [Chat](../Chat.tsx).
+function TurnBlock({
   turn,
   subagentById,
   resultByCallId,
   editsByCallId,
+  todosByCallId,
   onOpenSubagent,
   onOpenSession,
   footer,
@@ -90,14 +121,24 @@ export default function TurnBlock({
   // empty toggle. See `COLLAPSE_MIN` for why the threshold is what it is.
   const collapsible = !running && turn.rows >= COLLAPSE_MIN;
 
-  const segments = collapsible ? segmentWork(turn) : [];
+  // Keyed on `turn`, whose identity holds for as long as the walk's memo does —
+  // so the split is not walked again when a preview delta re-renders this block.
+  const segments = useMemo(
+    () => (collapsible ? segmentWork(turn) : NO_SEGMENTS),
+    [collapsible, turn],
+  );
   // The last message lives in the last segment, so opening that segment is what
   // puts it on screen twice if `finalText` keeps rendering.
   const lastOpen = collapsible && !!openSegments[segments.length - 1];
 
+  // A fresh object per render defeats the `memo` on `UserMessage` — which is the
+  // row doing the most work of any of them, since it highlights a prompt's
+  // mentions, paths and markdown on every pass.
+  const promptProps = useMemo(() => userProps(turn), [turn]);
+
   return (
     <div className="flex flex-col gap-3">
-      {turn.prompt && <UserMessage {...userProps(turn)} onOpenSession={onOpenSession} />}
+      {turn.prompt && <UserMessage {...promptProps} onOpenSession={onOpenSession} />}
 
       {/* The work is cut at each queued prompt and each stretch collapses
           behind its own summary line — hiding the rows between the prompts
@@ -105,7 +146,15 @@ export default function TurnBlock({
           something is part of what they said. */}
       {!collapsible
         ? turn.work.map((item) =>
-            renderItem(item, subagentById, resultByCallId, editsByCallId, onOpenSubagent, onOpenSession),
+            renderItem(
+              item,
+              subagentById,
+              resultByCallId,
+              editsByCallId,
+              todosByCallId,
+              onOpenSubagent,
+              onOpenSession,
+            ),
           )
         : segments.map((seg, i) => {
             const open = !!openSegments[i];
@@ -128,9 +177,17 @@ export default function TurnBlock({
                   rows={
                     open
                       ? seg.items.map((item) =>
-                          renderItem(item, subagentById, resultByCallId, editsByCallId, onOpenSubagent, onOpenSession),
+                          renderItem(
+                            item,
+                            subagentById,
+                            resultByCallId,
+                            editsByCallId,
+                            todosByCallId,
+                            onOpenSubagent,
+                            onOpenSession,
+                          ),
                         )
-                      : []
+                      : NO_ROWS
                   }
                 />
                 {seg.prompt &&
@@ -139,6 +196,7 @@ export default function TurnBlock({
                     subagentById,
                     resultByCallId,
                     editsByCallId,
+                    todosByCallId,
                     onOpenSubagent,
                     onOpenSession,
                   )}
@@ -151,6 +209,8 @@ export default function TurnBlock({
           duplicate. */}
       {!lastOpen && collapsible && turn.finalText && <AssistantMessage text={turn.finalText} />}
 
+      <TurnFooter prompt={turn.prompt} completed={turn.completed} text={turn.finalText} />
+
       {footer}
 
       {turn.completed && (
@@ -158,9 +218,105 @@ export default function TurnBlock({
           event={turn.completed}
           resultByCallId={resultByCallId}
           editsByCallId={editsByCallId}
+          todosByCallId={todosByCallId}
         />
       )}
     </div>
+  );
+}
+
+export default memo(TurnBlock);
+
+/// The line under a turn's answer: when it landed, how long the reader waited
+/// for it, and a way to take the text away.
+///
+/// **Timed from the prompt's own stamp, which is the reader's clock** — the
+/// webview reads it at the press and carries it through the send, because a
+/// cold session's first prompt waits out the child's whole boot (~6.5s) before
+/// this process writes anything at all. Stamp that at the write and the wait
+/// reads as the turn, which is the part the reader did not sit through.
+///
+/// Both stamps ride the events, so this is right for a session read back off
+/// disk as well as one being watched — no timing state, nothing a reload loses.
+/// A prompt logged before the stamp existed, and one no person sent (a relayed
+/// `hz send`, `hz new`), carries the write time and times slightly short.
+function TurnFooter({
+  prompt,
+  completed,
+  text,
+}: {
+  prompt: AgentEvent | null;
+  completed: AgentEvent | null;
+  /// The answer's own markdown, which is what a copy hands over — the source
+  /// rather than the rendered text, so a table or a code block pastes as one.
+  text: string | null;
+}) {
+  // Nothing to say about a turn still running or one with no prompt to time it
+  // from — the line exists between two events, and either half missing is the
+  // whole of it missing.
+  if (!prompt || !completed) return null;
+
+  const ms = Date.parse(completed.ts) - Date.parse(prompt.ts);
+  const waited = Number.isFinite(ms) && ms >= 0 ? formatDuration(ms) : null;
+  const at = clockTime(completed.ts);
+
+  return (
+    <div className="mt-1 flex items-center gap-2 text-ui text-muted-foreground">
+      {waited && <span>{`Responded in ${waited}`}</span>}
+      {/* `ml-auto`, so the clock and the control sit at the column's right edge
+          and stay put as the wait grows a digit — a ragged left edge under a
+          sentence reads as part of it. */}
+      <span className="ml-auto flex items-center gap-1.5">
+        {at && <span className="tabular-nums">{at}</span>}
+        {text && <CopyMessage text={text} />}
+      </span>
+    </div>
+  );
+}
+
+/// Copies the answer whole.
+///
+/// **Always drawn, not hovered for.** It was hover-revealed at first, and a
+/// control that only exists under the cursor is one the reader has to find by
+/// sweeping the line — the answer is the thing they came to take away, so the
+/// glyph says so at rest. It sits at the column's right edge with the clock,
+/// inside the same muted row.
+///
+/// A failed write shows no check mark and nothing else, the same as the table's
+/// control: a transcript row has nowhere to put an error sentence, and the text
+/// is still there to select by hand.
+function CopyMessage({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef(0);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(false), COPIED_MS);
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Copy message"
+          onClick={() => void copy()}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </TooltipTrigger>
+      {/* The tooltip says what the glyph does and then what the press did —
+          one line, and the check mark beside it is the same answer twice over
+          for the reader who is looking at the icon. */}
+      <TooltipContent>{copied ? "Copied" : "Copy message"}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -171,6 +327,7 @@ function renderItem(
   subagentById: Map<string, SubagentRun>,
   resultByCallId: Map<string, ToolResult>,
   editsByCallId: Map<string, FileEdit[]> | undefined,
+  todosByCallId: Map<string, TodoTask[]> | undefined,
   onOpenSubagent: (id: string) => void,
   onOpenSession: (sessionId: string) => void,
 ) {
@@ -181,6 +338,7 @@ function renderItem(
         group={item}
         resultByCallId={resultByCallId}
         editsByCallId={editsByCallId}
+        todosByCallId={todosByCallId}
       />
     );
   }
@@ -199,6 +357,7 @@ function renderItem(
       key={item.id}
       event={item}
       resultByCallId={resultByCallId}
+      todosByCallId={todosByCallId}
       onOpenSession={onOpenSession}
     />
   );

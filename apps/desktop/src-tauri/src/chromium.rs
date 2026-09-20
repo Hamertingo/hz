@@ -102,9 +102,9 @@ fn set(app: &AppHandle, status: ChromiumStatus) {
     let _ = app.emit("chromium_status", status);
 }
 
-/// `~/.dray/cef/`, holding one version directory at a time.
+/// `~/.hz/cef/`, holding one version directory at a time.
 fn cef_dir() -> PathBuf {
-    std::env::home_dir().unwrap_or_default().join(".dray/cef")
+    std::env::home_dir().unwrap_or_default().join(".hz/cef")
 }
 
 fn version_dir() -> PathBuf {
@@ -118,7 +118,7 @@ pub fn installed_framework() -> Option<PathBuf> {
     framework.join(LIBRARY).is_file().then_some(framework)
 }
 
-/// Why a tab cannot open right now, worded for the pane and `dray browser`.
+/// Why a tab cannot open right now, worded for the pane and `hz browser`.
 pub fn not_ready_reason() -> String {
     match status() {
         ChromiumStatus::Downloading { received, total } => {
@@ -136,11 +136,7 @@ pub fn not_ready_reason() -> String {
 }
 
 fn percent(received: u64, total: u64) -> u64 {
-    if total == 0 {
-        0
-    } else {
-        received * 100 / total
-    }
+    (received * 100).checked_div(total).unwrap_or(0)
 }
 
 /// Call once from setup. `present` is a framework the build already has
@@ -206,7 +202,7 @@ async fn run(app: AppHandle) {
 async fn download(app: &AppHandle) -> Result<()> {
     let tarball = tarball().context("no Chromium build for this architecture")?;
     let dir = cef_dir();
-    fs::create_dir_all(&dir).await.context("could not create ~/.dray/cef")?;
+    fs::create_dir_all(&dir).await.context("could not create ~/.hz/cef")?;
     let part = dir.join(format!("{}.part", tarball.name()));
 
     set(app, ChromiumStatus::Downloading { received: 0, total: tarball.size });
@@ -264,7 +260,7 @@ async fn stream_to(app: &AppHandle, tarball: &Tarball, part: &Path) -> Result<()
     .await
 }
 
-/// Everything in `~/.dray/cef` but the current version: older frameworks,
+/// Everything in `~/.hz/cef` but the current version: older frameworks,
 /// stale `.part`s from a killed run.
 async fn sweep(dir: &Path) {
     let Ok(mut entries) = fs::read_dir(dir).await else { return };
@@ -328,7 +324,7 @@ pub async fn remove(app: &AppHandle) -> Result<()> {
     tokio::task::spawn_blocking(|| {
         let loaded = load_guard();
         if *loaded {
-            bail!("Chromium is in use. Quit and reopen Dray, then remove it.");
+            bail!("Chromium is in use. Quit and reopen hz, then remove it.");
         }
         match std::fs::remove_dir_all(version_dir()) {
             Ok(()) => Ok(()),

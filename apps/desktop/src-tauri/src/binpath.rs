@@ -1,17 +1,21 @@
-//! Finding the `claude` binary when the app wasn't launched from a shell.
+//! Finding the CLI this app spawns when it wasn't launched from a shell.
 //!
-//! A bundled `.app` started from Finder or the Dock inherits `launchd`'s
-//! environment, not the user's. On macOS that means a `PATH` of roughly
-//! `/usr/bin:/bin:/usr/sbin:/sbin` — none of which holds `claude`, which
-//! installs to `~/.local/bin` or a node version manager's bin directory. So
-//! `Command::new("claude")` resolves under `pnpm tauri dev` and fails from the
-//! bundle, which is the same binary behaving differently by how it was started.
+//! **Never `Command::new("mcode")`.** A bundled `.app` launched from Finder or
+//! Dock inherits launchd's `PATH` — `/usr/bin:/bin:/usr/sbin:/sbin` — none of
+//! which holds an `mcode` however it was installed. So a bare name resolves
+//! under `pnpm tauri dev` and fails in the bundle, where the failure reads as
+//! "the agent is broken" rather than "the agent is unreachable", and no event
+//! ever arrives.
 //!
-//! Resolved once into a `OnceLock` and reused: the login-shell probe below costs
-//! real time (a shell reading the user's whole rc chain), and the answer can't
-//! change while the app runs.
+//! Resolution escalates by cost: the copy bundled into this app (see
+//! [`bundled_mcode`]), then the inherited `PATH`, then the directories a
+//! user-installed CLI lands in, then `$SHELL -l -c 'command -v mcode'` — `-l`
+//! because zsh otherwise reads `.zshrc` only and misses a `PATH` exported from
+//! `.zprofile`.
+//!
+//! `git` and `gh` need none of this: both are found where the system keeps
+//! them, or not at all.
 
-use crate::harness::Harness;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -19,33 +23,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock};
 use tokio::process::Command;
 
-static CLAUDE_PATH: OnceLock<PathBuf> = OnceLock::new();
-/// Not a `OnceLock` like the two beside it, because this one caches an
-/// *absence* and that absence is what the reader is being asked to fix — see
-/// [`forget_gh`].
+use crate::harness::Harness;
+
+/// The one CLI this app spawns. Resolved once and reused, like every other
+/// answer here.
+static MCODE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// `gh`'s slot. Not a `OnceLock` like the one above, because this one caches an
+/// *absence* too, and a reader who has just installed `gh` has to be able to
+/// throw that answer away without restarting the app.
 static GH_PATH: RwLock<Option<Option<PathBuf>>> = RwLock::new(None);
-/// Bumped by every [`forget_gh`], so a probe already running when the reader
-/// installed `gh` cannot put its own miss back over the answer.
+
+/// Bumped by [`forget_gh`], so a probe that started before it does not publish
+/// an answer about the machine as it was.
 static GH_GENERATION: AtomicU64 = AtomicU64::new(0);
-static CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-/// The `codex` shipped inside the ChatGPT desktop app.
-///
-/// Tried after every ordinary location, never before: it is an implementation
-/// detail of somebody else's bundle and Apple may move or drop it. But on a
-/// machine with that app and no separate install it is the only `codex` there
-/// is, and telling a reader who plainly has Codex that we cannot find it is the
-/// worse answer of the two.
-const CHATGPT_APP_CODEX: &str = "/Applications/ChatGPT.app/Contents/Resources/codex";
-
-/// The absolute path to `claude`, or the bare name as a last resort.
-///
-/// Falling back to `"claude"` rather than erroring keeps the failure where it
-/// already was — a spawn error naming the binary — instead of turning a
-/// resolvable-by-PATH case we didn't predict into a hard stop.
-pub async fn claude() -> PathBuf {
-    cached(&CLAUDE_PATH, or_bare("claude")).await
-}
 
 /// The slot's answer, or `resolve`'s, kept for the life of the process.
 ///
@@ -120,115 +111,65 @@ pub fn forget_gh() {
     GH_GENERATION.fetch_add(1, Ordering::Release);
 }
 
-/// The absolute path to a `codex` that can actually speak app-server.
+/// Where `mcode` is: the copy inside this bundle if there is one, then the
+/// ordinary places, then a login shell — or the bare name as a last resort, the
+/// shape every resolver here ends on, which keeps the failure where it already
+/// was: a spawn error naming the binary.
 ///
-/// Unlike [`claude`], finding *a* binary is not enough. Verified against a real
-/// machine: an old `codex-cli 0.29.0` sitting in an nvm bin directory has no
-/// `app-server` subcommand at all, so `codex app-server` is forwarded to the
-/// interactive CLI as a *prompt*. It then writes terminal escape sequences to
-/// stdout and never answers, which reaches the reader as a handshake timeout
-/// thirty seconds later — a failure that names the wrong thing entirely and
-/// looks like a broken protocol rather than a stale install.
-///
-/// So each candidate is asked what it can do before it is chosen, and the first
-/// that lists `app-server` wins. One `--help` per candidate, once per process.
-///
-/// Falls back to the bare name like [`claude`] rather than answering `None`
-/// like [`gh`]: a Codex session is one the reader picked, so a spawn error
-/// naming the binary is the honest failure.
-pub async fn codex() -> PathBuf {
-    cached(&CODEX_PATH, resolve_codex()).await
+/// **The bundled copy leads.** This app is built around one CLI, so a build
+/// that ships it must run *its* copy rather than whatever `mcode` the reader
+/// happens to have on their `PATH` — otherwise a machine with an older one
+/// installed runs that instead of the one we tested against, and the version
+/// the reader sees depends on an accident of their shell.
+pub async fn mcode() -> PathBuf {
+    cached(&MCODE_PATH, resolve_mcode()).await
 }
 
-async fn resolve_codex() -> PathBuf {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(path) = search_path("codex") {
-        candidates.push(path);
+async fn resolve_mcode() -> PathBuf {
+    if let Some(bundled) = shipped_mcode() {
+        return bundled;
     }
-    if let Some(path) = search_known_dirs("codex") {
-        candidates.push(path);
-    }
-    if let Some(path) = login_shell_which("codex").await {
-        candidates.push(path);
-    }
-    // Last, because it belongs to somebody else's bundle — but present, because
-    // on a machine with the ChatGPT app and no separate install it is the only
-    // Codex there is.
-    candidates.push(PathBuf::from(CHATGPT_APP_CODEX));
-
-    let mut resolved = None;
-    for candidate in candidates {
-        if resolved.as_ref() == Some(&candidate) {
-            continue;
-        }
-        if is_executable(&candidate) && speaks_app_server(&candidate).await {
-            resolved = Some(candidate);
-            break;
-        }
-    }
-
-    resolved.unwrap_or_else(|| PathBuf::from("codex"))
+    or_bare("mcode").await
 }
 
-static PI_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-/// Where `pi` is, or the bare name as a last resort — [`claude`]'s shape, and
-/// for its reason.
+/// The agent this app ships, in the order the two builds put it.
 ///
-/// **There is no version floor here, and one is coming.** pi below 0.80.6 does
-/// not send `agent_settled`, which is the only line that closes a turn — so a
-/// turn opens and never ends, the session sits `in_progress` forever with the
-/// transcript complete on screen, and that reads as Dray being broken.
+/// **hz carries its own agent**, so this is where "is it installed" is really
+/// answered — and the answer is yes for anything hz itself built. Three
+/// candidates, cheapest first:
 ///
-/// It is deliberately not a version compare. A number is a proxy for the
-/// question actually worth asking, which is whether *this* pi answers the
-/// commands Dray drives it with — and the model probe already has to spawn
-/// `pi --mode rpc` and ask, so the real check costs nothing extra there and a
-/// constant here would be a second thing to keep true.
-pub async fn pi() -> PathBuf {
-    cached(&PI_PATH, or_bare("pi")).await
-}
-
-static FX_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-/// Where `fx` is, or the bare name as a last resort — [`claude`]'s shape.
-/// Vercel's installer puts it in `~/.local/bin`, one of the known dirs.
-pub async fn fx() -> PathBuf {
-    cached(&FX_PATH, or_bare("fx")).await
-}
-
-static OMP_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-/// Where `omp` is, or the bare name as a last resort — [`claude`]'s shape.
+/// - **A release bundle**: `<Name>.app/Contents/Resources/mcode/bin/mcode`,
+///   which `scripts/vendor-mcode.sh` wrote and Tauri copied in. Read off the
+///   running executable, two directories up, because Tauri's own `resource_dir`
+///   needs an `AppHandle` this module has no business holding.
+/// - **The source tree this repository owns**: `apps/agent/bin/mcode`, the
+///   launcher beside the built CLI. `CARGO_MANIFEST_DIR` is baked at compile
+///   time, so this exists in `tauri dev` and in a debug build and points
+///   nowhere in a released app — which is exactly the shape wanted, since a
+///   released bundle carries the first candidate instead.
+/// - **A staged vendor tree**: `src-tauri/resources/mcode/bin/mcode`, what the
+///   vendoring script leaves for the bundle to pick up. Reached in dev before
+///   the script has run only as a miss, and worth keeping in the list because
+///   it is the copy that will actually ship.
 ///
-/// Every documented install lands somewhere [`known_dirs`] already walks:
-/// Homebrew's `/opt/homebrew/bin`, `~/.local/bin` for the curl script, and the
-/// npm or bun global bin between them. So this is the ordinary resolution and
-/// nothing omp-specific.
-///
-/// **No version floor**, for [`pi`]'s reason and one more: omp runs its own
-/// version train — 18.x where pi is 0.84.x — so a number compared against pi's
-/// would mean nothing. The question worth asking is whether *this* omp answers
-/// the commands Dray drives it with, and the model probe already spawns
-/// `omp --mode rpc` and asks, so the real check costs nothing extra there.
-pub async fn omp() -> PathBuf {
-    cached(&OMP_PATH, or_bare("omp")).await
-}
-
-#[cfg(test)]
-mod pi_resolution_tests {
-    /// Prints what the resolver found rather than asserting about this machine,
-    /// so a `pi` that is installed and still not detected can be told apart
-    /// from one that is genuinely absent. Ignored by default: the answer is a
-    /// property of whoever is running it.
-    #[tokio::test]
-    #[ignore]
-    async fn where_pi_resolves_to() {
-        println!("pi -> {}", super::pi().await.display());
-        // The mise branch alone, since any earlier hit hides it above.
-        let mise = std::env::home_dir().unwrap().join(".local/share/mise/installs");
-        println!("mise pi -> {:?}", super::find_versioned(&mise, 2, &["bin", "", "pi"], "pi"));
+/// Every one of these is a *launcher*, not the CLI's JS: the app spawns
+/// `<this> acp`, so whatever is named here has to take the subcommand.
+fn shipped_mcode() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let resources = exe.parent()?.parent()?.join("Resources");
+    let bundled = resources.join("mcode").join("bin").join("mcode");
+    if bundled.is_file() {
+        return Some(bundled);
     }
+
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir.parent()?.parent()?.parent()?;
+    [
+        workspace.join("apps/agent/bin/mcode"),
+        crate_dir.join("resources/mcode/bin/mcode"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
 }
 
 /// Whether the agent's CLI is installed and usable.
@@ -257,7 +198,7 @@ pub async fn agent_available(harness: Harness) -> bool {
 ///
 /// Split from [`agent_available`] because the two are different questions with
 /// different cures, and folding them cost the reader the useful half: a pi that
-/// is genuinely missing was reported as "Dray can't run pi yet", which names no
+/// is genuinely missing was reported as "hz can't run pi yet", which names no
 /// cure, while an installed one was never looked for at all.
 pub async fn agent_installed(harness: Harness) -> bool {
     agent_binary(harness).await.is_absolute()
@@ -271,45 +212,14 @@ pub async fn agent_installed(harness: Harness) -> bool {
 /// is what [`agent_installed`] reads to tell a resolved CLI from an absent one.
 pub async fn agent_binary(harness: Harness) -> PathBuf {
     match harness {
-        Harness::ClaudeCode => claude().await,
-        Harness::Codex => codex().await,
-        Harness::Pi => pi().await,
-        Harness::Fx => fx().await,
-        Harness::Omp => omp().await,
-        // A harness only some other build knows. Its own spelling, which is
-        // relative and so reads as "not installed" — the refusal has to happen
-        // here rather than by falling back to Claude Code, which would run the
-        // wrong agent in somebody's session.
+        Harness::Mcode => mcode().await,
+        // A harness only some other build knows — one of the four this app
+        // used to run, most likely. Its own spelling, which is relative and so
+        // reads as "not installed" — the refusal has to happen here rather than
+        // by falling back to the one CLI this build does drive, which would run
+        // the wrong agent in somebody else's session.
         Harness::Other(name) => PathBuf::from(name),
     }
-}
-
-/// Whether this `codex` has an `app-server` subcommand.
-///
-/// Asked of `--help` rather than parsed out of `--version`, because a version
-/// number is a guess about when the subcommand landed and this is the question
-/// we actually have. A binary that cannot be run at all answers `false`, which
-/// puts it behind the next candidate rather than failing the resolution.
-async fn speaks_app_server(bin: &Path) -> bool {
-    // The candidate's own dir and a `node` go on `PATH` for the same reason
-    // the child's do: an npm codex is a `node` script, and this probe runs
-    // before anything is cached for `resolved_bin_dirs` to hand back.
-    let extra = bin
-        .parent()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(node_dir().cloned())
-        .collect();
-    let Ok(output) = Command::new(bin)
-        .arg("--help")
-        .env("PATH", child_path(extra))
-        .output()
-        .await
-    else {
-        return false;
-    };
-
-    String::from_utf8_lossy(&output.stdout).contains("app-server")
 }
 
 /// Looks for `bin` on the inherited `PATH`, then in the usual install
@@ -340,7 +250,7 @@ fn search_path(bin: &str) -> Option<PathBuf> {
 ///
 /// Public because the spawn needs them for the *other* direction: a child
 /// inherits this process's `PATH`, and a bundled `.app` launched from Finder
-/// inherits launchd's, which holds none of these. So a `dray` the user has
+/// inherits launchd's, which holds none of these. So a `hz` the user has
 /// installed is invisible to the agent unless these are put back — the same
 /// failure this module exists to solve for `claude`, one layer out.
 pub fn known_dirs() -> Vec<PathBuf> {
@@ -389,9 +299,7 @@ pub fn resolved_bin_dirs() -> Vec<PathBuf> {
     // Read, never probed: this runs on the spawn path, and `gh`'s slot is the
     // one here that can be empty because nothing has asked yet.
     let gh = GH_PATH.read().unwrap().clone().flatten();
-    [CLAUDE_PATH.get(), CODEX_PATH.get(), PI_PATH.get(), OMP_PATH.get()]
-        .into_iter()
-        .flatten()
+    [MCODE_PATH.get()].into_iter().flatten()
         .cloned()
         .chain(gh)
         .filter(|path| path.is_absolute())
@@ -579,14 +487,14 @@ mod tests {
     /// path that fails only at spawn time.
     #[tokio::test]
     async fn a_missing_binary_resolves_to_none() {
-        assert!(resolve("dray-definitely-not-a-real-binary").await.is_none());
+        assert!(resolve("hz-definitely-not-a-real-binary").await.is_none());
     }
 
     /// mise's nesting is the layout that went missing: `installs/<tool>/<v>/`
     /// with the binary one level further in under the tool's own name.
     #[test]
     fn finds_a_binary_nested_under_a_version_dir() {
-        let root = std::env::temp_dir().join("dray-binpath-versioned-test");
+        let root = std::env::temp_dir().join("hz-binpath-versioned-test");
         let _ = std::fs::remove_dir_all(&root);
         let place = |rel: &str| {
             let bin = root.join(rel);
@@ -631,32 +539,6 @@ mod tests {
             path,
             "/usr/bin:/bin:/usr/sbin:/sbin:/home/u/.nvm/versions/node/v25.2.1/bin:/home/u/.volta/bin"
         );
-    }
-
-    /// An npm codex is a script whose interpreter sits beside it, and the probe
-    /// runs before any cache could put that dir on `PATH`. A fake interpreter
-    /// stands in for `node`; the probe passes only if the candidate's own dir
-    /// was handed to it.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn the_app_server_probe_finds_the_interpreter_beside_the_candidate() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = std::env::temp_dir().join("dray-binpath-probe-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = |name: &str, body: &str| {
-            let path = dir.join(name);
-            std::fs::write(&path, body).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            path
-        };
-        script("dray-fake-node", "#!/bin/sh\necho 'codex app-server'\n");
-        let codex = script("codex", "#!/usr/bin/env dray-fake-node\n");
-
-        assert!(speaks_app_server(&codex).await);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

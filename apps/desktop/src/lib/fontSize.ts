@@ -7,7 +7,7 @@
 /// as hooks nothing writes.
 ///
 /// Defaults are the rem values in App.css at a 16px root, stated here in px
-/// because px is the unit the reader sees. Stored as `ade.fontSizes`, and the
+/// because px is the unit the reader sees. Stored as `hz.fontSizes`, and the
 /// pre-paint script in index.html reads that key by hand — keep the two in step.
 export const FONT_SLOTS = [
   { id: "ui", label: "Interface", px: 13 },
@@ -20,7 +20,7 @@ export type FontSizes = Record<FontSlot, number>;
 
 export const FONT_MIN = 10;
 export const FONT_MAX = 24;
-export const FONT_SIZES_KEY = "ade.fontSizes";
+export const FONT_SIZES_KEY = "hz.fontSizes";
 
 export const DEFAULT_FONT_SIZES: FontSizes = Object.fromEntries(
   FONT_SLOTS.map((s) => [s.id, s.px]),

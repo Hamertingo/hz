@@ -12,15 +12,20 @@ import ChangesPanel from "@/components/ChangesPanel";
 import ChangesView from "@/components/changes/ChangesView";
 import FilesView from "@/components/files/FilesView";
 import ChatInput from "@/components/ChatInput";
+import CommandPalette from "@/components/CommandPalette";
 import DiffWorkerPool from "@/components/DiffWorkerPool";
 import DocsPanel from "@/components/DocsPanel";
 import NoticeStack from "@/components/NoticeStack";
 import LinkDialog from "@/components/chat/LinkDialog";
 import QuitDialog from "@/components/QuitDialog";
+import RenderErrorBoundary from "@/components/RenderErrorBoundary";
 import SettingsDialog, { type SettingsTab } from "@/components/SettingsDialog";
+import SlowRequestToast from "@/components/SlowRequestToast";
 import WorktreeDialog, { type WorktreePrompt } from "@/components/WorktreeDialog";
 import IssuePanel from "@/components/IssuePanel";
 import IssuesView from "@/components/IssuesView";
+import PrsView, { PrDetail } from "@/components/PrsView";
+import type { PrRow } from "@/hooks/usePrList";
 import PrPanel from "@/components/PrPanel";
 import BrowserPane from "@/components/browser/BrowserPane";
 import {
@@ -40,7 +45,7 @@ import { usePrMarks } from "@/hooks/usePrMarks";
 import { usePrReady } from "@/hooks/usePrReady";
 import { useWorkStatus } from "@/hooks/useWorkStatus";
 import HandoffRow from "@/components/composer/HandoffRow";
-import FollowupStrip, { todoPlan as todoPlanFromInput } from "@/components/composer/FollowupStrip";
+import FollowupStrip from "@/components/composer/FollowupStrip";
 import { trackFeature } from "@/lib/analytics";
 import { handoffActions } from "@/lib/handoff";
 import { prTabVisible, usePullRequest } from "@/hooks/usePullRequest";
@@ -60,7 +65,13 @@ import Sidebar, {
 } from "@/components/Sidebar";
 import SplitView, { DragGhost, DropZone } from "@/components/SplitView";
 import SubagentPanel from "@/components/SubagentPanel";
+import TodoPanel from "@/components/TodoPanel";
+import PendingAskPanel from "@/components/chat/PendingAskPanel";
 import { DROP_ATTR, useSessionDrag, type DropTarget } from "@/lib/dragSession";
+import type { PaletteItem } from "@/lib/palette";
+import { recalledPrompts } from "@/lib/recall";
+import type { ShortcutId } from "@/lib/shortcuts";
+import { displayPath } from "@/lib/space";
 import {
   closePane,
   dropLabel,
@@ -79,8 +90,7 @@ import DictateControl from "@/components/composer/DictateControl";
 import AppShell from "@/components/layout/AppShell";
 import SessionHeader from "@/components/layout/SessionHeader";
 import { nextEffort } from "@/components/composer/ModelSelector";
-import { nextHarness } from "@/lib/model";
-import { cycledModels } from "@/lib/starredModels";
+import { cycledModels, rowModel } from "@/lib/modelRotation";
 import ViewTabs, { type ViewTab } from "@/components/layout/ViewTabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
@@ -99,12 +109,17 @@ import { useSessions } from "@/hooks/useSessions";
 import { useAgentAvailability, useMissingAgent } from "@/hooks/useAgentAvailability";
 import AgentMissingNotice from "@/components/composer/AgentMissingNotice";
 import LoginExpiredNotice from "@/components/composer/LoginExpiredNotice";
-import type { Issue, SessionIndexItem, WorktreeDisposition } from "@/types/events";
-import { useSlashCommands } from "@/hooks/useSlashCommands";
+import type {
+  AgentEvent,
+  Issue,
+  SessionIndexItem,
+  WorktreeDisposition,
+} from "@/types/events";
 import { useRecorder } from "@/hooks/useTranscription";
 import { useUpdater } from "@/hooks/useUpdater";
 import { appendToDraft } from "@/hooks/useDraft";
 import { issueTag } from "@/lib/issue";
+import { usePreference } from "@/lib/prefs";
 import { authFailedTurn } from "@/lib/auth";
 import { basename } from "@/lib/format";
 import { focusComposer } from "@/lib/composerFocus";
@@ -127,6 +142,11 @@ import { cn } from "@/lib/utils";
 
 const PANE_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
+/// The events of no session, for the composer's context panel while there is
+/// none. Module-level rather than a fresh `[]` per render: it is a prop, and a
+/// new array each time would be a new prop identity on every event.
+const EMPTY_EVENTS: AgentEvent[] = [];
+
 function App() {
   const {
     selectedSessionId,
@@ -135,16 +155,14 @@ function App() {
     streamingContentBlock,
     sessionIndexItems,
     statusBySession,
+    slashCommands: slashCommandsForSession,
     askingSessions,
     showArchived,
     setShowArchived,
     models,
     refreshModels,
-    reloadModels,
-    seedFxModels,
     loadingModels,
     harness,
-    setHarness,
     modelId,
     effort,
     fast,
@@ -188,8 +206,9 @@ function App() {
     setUseWorktree,
     handleSendMsg,
     handleInterrupt,
-    handleStopTask,
+    handleSendNow,
     queuedMessages,
+    pendingAsks,
     handleCancelQueued,
     handleRespondPermission,
     handleAnswerQuestions,
@@ -227,26 +246,25 @@ function App() {
       ? (agents?.find((agent) => agent.harness === harness) ?? null)
       : null;
 
-  const [collapsed, setCollapsed] = useLocalStorage("ade.sidebarCollapsed", false);
+  const [collapsed, setCollapsed] = useLocalStorage("hz.sidebarCollapsed", false);
   // The sidebar's scope, not the composer's: `projectPath` decides where a new
   // session runs, and switching what you're *looking at* must not quietly move
   // where the next prompt would land.
   const [projectFilter, setProjectFilter] = useLocalStorage<string | null>(
-    "ade.projectFilter",
+    "hz.projectFilter",
     null,
   );
   // The wider scope the filter sits inside: a space is a tag on a project, so
   // this narrows the project list itself and everything reading it follows.
-  // Stored under the key `announce` reads, since notifications answer to the
-  // same scope and there is only one right answer to which space is up.
-  const [storedSpace, setStoredSpace] = useLocalStorage<string | null>(SPACE_KEY, null);
+  // A durable preference under the key `announce` reads, since notifications
+  // answer to the same scope and there is only one right answer to which space
+  // is up — see `src/lib/prefs.ts`.
+  const [storedSpace, setStoredSpace] = usePreference(SPACE_KEY, null);
   // Spaces the reader has made but not yet filled. Membership is the tag on the
   // project, so this list only has to carry the ones no project names yet —
   // `spaceNames` reads the two as one set.
-  const [declaredSpaces, setDeclaredSpaces] = useLocalStorage<string[]>(
-    SPACE_LIST_KEY,
-    [],
-  );
+  const [declaredSpaces, setDeclaredSpaces] = usePreference(SPACE_LIST_KEY, []);
+
   const spaces = useMemo(
     () => spaceNames(projects, declaredSpaces),
     [projects, declaredSpaces],
@@ -287,6 +305,94 @@ function App() {
   // selection: it is a place the reader goes and comes back from, and the
   // session they were in is still there when they do.
   const [issuesOpen, setIssuesOpen] = useState(false);
+
+  // The pull-requests page, on the same terms: a place the reader goes and comes
+  // back from, with the session they were in still there when they do. Its own
+  // page rather than a tab, because the question is about the *repository* and
+  // the session's tab is about one branch of it.
+  const [prsOpen, setPrsOpen] = useState(false);
+  /// **The repository the page lists, which is the session's own checkout.** A
+  /// listing is one `gh` call per repository, and the question the page answers
+  /// is about the code in front of the reader — the sidebar's marks can span
+  /// projects because a mark is one query per repo and a row only needs a glyph.
+  ///
+  /// **Every repository this app is working in, which is what the page lists.**
+  ///
+  /// The candidate set is what the app already knows about repositories: each
+  /// attached project (which may be a repository itself), and the checkout of
+  /// every session in the active space — a spawned session's worktree is a
+  /// checkout of the same repository, so it resolves to the project it came from
+  /// rather than adding a second row for the same repo.
+  ///
+  /// Nothing here is probed: a project that is a *workspace* is not a repository,
+  /// and `gh` is what says so — the page draws its rows from whichever
+  /// repositories answered.
+  const prsCwds = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+
+    for (const project of spaceProjects) {
+      for (const cwd of [project.path, project.path === repoPath ? repoPath : ""]) {
+        if (!cwd || seen.has(cwd)) continue;
+        seen.add(cwd);
+        out.push(cwd);
+      }
+    }
+
+    // The composer's own target leads where it names one: it is the repository
+    // the reader is pointed at, and the page opening on it is the useful answer.
+    const preferred = selectedSession?.cwd ?? repoPath ?? targetPath;
+    if (preferred && seen.has(preferred)) {
+      out.splice(out.indexOf(preferred), 1);
+      out.unshift(preferred);
+    }
+
+    return out;
+  }, [spaceProjects, selectedSession?.cwd, repoPath, targetPath]);
+  /// **The pull requests the pane is holding, in the order they were opened.**
+  /// Held here so the list and the pane cannot disagree about which one is
+  /// showing — the same split the issues page makes, and the reason `pickedIssue`
+  /// lives here too.
+  ///
+  /// A list rather than one row, because opening a second used to throw the
+  /// first away: comparing two attempts at the same fix, or reading a pull
+  /// request while its predecessor is still worth looking at, is the ordinary
+  /// reason to want both. `activePrKey` is the tab on screen and the only one
+  /// that reads — see `PrDetail`.
+  const [openPrs, setOpenPrs] = useState<PrRow[]>([]);
+  const [activePrKey, setActivePrKey] = useState<string | null>(null);
+
+  /// The tab on screen, or `null` where the pane is empty. Derived rather than
+  /// held, so a key that no longer names an open tab can never be selected.
+  const activePr = openPrs.find((pr) => prKey(pr) === activePrKey) ?? null;
+
+  /// Opens a pull request, or brings the tab it already has to the front.
+  const openPr = (pr: PrRow) => {
+    const key = prKey(pr);
+    setOpenPrs((prev) => (prev.some((open) => prKey(open) === key) ? prev : [...prev, pr]));
+    setActivePrKey(key);
+  };
+
+  /// Closes one tab, and **the neighbour takes over** — the one to its left, or
+  /// the one that was to its right when it was first. Same rule the files view's
+  /// strip takes, so a closed tab lands the reader where they were rather than
+  /// nowhere.
+  const closePr = (key: string) => {
+    const at = openPrs.findIndex((pr) => prKey(pr) === key);
+    if (at === -1) return;
+
+    const next = openPrs.filter((_, i) => i !== at);
+    setOpenPrs(next);
+    if (activePrKey !== key) return;
+
+    const neighbour = next[at - 1] ?? next[at] ?? null;
+    setActivePrKey(neighbour ? prKey(neighbour) : null);
+  };
+  /// The page's own refresh, so ⌘R and a write made in the pane beside it can
+  /// reach the listing. A ref rather than state, for `issuesRefreshRef`'s reason:
+  /// the page owns the read and re-rendering the app per keystroke in its search
+  /// box would be a render per keystroke.
+  const prsRefreshRef = useRef<(() => void) | null>(null);
 
   /// The issues page's own refresh, so ⌘R can reach it. A ref rather than
   /// state: the page owns the read and hands its handle up, and re-rendering
@@ -337,10 +443,23 @@ function App() {
   // reopening the app into them would be the app remembering the wrong half of
   // a session.
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // The palette, on the same terms: opened to do one thing and closed again.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
   // Which tab the *next* open lands on. Reset to Appearance as settings close,
   // so a mic press that sent the reader to Transcription does not leave every
   // later ⌘, opening there too.
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("appearance");
+
+  /// Opens Settings on the providers — where a reader whose model picker came up
+  /// empty can actually do something about it. The section is set before the
+  /// surface opens, so it draws on the right one rather than switching under the
+  /// reader's eyes.
+  const openProviderSettings = () => {
+    setSettingsTab("providers");
+    setSettingsOpen(true);
+  };
   // Whether that open should land with the new-space field already up. Same
   // reset as the tab, and for the same reason: it describes the way in, not the
   // dialog.
@@ -458,7 +577,11 @@ function App() {
 
   // The chat derives this too, but the panel and the header count need it here
   // and the memo makes the second pass free.
-  const { subagents, resultByCallId, events: mainEvents } = useMemo(
+  // The plan comes off the same walk as everything else — one pass over the
+  // session's log that reads both halves of it, the list a call carries in its
+  // input and the one a result answers with. Nothing here knows which harness
+  // sent it; see [todoTimeline](lib/todo.ts).
+  const { subagents, resultByCallId, events: mainEvents, todoPlan } = useMemo(
     // Same `busy` and task set the chat passes. Left off, a subagent's
     // in-flight call would show in the panel as one that never finished.
     () => buildTranscript(selectedSession?.events ?? [], busy, liveTaskIds),
@@ -490,23 +613,13 @@ function App() {
       return mainEvents.findIndex((e) => e.id === spawn.id) > lastPrompt;
     });
   }, [subagents, busy, mainEvents]);
-  const todoPlan = useMemo(() => {
-    const inputs: unknown[] = [];
-    for (const event of mainEvents) {
-      if (
-        event.payload.type === "tool_call_started" &&
-        (event.payload.name === "TodoWrite" || event.payload.name === "todo")
-      ) {
-        inputs.push(event.payload.input);
-      }
-    }
-    return todoPlanFromInput(inputs);
-  }, [mainEvents]);
 
   // The plan rides the turn. Its whole value here is "which step is the agent on
   // *now*", and a finished plan left standing would hold the strip up for the
   // rest of the session — a permanent band above the composer for work that
-  // ended an hour ago. The transcript is where the finished plan lives.
+  // ended an hour ago, with the handoff peek locked out of it. So the strip
+  // drops it with the turn and the panel's Plan tab keeps it: a tab costs
+  // nothing idle, and the peek is the only way to Commit at all.
   const stripPlan = busy ? todoPlan : null;
   const stripShown = liveRuns.length > 0 || stripPlan !== null;
 
@@ -567,7 +680,7 @@ function App() {
   // Whether the reader has ever made a group. Written once and never cleared:
   // the sidebar's drag tip retires on it, and a group dissolving later does
   // not make the drag un-learned.
-  const [splitLearned, setSplitLearned] = useLocalStorage("ade.splitLearned", false);
+  const [splitLearned, setSplitLearned] = useLocalStorage("hz.splitLearned", false);
   useEffect(() => {
     if (groups.length > 0 && !splitLearned) setSplitLearned(true);
   }, [groups, splitLearned, setSplitLearned]);
@@ -641,16 +754,27 @@ function App() {
     [selectedSessionId],
   );
 
+  /// Whether one of the two main-column pages is up.
+  ///
+  /// A page fills the column the session's own views live in — Chat, Diff,
+  /// Browser, Files — so every one of those asks *this* and not `issuesOpen`.
+  /// Stated as one flag because it was written per page: the pull-requests page
+  /// arrived without it, and the column drew the page *and* the chat, one above
+  /// the other, which is the same stacking the two pages do to each other when
+  /// both flags are up. The openers keep them mutually exclusive; this is the
+  /// question that has to be asked of either.
+  const pageOpen = issuesOpen || prsOpen;
+
   /// Whether the right pane is actually on screen, as against whether the
   /// reader has asked for it.
   ///
-  /// Two different questions, and conflating them was a bug worth naming: the
-  /// issues page fills the main column, so a pane left open beside it went on
+  /// Two different questions, and conflating them was a bug worth naming: a
+  /// page fills the main column, so a pane left open beside it went on
   /// describing the session the reader had *left* — its changes, its pull
   /// request, its issue — with nothing on screen to say whose they were. The
   /// preference is kept, so coming back restores the pane exactly as it was;
   /// everything that draws or reads reads this instead.
-  const panelShown = panelOpen && !issuesOpen;
+  const panelShown = panelOpen && !pageOpen;
   const memberKey = activeGroup ? members(activeGroup).join("\n") : "";
   const paneColumns = useMemo(
     () =>
@@ -845,7 +969,7 @@ function App() {
   // on it closes the pane, every time and whatever tab the pane was on: the
   // reader came for the full width. Nothing keeps it closed — ⌘E brings it
   // back beside the page — and the next arrival closes it again.
-  const fullBrowserOpen = !issuesOpen && viewTab === "browser";
+  const fullBrowserOpen = !pageOpen && viewTab === "browser";
   const lastViewTab = useRef(viewTab);
   useEffect(() => {
     const was = lastViewTab.current;
@@ -863,11 +987,16 @@ function App() {
   // chat's background-tasks indicator offers a tab that isn't in the row.
   const hasSubagentsTab = subagents.length > 0 || backgroundTasks.length > 0;
 
+  // Read off the session's own log rather than off `busy`: a plan outlives the
+  // turn that wrote it, and the tab is what the strip hands the finished one to.
+  const hasTodoTab = todoPlan !== null;
+
   const tabs = tabOrder({
     pr: hasPrTab,
     docs: hasDocsTab,
     issue: hasIssueTab,
     subagents: hasSubagentsTab,
+    todo: hasTodoTab,
   });
 
   // One rule, read rather than written back: an explicit pick wins wherever it
@@ -899,17 +1028,27 @@ function App() {
     openSubagentPanel();
   };
 
+  /// Opens the plan in the pane, for the rows the strip had no room for. Same
+  /// bargain as the subagent panel: the tab, not the selection.
+  const openTodoPanel = () => {
+    setPanelTab("todo");
+    setPanelOpen(true);
+  };
+
   // An open session's own directory, since project- and local-scoped commands
   // differ per repo and a session can be running somewhere the picker isn't
   // pointed — a worktree, or a project switched away from since. The `@` picker
-  // resolves against the same directory for the same reason, and off the same
-  // expression so the two can't answer for different trees.
+  // resolves against the same directory for the same reason.
   const composerCwd = selectedSession?.cwd ?? projectPath;
-  const { commands: slashCommands, loading: slashCommandsLoading } = useSlashCommands(
-    composerCwd,
-    harness,
-  );
-  // `true` wherever Dray has no answer: the list may not have landed, and pi
+
+  // The agent's own command list, as it pushed it for the session on screen —
+  // there is nothing to ask for: mcode states it when a session opens and again
+  // when it changes, and the app holds what arrived. `null` means its child has
+  // not spoken yet, which the picker reads as "not yet" and keeps its menu shut
+  // for, where an empty list would be drawn as "this agent publishes none".
+  const slashCommands = slashCommandsForSession ?? [];
+  const slashCommandsLoading = slashCommandsForSession === null;
+  // `true` wherever hz has no answer: the list may not have landed, and pi
   // picks its own model when none is named. A warning drawn on a guess is worse
   // than none, so absence reads as capable.
   const modelTakesImages =
@@ -973,16 +1112,34 @@ function App() {
   // be right.
   const lastTurnChanged = turnChangedTree({ baseline, head });
 
+  /// Closes what a page that owns the column has open, innermost first, and
+  /// answers whether it handled the press.
+  ///
+  /// **One function because the chord and the button have to agree.** They were
+  /// two copies of this rule once, and the copy in the chord went past the one
+  /// in the button into a pane that was not on screen. Neither page can *open*
+  /// its pane — a row is what picks the thing — so both halves only ever close,
+  /// and closing the detail before the page is the same innermost-first order
+  /// ⌘W takes.
+  const closePagePane = () => {
+    if (issuesOpen) {
+      setPickedIssue(null);
+      return true;
+    }
+    if (prsOpen) {
+      if (pickedPr) setPickedPr(null);
+      else setPrsOpen(false);
+      return true;
+    }
+    return false;
+  };
+
   // The click lands on whatever the glyph was drawing — a git icon that opened
   // the subagents tab would be a lie. That is all this does now: which tab the
   // pane *defaults* to is `activeTab`'s rule and needs no help here, and ⌘E
   // stays a plain toggle because it draws nothing and so promises nothing.
   const handleTogglePanel = () => {
-    // On the issues page the chord only ever *closes*. There is nothing for it
-    // to reopen — a row is what picks an issue — so a toggle that could open
-    // would have to guess which one, and the last pick is rarely the one wanted
-    // on the way back. Closing is the half that has an unambiguous meaning.
-    if (issuesOpen) return setPickedIssue(null);
+    if (closePagePane()) return;
     if (!panelOpen) {
       if (hasOpenPr && hasPrTab) setPanelTab("pr");
       else if (lastTurnChanged) setPanelTab("changes");
@@ -1082,6 +1239,14 @@ function App() {
   );
   const stepGroup = (delta: number) => stepThrough(units, delta);
 
+  // The prompts the reader has sent here, for ↑ and ↓ in an empty composer.
+  // Derived rather than stored: the log is already the list, and a copy would
+  // start empty on every resume — the visit that wants it most.
+  const promptHistory = useMemo(
+    () => recalledPrompts(selectedSession?.events ?? []),
+    [selectedSession?.events],
+  );
+
   // A click on a markdown path in the transcript, which is the one route in.
   // Off the counter rather than off `docs.length`, since reopening a file that
   // is already open leaves the list unchanged and still has to bring the pane
@@ -1108,7 +1273,7 @@ function App() {
   useEffect(() => {
     if (filesOpened === lastFileOpened.current) return;
     lastFileOpened.current = filesOpened;
-    if (!issuesOpen) setViewTab("files");
+    if (!pageOpen) setViewTab("files");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filesOpened]);
 
@@ -1177,8 +1342,23 @@ function App() {
   // back with it — so this is a navigation, not a dismissal.
   const goToSession = (go: () => void) => {
     setIssuesOpen(false);
+    setPrsOpen(false);
     go();
   };
+
+  // The two pages share the main column, so opening one is what closes the
+  // other: with both flags up the column drew one page above the other and the
+  // sidebar lit two rows. `useCallback` because the palette's row table is
+  // memoized on its inputs, and fresh closures there would rebuild it on every
+  // render — neither depends on anything but the setters.
+  const openIssues = useCallback(() => {
+    setPrsOpen(false);
+    setIssuesOpen(true);
+  }, []);
+  const openPrs = useCallback(() => {
+    setIssuesOpen(false);
+    setPrsOpen(true);
+  }, []);
 
   /// Moves the whole window to another space. The screen catches up in the
   /// effect below, which answers for every way membership can change and not
@@ -1412,7 +1592,7 @@ function App() {
       // The chord steps exactly what the picker draws, which under a space is
       // that space's projects — a chord landing on one the menu never offered
       // is a session started somewhere the reader cannot see.
-      enabled: !selectedSessionId && !issuesOpen && spaceProjects.length > 1,
+      enabled: !selectedSessionId && !pageOpen && spaceProjects.length > 1,
     },
   );
   // ⌘⇧ rather than plain ⌘: the composer is focused most of the time, where
@@ -1427,7 +1607,7 @@ function App() {
   // screen*: with none ⌘1 has nothing to point at and must not eat the key,
   // and under the Diff tab or the issues page ⌘W would close a pane the
   // reader cannot see.
-  const gridShown = !!activeGroup && !issuesOpen && viewTab === "chat";
+  const gridShown = !!activeGroup && !pageOpen && viewTab === "chat";
   const paneIds = activeGroup ? paneOrder(activeGroup) : [];
   // Keyboard focus moves with the pane. A click moves it by itself, but a
   // chord left it on whatever the old pane held — a link, a subagent control
@@ -1442,6 +1622,7 @@ function App() {
   };
   // Nine digits, so a tenth pane has no chord — it still takes a click. A
   // fixed list, so the hook count never moves between renders.
+  // biome-ignore lint/correctness/useHookAtTopLevel: a fixed list, so the count and order never move between renders
   for (const n of PANE_DIGITS) useHotkey(`pane.${n}`, () => focusPane(n), { enabled: gridShown });
   // ⌘W closes the innermost thing the main column has open, which is what it
   // means in every editor and browser this app is read beside. The views are
@@ -1456,13 +1637,12 @@ function App() {
     const open = browserTabs?.find((tab) => tab.active);
     if (open) void closeTab(selectedSessionId, open.id);
   };
-  // `viewTab` is per session and the issues page does not clear it, so a
-  // reader who opened Issues from the Files view still has `activeFile`
-  // naming a tab in a view nobody can see — and ⌘W there closed it silently.
-  // Every other arm already carries the guard: `fullBrowserOpen` and
-  // `gridShown` both hold `!issuesOpen`, and `panelShown` is the pane the
-  // page hides.
-  const fileShown = !issuesOpen && viewTab === "files" && !!activeFile;
+  // `viewTab` is per session and a page does not clear it, so a reader who
+  // opened Issues from the Files view still has `activeFile` naming a tab in a
+  // view nobody can see — and ⌘W there closed it silently. Every other arm
+  // already carries the guard: `fullBrowserOpen`, `gridShown` and the view's
+  // own bodies all hold `!pageOpen`, and `panelShown` is the pane a page hides.
+  const fileShown = !pageOpen && viewTab === "files" && !!activeFile;
   const closeTabOrPane = () => {
     if (!selectedSessionId) return;
     if (fileShown && activeFile) return closeFile(selectedSessionId, activeFile);
@@ -1484,11 +1664,11 @@ function App() {
   // Bound to the raw toggle rather than to `handleTogglePanel`, deliberately:
   // that one picks a tab on the way open, which is right for a button the
   // reader aimed at and wrong for a chord that draws nothing and so promises
-  // nothing. Which means the issues-page guard has to be repeated here — it
-  // lived only in `handleTogglePanel` at first, so the button honoured it and
-  // the chord went straight past it to a pane that is not on screen.
+  // nothing. What the two do share is the page guard, which is why that half is
+  // `closePagePane` rather than a line repeated here — repeated, the chord went
+  // straight past the button's guard into a pane that is not on screen.
   useHotkey("panel.toggle", () => {
-    if (issuesOpen) return setPickedIssue(null);
+    if (closePagePane()) return;
     togglePanel();
   });
   // ⌘⇧[ / ⌘⇧] — the browser and editor chord for stepping through tabs, so it
@@ -1514,6 +1694,7 @@ function App() {
       if (pickedIssue) return pickedIssueData.refresh();
       return issuesRefreshRef.current?.();
     }
+    if (prsOpen) return prsRefreshRef.current?.();
     if (panelShown) panelRefresh?.onRefresh();
   });
   // ⌘S writes the doc on screen. Unregistered rather than a no-op off that tab:
@@ -1530,26 +1711,27 @@ function App() {
   // Under ⌘⌥, with the bare ⌘ digits given to the panes: inside a grid the
   // focus moves many times a minute, where a view is a mode changed a few
   // times a session. `code`, since Option turns a digit's `key` into a symbol.
-  useHotkey("view.chat", () => !issuesOpen && setViewTab("chat"));
-  useHotkey("view.changes", () => !issuesOpen && setViewTab("changes"));
-  useHotkey("view.browser", () => !issuesOpen && setViewTab("browser"));
-  useHotkey("view.files", () => !issuesOpen && setViewTab("files"));
+  useHotkey("view.chat", () => !pageOpen && setViewTab("chat"));
+  useHotkey("view.changes", () => !pageOpen && setViewTab("changes"));
+  useHotkey("view.browser", () => !pageOpen && setViewTab("browser"));
+  useHotkey("view.files", () => !pageOpen && setViewTab("files"));
   // ⌘, — every macOS app's preferences chord, and the only way into settings
   // while the sidebar is collapsed and its gear gone with it. Safe to take for
   // `useHotkey`'s usual pair of reasons: it claims the chord, and the app's
   // custom menu carries no Settings item to swallow the key first.
-  useHotkey("settings", () => setSettingsOpen(true));
-  // Both only mean anything before a session exists — the agent *is* the child
-  // process and the worktree is where it starts — so they are unregistered
-  // rather than no-ops there. `useHotkey` claims every chord it matches, and
-  // ⌘⇧T is reopen-closed-tab in a webview: left bound on a session that cannot
-  // use it, it would eat the key and do nothing.
-  const composingNewSession = !selectedSessionId && !issuesOpen;
-  // Steps the picker's own row in its own order, rather than toggling between
-  // two — a toggle written when there were two silently never reached pi.
-  useHotkey("harness.next", () => setHarness(nextHarness(harness)), {
-    enabled: composingNewSession,
-  });
+  //
+  // **A toggle now that settings owns the window.** While it was a card the two
+  // meanings were the same press — the reader could still see the app they came
+  // from — and covering the whole window makes the chord that opened it the
+  // first one somebody presses to get back. Escape does the same thing, from a
+  // hint nobody sees until they try it; the chord is the one they already know.
+  useHotkey("settings", () => setSettingsOpen((open) => !open));
+  // Only means anything before a session exists — the worktree is where the
+  // agent starts — so it is unregistered rather than a no-op there. `useHotkey`
+  // claims every chord it matches, and ⌘⇧T is reopen-closed-tab in a webview:
+  // left bound on a session that cannot use it, it would eat the key and do
+  // nothing.
+  const composingNewSession = !selectedSessionId && !pageOpen;
   useHotkey("worktree.toggle", () => setUseWorktree((v) => !v), {
     // A worktree has nothing to fork from until a project is picked, which is
     // the same condition the toggle itself is drawn under.
@@ -1561,16 +1743,19 @@ function App() {
   //
   // Cycles rather than opening the picker, which is what makes it worth a
   // chord at all: a menu that then wants arrows and Enter is three keys to do
-  // what the trigger does in one click. Sane only because the cycle is short —
-  // two models on Claude Code, three on Codex — so a wrong landing is one more
-  // press away from right. Leaves each model's own remembered effort alone,
-  // same as picking it from the menu.
+  // what the trigger does in one click. Sane only because the cycle is short,
+  // so a wrong landing is one more press away from right. Leaves each model's
+  // own remembered effort alone, same as picking it from the menu.
   //
-  // `cycledModels` is the picker's own top-level list, and sharing it is what
-  // keeps the chord honest: it must never land on a model the menu doesn't
-  // draw. That is bounded by `secondary` on the written lists and by the
-  // reader's stars on pi's discovered one — where cycling the full list
-  // walked every model every logged-in provider serves.
+  // `cycledModels` is the reader's stars plus the model the session is on, and
+  // that short list — not the picker's whole one — is what the chord can afford:
+  // the menu draws every model a provider serves, 37 of them here, where 37
+  // presses to nowhere is not a shortcut. A star is the reader naming the models
+  // they switch between, and the stars lead the menu, so the cycle is its top.
+  //
+  // One press is one **model**, whatever the wire spent on it: a model with
+  // variants is one row and one stop, and landing on one leaves the variant it
+  // is already on alone.
   //
   // A session already on a model outside the list enters the cycle at its
   // start, the same convention `nextEffort` takes for a level it doesn't
@@ -1578,8 +1763,8 @@ function App() {
   useHotkey("model.next", () => {
     const cycle = cycledModels(models, harness, modelId);
     if (cycle.length < 2) return;
-    const index = cycle.findIndex((m) => m.id === modelId);
-    const next = cycle[(index + 1) % cycle.length];
+    const index = cycle.findIndex((row) => row.variants.some((m) => m.id === modelId));
+    const next = rowModel(cycle[(index + 1) % cycle.length], modelId);
     handleModelChange(next.id, null);
   });
   // ⌘⇧E for effort, beside ⌘E for the right pane — near enough to remember and
@@ -1596,7 +1781,116 @@ function App() {
   // nothing on that page opens the pane either (⌘E closes only there), and a
   // chord that closed it would have to pick somewhere to land, which is the
   // guess `goToSession` exists so nothing has to make.
-  useHotkey("issues.open", () => setIssuesOpen(true));
+  useHotkey("issues.open", openIssues);
+  // ⌘⇧L, free and next to ⌘I by meaning rather than by letter: the two lists the
+  // reader goes to when the branch in front of them has nothing to say.
+  useHotkey("prs.open", openPrs);
+  // ⌘K, which nothing else here claims. A toggle, so the chord that opened the
+  // box closes it — the same reasoning settings follows.
+  useHotkey("palette.open", () => setPaletteOpen((open) => !open));
+
+  /// Everything the palette can reach, in the order it should be read.
+  ///
+  /// **An explicit table rather than a replay of the shortcut chords.** Firing a
+  /// synthetic keystroke would be shorter, and it lies: a chord that is disabled
+  /// in the current pane fires nothing, so the row would do nothing and say
+  /// nothing. Every row here calls the same function its own chord calls, and a
+  /// row that cannot apply is simply not built.
+  const paletteItems = useMemo<PaletteItem[]>(() => {
+    const rows: PaletteItem[] = [];
+
+    // Sessions first and in the sidebar's own order: the palette is most often
+    // used to go somewhere, and the list beside it has to agree about what is
+    // near the top.
+    for (const item of ordered) {
+      rows.push({
+        kind: "session",
+        id: item.sessionId,
+        label: item.title,
+        detail: displayPath(item.projectPath),
+        run: () => goToSession(() => void handleSelectSessionIndexItem(item.sessionId)),
+      });
+    }
+
+    for (const project of projects) {
+      rows.push({
+        kind: "project",
+        id: project.path,
+        label: project.name,
+        detail: displayPath(project.path),
+        run: () => handleSelectProject(project.path),
+      });
+    }
+
+    for (const name of spaces) {
+      // Only the switch itself: filing and retagging live in Settings, where a
+      // project's space is a row rather than a decision to make mid-thought.
+      if (name === space) continue;
+      rows.push({ kind: "space", id: name, label: name, run: () => changeSpace(name) });
+    }
+
+    const actions: { id: ShortcutId; label: string; run: () => void }[] = [
+      { id: "session.new", label: "New task", run: () => goToSession(handleNewSession) },
+      {
+        id: "search",
+        label: "Search sessions",
+        // The field lives in the sidebar, so the sidebar comes with it — the
+        // same pair the chord itself does.
+        run: () => {
+          setCollapsed(false);
+          setSearchOpen(true);
+          document.querySelector<HTMLInputElement>(`#${SEARCH_INPUT_ID}`)?.select();
+        },
+      },
+      { id: "sidebar.toggle", label: "Toggle the sidebar", run: toggleSidebar },
+      {
+        id: "panel.toggle",
+        label: "Toggle the panel",
+        // The issues-page guard, repeated the way the chord repeats it: that
+        // page hides the pane, so the press lands somewhere else entirely.
+        run: () => {
+          if (issuesOpen) return setPickedIssue(null);
+          togglePanel();
+        },
+      },
+      { id: "issues.open", label: "Open issues", run: openIssues },
+      { id: "prs.open", label: "Open pull requests", run: openPrs },
+      { id: "settings", label: "Settings", run: () => setSettingsOpen(true) },
+    ];
+
+    if (selectedSessionId && !pageOpen) {
+      actions.push(
+        { id: "view.chat", label: "Show the chat", run: () => setViewTab("chat") },
+        { id: "view.changes", label: "Show the changes", run: () => setViewTab("changes") },
+        { id: "view.browser", label: "Show the browser", run: () => setViewTab("browser") },
+        { id: "view.files", label: "Show the files", run: () => setViewTab("files") },
+      );
+    }
+
+    for (const action of actions) {
+      rows.push({ kind: "action", id: action.id, label: action.label, shortcut: action.id, run: action.run });
+    }
+
+    return rows;
+  }, [
+    ordered,
+    projects,
+    spaces,
+    space,
+    issuesOpen,
+    selectedSessionId,
+    handleSelectSessionIndexItem,
+    handleSelectProject,
+    handleNewSession,
+    toggleSidebar,
+    togglePanel,
+    changeSpace,
+    openIssues,
+    openPrs,
+    pageOpen,
+    prsCwds,
+  ]);
+
   const fullscreen = useFullscreen();
   useGlass(fullscreen);
 
@@ -1606,7 +1900,7 @@ function App() {
     <AppShell
       // The issues page fills the column, so the centred empty-composer state
       // is wrong there even with no session selected.
-      centered={!selectedSession && !issuesOpen}
+      centered={!selectedSession && !pageOpen}
       overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <Sidebar
@@ -1628,10 +1922,10 @@ function App() {
           statusBySession={statusBySession}
           askingSessions={askingSessions}
           prFor={prMarks.prFor}
-          // Cleared while the page is up. The column is showing issues, so a
+          // Cleared while a page is up. The column is showing that page, so a
           // lit row would name a session that is nowhere on screen — and the
           // selection itself is kept, which is what makes coming back free.
-          selectedSessionId={issuesOpen ? null : selectedSessionId}
+          selectedSessionId={pageOpen ? null : selectedSessionId}
           collapsed={collapsed}
           onToggleCollapsed={toggleSidebar}
           onOpenSettings={() => setSettingsOpen(true)}
@@ -1648,8 +1942,10 @@ function App() {
               handleNewSession();
             })
           }
-          onOpenIssues={() => setIssuesOpen(true)}
+          onOpenIssues={openIssues}
           issuesOpen={issuesOpen}
+          onOpenPrs={openPrs}
+          prsOpen={prsOpen}
           onDetach={detachSession}
           onSetFlags={handleSetSessionFlags}
           onFork={forkSession}
@@ -1701,11 +1997,11 @@ function App() {
             // The group's name over a grid: each pane's header already names
             // its session, and the focused one's repeated up here read as a
             // second line of the same row.
-            standIn={issuesOpen ? "Issues" : activeGroup ? groupName(activeGroup) : null}
+            standIn={issuesOpen ? "Issues" : prsOpen ? "Pull requests" : activeGroup ? groupName(activeGroup) : null}
             className="flex-1"
           />
 
-          {!issuesOpen && selectedSession && <ViewTabs tab={viewTab} onChange={setViewTab} />}
+          {!pageOpen && selectedSession && <ViewTabs tab={viewTab} onChange={setViewTab} />}
 
           {issuesOpen
             ? // Only once something is open to close. Nothing on this page can
@@ -1714,15 +2010,23 @@ function App() {
               pickedIssue && (
                 <PanelToggle onToggle={() => setPickedIssue(null)} open changes={false} />
               )
-            : selectedSession && (
-                <PanelToggle
-                  onToggle={handleTogglePanel}
-                  open={panelOpen}
-                  changes={lastTurnChanged}
-                  pr={hasOpenPr && hasPrTab}
-                  draft={allDrafts}
-                />
-              )}
+            : prsOpen
+              ? // The same control the issues page draws, for the same reason,
+                // and it was missing here: the only toggle on this page was the
+                // *session's*, which a reader pointed at the detail beside it —
+                // and whose press closed the whole page instead.
+                pickedPr && (
+                  <PanelToggle onToggle={() => setPickedPr(null)} open changes={false} />
+                )
+              : selectedSession && (
+                  <PanelToggle
+                    onToggle={handleTogglePanel}
+                    open={panelOpen}
+                    changes={lastTurnChanged}
+                    pr={hasOpenPr && hasPrTab}
+                    draft={allDrafts}
+                  />
+                )}
         </header>
       }
       panel={
@@ -1730,7 +2034,35 @@ function App() {
         // page that is an issue and never a session — which is the whole reason
         // the session's pane is hidden there: left up, it went on describing
         // changes and a pull request belonging to work the reader had left.
-        issuesOpen ? (
+        prsOpen ? (
+          <RightPanel
+            open={!!pickedPr}
+            heading="Pull request"
+            tab="pr"
+            onTabChange={() => {}}
+            // The page's own listing is re-read as well as this pane: a merge
+            // changes the row's state, and a list still calling it open would be
+            // the pane's own answer contradicted two inches away.
+            refresh={{
+              // Through the ref, not a copy of it: the page publishes its
+              // refresh on every render, and a captured one would be the first
+              // render's — a button that worked until the filters moved.
+              onRefresh: () => prsRefreshRef.current?.(),
+              loading: false,
+            }}
+          >
+            <TabBody active>
+              <PrDetail
+                picked={pickedPr}
+                active={prsOpen}
+                onChanged={() => {
+                  prMarks.refresh();
+                  prsRefreshRef.current?.();
+                }}
+              />
+            </TabBody>
+          </RightPanel>
+        ) : issuesOpen ? (
           <RightPanel
             open={!!pickedIssue}
             // A word rather than a tab row: there is one thing in this pane
@@ -1792,6 +2124,7 @@ function App() {
             docs={hasDocsTab}
             issue={hasIssueTab}
             subagents={hasSubagentsTab}
+            todo={hasTodoTab}
             refresh={panelRefresh}
             cwd={selectedSession.cwd}
           >
@@ -1813,15 +2146,15 @@ function App() {
                 onCollapse={collapseBrowser}
               />
             </TabBody>
+            <TabBody active={hasTodoTab && activeTab === "todo"}>
+              <TodoPanel plan={todoPlan} live={busy} />
+            </TabBody>
             <TabBody active={activeTab === "subagents"}>
               <SubagentPanel
                 runs={subagents}
                 selectedId={selectedSubagentId}
                 resultByCallId={resultByCallId}
-                live={busy || backgroundTasks.length > 0}
-                canStop={selectedSession?.harness !== "omp"}
                 onSelect={setSelectedSubagentId}
-                onStopTask={handleStopTask}
               />
             </TabBody>
             <TabBody active={hasPrTab && activeTab === "pr"}>
@@ -1851,10 +2184,12 @@ function App() {
       footer={
         // Only under the transcript it writes into. The other views are not
         // conversations, and a composer under them would send into a session
-        // the reader can't see. Safe to unmount: the draft and the attachment
-        // tray are module-level stores precisely because the composer already
-        // unmounts crossing the empty state.
-        issuesOpen || (selectedSession && viewTab !== "chat") ? null : (
+        // the reader can't see — including the pull-requests page, which is
+        // about a repository rather than about anything being written. Safe to
+        // unmount: the draft, the attachments and the fan-out set are
+        // module-level stores precisely because the composer already unmounts
+        // crossing the empty state.
+        issuesOpen || prsOpen || (selectedSession && viewTab !== "chat") ? null : (
         <ChatInput
           onSend={handleSendMsg}
           commands={slashCommands}
@@ -1869,8 +2204,10 @@ function App() {
             <FollowupStrip
               runs={liveRuns}
               plan={stripPlan}
+              live={busy}
               onOpenRun={openSubagent}
               onOpenPanel={openSubagentPanel}
+              onOpenPlan={openTodoPanel}
             />
           }
           onCancelQueued={handleCancelQueued}
@@ -1902,10 +2239,28 @@ function App() {
           sessionId={selectedSessionId}
           isNewTask={!selectedSession}
           target={composerTarget}
+          // Walked by ↑/↓ in an empty box. The transcript is the history — no
+          // second store to keep in step, and a resumed session arrives with its
+          // prompts already in it.
+          history={promptHistory}
           issuesConnected={issuesConnected}
           modelTakesImages={modelTakesImages}
           error={error}
           onDismissError={() => setError(null)}
+          // The agent is blocked until this is answered, so it sits with the
+          // composer rather than at the bottom of a transcript the reader may
+          // have scrolled away from.
+          ask={
+            selectedSessionId && pendingAsks.length ? (
+              <PendingAskPanel
+                asks={pendingAsks}
+                sessionId={selectedSessionId}
+                onRespond={handleRespondPermission}
+                onAnswer={handleAnswerQuestions}
+                autoFocus
+              />
+            ) : undefined
+          }
           archived={selectedSession?.archived ?? false}
           onUnarchive={() =>
             selectedSessionId &&
@@ -1950,13 +2305,13 @@ function App() {
                 agent={loggedOutAgent}
                 cwd={selectedSession.cwd}
                 onHandled={() => setLoginHandled(authTurn)}
+                onOpenSettings={openProviderSettings}
               />
             ) : null
           }
           toolbar={
             <ComposerToolbar
               harness={harness}
-              onHarnessChange={setHarness}
               models={models}
               modelId={modelId}
               effort={effort}
@@ -1965,8 +2320,7 @@ function App() {
               fastNote={fastNote}
               onModelChange={handleModelChange}
               onRefreshModels={refreshModels}
-              onReloadModels={reloadModels}
-              onSeedProvider={seedFxModels}
+              onOpenProviderSettings={openProviderSettings}
               loadingModels={loadingModels}
               permissionMode={permissionMode}
               onPermissionModeChange={setPermissionMode}
@@ -1994,17 +2348,40 @@ function App() {
               onToggleWorktree={() => setUseWorktree((v) => !v)}
               onAttach={() => void pickAttachments(selectedSessionId)}
               contextUsage={contextUsage}
+              events={selectedSession?.events ?? EMPTY_EVENTS}
+              // Off the session's own index entry, so a session reopened with no
+              // agent running still draws the last reading the agent gave it.
+              contextReading={selectedSession?.contextReading ?? null}
+              sessionId={selectedSessionId}
               isNewSession={!selectedSessionId}
-              busy={busy}
             />
           }
         />
         )
       }
     >
+      {/* One bad row costs one view rather than the window: the sidebar, the
+          header and the composer are all outside this. Keyed on what the column
+          is showing, so a caught error clears when the reader moves to another
+          session or another tab instead of latching until a reload. */}
+      <RenderErrorBoundary
+        resetKey={`${viewTab}:${selectedSessionId ?? ""}:${issuesOpen ? "issues" : prsOpen ? "prs" : ""}`}
+        subject="view"
+      >
       {/* Hidden rather than unmounted, like everything else in this column:
           the list, its filters and its scroll survive a trip into a session and
           back, which is the trip this page exists to make. */}
+      <TabBody active={prsOpen}>
+        <PrsView
+          cwds={prsCwds}
+          active={prsOpen}
+          picked={pickedPr}
+          onPick={setPickedPr}
+          onClose={() => setPrsOpen(false)}
+          refreshRef={prsRefreshRef}
+        />
+      </TabBody>
+
       <TabBody active={issuesOpen}>
         <IssuesView
           active={issuesOpen}
@@ -2022,7 +2399,7 @@ function App() {
       {/* Hidden rather than unmounted, the same bargain the right panel's tabs
           make: the transcript keeps its scroll position and its highlighted
           diffs, and the repo view keeps its selection and its reads. */}
-      <TabBody active={!issuesOpen && viewTab === "chat"}>
+      <TabBody active={!pageOpen && viewTab === "chat"}>
       {activeGroup ? (
         <SplitView
           columns={paneColumns}
@@ -2031,14 +2408,14 @@ function App() {
           groups={spaceGroups}
           onFocus={(id) => void handleSelectSessionIndexItem(id)}
           onClose={closeSessionPane}
-          active={!issuesOpen && viewTab === "chat"}
+          active={!pageOpen && viewTab === "chat"}
           chat={{
             onOpenSubagent: openSubagent,
             onOpenSession: (id) => void handleSelectSessionIndexItem(id),
+            onSendNow: handleSendNow,
             onOpenSubagentPanel: openSubagentPanel,
             onRespondPermission: handleRespondPermission,
             onAnswerQuestions: handleAnswerQuestions,
-            onSendNow: handleInterrupt,
           }}
         />
       ) : (
@@ -2064,10 +2441,10 @@ function App() {
         compacting={compacting}
         apiRetry={apiRetry}
         queuedMessages={queuedMessages}
-        onSendNow={handleInterrupt}
+        onSendNow={handleSendNow}
         working={working}
-        crowded={!collapsed && (panelShown || (issuesOpen && !!pickedIssue))}
-        active={!issuesOpen && viewTab === "chat"}
+        crowded={!collapsed && (panelShown || (pageOpen && !!pickedIssue))}
+        active={!pageOpen && viewTab === "chat"}
       />
       {singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       </div>
@@ -2078,7 +2455,7 @@ function App() {
         // Keyed by session so the selection, the sub-tab and the commit box
         // reset with it. Cheap to remount: the reads behind it are cached by
         // tree id at module level and survive the unmount.
-        <TabBody active={!issuesOpen && viewTab === "changes"}>
+        <TabBody active={!pageOpen && viewTab === "changes"}>
           <ChangesView
             key={selectedSession.sessionId}
             cwd={selectedSession.cwd}
@@ -2089,7 +2466,7 @@ function App() {
       )}
 
       {selectedSession && (
-        <TabBody active={!issuesOpen && viewTab === "browser"}>
+        <TabBody active={!pageOpen && viewTab === "browser"}>
           <BrowserPane
             sessionId={selectedSession.sessionId}
             active={fullBrowserOpen}
@@ -2103,16 +2480,17 @@ function App() {
         // Keyed by session so the expanded tree resets with it. The tab strip
         // does not: its store is per session and outlives the remount, so what
         // comes back is that session's own files.
-        <TabBody active={!issuesOpen && viewTab === "files"}>
+        <TabBody active={!pageOpen && viewTab === "files"}>
           <FilesView
             key={selectedSession.sessionId}
             sessionId={selectedSession.sessionId}
             cwd={selectedSession.cwd}
-            active={!issuesOpen && viewTab === "files"}
+            active={!pageOpen && viewTab === "files"}
             revision={revision}
           />
         </TabBody>
       )}
+      </RenderErrorBoundary>
     </AppShell>
     {/* Outside `AppShell` on purpose: it is fixed to the window rather than
         placed in the layout, and the shell has no slot that isn't a pane. */}
@@ -2129,6 +2507,8 @@ function App() {
       }}
       onDeleteWorktree={(id) => removeWorktree(id)}
     />
+    <SlowRequestToast />
+    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
     <DragGhost />
     <QuitDialog />
     <LinkDialog />
@@ -2164,6 +2544,9 @@ function App() {
       onInstallUpdate={installUpdate}
       updateChannel={updateChannel}
       onUpdateChannelChange={setUpdateChannel}
+      // A provider changed, so the picker's list is stale — the agent is what
+      // answers it, and it just answered something else.
+      onProvidersChanged={() => void refreshModels()}
     />
     <WorktreeDialog
       prompt={worktreePrompt}

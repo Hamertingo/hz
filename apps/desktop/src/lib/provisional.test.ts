@@ -14,7 +14,7 @@ function event(id: string, seq: number, subagent: Subagent | null = null): Agent
   return {
     id,
     sessionId: "s",
-    harness: "claude_code",
+    harness: "mcode",
     seq,
     ts: "2026-09-16T00:00:00Z",
     turnId: null,

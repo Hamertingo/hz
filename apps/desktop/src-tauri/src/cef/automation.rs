@@ -1,4 +1,4 @@
-//! Driving a session's tabs for `dray browser`: the agent's half of the
+//! Driving a session's tabs for `hz browser`: the agent's half of the
 //! in-app browser, with agent-browser's verbs.
 //!
 //! No agent-browser and no debug port. CEF hands every browser its own
@@ -11,7 +11,7 @@
 
 use super::*;
 use base64::Engine;
-use dray_proto::{BrowserAction, Get, Is, Locator};
+use hz_proto::{BrowserAction, Get, Is, Locator};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicI32, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
@@ -108,7 +108,7 @@ const DEVICES: &[(&str, u32, u32)] = &[
 ];
 
 wrap_dev_tools_message_observer! {
-    struct DrayDevTools;
+    struct hzDevTools;
 
     impl DevToolsMessageObserver {
         fn on_dev_tools_method_result(
@@ -144,7 +144,7 @@ wrap_dev_tools_message_observer! {
 pub(super) fn observe(browser: &Browser) -> Option<Registration> {
     browser
         .host()
-        .and_then(|host| host.add_dev_tools_message_observer(Some(&mut DrayDevTools::new())))
+        .and_then(|host| host.add_dev_tools_message_observer(Some(&mut hzDevTools::new())))
 }
 
 /// Called from `on_console_message` for every line a page logs.
@@ -270,7 +270,7 @@ async fn wait_loaded(tab: i32) -> Result<(), String> {
     Err(format!("the page is still loading after {}s", LOAD_TIMEOUT.as_secs()))
 }
 
-/// `dray browser` opens web pages. `file://` would hand an agent every file
+/// `hz browser` opens web pages. `file://` would hand an agent every file
 /// the app can read, through `get text`; the other schemes are Chromium's
 /// own. Judged on the *parsed* scheme, with the same WHATWG parser Chromium
 /// applies, since that parser strips tabs and newlines and a hand-rolled
@@ -291,13 +291,13 @@ fn owned(session: &str, id: i32) -> Result<i32, String> {
     if tabs_of(session).iter().any(|t| t.id == id) {
         Ok(id)
     } else {
-        Err(format!("no tab {id} in this session; `dray browser tab` lists them"))
+        Err(format!("no tab {id} in this session; `hz browser tab` lists them"))
     }
 }
 
 fn active_tab(session: &str) -> Result<i32, String> {
     active_id(session).ok_or_else(|| {
-        "no tab is open in this session's browser; `dray browser open <url>` first".to_string()
+        "no tab is open in this session's browser; `hz browser open <url>` first".to_string()
     })
 }
 
@@ -406,7 +406,7 @@ async fn set_checked(tab: i32, at: &Locator, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// The whole of `dray browser`: one action on the session's active tab.
+/// The whole of `hz browser`: one action on the session's active tab.
 ///
 /// An input verb first brings the tab's view out of hiding, off-screen —
 /// see `reveal` — and the layout is put back after, whatever the outcome.
@@ -895,7 +895,7 @@ fn write_nofollow(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// A caller's screenshot path, admitted only under the session's own
-/// checkout. `dray` runs with no consent card and this write truncates, so
+/// checkout. `hz` runs with no consent card and this write truncates, so
 /// an open path would let a page-steered agent overwrite any file the app
 /// can; the parent is canonicalized so a symlink cannot point back out.
 async fn screenshot_path(session: &str, given: &str) -> Result<PathBuf, String> {
@@ -912,7 +912,7 @@ async fn screenshot_path(session: &str, given: &str) -> Result<PathBuf, String> 
     let parent = std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     if !parent.starts_with(&cwd) {
         return Err(format!(
-            "screenshots go under the session's checkout ({}); with no path, under ~/.dray/browser/shots",
+            "screenshots go under the session's checkout ({}); with no path, under ~/.hz/browser/shots",
             cwd.display()
         ));
     }
@@ -1038,7 +1038,7 @@ const HELPERS_JS: &str = r#"
   const __find = (loc) => {
     switch (loc.by) {
       case 'target': {
-        const sel = loc.target.startsWith('@') ? '[data-dray-ref="' + CSS.escape(loc.target.slice(1)) + '"]' : loc.target;
+        const sel = loc.target.startsWith('@') ? '[data-hz-ref="' + CSS.escape(loc.target.slice(1)) + '"]' : loc.target;
         return [...document.querySelectorAll(sel)];
       }
       case 'nth': {
@@ -1073,7 +1073,7 @@ const HELPERS_JS: &str = r#"
     return [];
   };
   const __snapshot = (opts) => {
-    document.querySelectorAll('[data-dray-ref]').forEach(el => el.removeAttribute('data-dray-ref'));
+    document.querySelectorAll('[data-hz-ref]').forEach(el => el.removeAttribute('data-hz-ref'));
     const root = opts.selector ? document.querySelector(opts.selector) : document;
     if (!root) return 'nothing matches ' + opts.selector;
     const lines = [];
@@ -1089,7 +1089,7 @@ const HELPERS_JS: &str = r#"
       const label = __name(el);
       if (!interactive.test(r)) { if (label) lines.push(r + ' "' + label + '"'); continue; }
       const ref = 'e' + (++n);
-      el.setAttribute('data-dray-ref', ref);
+      el.setAttribute('data-hz-ref', ref);
       let line = '@' + ref + ' ' + r + ' "' + label + '"';
       if (r === 'link' && el.href) line += ' → ' + el.href;
       if ((r === 'textbox' || r === 'combobox') && 'value' in el && el.value) line += ' value="' + String(el.value).slice(0, 60) + '"';

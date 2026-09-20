@@ -21,6 +21,8 @@ import {
   toolSummary,
 } from "@/lib/tools";
 import FileLink from "@/components/chat/FileLink";
+import TodoRows from "@/components/TodoRows";
+import { isPlanTool, todoRowSummary, type TodoTask } from "@/lib/todo";
 import type { FileEdit, ToolResult, ToolType } from "@/types/events";
 import FileEdits from "@/components/chat/FileEdits";
 import type { JsonValue } from "@/types/serde_json/JsonValue";
@@ -92,6 +94,10 @@ type ToolCallProps = {
   /// beside it, because a patch is one action — two rows put the filename on
   /// screen twice and made the reader work out that they were the same thing.
   edits?: FileEdit[];
+  /// The plan as it stood at this call, for a call that moves one — `todo` on
+  /// pi and omp, `TodoWrite` on Claude Code. Absent for every other call, and
+  /// absent for a plan call whose list has not arrived yet.
+  todos?: TodoTask[];
   /// Set for a row inside a `ToolGroupRow`, whose header already names the tool
   /// — repeating "Edited" down all 30 rows is noise, and the path is the only
   /// thing that varies.
@@ -111,6 +117,7 @@ export default function ToolCall({
   rawInput,
   result,
   edits,
+  todos,
   hideLabel = false,
   defaultOpen = false,
 }: ToolCallProps) {
@@ -121,15 +128,28 @@ export default function ToolCall({
   // method sits beside it as something readable.
   const mcp = toolType === "mcp" ? mcpCall(name, title) : null;
 
-  const summary = mcp
-    ? mcp.label
-    : // A skill names itself. Its title is the command that read it, which is
-      // machinery rather than the thing — and preferring the field here is what
-      // makes a row logged *before* the mapper stopped titling them that way
-      // draw right, since the title on disk cannot be changed.
-      name === "Skill"
-      ? (toolSummary(name, toolType, input) ?? title)
-      : (title ?? toolSummary(name, toolType, input));
+  // A plan call draws the list rather than its arguments, so its summary is
+  // about the plan: what this call *did* where the list rode the result — pi's
+  // one mutation per call — or where the list *stands* where the call was the
+  // list, which is Claude Code's shape. `todoRowSummary` is the one place that
+  // knows which of the two it is looking at.
+  //
+  // `rawInput` means the arguments have not parsed, so there is no mutation to
+  // read and nothing to say yet.
+  const plan = isPlanTool(name) && !rawInput;
+  const planList = plan && todos && todos.length > 0 ? todos : null;
+
+  const summary = plan
+    ? (todoRowSummary(input, todos ?? null) ?? title)
+    : mcp
+      ? mcp.label
+      : // A skill names itself. Its title is the command that read it, which is
+        // machinery rather than the thing — and preferring the field here is what
+        // makes a row logged *before* the mapper stopped titling them that way
+        // draw right, since the title on disk cannot be changed.
+        name === "Skill"
+        ? (toolSummary(name, toolType, input) ?? title)
+        : (title ?? toolSummary(name, toolType, input));
   const pending = result === undefined;
   const failed = result?.isError ?? false;
 
@@ -236,7 +256,7 @@ export default function ToolCall({
       : name === "Skill"
         ? SKILL_FIELDS
         : SUMMARY_FIELDS;
-  const body = inert || asked ? null : rawInput ?? formatToolInput(input, omit);
+  const body = planList || inert || asked ? null : rawInput ?? formatToolInput(input, omit);
 
   // A successful edit's result is boilerplate ("The file ... has been updated
   // successfully") that the diff above already demonstrates, and a rendered
@@ -265,13 +285,19 @@ export default function ToolCall({
   // A failure still shows: the agent may carry on without mentioning it, and
   // then this is the only place the reason lives.
   const reported = delegated !== null && !failed;
-  const shownOutput = echoesViewer || echoesHeader || fetched || reported ? "" : output;
+  // A plan row answers a *list*, and this harness's sentence beside it ("Updated
+  // #1 (pending → in_progress)") is the row's own summary read back — the same
+  // bargain `echoesHeader` makes. A failure still shows: that text is the only
+  // place the reason lives.
+  const echoesPlan = planList !== null && !failed;
+  const shownOutput = echoesViewer || echoesHeader || fetched || reported || echoesPlan ? "" : output;
   const shown = truncate(shownOutput, PREVIEW_CHARS);
 
   // Output stays behind the expander regardless of length. Auto-showing short
   // results only made rows inconsistent — some opened, some didn't, with no
   // visible reason why.
   const expandable =
+    Boolean(planList) ||
     Boolean(body) ||
     Boolean(shown) ||
     Boolean(brief) ||
@@ -447,6 +473,10 @@ export default function ToolCall({
       {open && brief && (
         <p className="whitespace-pre-wrap text-chat text-foreground/90">{brief}</p>
       )}
+
+      {/* A plan row's whole body: the list as that call left it. Indented a
+          little, since the rows are the call's contents rather than the call. */}
+      {open && planList && <TodoRows tasks={planList} live={pending} className="pl-4" />}
 
       {open && body && (
         <pre className="overflow-x-auto rounded-md bg-surface-raised px-2.5 py-2 font-mono text-tool text-muted-foreground">

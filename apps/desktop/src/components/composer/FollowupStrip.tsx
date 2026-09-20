@@ -1,21 +1,11 @@
+import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { TraceIcon } from "@/components/chat/AgentTrace";
+import TodoRows, { PlanHeaderLine } from "@/components/TodoRows";
+import { planRows, type TodoPlan } from "@/lib/todo";
 import { cn } from "@/lib/utils";
 import type { SubagentRun } from "@/lib/transcript";
-
-export type TodoItem = {
-  content: string;
-  status: string;
-  activeForm?: string;
-};
-
-export type TodoPlan = {
-  items: TodoItem[];
-  done: number;
-  total: number;
-  current: string | null;
-};
 
 /// How many runs the strip names before it stops counting them out. Three is
 /// where a session is still describable at a glance; past it the list stops
@@ -23,96 +13,11 @@ export type TodoPlan = {
 /// row that opens it.
 const RUN_LIMIT = 3;
 
-/// One todo list out of the `todo` calls' inputs, oldest first. Shape-narrowed
-/// here rather than in the mapper: the wire input is untyped JSON and a
-/// plan-shaped guess drawn as fact is worse than no strip at all.
-///
-/// Two shapes ride this channel. An `init` carries the list — `items` (omp's
-/// own) or `todos` (Claude's) — and an op call (`done`, …) carries one task
-/// name without the list. The op folds over whatever the newest init said, so
-/// the strip keeps counting past the first check-off instead of going blank.
-export function todoPlan(inputs: unknown[]): TodoPlan | null {
-  let items: TodoItem[] | null = null;
-  for (const input of inputs) {
-    if (input === null || typeof input !== "object" || Array.isArray(input)) continue;
-    const rec = input as Record<string, unknown>;
-    const list = readTodoList(rec);
-    if (list) {
-      items = list;
-      continue;
-    }
-    // An op without a list: the list stays whatever the newest init said.
-    // `done` is the only one that moves the count, and it names its task.
-    if (items && rec.op === "done" && typeof rec.task === "string") {
-      const name = rec.task.trim();
-      items = items.map((t) =>
-        t.content.trim() === name ? { ...t, status: "completed" } : t,
-      );
-    }
-  }
-  if (!items || items.length === 0) return null;
-  const done = items.filter((t) => t.status === "completed").length;
-  const live = items.find((t) => t.status === "in_progress") ?? null;
-  return {
-    items,
-    done,
-    total: items.length,
-    current: live ? (live.activeForm?.trim() ? live.activeForm : live.content) : null,
-  };
-}
-
-/// The list inside one `init`-shaped input, or null where it carries none.
-/// omp's `items` are bare strings — pending by construction, since the op
-/// channel is what moves them — and Claude's `todos` carry their own status.
-function readTodoList(rec: Record<string, unknown>): TodoItem[] | null {
-  const todos = rec.todos;
-  if (Array.isArray(todos) && todos.length > 0) {
-    const items: TodoItem[] = [];
-    for (const entry of todos) {
-      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
-      const item = entry as Record<string, unknown>;
-      if (typeof item.content !== "string" || typeof item.status !== "string") return null;
-      items.push({
-        content: item.content,
-        status: item.status,
-        activeForm: typeof item.activeForm === "string" ? item.activeForm : undefined,
-      });
-    }
-    return items;
-  }
-  const raw = rec.items;
-  if (Array.isArray(raw) && raw.length > 0 && raw.every((t) => typeof t === "string")) {
-    return (raw as string[]).map((content) => ({ content, status: "pending" }));
-  }
-  return null;
-}
-
-/// The plan's own ring: a share of the circle filled by how much is done.
-///
-/// A ring rather than a count alone because the count answers "how much is
-/// left" only to somebody who remembers the total, and this line is read at a
-/// glance or not at all. Green once it closes, muted while it is still moving —
-/// the same pair the sidebar's rail uses for the same reason.
-function PlanRing({ done, total, className }: { done: number; total: number; className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={cn("size-3.5 shrink-0 -rotate-90", className)} aria-hidden>
-      <circle cx="8" cy="8" r="6" fill="none" stroke="var(--border)" strokeWidth="2" />
-      <circle
-        cx="8"
-        cy="8"
-        r="6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        // Normalized so the arc is a share of the ring rather than a length
-        // recomputed from the radius every time the size changes.
-        pathLength={100}
-        strokeDasharray={`${total === 0 ? 0 : (done / total) * 100} 100`}
-      />
-    </svg>
-  );
-}
+/// How many plan rows fit before the same thing happens to them. Higher than
+/// `RUN_LIMIT` because a plan's rows are one line each and read as a sequence —
+/// this is the shape the reader is following — where runs are unrelated pieces
+/// of work that only ever need naming.
+const PLAN_LIMIT = 5;
 
 /// Live work above the composer: the runs the agent is holding, and the plan it
 /// is working through. Unmounted with nothing live, so the composer never moves
@@ -127,8 +32,12 @@ function PlanRing({ done, total, className }: { done: number; total: number; cla
 export default function FollowupStrip({
   runs,
   plan,
+  /// Whether the session is working now. Only the shimmer and the opening
+  /// default follow it — see below for why the plan outlives the turn.
+  live,
   onOpenRun,
   onOpenPanel,
+  onOpenPlan,
 }: {
   /// Open runs — done ones already have their rows. Backgrounded ones stay:
   /// the run's own `sleep 45` is the work the reader is waiting on, and the
@@ -137,14 +46,26 @@ export default function FollowupStrip({
   /// what it is doing — running — and the row says so without shimmering.
   runs: SubagentRun[];
   plan: TodoPlan | null;
+  live: boolean;
   onOpenRun: (id: string) => void;
   /// Opens the subagent panel, for the runs the strip stopped naming.
   onOpenPanel: () => void;
+  /// Opens the plan panel, for the rows this stopped naming.
+  onOpenPlan: () => void;
 }) {
+  /// Follows the work until the reader says otherwise, and then it is theirs —
+  /// the same tri-state every trace in the transcript uses. A plan opens itself
+  /// while the turn is in flight, since the rows *are* what the agent is doing;
+  /// it closes itself when the turn ends, because from there it is status, and
+  /// status belongs on one line.
+  const [manual, setManual] = useState<boolean | null>(null);
+  const open = manual ?? live;
+
   if (runs.length === 0 && plan === null) return null;
 
   const shown = runs.slice(0, RUN_LIMIT);
   const hidden = runs.length - shown.length;
+  const rows = plan ? planRows(plan.tasks, PLAN_LIMIT) : null;
 
   return (
     // `bg-composer` and the blur are the pair every floating surface takes —
@@ -201,23 +122,48 @@ export default function FollowupStrip({
         )}
 
         {plan !== null && (
-          // Not a button: there is nothing to open. The plan's rows live in the
-          // transcript, and the strip already says which step is current.
-          <div className="flex items-center gap-2 px-1.5 py-0.5 text-ui text-muted-foreground">
-            <PlanRing
-              done={plan.done}
-              total={plan.total}
-              className={plan.done === plan.total ? "text-accent-add" : "text-muted-foreground"}
-            />
+          <>
+            {/* The header is the control, the way it is on every trace in the
+                transcript: what the reader clicks to see more is the line they
+                were already reading. */}
+            <button
+              type="button"
+              onClick={() => setManual(!open)}
+              aria-expanded={open}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-ui transition-colors hover:bg-sidebar-accent/50"
+            >
+              <ChevronRight
+                className={cn(
+                  "size-3 shrink-0 text-muted-foreground transition-transform",
+                  open && "rotate-90",
+                )}
+              />
+              {/* The step is named here only while the rows are hidden: with
+                  them on screen the running one is two lines down, already
+                  shimmering. */}
+              <PlanHeaderLine plan={plan} current={!open} />
+            </button>
 
-            <span className="min-w-0 flex-1 truncate">
-              {plan.current ?? (plan.done === plan.total ? "Plan complete" : "Working through the plan")}
-            </span>
+            {open && rows && (
+              <>
+                <TodoRows tasks={rows.shown} live={live} className="pl-5" />
 
-            <span className="shrink-0 tabular-nums">
-              {plan.done}/{plan.total}
-            </span>
-          </div>
+                {rows.hidden > 0 && (
+                  // Opening the rest is the panel's job, not this row's: the
+                  // strip stays a status line however long the plan gets, and
+                  // the one thing it may not do is grow a second scroll box.
+                  <button
+                    type="button"
+                    onClick={onOpenPlan}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-md py-0.5 pl-5 pr-1.5 text-left text-ui text-muted-foreground transition-colors hover:bg-sidebar-accent/50"
+                  >
+                    <span>{rows.hidden === 1 ? "1 more" : `${rows.hidden} more`}</span>
+                    <ChevronRight className="ml-auto size-3 shrink-0" />
+                  </button>
+                )}
+              </>
+            )}
+          </>
         )}
       </div>
     </div>

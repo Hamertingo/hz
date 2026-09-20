@@ -1,14 +1,14 @@
-//! The socket an agent reaches Dray through.
+//! The socket an agent reaches hz through.
 //!
 //! Every other command in this app travels frontend → Rust. This one travels
-//! the other way: the `dray` CLI connects, asks for a session, and the frontend
+//! the other way: the `hz` CLI connects, asks for a session, and the frontend
 //! learns about it from an event rather than from the return value of something
 //! it called. That inversion is the whole of what this module adds — the work
 //! itself goes through [`SessionManager::send_msg`], the same function the
 //! composer reaches, so a session created here is not a second kind of session.
 //!
-//! Newline-delimited JSON over a unix socket at `~/.dray/dray.sock` — or
-//! `dray-dev.sock` for a dev build, see [`socket_path`] — one
+//! Newline-delimited JSON over a unix socket at `~/.hz/hz.sock` — or
+//! `hz-dev.sock` for a dev build, see [`socket_path`] — one
 //! request per connection. Nothing on the network can reach it at all, and
 //! access control is the containing directory's `0700` — see
 //! [`serve`](serve) for why the socket's own mode cannot be the boundary.
@@ -21,7 +21,7 @@ use crate::{
     store::{self, SessionIndexItem},
 };
 use anyhow::{bail, Context, Result};
-use dray_proto::{
+use hz_proto::{
     encode_line, CreateSession, Envelope, IssueLink, LinkIssues, ListSessions, Request, Response,
     SendMessage, SessionSummary, MAX_LINE, PROTOCOL_VERSION,
 };
@@ -49,21 +49,21 @@ pub const SESSION_CREATED: &str = "session_created";
 /// field free to disagree with the chain it describes.
 const MAX_DEPTH: usize = 2;
 
-/// The socket this build listens on: `dray-dev.sock` under `pnpm tauri dev`,
-/// `dray.sock` otherwise.
+/// The socket this build listens on: `hz-dev.sock` under `pnpm tauri dev`,
+/// `hz.sock` otherwise.
 ///
 /// Split by build because the release app is normally running while this one is
 /// being developed, and one path between them means whichever started last owns
 /// the channel — `bind` unlinks the other's socket, so the app left behind
-/// keeps a listener no `dray` will ever reach again.
+/// keeps a listener no `hz` will ever reach again.
 pub fn socket_path() -> Option<std::path::PathBuf> {
-    dray_proto::socket_path(tauri::is_dev())
+    hz_proto::socket_path(tauri::is_dev())
 }
 
-/// What a spawned agent's `DRAY_ENDPOINT` is set to.
+/// What a spawned agent's `HZ_ENDPOINT` is set to.
 ///
 /// Injected rather than left to the CLI's own default, so a session started by
-/// the dev app reaches the dev app. Without it every `dray` call inside a dev
+/// the dev app reaches the dev app. Without it every `hz` call inside a dev
 /// session would go to the release app's socket and create sessions in the
 /// wrong sidebar.
 pub fn child_endpoint() -> Option<String> {
@@ -78,7 +78,7 @@ pub fn child_endpoint() -> Option<String> {
 pub async fn serve(app: AppHandle) -> Result<()> {
     let path = socket_path().context("could not resolve the socket path")?;
 
-    // Creates `~/.dray` and narrows it to `0700`, which is what actually
+    // Creates `~/.hz` and narrows it to `0700`, which is what actually
     // guards this socket. `bind` applies the process umask, so under a
     // permissive one the socket lands world-writable and stays that way until
     // `restrict` runs a moment later — a window another local account can
@@ -168,12 +168,12 @@ fn restrict(path: &Path) -> Result<()> {
 /// work out which half to touch.
 fn mismatch(theirs: u32) -> String {
     let cure = if theirs < PROTOCOL_VERSION {
-        "run `dray update`"
+        "run `hz update`"
     } else {
-        "update the Dray app"
+        "update the hz app"
     };
 
-    format!("this dray CLI speaks protocol v{theirs}, the app speaks v{PROTOCOL_VERSION} — {cure}")
+    format!("this hz CLI speaks protocol v{theirs}, the app speaks v{PROTOCOL_VERSION} — {cure}")
 }
 
 /// Reads one request, answers it, closes. A connection carries one command so
@@ -228,9 +228,9 @@ async fn dispatch(request: Request, app: &AppHandle) -> Result<Response> {
     }
 }
 
-/// One `dray browser` step. The browser is macOS-only and behind a feature,
+/// One `hz browser` step. The browser is macOS-only and behind a feature,
 /// so the refusal names that rather than reading as a broken CLI.
-async fn browse(request: dray_proto::BrowserRequest) -> Result<Response> {
+async fn browse(request: hz_proto::BrowserRequest) -> Result<Response> {
     #[cfg(all(feature = "cef", target_os = "macos"))]
     {
         Ok(match crate::cef::automation::run(&request.session_id, request.action).await {
@@ -241,7 +241,7 @@ async fn browse(request: dray_proto::BrowserRequest) -> Result<Response> {
     #[cfg(not(all(feature = "cef", target_os = "macos")))]
     {
         let _ = request;
-        Ok(Response::error("this build of Dray has no browser"))
+        Ok(Response::error("this build of hz has no browser"))
     }
 }
 
@@ -286,7 +286,7 @@ async fn link_issues(link: LinkIssues) -> Result<Response> {
                     // No tracker call, so no stable tracker id to record. The
                     // identifier stands in: `unlink_session_issue` already
                     // matches on either, so a link made here is removable by
-                    // the panel's button and by `dray issue unlink` alike.
+                    // the panel's button and by `hz issue unlink` alike.
                     id: identifier.clone(),
                     identifier,
                     title: input.title.clone().unwrap_or_default(),
@@ -364,36 +364,42 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
 
     let outcome = manager
         .send_msg(
-            &session_id,
-            &create.prompt,
-            &[],
-            &create.issues,
-            harness,
-            model,
-            effort,
-            permission_mode,
-            fast,
-            &project_path,
-            None,
-            // Always. Sessions created this way are meant to run at the same
-            // time, and several agents writing to one checkout overwrite each
-            // other — the changes panel cannot even tell them apart.
-            true,
-            // Never named by the caller: an agent has no basis for choosing
-            // one, and a name that collides is a create that fails for a field
-            // nobody wanted. `None` lets the app generate a readable one.
-            None,
-            base_ref.as_deref(),
-            // `dray new` names no role: the caller is an agent, the skill
-            // decides whether to inherit one, and the flag surface has no
-            // `--role` to carry it today.
-            None,
-            true,
-            create.parent_session_id.as_deref(),
-            // The creating session is this one's *parent*, which the sidebar
-            // already draws by nesting the row. Its opening prompt is the brief,
-            // not a message relayed into a conversation already under way.
-            None,
+            crate::session::SendRequest {
+                session_id: &session_id,
+                prompt: &create.prompt,
+                attachment_paths: &[],
+                issue_ids: &create.issues,
+                harness,
+                model,
+                effort,
+                permission_mode,
+                fast,
+                cwd: &project_path,
+                branch: None,
+                // Always. Sessions created this way are meant to run at the same
+                // time, and several agents writing to one checkout overwrite each
+                // other — the changes panel cannot even tell them apart.
+                use_worktree: true,
+                // Never named by the caller: an agent has no basis for choosing
+                // one, and a name that collides is a create that fails for a
+                // field nobody wanted. `None` lets the app generate a readable
+                // one.
+                worktree_name: None,
+                base_ref: base_ref.as_deref(),
+                // `hz new` names no role: the caller is an agent, the skill
+                // decides whether to inherit one, and the flag surface has no
+                // `--role` to carry it today.
+                role_id: None,
+                is_new_session: true,
+                parent_session_id: create.parent_session_id.as_deref(),
+                // The creating session is this one's *parent*, which the sidebar
+                // already draws by nesting the row. Its opening prompt is the
+                // brief, not a message relayed into a conversation already under
+                // way.
+                from: None,
+                // Nobody pressed send; the socket did. Stamped now, like a relay.
+                sent_at: None,
+            },
             app,
         )
         .await?;
@@ -416,8 +422,8 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
 /// other ref.
 ///
 /// A session id is tried first, because it is the address everywhere else in
-/// `dray` — `ls` prints it, `send` takes it — and an agent holding one should
-/// not have to learn how Dray names branches to point at that session's work.
+/// `hz` — `ls` prints it, `send` takes it — and an agent holding one should
+/// not have to learn how hz names branches to point at that session's work.
 /// A ref that happens to look like a session id is the only ambiguity, and a
 /// v7 UUID is not a branch name anybody types.
 ///
@@ -529,10 +535,7 @@ async fn resolve_model(
     harness: Harness,
 ) -> Result<ModelId> {
     if let Some(alias) = requested {
-        let found = match harness {
-            Harness::Codex => crate::harness::codex::models::id_for_arg(alias).await,
-            _ => id_for_arg(alias, harness),
-        };
+        let found = id_for_arg(alias, harness);
 
         return found.with_context(|| {
             let known: Vec<_> = models_for(harness).into_iter().map(|m| m.arg).collect();
@@ -544,14 +547,11 @@ async fn resolve_model(
         return Ok(inherited);
     }
 
-    Ok(match harness {
-        Harness::Codex => crate::harness::codex::models::default_model().await,
-        // `None` is pi's answer and means "pass no `--model`": pi is
-        // multi-provider, so any constant named here might not exist on the
-        // machine, and its own settings already say which model the reader
-        // wants. The unset sentinel is what carries that through the index.
-        _ => default_model_for(harness).unwrap_or_default(),
-    })
+    // `None` means "pass no `--model`": mcode is multi-provider, so any constant
+    // named here might not exist on the machine, and its own settings already
+    // say which model the reader wants. The unset sentinel is what carries that
+    // through the index.
+    Ok(default_model_for(harness).unwrap_or_default())
 }
 
 /// The caller's level if it gave one, else the parent's, else `None` — which
@@ -620,31 +620,36 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
     let manager = app.state::<SessionManager>();
     let outcome = manager
         .send_msg(
-            &target.session_id,
-            &prompt,
-            &[],
-            // None named: a relayed message carries whatever it tags in its own
-            // text, and must not re-aim the session it arrives at.
-            &[],
-            target.harness,
-            target.model,
-            target.effort,
-            target.permission_mode,
-            // The target's own, like everything beside it: a relayed message
-            // must not move the session it arrives at onto another tier.
-            target.fast,
-            &target.cwd,
-            None,
-            false,
-            None,
-            None,
-            // A relayed message must not reconfigure the session it arrives at,
-            // and a role is a creation-time property besides. The target is
-            // already running, so this is ignored either way.
-            None,
-            false,
-            None,
-            from,
+            crate::session::SendRequest {
+                session_id: &target.session_id,
+                prompt: &prompt,
+                attachment_paths: &[],
+                // None named: a relayed message carries whatever it tags in its
+                // own text, and must not re-aim the session it arrives at.
+                issue_ids: &[],
+                harness: target.harness,
+                model: target.model,
+                effort: target.effort,
+                permission_mode: target.permission_mode,
+                // The target's own, like everything beside it: a relayed message
+                // must not move the session it arrives at onto another tier.
+                fast: target.fast,
+                cwd: &target.cwd,
+                branch: None,
+                use_worktree: false,
+                worktree_name: None,
+                base_ref: None,
+                // A relayed message must not reconfigure the session it arrives
+                // at, and a role is a creation-time property besides. The target
+                // is already running, so this is ignored either way.
+                role_id: None,
+                is_new_session: false,
+                parent_session_id: None,
+                from,
+                // Nothing pressed Enter: an agent called this, and its own clock
+                // is not the reader's. Stamped now, which is when it arrived.
+                sent_at: None,
+            },
             app,
         )
         .await?;
@@ -675,11 +680,11 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
 ///
 /// Both built from one [`MessageSender`], so the two cannot name different
 /// sessions. The id rides along because it is the address: the agent answers
-/// with `dray send <id>` rather than paying a `dray ls` to work out who asked.
+/// with `hz send <id>` rather than paying a `hz ls` to work out who asked.
 fn attribute(prompt: &str, from: Option<&MessageSender>) -> String {
     match from {
         Some(from) => format!(
-            "[message from the Dray session \"{}\" ({})]\n\n{prompt}",
+            "[message from the hz session \"{}\" ({})]\n\n{prompt}",
             from.title, from.session_id
         ),
         None => prompt.to_string(),
@@ -705,10 +710,10 @@ async fn sender(send: &SendMessage) -> Option<MessageSender> {
         })
 }
 
-/// The caller's pick, else the parent's, else Claude Code.
+/// The caller's pick, else the parent's, else the only one this build runs.
 fn resolve_harness(requested: Option<&str>, parent: Option<&SessionIndexItem>) -> Result<Harness> {
     let Some(requested) = requested else {
-        return Ok(parent.map(|p| p.harness).unwrap_or(Harness::ClaudeCode));
+        return Ok(parent.map(|p| p.harness).unwrap_or(Harness::Mcode));
     };
 
     // Named outright, so it has to resolve to something this build offers. The
@@ -769,7 +774,7 @@ mod tests {
     fn item(id: &str, parent: Option<&str>) -> SessionIndexItem {
         SessionIndexItem::new(
             id,
-            Harness::ClaudeCode,
+            Harness::Mcode,
             "/p",
             "/p",
             None,
@@ -782,46 +787,6 @@ mod tests {
             parent,
         )
     }
-
-    /// The two harnesses' ladders share their names and not their scale —
-    /// Codex starts at Medium where Claude's models start at High — so a
-    /// parent's level must not cross onto a child on the other harness. It
-    /// falls through to `None`, which resolves to that model's own default.
-    #[test]
-    fn an_effort_does_not_cross_harnesses() {
-        let parent = item("a", None);
-
-        assert_eq!(
-            resolve_effort(None, Some(&parent), Harness::ClaudeCode).unwrap(),
-            Some(Effort::High)
-        );
-        assert_eq!(resolve_effort(None, Some(&parent), Harness::Codex).unwrap(), None);
-        // A level the caller named stands whatever the parent ran.
-        assert_eq!(
-            resolve_effort(Some("max"), Some(&parent), Harness::Codex).unwrap(),
-            Some(Effort::Max)
-        );
-    }
-
-    /// Same boundary the effort above stops at, for a nearer reason: a `true`
-    /// carried onto a child on another harness turns on a paid tier on a
-    /// different vendor's account. And the bare flag means "yes", never "no" —
-    /// `--fast` absent has to inherit, or a session spawned by one already
-    /// running fast would quietly drop to ordinary speed.
-    #[test]
-    fn fast_mode_inherits_within_one_harness_and_no_further() {
-        let mut parent = item("a", None);
-        parent.fast = true;
-
-        assert!(resolve_fast(None, Some(&parent), Harness::ClaudeCode));
-        assert!(!resolve_fast(None, Some(&parent), Harness::Codex));
-        // Named outright, it stands whatever the parent ran — both ways.
-        assert!(resolve_fast(Some(true), Some(&parent), Harness::Codex));
-        assert!(!resolve_fast(Some(false), Some(&parent), Harness::ClaudeCode));
-        // No parent at all is the ordinary terminal call: off.
-        assert!(!resolve_fast(None, None, Harness::ClaudeCode));
-    }
-
     #[test]
     fn summary_spells_status_the_way_the_index_does() {
         let summary = summarize(item("a", None));
@@ -869,7 +834,7 @@ mod tests {
         let prompt = attribute("review is done", Some(&from));
 
         assert!(prompt.starts_with(
-            "[message from the Dray session \"Fix the login redirect\" (abc-123)]\n\n"
+            "[message from the hz session \"Fix the login redirect\" (abc-123)]\n\n"
         ));
         assert!(prompt.ends_with("review is done"));
     }
@@ -892,9 +857,9 @@ mod tests {
     /// command that cannot fix what they have.
     #[test]
     fn the_mismatch_names_whichever_side_is_behind() {
-        assert!(mismatch(PROTOCOL_VERSION - 1).contains("dray update"));
-        assert!(mismatch(PROTOCOL_VERSION + 1).contains("update the Dray app"));
-        assert!(!mismatch(PROTOCOL_VERSION + 1).contains("dray update"));
+        assert!(mismatch(PROTOCOL_VERSION - 1).contains("hz update"));
+        assert!(mismatch(PROTOCOL_VERSION + 1).contains("update the hz app"));
+        assert!(!mismatch(PROTOCOL_VERSION + 1).contains("hz update"));
     }
 
     /// Every harness the app can run is reachable by name from the CLI.

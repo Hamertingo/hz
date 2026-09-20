@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +11,25 @@ import {
   parseIdentifier,
 } from "@/lib/issue";
 import type { Issue, IssueRef, IssueStateKind } from "@/types/events";
+
+/// The identifier's shape and the tag's text — `parseIdentifier`/`issueTag`
+/// here, `parse_identifier`/`tag_text` in Rust — read from the table both suites
+/// are held to, so a word the transcript paints is a word the backend links,
+/// and a tag picked from the menu is the tag `--issue` appends.
+const SHARED_RULES = new URL(
+  "../../src-tauri/src/harness/mcode/fixtures/shared_rules.json",
+  import.meta.url,
+);
+
+type IdentifierRow = { text: string; expected: string | null };
+type TagRow = { identifier: string; title: string; expected: string };
+
+type SharedRules = { identifier: IdentifierRow[]; tag: TagRow[] };
+
+/// The cast is the boundary a parsed file needs: this is a fixture in this repo
+/// rather than anything off a wire, and a row of the wrong shape fails the
+/// assertions below rather than passing quietly.
+const shared = JSON.parse(readFileSync(SHARED_RULES, "utf8")) as SharedRules;
 
 const ref = (identifier: string, title: string): IssueRef => ({
   tracker: "linear",
@@ -69,28 +89,31 @@ describe("applyIssue", () => {
   });
 
   /// The string Rust's `tag_text` writes for `--issue`, so a tag picked from the
-  /// menu and one appended by the CLI are the same thing.
+  /// menu and one appended by the CLI are the same thing — the same rows its
+  /// own test reads.
+  ///
+  /// A title that is only whitespace is the one input the two disagree on: Rust
+  /// trims it and writes the identifier alone, where this side truth-tests it
+  /// and writes the spaces out. Deliberately not a row, and worth knowing before
+  /// somebody adds one.
   it("matches the shape the backend writes", () => {
-    expect(issueTag("DRA-53", "One")).toBe("#DRA-53 One");
-    // A title we never resolved leaves the identifier standing alone rather
-    // than a trailing space nobody typed.
-    expect(issueTag("DRA-53", "")).toBe("#DRA-53");
+    for (const row of shared.tag) {
+      const where = `${row.identifier} / ${JSON.stringify(row.title)}`;
+
+      expect(issueTag(row.identifier, row.title), where).toBe(row.expected);
+    }
   });
 });
 
 describe("parseIdentifier", () => {
-  it("takes a key and a number, and uppercases the key", () => {
-    expect(parseIdentifier("DRA-53")).toBe("DRA-53");
-    expect(parseIdentifier("dra-53")).toBe("DRA-53");
-    // Trailing punctuation stops the scan rather than failing it.
-    expect(parseIdentifier("DRA-53),")).toBe("DRA-53");
-  });
-
-  it("refuses everything that is not one", () => {
-    expect(parseIdentifier("fff")).toBeNull();
-    expect(parseIdentifier("53")).toBeNull();
-    expect(parseIdentifier("1-2")).toBeNull();
-    expect(parseIdentifier("DRA-")).toBeNull();
+  /// A key and a number, uppercased, wherever the token ends — and nothing for
+  /// the words that only look like one: a colour's `fff`, a bare number, a
+  /// heading's word. Every row is the backend's too, and both readers decide the
+  /// same two things with it: what gets painted as a tag, and what gets linked.
+  it("reads every shared row the way the backend does", () => {
+    for (const row of shared.identifier) {
+      expect(parseIdentifier(row.text), row.text).toBe(row.expected);
+    }
   });
 });
 

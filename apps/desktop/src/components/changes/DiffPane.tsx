@@ -69,7 +69,7 @@ export default function DiffPane({
   // Split by default, which is also the library's own default and what anyone
   // arriving from another git client expects. Stored, because it is a way of
   // reading rather than a property of the file being read.
-  const [diffStyle, setDiffStyle] = useLocalStorage<DiffStyle>("ade.diffStyle", "split");
+  const [diffStyle, setDiffStyle] = useLocalStorage<DiffStyle>("hz.diffStyle", "split");
 
   const readable = !!file && !file.binary;
   const { versions, error } = useFileVersions(

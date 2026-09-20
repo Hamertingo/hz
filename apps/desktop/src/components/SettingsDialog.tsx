@@ -1,11 +1,23 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  GitBranch,
+  Info,
+  Keyboard,
+  Layers,
+  Mic,
+  Palette,
+  Plug,
+  Server,
+  type LucideIcon,
+} from "lucide-react";
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import AppIcon from "@/components/AppIcon";
 import LinearIcon from "@/components/LinearIcon";
-import TabButton from "@/components/TabButton";
+import { CommandChip, INSTALL_COMMAND, LOGIN_COMMAND } from "@/components/PrPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,10 +39,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { resetFontSizes, setFontSize, useFontSizes } from "@/hooks/useFontSizes";
 import type { useIntegrations } from "@/hooks/useIntegrations";
-import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { useSourceControl } from "@/hooks/useSourceControl";
 import { useTheme } from "@/hooks/useTheme";
 import { type ManualCheck, updateFailure } from "@/hooks/useUpdater";
 import { downloadChromium, removeChromium, useChromium } from "@/lib/browser";
+import { usePreference } from "@/lib/prefs";
 import {
   FONT_MAX,
   FONT_MIN,
@@ -45,6 +58,7 @@ import {
   OPEN_FILE_KEY,
   pickFileOpener,
 } from "@/lib/openWith";
+import ProviderSettings from "@/components/settings/ProviderSettings";
 import ShortcutsSettings from "@/components/settings/ShortcutsSettings";
 import SpacesSettings from "@/components/settings/SpacesSettings";
 import TranscriptionSettings from "@/components/settings/TranscriptionSettings";
@@ -54,6 +68,7 @@ import { hasLightMode, THEMES, type ThemeMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import type {
   ExternalApp,
+  GhAccount,
   Project,
   SettingsView,
   UpdateChannel,
@@ -64,7 +79,7 @@ import type {
 /// issue tracker: most feedback is a sentence, and a form is more than a sentence is
 /// worth. The repo is beside it for the half who would rather send the fix.
 const CONTACT_URL = "https://x.com/yogesharc";
-const REPO_URL = "https://github.com/monorepo-labs/dray";
+const REPO_URL = "https://github.com/Hamertingo/hz";
 
 /// The app's preferences, such as they are.
 ///
@@ -93,6 +108,7 @@ export default function SettingsDialog({
   onInstallUpdate,
   updateChannel,
   onUpdateChannelChange,
+  onProvidersChanged,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
@@ -123,10 +139,13 @@ export default function SettingsDialog({
   updateBlocked: boolean;
   onCheckUpdates: () => void;
   onInstallUpdate: () => void;
-  /// Owned by `useUpdater`, for the reason its own doc comment gives: a second
-  /// `useLocalStorage` here would write a value the checking effect never sees.
+  /// Owned by `useUpdater`, for the reason its own doc comment gives: the row
+  /// hands the pick back to the effect that re-arms the check on it.
   updateChannel: UpdateChannel;
   onUpdateChannelChange: (next: UpdateChannel) => void;
+  /// A provider was added, removed or made active, so the model list the
+  /// composer draws is stale — the app re-reads it.
+  onProvidersChanged?: () => void;
 }) {
   const { settings, setAnalyticsEnabled } = useAppSettings(open);
   const transcription = useTranscriptionSettings(open);
@@ -140,13 +159,42 @@ export default function SettingsDialog({
       {/* Wider than the dialog default. That default is sized for a question and
           two buttons; this holds prose, and at 25rem the analytics sentence broke
           across three lines with two words on the last one. */}
-      <DialogContent aria-describedby={undefined} className="max-w-136">
-        <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-        </DialogHeader>
+      <DialogContent
+        aria-describedby={undefined}
+        overlayClassName="bg-transparent"
+        // **Full window, and every override neutralises one half of the
+        // dialog's own frame** — a centred card of a dialog is the shape this
+        // stopped being. The frame, the overlay and the fade stay: the overlay
+        // is what hides the native browser view (see `judgeOcclusion`), the fade
+        // is the same one every other surface opens with, and the centring,
+        // radius, border, fill and blur are what a full-bleed surface cannot
+        // carry. `bg-transparent` because the two columns paint themselves: the
+        // nav stays see-through so the window keeps its glass, which is exactly
+        // how the app's own sidebar is drawn.
+        // **No animation at all, and that is a fix rather than a preference.** A
+        // card can afford to fade: the reader keeps seeing the app they were in,
+        // dimmed, and the card arrives over it. A surface that replaces the
+        // window cannot — a fade from zero opacity *is* the app showing through
+        // it, so the settings page arrives as a ghost of the transcript with the
+        // window's own header over the top, which reads as a glitch rather than
+        // as a transition. Measured before this: 0.11 → 1.0 over about 100ms,
+        // every frame of it wrong, and the way out faded the same. So this
+        // surface appears on one frame, the way every other in-app navigation
+        // does.
+        animated={false}
+        className="top-0 left-0 flex h-full w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 bg-transparent p-0 shadow-none backdrop-blur-none"
+      >
+        {/* The window's own drag row, and it has to be here: this surface covers
+            the app's, and a full-window page with nothing to drag by is a window
+            that cannot be moved. */}
+        <div
+          className="flex h-(--titlebar-h) shrink-0 bg-background"
+          data-tauri-drag-region="deep"
+        />
 
-        <SettingsTabs initialTab={initialTab}>
+        <SettingsSections initialTab={initialTab}>
           {{
+            providers: <ProviderSettings onChanged={onProvidersChanged} />,
             appearance: (
               <>
                 <Section>
@@ -184,6 +232,7 @@ export default function SettingsDialog({
                 onSetMute={transcription.setMute}
               />
             ),
+            sourceControl: <SourceControlSettings />,
             integrations: (
               <Section>
                 <OpenFilesRow />
@@ -219,7 +268,7 @@ export default function SettingsDialog({
               </>
             ),
           }}
-        </SettingsTabs>
+        </SettingsSections>
       </DialogContent>
     </Dialog>
   );
@@ -398,7 +447,7 @@ function ThemeRow() {
 /// list of one, which is a menu that cannot change anything.
 function OpenFilesRow() {
   const id = useId();
-  const [stored, setStored] = useLocalStorage<string | null>(OPEN_FILE_KEY, null);
+  const [stored, setStored] = usePreference(OPEN_FILE_KEY, null);
   // `null` until the first read lands, so an empty list can still mean "this
   // machine has nothing" rather than "nobody has asked yet".
   const [apps, setApps] = useState<ExternalApp[] | null>(() => {
@@ -407,7 +456,7 @@ function OpenFilesRow() {
   });
 
   /// Asks again, on mount and whenever the menu opens — an editor installed
-  /// while Dray was running is otherwise absent until a restart, and the menu
+  /// while hz was running is otherwise absent until a restart, and the menu
   /// opening is the one moment the list has to be current.
   const refresh = useCallback(() => {
     void load().then(setApps);
@@ -422,7 +471,7 @@ function OpenFilesRow() {
   const unavailable = !IS_MAC
     ? "Opening a file in another app is macOS-only for now."
     : apps !== null && editors.length === 0
-      ? "No editor Dray knows about is installed, so filenames open in Finder."
+      ? "No editor hz knows about is installed, so filenames open in Finder."
       : null;
 
   return (
@@ -809,7 +858,7 @@ function AnalyticsRow({
         view?.analyticsLocked
           ? // Disabled and saying why, rather than hidden or — worse — drawn
             // from the stored value and sitting at `on` while nothing is sent.
-            "Turned off for this run by DRAY_NO_ANALYTICS."
+            "Turned off for this run by HZ_NO_ANALYTICS."
           : // Says what is actually sent. It read "your conversations and
             // activity are never collected" while a launch was the only event,
             // and that stopped being true the moment features were reported —
@@ -829,6 +878,212 @@ function AnalyticsRow({
         onCheckedChange={onChange}
       />
     </SettingRow>
+  );
+}
+
+/// A word where a control would go, on a row whose answer is a fact about this
+/// machine rather than something to set.
+///
+/// The same chip shape the pull-requests header counts rows with, because it is
+/// the same kind of thing: a short answer at the end of a line that a control
+/// would otherwise sit at the end of.
+function StatusChip({ children, bad }: { children: ReactNode; bad?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "max-w-72 shrink-0 truncate rounded-full border px-2 py-px text-ui",
+        bad ? "border-destructive/40 text-destructive" : "border-border text-muted-foreground",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/// What the pull-request screens actually run on, and who they run as.
+///
+/// **The third question is the one nothing else in the app can answer.** "Is
+/// `gh` installed" and "is it signed in" both surface where they are needed —
+/// the PR tab has its own install prompt — but a credential that is present and
+/// *refused* looks exactly like a working one until a read comes back with
+/// GitHub's answer, and that answer is one error per field path rather than a
+/// sentence. So the account and its scopes are here, where a failure of that
+/// kind has somewhere to be looked at.
+function SourceControlSettings() {
+  const { state, error, loading, recheck } = useSourceControl();
+  const [stillMissing, setStillMissing] = useState(false);
+
+  const check = async () => {
+    setStillMissing(false);
+    await recheck();
+    setStillMissing(true);
+  };
+
+  if (!state) {
+    return (
+      <Section>
+        <p className="text-ui text-muted-foreground">
+          {error
+            ? `Could not read what is installed — ${error}`
+            : "Reading what is installed…"}
+        </p>
+      </Section>
+    );
+  }
+
+  return (
+    <Section>
+      <SettingRow
+        id="source-control-git"
+        asGroup
+        label="Git"
+        description={
+          state.git
+            ? "Every checkout, branch and diff hz runs goes through it."
+            : "Not on this machine, so there is nothing here for hz to diff."
+        }
+      >
+        <StatusChip bad={!state.git}>{state.git ?? "Not installed"}</StatusChip>
+      </SettingRow>
+
+      <GitHubCliRow gh={state.gh} loading={loading} onRecheck={check} stillMissing={stillMissing} />
+    </Section>
+  );
+}
+
+/// The `gh` half, in the four states it can be in.
+///
+/// Split out rather than inlined because the states are the whole of it, and
+/// two of the four are the ones a reader arrives here to find: a credential
+/// GitHub turned down, and a signed-in account whose scopes do not reach what
+/// the pull-request reads ask for.
+function GitHubCliRow({
+  gh,
+  loading,
+  onRecheck,
+  stillMissing,
+}: {
+  gh: GhAccount | null;
+  loading: boolean;
+  onRecheck: () => void;
+  stillMissing: boolean;
+}) {
+  const chip = !gh
+    ? { text: "Not installed", bad: true }
+    : gh.error
+      ? { text: "Refused", bad: true }
+      : gh.login
+        ? { text: `Signed in as ${gh.login}`, bad: false }
+        : { text: "Not signed in", bad: true };
+
+  const command = !gh ? INSTALL_COMMAND : gh.login || gh.error ? null : LOGIN_COMMAND;
+
+  return (
+    <SettingRow
+      id="source-control-gh"
+      asGroup
+      label="GitHub CLI"
+      description={<GhDescription gh={gh} stillMissing={stillMissing} />}
+    >
+      <span className="flex shrink-0 items-center gap-1.5">
+        <StatusChip bad={chip.bad}>{chip.text}</StatusChip>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="cursor-pointer"
+          disabled={loading}
+          onClick={onRecheck}
+        >
+          {loading ? "Looking…" : "Recheck"}
+        </Button>
+      </span>
+      {command && <CommandChip command={command} />}
+    </SettingRow>
+  );
+}
+
+/// Why the row says what it says, in the words of what to do about it.
+function GhDescription({ gh, stillMissing }: { gh: GhAccount | null; stillMissing: boolean }) {
+  if (!gh) {
+    return (
+      <>
+        Pull requests, their checks and their reviews all read through it.
+        {stillMissing &&
+          " Still not found — hz looks where your login shell does, so an install that landed somewhere else needs the app restarted."}
+      </>
+    );
+  }
+
+  if (gh.error) {
+    return (
+      <>
+        <code className="text-foreground">{gh.tokenSource ?? "A credential"}</code> is set, and
+        GitHub turned it down — {gh.error}. That is the token itself rather than anything hz can
+        fix: replace it with <code className="text-foreground">gh auth login</code>, or with a token
+        that carries the permissions below.
+      </>
+    );
+  }
+
+  if (!gh.login) {
+    return (
+      <>
+        Nothing is signed in, so every pull-request read comes back empty rather than wrong. The tab
+        in a session offers this same command where the failure is met.
+      </>
+    );
+  }
+
+  // **Where the credential comes from decides which cure is available**, so it
+  // is said first. `gh` prefers a token in the environment over the one its own
+  // `gh auth login` stored, and a shell that exports one silently overrides a
+  // working keyring account — the app inherits that environment, so the two
+  // accounts `gh auth status` lists are not both in play.
+  const fromEnvironment = gh.tokenSource && gh.tokenSource !== "keyring" ? gh.tokenSource : null;
+
+  return (
+    <>
+      On {gh.host ?? "GitHub"}, signed in as <code className="text-foreground">{gh.login}</code>
+      {fromEnvironment ? (
+        <>
+          , using the token in <code className="text-foreground">{fromEnvironment}</code> rather
+          than the one <code className="text-foreground">gh auth login</code> stored. gh prefers
+          the environment, so unsetting it is a cure in itself — and the app has to be started
+          from a shell that does not set it.
+        </>
+      ) : (
+        <>, {gh.tokenSource === "keyring" ? "through gh's own login" : "signed in"}.</>
+      )}
+
+      {/* **An empty scope list is not a fault, and must not be drawn as one.**
+          Every fine-grained personal access token reports no scopes at all —
+          its permissions live on GitHub, so a read it is not allowed is refused
+          with nothing here to show for it. Naming the two permissions that
+          matter is the most this row can do about that. */}
+      {gh.scopes.length === 0 ? (
+        <>
+          {" "}
+          gh reports no scopes, which is how a fine-grained personal access token always reads.
+          What it may read is set per repository on GitHub: pull requests and checks need{" "}
+          <strong className="font-medium text-foreground">Checks: Read</strong> and{" "}
+          <strong className="font-medium text-foreground">Commit statuses: Read</strong> beside
+          the Contents and Pull requests ones.
+        </>
+      ) : (
+        <>
+          {" "}
+          Scopes: {gh.scopes.join(", ")}.
+          {!gh.scopes.includes("repo") && (
+            <>
+              {" "}
+              <code className="text-foreground">repo</code> is not among them, and reading a
+              repository's pull requests needs it —{" "}
+              <code className="text-foreground">gh auth refresh -s repo</code> adds it.
+            </>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
@@ -859,7 +1114,7 @@ function BrowserRow() {
         error ? (
           <span className="text-destructive">{error}</span>
         ) : confirming ? (
-          "Chromium will be downloaded again the next time Dray starts."
+          "Chromium will be downloaded again the next time hz starts."
         ) : (
           describeChromium(status)
         )
@@ -951,7 +1206,7 @@ function IssueTrackerRow({
           label="Issue tracker"
           description={
             confirming
-              ? "Dray will forget the key. Sessions keep the issues they are tagged with."
+              ? "hz will forget the key. Sessions keep the issues they are tagged with."
               : // The mark rather than the word, since the word is already the row's
                 // subject — and it is what makes this row findable at a glance in a
                 // dialog of sentences.
@@ -1042,6 +1297,17 @@ const SETTINGS_TABS = [
   "appearance",
   "spaces",
   "transcription",
+  // Beside Integrations rather than inside it: both are "things that leave the
+  // machine", and this one is what the pull-request screens run on. It is the
+  // only place that can answer why they will not load.
+  "sourceControl",
+  // After Transcription, among the occasional setup rather than heading the
+  // rail: connecting a provider is done once and then left alone, and the
+  // reader who has never done it is sent here by the empty model picker rather
+  // than by looking down this list. Named for the providers rather than for the
+  // agent: it is the only screen in here that is about *what the agent runs
+  // on*, and "Agent" said nothing about what the reader was going to do on it.
+  "providers",
   "integrations",
   "shortcuts",
   "about",
@@ -1050,34 +1316,41 @@ const SETTINGS_TABS = [
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 const TAB_LABELS: Record<SettingsTab, string> = {
+  providers: "Providers",
   appearance: "Appearance",
   shortcuts: "Shortcuts",
   spaces: "Spaces",
   transcription: "Transcription",
+  sourceControl: "Source control",
   integrations: "Integrations",
   about: "About",
 };
 
-/// The dialog's groups as a tab row, drawn as the app's tabs everywhere else.
+/// A nav rail down one side and the section's rows in the pane beside it — the
+/// shape a settings surface takes once it owns the window.
 ///
-/// One long scroll was the first shape and it stopped working at five groups:
-/// the reader who came to change one thing read past four others to find it,
-/// and every group added made that worse. Tabs across the top rather than a
-/// rail down the side, because the dialog is 28rem and a rail takes a third of
-/// that from the prose — the analytics sentence already broke across three
-/// lines at 25rem.
+/// **Tabs across the top were right for a 34rem dialog and wrong for a window.**
+/// They fit one line there by using the width a card had to spare; here the same
+/// seven across the top read as a web form, and the reader hunting one setting
+/// scans a horizontal row whose labels are all the same weight. The rail also
+/// buys the thing the tabs could not: an icon per group, so Appearance is found
+/// by shape as well as by word.
+///
+/// **A vertical tab list, so the keyboard promise is the vertical one.** Up and
+/// Down, Home and End, one Tab stop; `aria-orientation` is what tells a screen
+/// reader which half of the four keys to expect.
 ///
 /// **About holds privacy and feedback**, which is the one grouping worth
 /// arguing about. Both answer what the app does with you rather than what it
 /// does for you: what is collected, and how to reach the person who wrote it.
-/// Privacy alone was too thin to be a tab and reads oddly next to Appearance.
+/// Privacy alone was too thin to be a section and reads oddly next to Appearance.
 ///
 /// Bodies are switched, not hidden, unlike the right panel's. There is no
-/// scroll position or expensive render to preserve here, and mounting all three
-/// would have the external-app scan run every time the dialog opens whichever
-/// tab the reader wanted. The pick resets on close for the same reason the
-/// dialog's own open state is not persisted.
-function SettingsTabs({
+/// scroll position or expensive render to preserve here, and mounting them all
+/// would have the external-app scan run every time this opens whichever section
+/// the reader wanted. The pick resets on close for the same reason the open state
+/// is not persisted.
+function SettingsSections({
   initialTab,
   children,
 }: {
@@ -1086,73 +1359,114 @@ function SettingsTabs({
 }) {
   const id = useId();
   // An initializer, not an effect: `DialogContent` unmounts on close, so every
-  // open builds this fresh and the caller's tab is simply where it starts.
+  // open builds this fresh and the caller's section is simply where it starts.
   // That is also what keeps "the pick resets on close" true.
-  const [tab, setTab] = useState<SettingsTab>(initialTab);
+  const [section, setSection] = useState<SettingsTab>(initialTab);
 
-  const index = SETTINGS_TABS.indexOf(tab);
+  const index = SETTINGS_TABS.indexOf(section);
   const { refs, onKeyDown } = useRovingGroup(SETTINGS_TABS.length, index, (next) =>
-    setTab(SETTINGS_TABS[next]),
+    setSection(SETTINGS_TABS[next]),
   );
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-h-0 flex-1">
       <div
         role="tablist"
         aria-label="Settings"
+        aria-orientation="vertical"
         onKeyDown={onKeyDown}
-        // Wraps rather than clips: six tabs fit the width today, and a seventh
-        // must show up on a second line, never past the edge.
-        className="flex flex-wrap items-center gap-0.5"
+        className="flex w-56 shrink-0 flex-col border-r border-sidebar-border bg-background"
       >
-        {SETTINGS_TABS.map((value, i) => (
-          <TabButton
-            key={value}
-            ref={(el) => {
-              refs.current[i] = el;
-            }}
-            role="tab"
-            id={`${id}-${value}`}
-            aria-selected={tab === value}
-            aria-controls={`${id}-panel`}
-            tabIndex={tab === value ? 0 : -1}
-            active={tab === value}
-            onClick={() => setTab(value)}
-            className="cursor-pointer"
-          >
-            {TAB_LABELS[value]}
-          </TabButton>
-        ))}
+        {/* The rail's own heading, in the muted weight every group heading in
+            the pane wears — the pane's `<h2>` names the section, and this names
+            the surface. It is also the dialog's `DialogTitle`, which is why it
+            is a heading rather than a word in a `div`. */}
+        <DialogHeader className="px-4 pt-1 pb-3">
+          <DialogTitle className="text-ui text-muted-foreground">Settings</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-0.5 px-2">
+          {SETTINGS_TABS.map((value, i) => {
+            const Icon = SECTION_ICONS[value];
+            const active = section === value;
+            return (
+              <button
+                key={value}
+                ref={(el) => {
+                  refs.current[i] = el;
+                }}
+                type="button"
+                role="tab"
+                id={`${id}-${value}`}
+                aria-selected={active}
+                aria-controls={`${id}-panel`}
+                tabIndex={active ? 0 : -1}
+                onClick={() => setSection(value)}
+                className={cn(
+                  "flex h-8 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-ui outline-none transition-colors",
+                  // The app's one selected-row token, so a lit section reads the
+                  // same as a lit session or a lit file.
+                  active
+                    ? "bg-sidebar-accent text-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4 shrink-0" aria-hidden />
+                <span className="truncate">{TAB_LABELS[value]}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Fixed, and scrolling past it. A floor was enough while the tabs were
-          within a line or two of each other, and stopped being enough the
-          moment Transcription arrived carrying a list of models — the dialog
-          then doubled in height on the way in and halved on the way out, which
-          reads as the window jumping rather than as the content changing.
-          Raising the floor to the tallest tab instead would spend that height
-          on About, which is four lines.
-
-          The negative margin is for the model rows' focus ring: `overflow-y`
-          clips the other axis too, so a ring drawn at the panel's own edge
-          loses its outer edge without it. */}
       <div
         role="tabpanel"
         id={`${id}-panel`}
-        aria-labelledby={`${id}-${tab}`}
-        // `shrink-0` on the sections, since a column flex item's default is to
-        // shrink toward its content before the container agrees to scroll.
-        // Capped against the viewport as well as fixed: the height is still
-        // one number for every tab, so nothing jumps on a switch, but a short
-        // window gets a dialog that fits inside it rather than one running off
-        // both ends.
-        className="-mx-1 flex h-[32rem] max-h-[60vh] flex-col gap-7 overflow-y-auto px-1 [&>*]:shrink-0"
+        aria-labelledby={`${id}-${section}`}
+        className="flex min-w-0 flex-1 flex-col bg-background"
       >
-        {children[tab]}
+        {/* `key` on the scroll box, so a section opens at its own top: the
+            container is the same element across a switch, and Shortcuts is long
+            enough that a reader who scrolled it would otherwise land in About
+            somewhere past its heading. */}
+        <div key={section} className="min-h-0 flex-1 overflow-y-auto px-10 pb-10">
+          {/* **Capped, and the heading is inside the cap.** A row is a label and
+              a control that want an edge to sit against, and the same row spread
+              across a 1400px window leaves the control a page away from the
+              sentence explaining it. Centred rather than pinned left, like the
+              transcript — and the section's own name belongs to the top of that
+              column rather than to the pane's edge, or the heading and the rows
+              it names start at two different places and read as two blocks. */}
+          <div className="mx-auto flex w-full max-w-2xl flex-col gap-7 [&>*]:shrink-0">
+            {/* Named here as well as in the rail, and that is not repetition: a
+                section whose own name is only in the rail while the pane starts
+                mid-sentence makes the reader check the rail to know where they
+                are. */}
+            <h2 className="pt-1 text-lg font-medium">{TAB_LABELS[section]}</h2>
+
+            {children[section]}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
+
+/// One glyph per section, and the rail is the only place they appear.
+///
+/// Chosen for the word beside them rather than for the app's own vocabulary:
+/// these are the reader's questions (`Keyboard` for what key does what, `Mic`
+/// for the thing that listens), not the internals behind them.
+const SECTION_ICONS: Record<SettingsTab, LucideIcon> = {
+  providers: Server,
+  appearance: Palette,
+  spaces: Layers,
+  transcription: Mic,
+  sourceControl: GitBranch,
+  integrations: Plug,
+  shortcuts: Keyboard,
+  about: Info,
+};
 
 /// Label and control on the top line, reason at full width underneath — and
 /// `stacked` for when even that is the wrong shape.

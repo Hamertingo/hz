@@ -21,7 +21,7 @@ const aeonik = localFont({
   display: "swap",
 });
 
-const title = "Dray: run Claude Code, Codex, pi and fx in one app";
+const title = "hz: run Claude Code, Codex, pi and fx in one app";
 const description =
   "Fast, feels right, runs agents in parallel — on your existing subscriptions.";
 
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title,
   description,
-  openGraph: { title, description, type: "website", siteName: "Dray" },
+  openGraph: { title, description, type: "website", siteName: "hz" },
   twitter: { card: "summary_large_image", title, description },
 };
 

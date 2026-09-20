@@ -375,7 +375,7 @@ export function summarizeChecks(checks: PrCheck[]): CheckSummary {
 /// repo with no CI, so a PR the app had just opened read as settled and never
 /// re-asked. See `OPEN_POLL_MS`.
 export function isSettling(pr: PullRequest | null): boolean {
-  if (!pr || pr.state !== "OPEN") return false;
+  if (pr?.state !== "OPEN") return false;
   return pr.mergeable === "UNKNOWN" || pr.checks.some((c) => c.state === "pending");
 }
 

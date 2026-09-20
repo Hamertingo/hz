@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { useLocalStorage } from "@/hooks/useLocalStorage";
-import type { InstallError, UpdateChannel, UpdateStatus } from "@/types/events";
+import { usePreference } from "@/lib/prefs";
+import type { InstallError, UpdateStatus } from "@/types/events";
 
 // Long enough that a session left open for a week still finds an update, short
 // enough that it isn't only ever the launch check doing the work.
@@ -46,7 +46,7 @@ export type ManualCheck =
 export function updateFailure(manual: ManualCheck): string | null {
   if (manual === "install_failed") return "Couldn't install the update.";
   if (manual === "relaunch_failed")
-    return "Update installed. Quit and open Dray again.";
+    return "Update installed. Quit and open hz again.";
   return null;
 }
 
@@ -58,18 +58,14 @@ export function updateFailure(manual: ManualCheck): string | null {
 /// error the reader can do nothing about.
 ///
 /// The channel is held here and handed *out*, rather than read a second time by
-/// the settings row that writes it. `useLocalStorage` is per-component, so a
-/// second copy would set its own value while this one kept the old — and since
-/// `channel` is what re-arms the effect below, the change would take on the
-/// next launch and not before. The same trap `useTheme` became a module store
-/// to escape; one owner and a prop is enough for two surfaces.
+/// the settings row that writes it: it is what re-arms the effect below, so the
+/// surface that owns the check is the surface that owns the value. The store
+/// underneath is shared (`src/lib/prefs.ts`), and one owner and a prop is still
+/// simpler than two readers and an effect that has to notice either of them.
 export function useUpdater() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [manual, setManual] = useState<ManualCheck>("idle");
-  const [channel, setChannel] = useLocalStorage<UpdateChannel>(
-    "ade.updateChannel",
-    "stable",
-  );
+  const [channel, setChannel] = usePreference("hz.updateChannel", "stable");
 
   // Read inside the check's own promise, which resolves long after the closure
   // that started it was made — on a run that finds something, only once the

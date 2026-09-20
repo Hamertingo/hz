@@ -1,9 +1,7 @@
 import { useEffect, useRef } from "react";
-import { ChevronRight, Square } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 
 import EventRow from "@/components/chat/EventRow";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { compactTokens } from "@/lib/format";
 import { subagentBrief } from "@/lib/tools";
 import type { SubagentRun } from "@/lib/transcript";
@@ -16,17 +14,7 @@ type SubagentPanelProps = {
   /// because a click in the chat opens a run from outside this component.
   selectedId: string | null;
   resultByCallId: Map<string, ToolResult>;
-  /// Whether a child is actually running this session. A run left open by a
-  /// killed child looks unfinished forever, and its task died with the process
-  /// — so the stop button is withheld rather than offered and then erroring.
-  live: boolean;
-  /// Whether this harness exposes a per-task stop. omp's RPC has no stop
-  /// command — its `abort` ends the turn and leaves a detached run going —
-  /// so offering the button there is a control that answers success and does
-  /// nothing.
-  canStop: boolean;
   onSelect: (id: string | null) => void;
-  onStopTask: (taskId: string) => void;
 };
 
 /// Every subagent in the session, one row each, expanding in place. A tab of
@@ -38,10 +26,7 @@ export default function SubagentPanel({
   runs,
   selectedId,
   resultByCallId,
-  live,
-  canStop,
   onSelect,
-  onStopTask,
 }: SubagentPanelProps) {
   if (runs.length === 0) {
     return (
@@ -57,10 +42,7 @@ export default function SubagentPanel({
           run={run}
           open={run.id === selectedId}
           resultByCallId={resultByCallId}
-          live={live}
-          canStop={canStop}
           onToggle={() => onSelect(run.id === selectedId ? null : run.id)}
-          onStopTask={onStopTask}
         />
       ))}
     </div>
@@ -108,18 +90,12 @@ function RunRow({
   run,
   open,
   resultByCallId,
-  live,
-  canStop,
   onToggle,
-  onStopTask,
 }: {
   run: SubagentRun;
   open: boolean;
   resultByCallId: Map<string, ToolResult>;
-  live: boolean;
-  canStop: boolean;
   onToggle: () => void;
-  onStopTask: (taskId: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -137,12 +113,6 @@ function RunRow({
 
   const tokens = run.usage?.totalTokens ?? null;
 
-  // Only a run the harness still holds can be stopped. `taskId` is null until a
-  // lifecycle event names it, a dead child's tasks died with it — and some
-  // harnesses (omp) expose no per-task stop at all. Either way the button
-  // would be one the CLI answers success to and nothing happens.
-  const stoppable = live && !run.done && run.taskId !== null && canStop;
-
   // The brief a harness nests rather than streams — fx's, and the whole of what
   // it says about the child. Null everywhere else, where the spawning call's own
   // row is what carries the prompt.
@@ -158,10 +128,6 @@ function RunRow({
 
   return (
     <div ref={ref} className="border-b border-border">
-      {/* A row, not one button: the stop control is a second action on the same
-          line, and nesting it inside the expander would be a button inside a
-          button. The expander keeps the row's padding so its hit area is still
-          the whole line minus the control. */}
       <div className="flex items-center transition-colors hover:bg-sidebar-accent/50">
         <button
           type="button"
@@ -196,28 +162,6 @@ function RunRow({
             </span>
           )}
         </button>
-
-        {/* Shown rather than revealed on hover: a task running longer than it
-            should is what sends the reader here, and a control they have to
-            find by pointing at the right row is one more thing between them and
-            stopping it. Settled runs draw nothing, so the column is only as
-            loud as the session is busy. */}
-        {stoppable && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Stop this subagent"
-                className="mr-2 shrink-0 text-muted-foreground hover:text-foreground"
-                onClick={() => onStopTask(run.taskId!)}
-              >
-                <Square className="fill-current" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Stop this subagent</TooltipContent>
-          </Tooltip>
-        )}
       </div>
 
       {open && hasContent && (

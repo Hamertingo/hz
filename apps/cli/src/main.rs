@@ -1,15 +1,15 @@
-//! `dray` — create and list Dray sessions from outside the app.
+//! `hz` — create and list hz sessions from outside the app.
 //!
 //! Deliberately standalone. It links neither the app nor tokio: one connect,
 //! one write, one read, exit. That keeps startup instant, which matters because
 //! the usual caller is an agent shelling out to it — and it is what lets this
-//! ship for linux, where there is no Dray app to be part of.
+//! ship for linux, where there is no hz app to be part of.
 //!
-//! Everything about *where* to connect lives in [`dray_proto::endpoint`], so
+//! Everything about *where* to connect lives in [`hz_proto::endpoint`], so
 //! moving the app to a server changes one function and nothing here.
 
 use clap::{Args, Parser, Subcommand};
-use dray_proto::{
+use hz_proto::{
     encode_line, BrowserAction, BrowserRequest, CreateSession, Envelope, Get, Is, IssueInput,
     LinkIssues, ListSessions, Locator, Request, Response, SendMessage, SessionSummary,
 };
@@ -23,16 +23,20 @@ use std::process::ExitCode;
 /// than no skill, and fetching it separately is exactly how that happens.
 const SKILL: &str = include_str!("../skill/SKILL.md");
 
-const INSTALLER_URL: &str = "https://www.drayhq.com/install.sh";
+/// Where the installer lives, for `hz update`. The repository copy is the one
+/// that ships with this version of the CLI, so the script that replaces it and
+/// the binary replacing it come from the same commit.
+const INSTALLER_URL: &str =
+    "https://raw.githubusercontent.com/Hamertingo/hz/main/apps/web/public/install.sh";
 
 #[derive(Parser)]
 #[command(
-    name = "dray",
+    name = "hz",
     version,
-    about = "Create and list Dray sessions.",
-    long_about = "Create and list Dray sessions.\n\nDray runs coding agents in parallel, one \
+    about = "Create and list hz sessions.",
+    long_about = "Create and list hz sessions.\n\nhz runs coding agents in parallel, one \
                   session per piece of work. This creates those sessions from the command line, \
-                  so an agent in one session can fan work out into several.\n\nRequires the Dray \
+                  so an agent in one session can fan work out into several.\n\nRequires the hz \
                   app to be running."
 )]
 struct Cli {
@@ -103,14 +107,14 @@ struct New {
 #[derive(Args)]
 struct Update {
     /// Install the newest release even when it is the one already running.
-    /// Reinstalls a damaged binary; `DRAY_VERSION=<tag>` downgrades.
+    /// Reinstalls a damaged binary; `HZ_VERSION=<tag>` downgrades.
     #[arg(long)]
     force: bool,
 }
 
 #[derive(Args)]
 struct Send {
-    /// The session to send to, as printed by `dray ls`.
+    /// The session to send to, as printed by `hz ls`.
     session_id: String,
 
     /// The message. Write it for someone who cannot see your conversation.
@@ -144,7 +148,7 @@ enum IssueCommand {
 #[derive(Args)]
 struct IssueLinkArgs {
     /// Issue identifiers, like DRA-53, optionally preceded by the session they
-    /// belong to as printed by `dray ls`. Inside a Dray session the session is
+    /// belong to as printed by `hz ls`. Inside a hz session the session is
     /// read from the environment, so the identifiers alone are enough.
     #[arg(required = true, value_name = "SESSION | ISSUE")]
     session_and_issues: Vec<String>,
@@ -231,7 +235,7 @@ struct BrowserCommand {
 
 #[derive(Subcommand)]
 enum SkillCommand {
-    /// Write the skill to ~/.claude/skills/dray/ and ~/.codex/skills/dray/,
+    /// Write the skill to ~/.claude/skills/hz/ and ~/.codex/skills/hz/,
     /// where Claude Code and Codex find it.
     Install,
 }
@@ -240,7 +244,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("dray: {message}");
+            eprintln!("hz: {message}");
             ExitCode::FAILURE
         }
     }
@@ -277,7 +281,7 @@ fn new(args: New) -> Result<(), String> {
 
     match send(request)? {
         Response::Created { session, base_ref } => {
-            // The id alone on stdout, so `$(dray new …)` captures something
+            // The id alone on stdout, so `$(hz new …)` captures something
             // usable; everything a human wants goes to stderr beside it.
             println!("{}", session.session_id);
             eprintln!(
@@ -380,7 +384,7 @@ fn send_message(args: Send) -> Result<(), String> {
 
 fn browser(args: BrowserCommand) -> Result<(), String> {
     let session_id = args.session.clone().or_else(parent_session_id).ok_or(
-        "which session's browser? Pass --session <id>, or run this from inside a Dray session.",
+        "which session's browser? Pass --session <id>, or run this from inside a hz session.",
     )?;
     let action = browser_action(&args)?;
     match send(Request::Browser(BrowserRequest { session_id, action }))? {
@@ -593,7 +597,7 @@ fn act(
 }
 
 fn parse_id(s: &str) -> Result<i32, String> {
-    s.parse().map_err(|_| format!("{s} is not a tab id; `dray browser tab` lists them"))
+    s.parse().map_err(|_| format!("{s} is not a tab id; `hz browser tab` lists them"))
 }
 
 /// The app answered something this command never asks for: the two sides
@@ -661,10 +665,10 @@ fn print_table(sessions: &[SessionSummary]) {
 /// curl or wget, the pair the installer itself accepts.
 fn update(args: Update) -> Result<(), String> {
     let exe = std::env::current_exe()
-        .map_err(|e| format!("could not find the running dray binary: {e}"))?;
+        .map_err(|e| format!("could not find the running hz binary: {e}"))?;
     let dir = exe
         .parent()
-        .ok_or("the running dray binary sits in no directory")?;
+        .ok_or("the running hz binary sits in no directory")?;
 
     let mut sh = std::process::Command::new("sh");
     sh.args([
@@ -676,14 +680,14 @@ fn update(args: Update) -> Result<(), String> {
     ])
     // Where this binary lives, not ~/.local/bin. Renaming over a running
     // unix binary is safe: the process keeps the inode it started from.
-    .env("DRAY_INSTALL_DIR", dir);
+    .env("HZ_INSTALL_DIR", dir);
 
     if args.force {
         // Cleared rather than left alone, or a value the caller exported makes
         // the flag do nothing.
-        sh.env_remove("DRAY_CURRENT_VERSION");
+        sh.env_remove("HZ_CURRENT_VERSION");
     } else {
-        sh.env("DRAY_CURRENT_VERSION", current_tag());
+        sh.env("HZ_CURRENT_VERSION", current_tag());
     }
 
     match sh.status() {
@@ -694,7 +698,7 @@ fn update(args: Update) -> Result<(), String> {
 }
 
 /// The release tag this binary was built as — the one fact the installer cannot
-/// work out for itself, since it cannot tell which `dray` on disk ran it.
+/// work out for itself, since it cannot tell which `hz` on disk ran it.
 fn current_tag() -> String {
     format!("cli-v{}", env!("CARGO_PKG_VERSION"))
 }
@@ -714,7 +718,7 @@ fn install_skill() -> Result<(), String> {
     let home = std::env::home_dir().ok_or("could not resolve your home directory")?;
 
     for agent_home in SKILL_HOMES {
-        let dir = home.join(agent_home).join("skills").join("dray");
+        let dir = home.join(agent_home).join("skills").join("hz");
 
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
@@ -723,7 +727,7 @@ fn install_skill() -> Result<(), String> {
         std::fs::write(&path, SKILL)
             .map_err(|e| format!("could not write {}: {e}", path.display()))?;
 
-        eprintln!("Installed the dray skill to {}", path.display());
+        eprintln!("Installed the hz skill to {}", path.display());
     }
 
     Ok(())
@@ -755,21 +759,21 @@ fn install_skill() -> Result<(), String> {
 fn connect_failure(error: &std::io::Error, endpoint: &str) -> String {
     match error.kind() {
         ErrorKind::PermissionDenied => format!(
-            "permission denied reaching Dray at {endpoint}. The app may well be \
+            "permission denied reaching hz at {endpoint}. The app may well be \
              running: a sandbox, or the filesystem permissions on that path, \
              blocked the connection. If this command is sandboxed, retry this one \
              command with escalated permissions."
         ),
         ErrorKind::NotFound | ErrorKind::ConnectionRefused => {
-            "Dray isn't running. Start the app and try again.".to_string()
+            "hz isn't running. Start the app and try again.".to_string()
         }
-        _ => format!("could not connect to Dray at {endpoint}: {error}"),
+        _ => format!("could not connect to hz at {endpoint}: {error}"),
     }
 }
 
 /// One request, one response, connection closed.
 fn send(request: Request) -> Result<Response, String> {
-    let endpoint = dray_proto::endpoint().ok_or("could not work out where Dray is listening")?;
+    let endpoint = hz_proto::endpoint().ok_or("could not work out where hz is listening")?;
 
     let mut stream =
         UnixStream::connect(&endpoint).map_err(|e| connect_failure(&e, &endpoint))?;
@@ -790,7 +794,7 @@ fn send(request: Request) -> Result<Response, String> {
         .map_err(|e| format!("could not read the response: {e}"))?;
 
     if response.trim().is_empty() {
-        return Err("Dray closed the connection without answering.".into());
+        return Err("hz closed the connection without answering.".into());
     }
 
     serde_json::from_str(&response).map_err(|e| format!("could not parse the response: {e}"))
@@ -800,8 +804,8 @@ fn send(request: Request) -> Result<Response, String> {
 ///
 /// The session is optional so that the documented invocation can name no
 /// environment variable at all. The Claude Code harness refuses any command that
-/// names one inside a worktree-isolated session — which is every session `dray
-/// new` makes — so the documented `dray issue link "$DRAY_SESSION_ID" DRA-53`
+/// names one inside a worktree-isolated session — which is every session `hz
+/// new` makes — so the documented `hz issue link "$HZ_SESSION_ID" DRA-53`
 /// was refused before it spawned, and refused silently: the agent read the
 /// refusal, carried on, and the issue was never linked.
 ///
@@ -817,8 +821,8 @@ fn split_session_and_issues(
         given.remove(0)
     } else {
         from_environment.ok_or(
-            "no session named, and DRAY_SESSION_ID is not set: name the session, \
-             as printed by `dray ls`",
+            "no session named, and HZ_SESSION_ID is not set: name the session, \
+             as printed by `hz ls`",
         )?
     };
 
@@ -840,11 +844,11 @@ fn is_session_id(value: &str) -> bool {
         && value.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// Which session is making this call, if one is. Injected into every agent Dray
+/// Which session is making this call, if one is. Injected into every agent hz
 /// spawns; absent when a person runs this in their own terminal, which is
 /// ordinary rather than an error.
 fn parent_session_id() -> Option<String> {
-    std::env::var("DRAY_SESSION_ID")
+    std::env::var("HZ_SESSION_ID")
         .ok()
         .filter(|v| !v.is_empty())
 }
@@ -865,7 +869,7 @@ fn resolve_project(explicit: Option<PathBuf>) -> Option<String> {
 /// we happen to be standing in.
 ///
 /// `rev-parse --show-toplevel` answers the linked worktree, and that is what an
-/// agent running in a Dray worktree session was putting on the wire as the new
+/// agent running in a hz worktree session was putting on the wire as the new
 /// session's project. The app then computed a `cwd` of
 /// `<that worktree>/.claude/worktrees/<name>`, which `claude -w` never creates —
 /// it resolves the repo for itself — so Changes, commit and PR all read a
@@ -921,12 +925,12 @@ mod tests {
     fn failure(kind: ErrorKind) -> String {
         unwrapped(&connect_failure(
             &std::io::Error::from(kind),
-            "/Users/me/.dray/dray.sock",
+            "/Users/me/.hz/hz.sock",
         ))
     }
 
     const CURE: &str = "retry this one command with escalated permissions";
-    const CLOSED: &str = "Dray isn't running. Start the app and try again.";
+    const CLOSED: &str = "hz isn't running. Start the app and try again.";
 
     /// The bug this arm exists for: a sandbox refusing the connect used to
     /// report the user's app closed, which is a false fact about their machine
@@ -940,7 +944,7 @@ mod tests {
     fn permission_denied_hedges_the_cause_and_names_the_conditional_cure() {
         let message = failure(ErrorKind::PermissionDenied);
 
-        assert!(message.contains("/Users/me/.dray/dray.sock"));
+        assert!(message.contains("/Users/me/.hz/hz.sock"));
         assert!(message.contains("The app may well be running"));
         assert!(message.contains("a sandbox, or the filesystem permissions"));
         assert!(message.contains(CURE));
@@ -972,8 +976,8 @@ mod tests {
         ] {
             let message = failure(kind);
 
-            assert!(message.contains("could not connect to Dray at"));
-            assert!(message.contains("/Users/me/.dray/dray.sock"));
+            assert!(message.contains("could not connect to hz at"));
+            assert!(message.contains("/Users/me/.hz/hz.sock"));
             assert!(!message.contains("isn't running"));
             assert!(!message.contains(CURE));
         }
@@ -986,7 +990,7 @@ mod tests {
     #[test]
     fn a_verb_reads_the_same_bare_or_after_find() {
         let action = |line: &[&str]| {
-            let cli = Cli::parse_from([&["dray", "browser"][..], line].concat());
+            let cli = Cli::parse_from([&["hz", "browser"][..], line].concat());
             let Command::Browser(args) = cli.command else { panic!("wrong subcommand") };
             browser_action(&args)
         };
@@ -1031,7 +1035,7 @@ mod tests {
     #[test]
     fn metadata_describes_one_issue() {
         let args = Cli::try_parse_from([
-            "dray", "issue", "link", SESSION, "DRA-53", "DRA-54", "--title", "One",
+            "hz", "issue", "link", SESSION, "DRA-53", "DRA-54", "--title", "One",
         ])
         .unwrap();
 
@@ -1048,7 +1052,7 @@ mod tests {
     #[test]
     fn identifiers_alone_are_accepted() {
         assert!(
-            Cli::try_parse_from(["dray", "issue", "link", SESSION, "DRA-53", "DRA-54"]).is_ok()
+            Cli::try_parse_from(["hz", "issue", "link", SESSION, "DRA-53", "DRA-54"]).is_ok()
         );
     }
 
@@ -1069,7 +1073,7 @@ mod tests {
 
     /// The whole point: the documented invocation names no environment variable,
     /// because the Claude Code harness refuses a command that does inside a
-    /// worktree — which is every session `dray new` makes.
+    /// worktree — which is every session `hz new` makes.
     #[test]
     fn issues_alone_take_the_session_from_the_environment() {
         let split =
@@ -1117,10 +1121,10 @@ mod tests {
     /// `unlink` shares the arguments so it gains the short form too.
     #[test]
     fn both_forms_parse() {
-        assert!(Cli::try_parse_from(["dray", "issue", "link", "DRA-53"]).is_ok());
-        assert!(Cli::try_parse_from(["dray", "issue", "unlink", "DRA-53"]).is_ok());
-        assert!(Cli::try_parse_from(["dray", "issue", "link", SESSION, "DRA-53"]).is_ok());
-        assert!(Cli::try_parse_from(["dray", "issue", "link"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "issue", "link", "DRA-53"]).is_ok());
+        assert!(Cli::try_parse_from(["hz", "issue", "unlink", "DRA-53"]).is_ok());
+        assert!(Cli::try_parse_from(["hz", "issue", "link", SESSION, "DRA-53"]).is_ok());
+        assert!(Cli::try_parse_from(["hz", "issue", "link"]).is_err());
     }
 
     #[test]
@@ -1128,19 +1132,19 @@ mod tests {
         // Sessions created here run at the same time by design, so sharing a
         // checkout is never the right answer — the flag is gone rather than
         // defaulted.
-        assert!(Cli::try_parse_from(["dray", "new", "x", "--no-worktree"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "new", "x", "--no-worktree"]).is_err());
     }
 
     #[test]
     fn the_worktree_cannot_be_named_either() {
-        // An agent has no basis for picking a name, Dray generates a readable
+        // An agent has no basis for picking a name, hz generates a readable
         // one, and a caller-supplied name is one more thing that can collide.
-        assert!(Cli::try_parse_from(["dray", "new", "x", "--worktree-name", "n"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "new", "x", "--worktree-name", "n"]).is_err());
     }
 
     #[test]
     fn send_takes_a_target_and_a_message() {
-        let cli = Cli::parse_from(["dray", "send", "abc-123", "review is done"]);
+        let cli = Cli::parse_from(["hz", "send", "abc-123", "review is done"]);
         let Command::Send(args) = cli.command else {
             panic!("wrong subcommand");
         };
@@ -1150,7 +1154,7 @@ mod tests {
 
     #[test]
     fn the_prompt_is_positional_and_survives_spaces() {
-        let cli = Cli::parse_from(["dray", "new", "fix the login redirect loop"]);
+        let cli = Cli::parse_from(["hz", "new", "fix the login redirect loop"]);
         let Command::New(args) = cli.command else {
             panic!("wrong subcommand");
         };
@@ -1162,27 +1166,27 @@ mod tests {
         // One flag for both, because the app is the only side that can tell
         // them apart — it holds the index, and this does not.
         for value in ["0198f0a2-1c5e-7000-8000-000000000000", "feature/login"] {
-            let cli = Cli::parse_from(["dray", "new", "review it", "--from", value]);
+            let cli = Cli::parse_from(["hz", "new", "review it", "--from", value]);
             let Command::New(args) = cli.command else {
                 panic!("wrong subcommand");
             };
             assert_eq!(args.from.as_deref(), Some(value));
         }
 
-        let cli = Cli::parse_from(["dray", "new", "x"]);
+        let cli = Cli::parse_from(["hz", "new", "x"]);
         let Command::New(args) = cli.command else {
             panic!("wrong subcommand");
         };
         assert_eq!(args.from, None);
     }
 
-    /// The tree is still Dray's to make either way — `--from` moves where the
+    /// The tree is still hz's to make either way — `--from` moves where the
     /// branch starts, and there is no flag for running in somebody else's
     /// checkout.
     #[test]
     fn a_base_does_not_bring_back_a_way_into_someone_elses_tree() {
-        assert!(Cli::try_parse_from(["dray", "new", "x", "--in", "abc"]).is_err());
-        assert!(Cli::try_parse_from(["dray", "new", "x", "--detach"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "new", "x", "--in", "abc"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "new", "x", "--detach"]).is_err());
     }
 
     #[test]
@@ -1195,12 +1199,12 @@ mod tests {
 
     #[test]
     fn update_checks_the_installed_version_unless_forced() {
-        let Command::Update(args) = Cli::parse_from(["dray", "update"]).command else {
+        let Command::Update(args) = Cli::parse_from(["hz", "update"]).command else {
             panic!("wrong subcommand");
         };
         assert!(!args.force);
 
-        let Command::Update(args) = Cli::parse_from(["dray", "update", "--force"]).command else {
+        let Command::Update(args) = Cli::parse_from(["hz", "update", "--force"]).command else {
             panic!("wrong subcommand");
         };
         assert!(args.force);
@@ -1211,8 +1215,8 @@ mod tests {
     /// same number twice under two meanings.
     #[test]
     fn update_takes_no_other_arguments() {
-        assert!(Cli::try_parse_from(["dray", "update", "--version"]).is_err());
-        assert!(Cli::try_parse_from(["dray", "update", "cli-v0.1.0"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "update", "--version"]).is_err());
+        assert!(Cli::try_parse_from(["hz", "update", "cli-v0.1.0"]).is_err());
     }
 
     /// The comparison is a string one against a git tag, so the shape is the
@@ -1229,7 +1233,7 @@ mod tests {
     #[test]
     fn the_skill_carries_frontmatter_claude_code_can_read() {
         assert!(SKILL.starts_with("---\n"), "skill needs YAML frontmatter");
-        assert!(SKILL.contains("\nname: dray\n"));
+        assert!(SKILL.contains("\nname: hz\n"));
         assert!(SKILL.contains("\ndescription: "));
     }
 
@@ -1280,7 +1284,7 @@ mod tests {
 
     #[test]
     fn a_plain_directory_is_no_project() {
-        let dir = std::env::temp_dir().join(format!("dray-clitest-plain-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hz-clitest-plain-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         assert_eq!(repo_root(&dir), None);
@@ -1293,7 +1297,7 @@ mod tests {
     /// `None` when there is no usable git, which is not a failure worth failing
     /// the suite over.
     fn scratch_repo() -> Option<PathBuf> {
-        let dir = std::env::temp_dir().join(format!("dray-clitest-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hz-clitest-{}", std::process::id()));
         // A run that failed before its cleanup would otherwise leave a repo
         // here whose `child` worktree already exists.
         let _ = std::fs::remove_dir_all(&dir);

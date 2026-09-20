@@ -1,10 +1,15 @@
 # Third-party licences
 
-Other people's work that Dray ships: the palettes it ports, and the engine its
-dictation runs on. Each is MIT, and MIT asks that the copyright notice and
-permission notice travel with the work — so they are reproduced in full here
-rather than linked. The credit tables in [README](README.md) name who each one
-is by; this file is the licence itself.
+Other people's work that hz ships: the palettes it ports, the engine its
+dictation runs on, and the agent CLI it bundles. Each is MIT, and MIT asks that
+the copyright notice and permission notice travel with the work — so they are
+reproduced in full here rather than linked. The credit tables in
+[README](README.md) name who each one is by; this file is the licence itself.
+
+**The bundled CLI is the one licence here that ships as a file.** Everything
+else is a palette or a link; `apps/desktop/scripts/vendor-mcode.sh` copies the
+built MiniMax Code CLI into the app bundle, so its notice travels in the same
+directory (`src-tauri/resources/mcode/LICENSE`) as well as here.
 
 Ported palettes live in `apps/desktop/src/App.css`. Colours are theirs, token
 names are ours, and each value carries the name it has upstream so a port can be
@@ -235,3 +240,37 @@ as an OSS sponsor, and Dray marks a prompt running one of their commands with
 That colour is Greptile's mark, used to identify Greptile's own commands and
 nothing else. It is not covered by any grant above, and it travels with its
 owner's permission rather than with a licence file. No Greptile artwork is used.
+
+---
+
+## MiniMax Code
+
+<https://www.npmjs.com/package/@minimax-ai/code>
+
+Bundled by `apps/desktop/scripts/vendor-mcode.sh` and spawned as the agent every
+session runs on — see `harness/mcode/`. A Node runtime, where one is vendored
+with it (`--with-node`), carries Node's own licence beside it.
+
+```
+MIT License
+
+Copyright (c) MiniMax
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

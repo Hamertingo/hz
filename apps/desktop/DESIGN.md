@@ -1,6 +1,6 @@
 # Design notes
 
-Why Dray's surfaces are shaped the way they are. [CLAUDE.md](../../CLAUDE.md) holds the
+Why hz's surfaces are shaped the way they are. [CLAUDE.md](../../CLAUDE.md) holds the
 operating manual — protocol, git mechanics, conventions, traps; this file holds the
 reasoning behind the visual and interaction design.
 
@@ -19,7 +19,7 @@ Same writing rules as CLAUDE.md: why, not what. Cut any word doing no work.
 
 **Shortcut belong in real tooltip, not on `title`.** System tooltip can't hold keycap and look like OS not app. Use `Tooltip`/`TooltipContent` with `Kbd`/`KbdGroup` (see `ModelSelector`, `ComposerToolbar`), put plain name on `aria-label`. Reserve `title` for text app is _truncating_ — shortened path, clipped name — where tooltip restore information layout removed, not add information reader already have.
 
-**Window is glass, and body's fill = only hole in it.** Vibrancy set in [tauri.conf.json](src-tauri/tauri.conf.json), not Rust: `windowEffects.effects: ["sidebar"]` put NSVisualEffectView behind webview, `transparent: true` let webview show it. Second flag drag `macOSPrivateApi: true` and `macos-private-api` Cargo feature with it, costing App Store eligibility Dray never wanted. Effect whole-window, so material picked for blur amount only; tint = ours.
+**Window is glass, and body's fill = only hole in it.** Vibrancy set in [tauri.conf.json](src-tauri/tauri.conf.json), not Rust: `windowEffects.effects: ["sidebar"]` put NSVisualEffectView behind webview, `transparent: true` let webview show it. Second flag drag `macOSPrivateApi: true` and `macos-private-api` Cargo feature with it, costing App Store eligibility hz never wanted. Effect whole-window, so material picked for blur amount only; tint = ours.
 
 Feature arrive late, so **first `pnpm tauri dev` after turning this on need manual restart** — CLI patch `Cargo.toml` when it read new config, but already-spawned app predate relinked binary, and `transparent` compile out entirely without feature. Read as "vibrancy don't work", not as stale build.
 
@@ -185,6 +185,32 @@ Glyph sit **beside rail, ahead of title**, and take **no room when absent** — 
 
 **Table cell wrap `anywhere`, and that fix belong to [Markdown](src/components/chat/Markdown.tsx) not to panel.** Streamdown table = `w-full` under `overflow-x-auto` wrapper, so cell that can't break set table's width: one file path in bot's "Files Changed" table pushed every other column off pane. `anywhere` not `break-word` — only `anywhere` shrink cell's *min-content* width, which what auto layout measure. Header cell need its `whitespace-nowrap` lifted first, or rule dead there. Cell also `align-top`. Wrapper keep own scroll for table genuinely wide.
 
+## The pull-requests list
+
+**Two lines, and the split is the sort.** Title on the first, with the three facts about the *change* beside it — the verdict on it, whether CI is still going, its size — because those are what the reader is choosing between. Who wrote it, which branch it came from and when it moved drop to the second: context for a row already chosen, and on the first line they compete with the titles.
+
+**A card, not a bordered row.** The list is the whole column here, so a rule between every pair turns fifty rows into a table. The pick and the hover are `--surface-selected`, the one token every other list marks a row with.
+
+**A running check is the sidebar's own arc, and a failing one draws nothing new.** `PrStateIcon` already recolours the state glyph for a failure, so a second mark would say one fact twice; the dashed arc at the same 3s turn says the other. Passing draws nothing in both places.
+
+**A conflict is a word in the meta line.** Red-green is the difference this palette can least afford to make load-bearing, and a row that cannot land should say so where the eye already is. One word rather than the base branch: the meta line has four other things to hold, and which branch is the detail pane's answer.
+
+**Approval is a glyph and a change request is a word.** "Review required" is the *absence* of a verdict, so a row saying it spends the scarce end of the line on nothing. The glyph is the one somebody actually gave; the word is the one the reader has to act on.
+
+**The external link is revealed by the row's hover and its box is reserved either way** — `IssueRow`'s "Work on it" bargain, or a control appearing under the cursor moves the line that revealed it.
+
+**A read with nothing behind it draws the rows, not a spinner.** Bars built from the real row's own boxes, in `em` against `text-ui`, the same pairing the providers list makes: a lone arc over an empty pane reads as the page having failed to draw.
+
+**The header is a search box and three buttons, and no segment groups.** It used to carry six words of pills for state and involvement — the widest chrome on the page for two choices, spending the row the search is typed into. A narrowing is a menu, and the two that change most are the first two items in it.
+
+**A submenu names the value it is set to, on the trigger.** That is the whole reason the menu is built from submenus rather than a flat column: a short list whose reason is one popup deep is a list that looks broken, and `Open ‹` on the closed Filters row says what happened without opening anything.
+
+**The trigger counts what is off its default, and the count has a cure.** The badge is a promise about why the list is short; a number with no way to reset it is the reader unticking four submenus, so `Clear filters` is the last item in that menu whenever the count is above zero.
+
+**Sort says `Sort`, not the order it is on.** The button sits in a row of four and the one thing the reader needs from it is what pressing it does. Which order is live is one press away, drawn with a tick.
+
+**Refresh is a glyph, and it spins rather than going disabled.** It means the same thing every time it is pressed, so a word would take width the search is not getting; and a read that lands in under a frame otherwise looks like a press that missed.
+
 ## Repo view and diffs
 
 **History open in place, and nothing open on arrival.** Not drill-in, not third column: column leave diff narrowest of three, drill-in hide history behind whichever commit open. Row expand under itself instead. Follow from that: **no default selection** — first commit touching thirty file would push rest of history off screen. Click open, click again close. **No chevron**: row = control, highlight say which open, second click prove it. Commit's *first file* selected on open, which is different question and safe, since file list already bounded by commit reader chose.
@@ -267,21 +293,37 @@ Card name its subject — it and `worktree-failed` the only two that do — brea
 
 **Destructive confirm sit rightmost and take solid red.** `AlertDialogFooter` = `sm:flex-row sm:justify-end`, so source order = screen order — confirm must come **after** `AlertDialogCancel` in markup or it land on left. `destructive` prop on `AlertDialogAction` carry solid fill, not button's own `destructive` variant: that one a tint, for control sitting among others, where this the one thing in dialog that do something. Prop caller's to set — both dialog today destructive, but red default quietly colour first one that isn't.
 
-## Settings dialog
+## Settings
 
-**Dialog, not alert, and `showClose` = whole difference.** Frame, overlay and both animation copied from `alert-dialog` deliberately: to reader two are same object, differing only in whether app asking question or reader opened something. Alert answered by own buttons so carry no dismiss; dialog dismissed rather than answered, and Escape alone = way out only for people who already know it there. `--popover` not `--card` on both, so both take glass on vibrancy — they float over page, and wash of own colour plus blur is what say so. [Reason above](#worktree-notice-and-confirm-dialog).
+**Full window, and it stays a dialog underneath.** The shell is `DialogContent` with every half of the frame turned off — no centring, radius, border, fill, blur or shadow — and that is deliberate rather than lazy: a settings *page* still has to trap focus, block the app behind it, close on Escape and, the load-bearing one, put a `[data-slot$="-overlay"]` over the native browser view. `judgeOcclusion` measures that overlay to decide whether the browser tab has to be hidden, so a full-window surface built any other way is a surface the CEF view draws straight over.
+
+**Setting owns the window because the card ran out of room.** Six groups in a 34rem dialog were already wrapping their tab row to a second line, and the tallest ones — Shortcuts, the model list — scrolled inside a fixed 32rem box. What the card was buying (the app visible behind, so the reader keeps their place) is worth less than what it cost, and ⌘, is a toggle now for exactly that reason: the chord that opened this is the first one somebody presses to get back, and Escape is a hint nobody sees until they try it.
+
+**Overlay goes transparent, and it is a prop on the primitive.** A dim behind a surface that fills the window dims the surface: the rail's own region is the window's left edge, and `bg-black/50` under a page that paints over it leaks at the edges and darkens the whole left column. The element stays either way — it is the occlusion signal — so only its colour changes.
+
+**It arrives on one frame — no fade, no zoom — and that is a fix, not taste.** A card can afford to fade: the reader keeps the app behind it, dimmed, and the card lands over it. A surface that replaces the window cannot. A fade from zero opacity *is* the app showing through it, so the settings page came up as a ghost of the transcript with the window's own header over it for about a hundred milliseconds, and closing faded it back the same way. Measured, not guessed: opacity 0.11 → 1.0 across ~100ms, every frame wrong. So `DialogContent` gained **`animated`** (default true) and this passes `false`.
+
+**Overriding motion with a later class does not work, and that is why it is a prop.** `data-closed:animate-none` beside the primitive's `data-closed:animate-out` leaves both declarations in the stylesheet, and the winner is whichever Tailwind emits last — which is *not* the same answer for both states: measured, `animate-none` beats `animate-in` and `animate-out` beats `animate-none`. Leaving the class off at the source is the only version of it that cannot drift.
+
+**The surface paints everything it covers — rail, drag row and pane alike — and the first pass did not.** It left the rail see-through so the window kept its glass down that edge, which is right for the app's own sidebar and wrong here: behind a full-window surface is the app, so the session sidebar came up through the rail and the window's own "New session" header came up through the drag row. **Hiding the sidebar only fixed the steady state.** On the frame it opened, the reader still caught both lists drawn over each other for a moment: a subtree hidden with `visibility` keeps its boxes and layers, so an engine may paint it one frame late, and `display` — which cannot be painted late — costs the column's scroll position on every trip into settings. An opaque surface has nothing behind it to paint late, whichever engine and whenever the commit lands. What it costs is the glass: while settings is up the window is one flat page, which is what a settings window is on this platform anyway.
+
+**Rail down the left, pane beside it, and the rail is the app's sidebar in another dress.** Icons per group because a word list the reader scans for one thing gives every entry the same weight; the selected row takes `--surface-selected`, the same token as a lit session or a lit file. **The rail is transparent and the pane paints `--background`** — the app's own split, so the window keeps its glass down one edge instead of going flat the moment settings opens. A drag row of `h-(--titlebar-h)` with `data-tauri-drag-region="deep"` sits above both, and it is not optional: this surface covers the app's own strip, and a window with nothing to drag by cannot be moved.
+
+**The section's name lives in the pane, inside the capped column, beside the rows it names.** Not only in the rail: a pane that starts mid-sentence makes the reader check the rail to know where they are. Not at the pane's edge either — heading and rows starting at two different places read as two blocks, which is what the first pass did with a centred `max-w-2xl` under a left-pinned `<h2>`. The cap is the transcript's own measure, because a row is a label and a control that want an edge to sit against, and the same row spread across a 1400px window leaves the control a page away from the sentence explaining it. The pane's scroll box is **keyed on the section**, or a reader who scrolled Shortcuts lands in About past its heading.
+
+**Vertical tab list, so the keyboard promise is the vertical one** — Up/Down, Home/End, one Tab stop, `aria-orientation` telling a screen reader which. Same `useRovingGroup` the swatches and the mode segments use; a horizontal strip here would promise keys that do nothing.
 
 **Gear in sidebar's titlebar strip, and it move in fullscreen.** Strip `justify-end` normally to clear traffic lights, `justify-start` in fullscreen where they gone. Sidebar toggle **also** drawn in app header when sidebar collapsed, so it must hold strip's outer edge in both layout and never change which end it at; gear have no second home, so gear = the one that move. Settings sit in that strip rather than filter row below, because every control in that row scope list under it and these app-wide.
 
 **Row = label and reason left, control right** (`SettingRow`), **except where control wider than a switch — then it go under label, full width** (`stacked`). Beside-the-label take its width out of description, which then wrap to three ragged line and leave orphan, and dialog read as set of row that don't fit rather than list of setting. Under = also where picker want to be: option ranged along one edge, not pushed against far one. Description **not optional except where control show answer instead of telling it** — see theme row below; everywhere else it where "why is this off by default" live, and row with bare label make reader guess.
 
-**Dialog wider than `Dialog`'s own default** (28rem against 25rem). Default sized for question and two button; this hold prose. Setting that cannot apply on this platform **disabled, not hidden**: row that vanish read as setting app forgot, and sentence under it = only place reason can be said.
+**Once wider than `Dialog`'s own default for prose; now the window.** The line that mattered was never the number — it was that the default is sized for a question and two buttons, and this holds sentences. Setting that cannot apply on this platform **disabled, not hidden**: row that vanish read as setting app forgot, and sentence under it = only place reason can be said.
 
 **Switch one rung up from composer's own toggle** — `h-4 w-7` against its `h-3 w-5`. There track sit inside toolbar button among other 12px chrome; here it thing being pressed and have to take click on own.
 
 **Copy say what it for and what it never touch, and stop.** Analytics row = two sentence, no itemised field list. Naming every field read as something to be wary of; "analytics" alone read as behavioural tracking. Second sentence — conversation and activity never collected — carry row.
 
-**Group heading arrive with second group, not before.** One heading over only group there was = label for dialog, which `DialogTitle` already is. Separated by **space, not rules**, for reason PR panel's own sections are.
+**Group heading arrive with second group, not before.** One heading over only group there was = label for surface, which the rail's own heading already is. Separated by **space, not rules**, for reason PR panel's own sections are.
 
 **Theme picked by looking at it, not by reading label.** Swatch draw theme's own backdrop — gradient and all — because each swatch carry `data-theme`/`data-mode` itself, so palette blocks match it exactly as they match `<html>`. Follow that swatch cannot drift from theme it stand for, which table of colours in TSX could and eventually would. Square, so it read as sample of colour rather than as picture of window.
 
@@ -289,11 +331,59 @@ Card name its subject — it and `worktree-failed` the only two that do — brea
 
 **Theme row = only row with no description**, and rule it break is deliberate: control *is* explanation. Sentence saying "the palette everything uses" beside two visible palettes spend words on thing reader already seen. Switch keep its description, always — switch = word and a state, and sentence under it only place "why is this off by default" can live.
 
-**Radio group = one Tab stop with arrows inside it.** `role="radiogroup"` without that = promise to screen reader that keyboard then break. Roving `tabIndex` other half, or tabbing through dialog walk palettes one at a time. Selection follow focus, right for group whose option cheap to try — here trying one *is* seeing it.
+**Radio group = one Tab stop with arrows inside it.** `role="radiogroup"` without that = promise to screen reader that keyboard then break. Roving `tabIndex` other half, or tabbing through the surface walk palettes one at a time. Selection follow focus, right for group whose option cheap to try — here trying one *is* seeing it.
 
 **Feedback block send people out, not into a form, and it deliberately not a `SettingRow`.** Nothing there a setting — no state to read back — so label a row demand ("Get in touch") sit under heading already saying Feedback and earn nothing but third line. Sentence plus two button = whole block. Most feedback = one sentence and form more than sentence worth, so button open DM; GitHub beside it for half who would rather send fix than describe it. Both go through `openUrl`, same route PR panel and transcript links take, so link land in reader's own browser rather than turning app window into one.
 
 **`SettingRow` grew `asGroup`, and it about `htmlFor` reaching nothing.** Label only bind to labelable element, so theme's radio group have to be pointed other way — label carry id, group carry `aria-labelledby`. Switch rows unchanged.
+
+## Providers
+
+**Two groups, and the second one is the next step.** What is connected, then the ways to connect. They were one column of identically-built cards — providers, presets and the Add button all the same weight — so the reader who arrived with nothing connected scrolled past their own working setup to find the button. A heading each, and the list comes first because for anyone who has connected something it is the whole screen.
+
+**With nothing connected the list is replaced by a sentence**, not drawn empty: that reader has just come from a model picker with nothing in it, and they are the one person here who has to be told what this screen is for.
+
+**Adding happens in a dialog.** The form opened in place before: four fields appeared between the rows, everything below them moved, and the one-field preset path had to be told apart from the four-field manual one by which fields were *missing*. A dialog is the reader asking for something rather than the panel changing shape — and it gives the fields labels, which an inline stack of placeholder-only inputs never had. One dialog, two shapes: a preset asks for the key alone (its URL and dialect are facts hz holds, shown once above the field), the manual shape is every field the CLI takes.
+
+**A row says what it has on one line and what was done to it on the next.** Both were one `·`-joined string — "Key stored · 12 models · gpt-5, o3, claude" — which truncated the model list mid-id and made a test result read like one more inventory field. Trouble is the one thing marked rather than described: a dot, and the sentence keeps its ordinary colour, because a red line is longer than a dot for the same news.
+
+**Choice rows are the button.** Two of them under one heading, so a `Connect` button on each would be three controls saying one thing; the chevron is what says the click opens something rather than doing it in place.
+
+**Waiting is drawn as the rows, not as a spinner.** The list is one CLI call, so the wait is a blink or a second, and a lone 14px arc at the top of an otherwise empty pane reads as the page having failed to draw — the one thing a loading state must not look like. Two placeholder rows hold the space the real ones will take, built from the real row's own boxes: a 28px name line because the two action buttons live on it, then a facts line. That is what keeps the list from moving everything below it when it lands. They measured 82px against the row's 80 until the facts placeholder took the token's own line height instead of a fixed one — which matters because that height is the reader's interface size, so a pinned value is only ever right at the default.
+
+**Progress belongs inside the control that was pressed.** The spinner replaces the glyph in the button that started the work rather than floating beside the row's name — the bargain the dictation control makes — and `disabled:opacity-100` keeps the arc from being dimmed to invisible while it runs. Both buttons go inert, since one action at a time is the whole of a row's state, and a mutation that succeeded writes no note: the row that changed is the answer.
+
+## The composer's own furniture
+
+**One row for everything riding on the draft, and it is chips — not tiles.** An attachment, a quotation, and the `@path` a file becomes on send are one thing at three moments, so they are one shape: a pill with the file's own coloured mark, the name, and the way off. They were 56px tiles with a border each, which read as a second, smaller list sitting on top of the message — the eye went to the files rather than to the sentence being written. Both trays render into the composer's row with `contents`, so a quotation and a file wrap together rather than as two rows that happen to be adjacent.
+
+**The pill is measured in `em` and its height is pinned.** What sits inside one varies — a mark and a name, or a glyph, a label, a pencil and an × — and a row of them has to come out level whatever it holds, so the height is set rather than left to the contents. In `em`, because the reader can raise the composer's own size and a pinned pixel height would stop growing with the words beside it.
+
+**The hue is mixed from the accent the run will take, never declared.** A file wears `--accent-mention`, because that is what `@path` is coloured when the prompt lands; a quotation wears `--accent-issue`. `color-mix` over a token that already knows its mode is the only version that cannot drift from the text it turns into — and there are twenty-odd palettes in `App.css`, none of which would survive a second copy of "blue". **A quotation is a chip above the box, never a thing inside the text:** the composer is a textarea with a coloured mirror over it, and that mirror is only in register because every glyph in the draft is still in the textarea underneath. A chip that is not literally in the text would put the caret somewhere the reader can see and cannot click. The alternative — a rich text editor in the composer — is what t3code does and a rewrite of the one component whose whole design is that invariant.
+
+**One Enter legend, and it says what the press will do.** `Press ⏎ to send` becomes `…to 3 models` when a fan-out is set, and the picker's own trigger says `3 models` rather than naming one of them: a button that names one model while the press starts three is a lie about the control. The fan-out set is marked on the row by tinting the model's *name* rather than adding a second glyph — a row can be both the current pick and in the set, and one check for two facts is one word too many.
+
+**A held prompt's way out is not a stop.** The queued bubble's `Now` hands the sentence into the running turn instead of ending it, and the label stayed as it was — `Now` beside `Esc to cancel` never promised a stop, and this is the first release of that promise that does not throw work away.
+
+**Paste is left to the browser until it is too big to be a draft.** Over 32KiB the paste becomes a file and a chip appears in the row; under it the browser inserts the text as it always did, which is what keeps undo and the spelling checker honest. The ceiling on a draft is drawn as a sentence under the box rather than folded into the send button's disabled state, because the button's disabled state already means "this will stop the turn" during a running one — one control cannot say two things.
+
+## Asks beside the composer
+
+**The card sits where the typing is, not where the transcript happens to be scrolled.** The agent stopping mid-turn is the one moment the reader has to act, and the transcript may be anywhere — so the pane that owns the composer draws the cards above it, and a pane that has no composer keeps the transcript's own copy. Never both: an answered card at one surface would leave buttons at the other that can no longer answer anything.
+
+**All of them, not just the newest.** Two requests can be open at once, and the transcript's copy is not drawn for that pane — drawing one card would hide the other with nothing on screen to say it exists.
+
+## What a palette row promises
+
+**A row that looks like it worked did something.** Every action in `⌘K` calls the same function its own chord calls rather than replaying the keystroke, and a row that cannot apply is not built — a chord that is disabled in the current pane fires nothing, so a replayed one would be a row that does nothing and says nothing. The chord is drawn from the registry, so a rebinding moves the caps.
+
+**`>` narrows to actions**, an empty box draws everything in the order the app already draws it, and a query matching the *start* of a label outranks one matching the middle. The list is never focused: the arrows and Enter belong to the field, for the reason the composer's pickers are built that way.
+
+## When a pane fails
+
+**A throw costs a view, not the window.** A boundary around the main column keeps the sidebar, the header and the composer alive; one around the whole app is the floor. It is keyed on what the pane is showing, because a boundary latches on the error it caught — unkeyed, one bad turn would leave every later session blank. The panel shows the error's own message, a Reload and a copy, and nothing about it is reported anywhere: an error message is arbitrary text that routinely carries a path.
+
+**A slow read draws one line, after four seconds, and only the oldest.** A spinner for every read is a screen that always looks busy; a line per read is a wall. The line is bottom-left, over the sidebar — the cheapest thing on screen to cover — and it clears itself a beat after the read lands, or on a failure, since the composer's error slot is then saying what actually went wrong. No spinner glyph: this is a sentence about waiting, not a control.
 
 ## Update row
 

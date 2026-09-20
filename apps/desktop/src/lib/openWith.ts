@@ -1,17 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
-import { readLocalStorage } from "@/hooks/useLocalStorage";
+import { readPreference } from "@/lib/prefs";
 import type { ExternalApp } from "@/types/events";
 
 /// Which app the reader last opened a session's *working directory* with, by
 /// bundle path.
 ///
 /// One value for the whole app, not one per session: which editor you use is a
-/// fact about you, the same standing preference `ade.diffStyle` and
-/// `ade.updateChannel` are. Keyed per session it would have to be *learned*
+/// fact about you, the same standing preference the update channel and the
+/// space list are. Keyed per session it would have to be *learned*
 /// again on every new session, which is where it is least likely to be right.
-export const OPEN_DIR_KEY = "ade.openWith";
+export const OPEN_DIR_KEY = "hz.openWith";
 
 /// Which app a *filename* in the transcript opens in, by bundle path.
 ///
@@ -20,10 +20,10 @@ export const OPEN_DIR_KEY = "ade.openWith";
 /// their checkout in Ghostty would find that clicking a filename opened a
 /// terminal, which is no answer to "show me this file".
 ///
-/// Markdown never reaches this: it opens in the Docs panel, which is Dray's own
+/// Markdown never reaches this: it opens in the Docs panel, which is hz's own
 /// answer to "show me this file". See `openPath` in
 /// [useDocs](../hooks/useDocs.ts).
-export const OPEN_FILE_KEY = "ade.openFileWith";
+export const OPEN_FILE_KEY = "hz.openFileWith";
 
 /// The last answer, so a control drawn after the first read paints at once
 /// instead of flashing in a frame later. Not a cache in the sense of being
@@ -107,12 +107,19 @@ export async function openFileWith(
   await invoke("open_in_app", { appPath: app.path, path: lineUrl(app, path, line) ?? path });
 }
 
+/// The preferences a control of this shape picks between, all three holding a
+/// bundle path or nothing — which is why one [Opener] can wear any of them: the
+/// control is the same control with a different list behind it.
+export type OpenerKey = typeof OPEN_DIR_KEY | typeof OPEN_FILE_KEY | typeof RUN_IN_KEY;
+
 /// What a control opening a *directory* offers and remembers, and what one
 /// opening a *file* does — two different lists, two different defaults and two
 /// different meanings for Finder, collected so one button can wear either.
 export type Opener = {
-  /// Where the reader's last pick is stored.
-  key: string;
+  /// Which preference the reader's last pick is stored under — a durable key,
+  /// so the three of them can be read and written through `lib/prefs` without
+  /// this module naming a store.
+  key: OpenerKey;
   /// Which detected apps this control lists.
   choices: (apps: ExternalApp[]) => ExternalApp[];
   /// Which of them it opens with when the stored one is gone or unset.
@@ -138,16 +145,16 @@ export const DIR_OPENER: Opener = {
   open: (app, path) => invoke("open_in_app", { appPath: app.path, path }),
 };
 
-/// Which terminal the reader last had Dray open for them, by bundle path.
+/// Which terminal the reader last had hz open for them, by bundle path.
 ///
 /// Its own key rather than [OPEN_DIR_KEY]'s: that one holds editors and Finder
 /// too, so a reader who last opened their checkout in VS Code would find this
 /// control standing in a terminal-shaped hole with an editor's name on it.
-export const RUN_IN_KEY = "ade.runInTerminal";
+export const RUN_IN_KEY = "hz.runInTerminal";
 
 /// A terminal, opened at a directory — nothing is typed and nothing is run.
 ///
-/// The PR pane's, where the reader has a command to run and Dray has no
+/// The PR pane's, where the reader has a command to run and hz has no
 /// business running it: macOS lets no app put text on another's prompt without
 /// an Accessibility grant, and everything short of that either executes on
 /// their behalf or needs a permission whose denial is silent. So the command is
@@ -191,7 +198,7 @@ export const FILE_OPENER: Opener = {
 /// existed. A transcript row has nowhere to put an error sentence, so the
 /// failure has to be a working link rather than a message.
 export async function openFile(path: string, line?: number): Promise<void> {
-  const stored = readLocalStorage<string | null>(OPEN_FILE_KEY, null);
+  const stored = readPreference(OPEN_FILE_KEY, null);
   const app = pickFileOpener(await load(), stored);
 
   if (app) {

@@ -31,14 +31,6 @@ pub struct Usage {
     pub per_model: Vec<ModelUsage>,
 }
 
-impl Usage {
-    /// Whether this carries anything worth emitting. The mapper debounces on
-    /// this to avoid one `UsageUpdate` per token-count line.
-    pub fn is_empty(&self) -> bool {
-        *self == Usage::default()
-    }
-}
-
 /// What one model has consumed **for the session so far** — cumulative and
 /// monotonic across turns, not a per-turn figure.
 ///

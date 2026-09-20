@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { groupLabel, isRoutineError, mcpCall, skillBrief, streamingLabel, subagentBrief, toolLabel, toolSummary } from "./tools";
 
-// Every input here is a real `Skill` call taken out of `~/.dray/sessions`. The
+// Every input here is a real `Skill` call taken out of `~/.hz/sessions`. The
 // harness classifies the tool as `other` and leaves `title` null, so the name
 // and the brief are the whole of what the row has to work with.
 describe("a Skill call", () => {
@@ -35,7 +35,7 @@ describe("a Skill call", () => {
 });
 
 
-// Every string here is a real `Bash` error taken out of `~/.dray/sessions`,
+// Every string here is a real `Bash` error taken out of `~/.hz/sessions`,
 // including the "Exit code N" prefix a shell failure actually arrives with —
 // the patterns have to match inside that, not against a bare message.
 describe("isRoutineError", () => {

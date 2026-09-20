@@ -1,30 +1,28 @@
 use crate::{
     attachments,
+    context::ContextSnapshot,
     events::{
-        now_rfc3339, AgentEvent, AgentEventPayload, ApprovalPolicy, ErrorSource, ImageRef,
-        MessageSender, PermissionBehavior,
+        now_rfc3339, prompt_ts, AgentEvent, AgentEventPayload, ApprovalPolicy, ErrorSource, ImageRef,
+        MessageSender,
     },
     git,
     harness::{
-        claude_code::{
-            self,
-            control::{ControlLine, ControlRequest, FlagSettings},
-            permissions::{answer_response, decision_response, PendingPermissions, Reply},
-        },
+        mcode::{self, McodeSession},
+        permissions::{PendingPermissions, Reply},
         FastMode,
     },
     issues::{self, IssueRef},
-    models::{find_model, resolve_effort, runs_on, Effort, Model, ModelId},
+    models::{resolve_effort, runs_on, Effort, Model, ModelId},
     store::{
         append_session_event, append_session_index_item, clear_fork_from, copy_session_log,
         delete_session, get_session_index_item, link_session_issue, list_session_events,
-        relocate_session_to_project, resolve_unclaimed_worktree_name, set_session_status,
-        touch_session_index_item, worktree_path, SessionIndexItem, SessionSnapshot, SessionStatus,
+        record_context_reading, relocate_session_to_project, resolve_unclaimed_worktree_name,
+        set_session_status, touch_session_index_item, worktree_path, SessionIndexItem, SessionSnapshot,
+        SessionStatus,
     },
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -40,8 +38,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    io::AsyncWriteExt,
-    process::{Child, ChildStdin},
+    process::Child,
     sync::Mutex,
 };
 
@@ -90,6 +87,12 @@ pub struct QueuedMessage {
     /// flush.
     #[serde(default)]
     pub issues: Vec<IssueRef>,
+    /// The reader's clock at the press, carried through the wait rather than
+    /// read at the flush. A held prompt can wait out a whole turn, and the one
+    /// it opens is timed from the press — the boundary that released it is not
+    /// something the reader did.
+    #[serde(default)]
+    pub sent_at: Option<String>,
 }
 
 /// Held prompts, oldest first. Shared with the stdout task, which is where the
@@ -271,12 +274,6 @@ impl StatusTracker {
         self.status
     }
 
-    /// The outstanding background tasks — the latest reading, since the set is
-    /// republished whole on every change rather than accumulated here.
-    pub fn background_task_ids(&self) -> Vec<String> {
-        self.background_tasks.clone()
-    }
-
     /// Counts main-thread tool calls in and out. Fed separately from
     /// [`Self::on_event`] because only the caller holds the event envelope, and
     /// a *subagent's* tool call must not count: it runs on its own thread and
@@ -403,82 +400,108 @@ impl Default for SessionManager {
     }
 }
 
+/// One send: the prompt, what it carries, and the settings a new session starts
+/// under.
+///
+/// **A struct rather than twenty-two arguments**, and the count is the point —
+/// every field is genuinely one send's, they travelled together through the
+/// manager, and a bare list of them meant a reader counting positions to know
+/// which `Option<&str>` was the branch and which was the base ref. Clippy says
+/// the same thing at seven arguments; this one was three times over.
+pub struct SendRequest<'a> {
+    pub session_id: &'a str,
+    pub prompt: &'a str,
+    /// Absolute paths of what the composer had attached. Re-read by the send
+    /// rather than uploaded: the frontend holds a thumbnail, not the bytes.
+    pub attachment_paths: &'a [String],
+    /// Issues named outright rather than tagged in the text. `hz new --issue`
+    /// is the only caller: the app sends none, since nothing in it starts a
+    /// session against a row. Merged with the prompt's own `#` tags — and
+    /// naming one here is what *links* it, where a tag in the text only
+    /// mentions.
+    pub issue_ids: &'a [String],
+    pub harness: Harness,
+    pub model: ModelId,
+    pub effort: Option<Effort>,
+    pub permission_mode: ApprovalPolicy,
+    /// The composer's fast-mode pick. Clamped to what this harness and model
+    /// have a route to before it is recorded — see `fast` in [`SessionManager::send_msg`].
+    pub fast: bool,
+    pub cwd: &'a str,
+    /// Recorded, not acted on: the picker checks the branch out when the user
+    /// picks it, so by here the tree is already on it.
+    pub branch: Option<&'a str>,
+    pub use_worktree: bool,
+    pub worktree_name: Option<&'a str>,
+    /// Where the worktree starts from, already resolved to a git ref by the
+    /// caller — the orchestration socket turns a session id into one, and
+    /// nothing below here knows sessions.
+    pub base_ref: Option<&'a str>,
+    /// The responsibility a new session starts under, written onto the index
+    /// entry *before* the child spawns: the role is resolved from the entry at
+    /// spawn, so a session created with one carries it from its first turn
+    /// rather than its next respawn. Ignored for an existing session.
+    pub role_id: Option<&'a str>,
+    pub is_new_session: bool,
+    /// Set only for a session created over the orchestration socket. Recorded
+    /// rather than acted on — the depth cap reads it off the index on the
+    /// *next* create.
+    pub parent_session_id: Option<&'a str>,
+    /// The session that relayed this prompt, for a message arriving over the
+    /// orchestration socket. `None` everywhere else: the composer's prompts are
+    /// the user's own, and a `user_message` with a sender is drawn differently.
+    pub from: Option<MessageSender>,
+    /// The reader's clock at the press, from the webview that saw it — the
+    /// composer's own `new Date()`, since only it knows when Enter landed.
+    /// `None` for every caller that is not a person: `hz send` relaying, and
+    /// `hz new` starting a session an agent asked for.
+    pub sent_at: Option<&'a str>,
+}
+
 impl SessionManager {
     /// Routes a prompt to a session: spawns a new child, reuses a live one, or
-    /// respawns via `--resume` when the id is known but its process is gone.
+    /// respawns it from its own agent session when the process is gone.
     pub async fn send_msg(
         &self,
-        session_id: &str,
-        prompt: &str,
-        // Absolute paths of what the composer had attached. Re-read here rather
-        // than uploaded: the frontend holds a thumbnail, not bytes.
-        attachment_paths: &[String],
-        // Issues named outright rather than tagged in the text. `dray new
-        // --issue` is the only caller: the app sends none, since nothing in it
-        // starts a session against a row. Merged with the prompt's own `#` tags,
-        // which is why one list arrives here and not two — and naming an issue
-        // here is what *links* it, where a tag in the text only mentions.
-        issue_ids: &[String],
-        harness: Harness,
-        model: ModelId,
-        effort: Option<Effort>,
-        permission_mode: ApprovalPolicy,
-        // The composer's fast-mode pick. Where a harness cannot honour it this
-        // is clamped rather than obeyed — see `fast` below — so what reaches
-        // the index is always what the child was actually told.
-        fast: bool,
-        cwd: &str,
-        // Recorded, not acted on: the picker checks the branch out when the
-        // user picks it, so by here the tree is already on it.
-        branch: Option<&str>,
-        use_worktree: bool,
-        worktree_name: Option<&str>,
-        // Where the worktree starts from, already resolved to a git ref by the
-        // caller — the orchestration socket turns a session id into one, and
-        // nothing below here knows sessions. `None` is the ordinary case and
-        // hands the tree to `claude -w`, which forks it from `origin/<default>`.
-        base_ref: Option<&str>,
-        // The responsibility a new session starts under. Written onto the index
-        // entry *before* the child spawns, which is the whole reason it is a
-        // parameter rather than a `set_session_role` call after the fact: the
-        // role is resolved from the entry at spawn, so a session created with
-        // one here carries it from its first turn instead of its next respawn.
-        // Ignored for an existing session, whose role is already recorded.
-        role_id: Option<&str>,
-        is_new_session: bool,
-        // Set only for a session created over the orchestration socket. The
-        // composer never has one, and it is recorded rather than acted on —
-        // the depth cap reads it back off the index on the *next* create.
-        parent_session_id: Option<&str>,
-        // The session that relayed this prompt, for a message arriving over the
-        // orchestration socket. `None` everywhere else: the composer's prompts
-        // are the user's own, and a `user_message` with a sender is drawn
-        // differently.
-        from: Option<MessageSender>,
+        request: SendRequest<'_>,
         app: &AppHandle,
     ) -> Result<SendOutcome> {
-        // Resolved against whichever table can name it. The two single-vendor
-        // harnesses have one written here; pi's list is answered by the machine,
-        // so its models are looked up in what the probe last reported.
-        //
-        // `None` is legal for pi alone and means "let pi decide" — its own
-        // settings already name a model, and Dray naming one it might have no
+        // Unpacked here once, so the body below reads exactly as it did when
+        // these were twenty-two parameters — the struct is about the call site
+        // and the signature, not about renaming everything inside it.
+        let SendRequest {
+            session_id,
+            prompt,
+            attachment_paths,
+            issue_ids,
+            harness,
+            model,
+            effort,
+            permission_mode,
+            fast,
+            cwd,
+            branch,
+            use_worktree,
+            worktree_name,
+            base_ref,
+            role_id,
+            is_new_session,
+            parent_session_id,
+            from,
+            sent_at,
+        } = request;
+
+
+        // The machine's answer, not a table: the agent states what it will take
+        // on this account and these providers, so a model shipped after this
+        // build still spawns. `None` is legal and means "let mcode decide" — its
+        // own settings already name one, and hz naming a model the reader has no
         // key for is the worst possible first run.
-        let model_spec = match harness {
-            Harness::Pi => crate::harness::pi::models::find(&model).await,
-            Harness::Fx => crate::harness::fx::models::find(&model).await,
-            // omp's list is a read too, and the same shape: multi-provider, so
-            // any constant Dray named could be one the reader has no key for.
-            Harness::Omp => crate::harness::omp::models::find(&model).await,
-            // Codex's list is the machine's answer too now, with the table
-            // behind it — so a model shipped after this build still spawns.
-            Harness::Codex => crate::harness::codex::models::find(&model).await,
-            _ => Some(find_model(&model).with_context(|| format!("unknown model {model}"))?),
-        };
+        let model_spec = crate::harness::mcode::models::find(&model).await;
 
         // A model belongs to exactly one harness, and the pair reaches here from
         // two places that each know only half of it — the composer's stored
-        // defaults and the `dray` CLI's own flags — so nothing upstream makes
+        // defaults and the `hz` CLI's own flags — so nothing upstream makes
         // them agree. Refused rather than quietly repaired: a session running on
         // a model nobody picked is the failure that looks like success.
         //
@@ -488,10 +511,10 @@ impl SessionManager {
         // searched what Codex reported *and* the table, where `runs_on`
         // knows only the table and would refuse a model newer than this
         // build.
-        let runnable = match harness {
-            Harness::Codex => model_spec.is_some(),
-            _ => runs_on(&model, harness),
-        };
+        // The live list answers the wider question: it holds what the agent
+        // reported, where `runs_on` knows only the table and would refuse a
+        // model newer than this build.
+        let runnable = model_spec.is_some() || runs_on(&model, harness);
 
         if !model.is_unset() && !runnable {
             let named = model_spec
@@ -509,11 +532,11 @@ impl SessionManager {
         // clamped **here** so the index records what the child was told rather
         // than what was asked for. A `true` sitting on an entry that cannot
         // honour it is not a cosmetic lie: it draws a lit switch over a session
-        // running at ordinary speed, and `dray new` hands it down to every
+        // running at ordinary speed, and `hz new` hands it down to every
         // same-harness child the session spawns.
         //
         // Both halves are needed and the composer is not one of them. It runs
-        // the same narrowing in `fastFor`, but `dray new --fast --model haiku`
+        // the same narrowing in `fastFor`, but `hz new --fast --model haiku`
         // never goes near it — the orchestration socket reaches this function
         // directly, which is the whole reason the rule is restated on this side.
         //
@@ -568,7 +591,7 @@ impl SessionManager {
             }
 
             // Only Claude Code's `-w` makes its own tree. For everything else
-            // the tree has to be one Dray makes — the same route `--from`
+            // the tree has to be one hz makes — the same route `--from`
             // already takes, started where the CLI would have started it.
             // Without this the tree is never created, and the session bails
             // inside `Session::init` with its row already in the index: a
@@ -608,7 +631,7 @@ impl SessionManager {
                 None => git::list_branches(cwd).await?.current,
             };
 
-            // A base ref is the one case Dray makes the tree itself. The harness
+            // A base ref is the one case hz makes the tree itself. The harness
             // cannot be told where to fork from — `-w` resolves the default
             // branch and fetches `origin/<it>`, and its flag surface exposes no
             // base at all — so the tree is created here and the child is spawned
@@ -661,7 +684,7 @@ impl SessionManager {
             // The spawn below is deliberately *not* covered — by then the row
             // exists, and deleting the session already takes the tree with it.
             //
-            // Only a tree Dray made. A `-w` one does not exist yet, and the
+            // Only a tree hz made. A `-w` one does not exist yet, and the
             // failed create above left nothing to undo.
             if let Err(e) = append_session_index_item(item.clone()).await {
                 if owned_worktree {
@@ -698,16 +721,6 @@ impl SessionManager {
                 }),
             );
 
-            // Detached: generation takes ~16s and the snapshot below is what the
-            // composer waits on. The title written above stands until this lands.
-            //
-            // Spawned at the project root, not `session_cwd`, for the same
-            // reason the harness child is: a worktree's directory does not exist
-            // until the CLI creates it, and `current_dir` on a missing path
-            // fails the spawn outright. Nothing waits on this, so that took
-            // every worktree session's title with it in silence.
-            crate::title::spawn_title_generation(session_id, harness, prompt, cwd, app);
-
             // Taken before the child exists, so nothing it does can end up
             // inside its own baseline. A worktree the CLI has yet to create has
             // no directory to snapshot, so that case resolves the fork point the
@@ -737,7 +750,6 @@ impl SessionManager {
                 model_spec.as_ref(),
                 effort,
                 permission_mode,
-                fast,
                 spawn_cwd,
                 &session_cwd,
                 spawn_worktree,
@@ -746,8 +758,25 @@ impl SessionManager {
                 app,
             )
             .await?;
+
+            // **After the child is up, not before it.** This was spawned a few
+            // lines above, while `Session::init` — the whole handshake, measured
+            // at 5.3s — was still to come, so two copies of the same 28MB
+            // runtime booted at once and the reader's own session waited behind
+            // both. Nothing waits on the title, so it has no business in that
+            // queue.
+            //
+            // Detached: generation takes ~16s, and it is an upgrade to the
+            // prompt-derived title written above, never a prerequisite for it.
+            // Spawned at the project root rather than `session_cwd` for the same
+            // reason the harness child is: a worktree's directory does not exist
+            // until the CLI creates it, and `current_dir` on a missing path
+            // fails the spawn outright — which took every worktree session's
+            // title with it, in silence.
+            crate::title::spawn_title_generation(session_id, harness, prompt, cwd, app);
+
             if let Err(error) = session
-                .send_msg(prompt, attachment_paths, issues, baseline, from, app)
+                .send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
                 .await
             {
                 // Nothing has this session yet — it is inserted below — so
@@ -910,29 +939,23 @@ impl SessionManager {
                 // The cost is that there is no window to cancel in — which the
                 // UI states by itself, since a prompt written straight through
                 // draws no pending row and so offers no Esc.
-                // pi holds a steering queue of its own and drains it at the next
-                // tool-call boundary inside the run, so there is nothing for
-                // Dray's queue to do here and no boundary for it to race for —
-                // whether or not a tool happens to be running right now.
-                if matches!(s.stdin, Transport::Pi(_)) {
-                    s.steer(prompt, attachment_paths, issues, from, app).await?;
-                    return Ok(SendOutcome {
-                        issues: linked,
-                        ..Default::default()
-                    });
-                }
-
-                // fx has no injection point at all: `session/prompt` blocks for
-                // the turn and a second one written meanwhile takes over the one
-                // id the read loop settles the turn on, so the first is never
-                // closed. It queues to the turn's end, whatever is running — and
+                // ACP has no injection point: `session/prompt` blocks for the
+                // turn and a second one written meanwhile takes over the one id
+                // the read loop settles the turn on, so the first is never
+                // closed. A prompt typed mid-turn queues to the turn's end — and
                 // the decision is atomic with the turn-end reservation, so a
                 // completion cannot slip between the check and the enqueue.
                 // `None` means the turn ended under this read: fall through and
                 // start a new one.
-                if matches!(s.stdin, Transport::Fx(_)) {
+                if matches!(s.stdin, Transport::Acp(_)) {
                     if let Some(queued) = s
-                        .fx_queue_if_in_flight(prompt, attachment_paths, issues, from.clone())
+                        .acp_queue_if_in_flight(
+                            prompt,
+                            attachment_paths,
+                            issues,
+                            from.clone(),
+                            sent_at,
+                        )
                         .await
                     {
                         return Ok(SendOutcome {
@@ -943,7 +966,7 @@ impl SessionManager {
                     }
                 } else {
                     if tool_in_flight {
-                        s.queue_and_flush(prompt, attachment_paths, issues, from, app)
+                        s.queue_and_flush(prompt, attachment_paths, issues, from, sent_at, app)
                             .await;
                         return Ok(SendOutcome {
                             issues: linked,
@@ -951,7 +974,9 @@ impl SessionManager {
                         });
                     }
 
-                    let queued = s.queue_msg(prompt, attachment_paths, issues, from).await;
+                    let queued = s
+                        .queue_msg(prompt, attachment_paths, issues, from, sent_at)
+                        .await;
                     return Ok(SendOutcome {
                         snapshot: None,
                         queued: Some(queued),
@@ -1033,7 +1058,7 @@ impl SessionManager {
                     )
                     .await;
                     // Written back over the optimistic touch above, so the row
-                    // and `dray ls` name the effort that is running rather than
+                    // and `hz ls` name the effort that is running rather than
                     // the one that was asked for. Every other field is still
                     // the pick: fast mode is applied below this block, so
                     // recording the child's current value here would drop it.
@@ -1050,15 +1075,12 @@ impl SessionManager {
             if caps.applies_permission_in_place && s.permission_mode != permission_mode {
                 s.set_permission_mode(permission_mode).await?;
             }
-            if caps.fast_mode == FastMode::InPlace && s.fast != fast {
-                s.set_fast(fast).await?;
-            }
 
             // Last thing before the prompt goes down the pipe: the child is idle
             // but alive, so the narrower the gap the less of the user's own
             // editing lands on the turn's side of the diff.
             let baseline = git::snapshot_tree(&session_cwd).await;
-            s.send_msg(prompt, attachment_paths, issues, baseline, from, app)
+            s.send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
                 .await?;
             return Ok(SendOutcome {
                 issues: linked,
@@ -1093,7 +1115,7 @@ impl SessionManager {
         // Claude Code takes `-w` and creates the tree itself after launch, so
         // the child spawns at the project root and the baseline can only be the
         // fork point it is about to resolve. Every other harness needs the tree
-        // to exist first — so Dray makes it, and then the ordinary snapshot
+        // to exist first — so hz makes it, and then the ordinary snapshot
         // works, which is the more exact of the two baselines.
         let mut pending_worktree = None;
         let (spawn_cwd, baseline) = match unmade_worktree {
@@ -1142,7 +1164,6 @@ impl SessionManager {
             model_spec.as_ref(),
             effort,
             permission_mode,
-            fast,
             &spawn_cwd,
             &session_cwd,
             pending_worktree.as_deref(),
@@ -1161,7 +1182,7 @@ impl SessionManager {
         }
 
         if let Err(error) = session
-            .send_msg(prompt, attachment_paths, issues, baseline, from, app)
+            .send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
             .await
         {
             // Same reason as the creation path above: the insert is below, so
@@ -1223,7 +1244,7 @@ impl SessionManager {
         }
         if !parent.harness.names_a_cli() {
             bail!(
-                "this session runs on {}, which this version of Dray can't drive — update Dray",
+                "this session runs on {}, which this version of hz can't drive — update hz",
                 parent.harness.label()
             );
         }
@@ -1263,16 +1284,6 @@ impl SessionManager {
         // hold its parent's conversation, and the entry has not been written yet,
         // so failing here leaves nothing behind.
         //
-        // Asked for by harness rather than by probing the path, so that a missing
-        // file is an error where it means something and never reached where it is
-        // the ordinary state. Every other harness forks through the CLI and has no
-        // transcript of its own here.
-        match parent.harness {
-            Harness::Pi => crate::store::copy_pi_session_file(session_id, fork_id).await?,
-            Harness::Omp => crate::store::copy_omp_session_file(session_id, fork_id).await?,
-            _ => {}
-        }
-
         let item = parent.fork(fork_id, worktree_name.as_deref());
         append_session_index_item(item.clone()).await?;
 
@@ -1291,17 +1302,63 @@ impl SessionManager {
     /// task held the session `in_progress` — the status follows the turn alone
     /// now, so that fan-out only killed dev servers the reader still wanted.
     /// Per-task stops stay available in the subagent panel for the narrower ask.
-    pub async fn interrupt(&self, session_id: &str, app: &AppHandle) -> Result<()> {
-        // pi stops off its own desk, for `answer_questions`' reason and one
-        // more: the optimistic row the composer draws for a new session puts
-        // Stop on screen while the backend `Session` is still a local inside
-        // `send_msg`, so reaching for the map here answered "no running session"
-        // over a blocked agent. Claude Code and Codex go on through
-        // `Session::interrupt` below.
-        if let Some(desk) = crate::harness::pi::desk::find(session_id) {
-            return desk.stop(app).await;
+    /// Asks the live child for its own context report, for the composer's panel.
+    ///
+    /// **A reading is a question only a live child can answer**, so the three
+    /// ways this cannot is each its own sentence rather than one silence: no child
+    /// up (a `Err`, because the panel has already drawn the last reading the index
+    /// holds and the reader is owed the reason the refresh did nothing), the child
+    /// mid-turn (the agent refuses a second prompt outright), and a child that
+    /// answers no report — `Ok(None)`, the agent's own "No Runtime context
+    /// snapshot is available for this session yet." until a turn has run on it.
+    ///
+    /// A report is written to the index before it is answered, so the reading on
+    /// screen and the one a reopened session draws are the same answer.
+    pub async fn context_snapshot(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ContextSnapshot>, String> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id) else {
+            // The panel draws the last reading off the index, so this is not
+            // "nothing to show" — it is why the *refresh* it just offered did
+            // nothing, and it says so rather than repeating the agent's own
+            // "nothing to count yet", which is a different fact about a live
+            // child.
+            return Err("This session's agent is not running — a reading is taken while it is.".into());
+        };
+
+        // Refused rather than queued: the agent answers a second prompt with an
+        // error, and a reading taken mid-turn would be of a run in progress
+        // anyway. The panel says so and the reader asks again when it settles.
+        if session.status.lock().await.turn_in_flight() {
+            return Err("The agent is mid-turn — read this again when it settles.".into());
         }
 
+        let Transport::Acp(child) = &session.stdin;
+        let text = mcode::probe_context(child).await.map_err(|e| format!("{e:#}"))?;
+
+        // No report: the agent said something else, or nothing it counts yet.
+        // Both read as "nothing to show" rather than as a failure.
+        let Some(snapshot) = mcode::context::parse(&text) else {
+            return Ok(None);
+        };
+
+        // Kept before it is answered, so the panel's reading and the one a
+        // reopened session draws are the same answer. Best effort: a failed write
+        // costs the next cold open, and refusing here would cost the live one.
+        let reading = crate::context::ContextReading {
+            ts: now_rfc3339(),
+            snapshot: snapshot.clone(),
+        };
+        if let Err(e) = record_context_reading(session_id, reading).await {
+            eprintln!("[hz] could not record the context reading: {e:#}");
+        }
+
+        Ok(Some(snapshot))
+    }
+
+    pub async fn interrupt(&self, session_id: &str, _app: &AppHandle) -> Result<()> {
         let mut sessions_guard = self.sessions.lock().await;
         let Some(session) = sessions_guard.get_mut(session_id) else {
             bail!("no running session {session_id}");
@@ -1310,14 +1367,17 @@ impl SessionManager {
         session.interrupt().await
     }
 
-    /// Stops one of a session's background tasks. Errors for a dead child like
-    /// the rest of these: the task ran inside that process and died with it.
-    pub async fn stop_task(&self, session_id: &str, task_id: &str) -> Result<()> {
+    /// Hands every held prompt into the running turn, without stopping it.
+    ///
+    /// See [`Session::steer_queued`]: this is the reader's own alternative to
+    /// interrupting a turn just to release a sentence they have already written.
+    pub async fn steer_queued(&self, session_id: &str, app: &AppHandle) -> Result<usize> {
         let mut sessions_guard = self.sessions.lock().await;
         let Some(session) = sessions_guard.get_mut(session_id) else {
             bail!("no running session {session_id}");
         };
-        session.stop_task(task_id).await
+
+        session.steer_queued(app).await
     }
 
     /// Takes back the newest prompt still waiting on a boundary, returning it
@@ -1358,15 +1418,6 @@ impl SessionManager {
         answers: HashMap<String, String>,
         app: &AppHandle,
     ) -> Result<()> {
-        // pi answers off its own desk and never touches the map below, because
-        // it can ask while the map does not hold the session or while this very
-        // lock is held by the send it is blocking. Both left the card drawn with
-        // buttons that did nothing until the prompt timed out 30 seconds later.
-        // See `harness::pi::desk`.
-        if let Some(desk) = crate::harness::pi::desk::find(session_id) {
-            return desk.answer(request_id, &answers, app);
-        }
-
         let mut sessions_guard = self.sessions.lock().await;
         let Some(session) = sessions_guard.get_mut(session_id) else {
             bail!("no running session {session_id}");
@@ -1464,7 +1515,7 @@ impl SessionManager {
             eprintln!("could not delete attachments for {session_id}: {e}");
         }
 
-        // pi keeps its own transcript beside Dray's, because the *file* is its
+        // pi keeps its own transcript beside hz's, because the *file* is its
         // resume handle. Left behind it is a whole conversation on disk that
         // nothing can ever reach again, the index entry naming it having just
         // gone. Best-effort and unconditional: a non-pi session has no such
@@ -1475,7 +1526,7 @@ impl SessionManager {
 
         // And omp's, for the same reason under a different file: its resume
         // handle is the transcript too, so leaving it behind orphans a whole
-        // conversation on disk under `~/.dray/omp-sessions/`. Best-effort and
+        // conversation on disk under `~/.hz/omp-sessions/`. Best-effort and
         // unconditional, and a missing one reads as done.
         if let Err(e) = crate::store::delete_omp_session_file(session_id).await {
             eprintln!("could not delete omp's session file for {session_id}: {e}");
@@ -1523,39 +1574,9 @@ impl SessionManager {
 /// one way to write, and the compiler should say so.
 #[derive(Clone, Debug)]
 pub enum Transport {
-    Lines(Arc<Mutex<ChildStdin>>),
-    /// The conversation every Codex write is addressed to, and the settings
-    /// each one restates. See [`Thread`](crate::harness::codex::Thread).
-    Rpc(crate::harness::codex::Thread),
-    /// pi's connection. A peer like Codex's, but not JSON-RPC and with nothing
-    /// to address a write to: pi has one conversation per process, so the
-    /// client is the whole of it.
-    Pi(crate::harness::pi::rpc::PiClient),
-    /// fx's connection: JSON-RPC like Codex's, addressed to the session fx
-    /// minted. See [`FxSession`](crate::harness::fx::FxSession).
-    Fx(crate::harness::fx::FxSession),
-    /// omp's connection. pi's shape exactly — a peer that does not speak
-    /// JSON-RPC, with one conversation per process — for the reason the two
-    /// harnesses are forks of one another. See
-    /// [`OmpClient`](crate::harness::omp::rpc::OmpClient).
-    Omp(crate::harness::omp::rpc::OmpClient),
-}
-
-impl Transport {
-    /// The line-writing pipe, for the paths that only Claude Code has.
-    ///
-    /// An error rather than a silent no-op: reaching one of those with a
-    /// session that writes some other way is a wiring mistake, and a control
-    /// that quietly does nothing is the failure mode `control.rs` exists to
-    /// warn about.
-    pub fn lines(&self) -> Result<&Arc<Mutex<ChildStdin>>> {
-        match self {
-            Transport::Lines(stdin) => Ok(stdin),
-            Transport::Rpc(_) | Transport::Pi(_) | Transport::Fx(_) | Transport::Omp(_) => {
-                bail!("this control is not wired for this harness")
-            }
-        }
-    }
+    /// ACP over stdio, addressed to the session the CLI minted. See
+    /// [`McodeSession`](crate::harness::mcode::McodeSession).
+    Acp(McodeSession),
 }
 
 #[derive(Debug)]
@@ -1590,17 +1611,23 @@ pub struct Session {
 impl Session {
     /// Spawns the child process for the given harness.
     ///
-    /// `model` is optional because pi's is: it is multi-provider, so Dray names
+    /// `model` is optional because pi's is: it is multi-provider, so hz names
     /// no default it could be wrong about and lets pi's own settings decide.
     /// The other two name one in `default_model_for`, so `None` reaching them
     /// is a caller that skipped resolution rather than a state to spawn in.
+    //
+    // Eleven handles and facts about one spawn, and there is no object to name
+    // that would group them: a `SpawnConfig` would be a struct with eleven
+    // fields and one caller shape, which is this list with more ceremony.
+    // `SendRequest` earns its struct because three callers build it from three
+    // different places; this one is built where it is used.
+    #[allow(clippy::too_many_arguments)]
     pub async fn init(
         session_id: &str,
         harness: Harness,
         model: Option<&Model>,
         effort: Option<Effort>,
         permission_mode: ApprovalPolicy,
-        fast: bool,
         cwd: &str,
         // The session's own tree, for the turn-end snapshot. Differs from `cwd`
         // on a worktree creation, where the child spawns at the project root.
@@ -1610,131 +1637,25 @@ impl Session {
         fork_from: Option<&str>,
         app: &AppHandle,
     ) -> Result<Session> {
+        // The tree is made before this on every harness now — mcode has no `-w`
+        // — so a name arriving here is a caller that skipped resolving one, and
+        // a session that silently ran in the wrong tree is the failure worth
+        // refusing outright.
+        if worktree_name.is_some() {
+            bail!("mcode cannot create a worktree — it has to be made first");
+        }
+
         match harness {
-            Harness::ClaudeCode => {
-                claude_code::init(
+            Harness::Mcode => {
+                mcode::init(
                     session_id,
-                    model.context("a Claude Code session needs a model")?,
+                    model,
                     effort,
                     permission_mode,
-                    fast,
                     cwd,
                     session_cwd,
-                    worktree_name,
                     is_new_session,
                     fork_from,
-                    app,
-                )
-                .await
-            }
-            Harness::Codex => {
-                // A worktree reaches Codex as a directory that already exists,
-                // never as a name to create: `send_msg` resolves a base and
-                // makes the tree itself, because Codex has no `-w`. A name
-                // arriving here is a caller that skipped that, and a session
-                // that silently ran in the wrong tree is the failure worth
-                // refusing outright. A fork needs `thread/fork`, and forking
-                // into the parent's own conversation is the same kind of wrong.
-                if worktree_name.is_some() {
-                    bail!("Codex cannot create a worktree — it has to be made first");
-                }
-                if fork_from.is_some() {
-                    bail!("Codex sessions cannot be forked yet");
-                }
-
-                crate::harness::codex::init(
-                    session_id,
-                    model.context("a Codex session needs a model")?,
-                    effort,
-                    permission_mode,
-                    fast,
-                    cwd,
-                    session_cwd,
-                    is_new_session,
-                    app,
-                )
-                .await
-            }
-            Harness::Pi => {
-                // A worktree reaches pi as a directory that already exists,
-                // never as a name to create — pi has no `-w`, so `send_msg`
-                // resolves a base and makes the tree itself. A name arriving
-                // here is a caller that skipped that, and a session that
-                // silently ran in the wrong tree is worth refusing outright.
-                if worktree_name.is_some() {
-                    bail!("pi cannot create a worktree — it has to be made first");
-                }
-                // A fork reaches here as an ordinary resume, because pi's fork
-                // is whole the moment its session file is copied — `send_msg`
-                // filters the instruction out on `fork_needs_cli`. One arriving
-                // anyway is a caller expecting a CLI-side fork pi cannot
-                // perform: its own `fork` names the file rather than taking the
-                // one Dray chose, since `--fork` and `--session` are refused
-                // together.
-                if fork_from.is_some() {
-                    bail!("a pi fork is the copied session file — there is nothing to resume from");
-                }
-
-                // `None` where pi picked for itself. The spawn omits `--model`
-                // there, which is the honest answer for a multi-provider CLI
-                // whose user has already configured one.
-                crate::harness::pi::init(
-                    session_id,
-                    model,
-                    effort,
-                    permission_mode,
-                    cwd,
-                    session_cwd,
-                    is_new_session,
-                    app,
-                )
-                .await
-            }
-            Harness::Fx => {
-                // Same two refusals as pi's, for the same reasons: fx has no
-                // `-w`, so the tree is made before this; and it has no fork.
-                if worktree_name.is_some() {
-                    bail!("fx cannot create a worktree — it has to be made first");
-                }
-                if fork_from.is_some() {
-                    bail!("fx sessions cannot be forked");
-                }
-
-                crate::harness::fx::init(
-                    session_id,
-                    model,
-                    effort,
-                    permission_mode,
-                    fast,
-                    cwd,
-                    session_cwd,
-                    is_new_session,
-                    app,
-                )
-                .await
-            }
-            Harness::Omp => {
-                // Same two refusals as pi's, for the same reasons: omp has no
-                // `-w`, so the tree is made before this; and its fork *is* the
-                // copied session file, so a `fork_from` arriving here is a
-                // caller expecting a CLI-side half omp does not have.
-                if worktree_name.is_some() {
-                    bail!("omp cannot create a worktree — it has to be made first");
-                }
-                if fork_from.is_some() {
-                    bail!("an omp fork is the copied session file — there is nothing to resume from");
-                }
-
-                // `None` where omp picked for itself: multi-provider, so the
-                // flags are omitted and its own settings decide.
-                crate::harness::omp::init(
-                    session_id,
-                    model,
-                    effort,
-                    permission_mode,
-                    cwd,
-                    session_cwd,
-                    is_new_session,
                     app,
                 )
                 .await
@@ -1742,10 +1663,10 @@ impl Session {
             // A session some newer build wrote into the shared index. Its
             // transcript still reads and its row still draws — that is what the
             // tolerant read bought — but there is no CLI here to carry it on,
-            // and picking one would run a different agent inside somebody
-            // else's conversation.
+            // and picking one would run a different agent inside somebody else's
+            // conversation.
             Harness::Other(name) => {
-                bail!("this session runs on {name}, which this version of Dray can't drive — update Dray")
+                bail!("this session runs on {name}, which this version of hz can't drive — update hz")
             }
         }
     }
@@ -1757,6 +1678,12 @@ impl Session {
     /// prompt reaches the child. It is passed in rather than taken here because
     /// only the manager knows which directory to snapshot: a worktree session's
     /// tree does not exist until the CLI creates it.
+    // Eight arguments' worth of a prompt — its text, what it carries, what it is
+    // timed and attributed by — and the path is the point: this is the one
+    // function a queued prompt, a relayed one and a fresh one all reach, so the
+    // fields stay named here rather than behind a struct only this signature
+    // would use. See the note on `flush_queued` next door.
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_msg(
         &mut self,
         prompt: &str,
@@ -1764,6 +1691,7 @@ impl Session {
         issues: &[IssueRef],
         baseline: Option<String>,
         from: Option<MessageSender>,
+        sent_at: Option<&str>,
         app: &AppHandle,
     ) -> Result<()> {
         deliver_prompt(
@@ -1774,9 +1702,9 @@ impl Session {
             issues,
             baseline,
             false,
-            crate::harness::pi::Delivery::WhenIdle,
             true,
             from,
+            sent_at,
             &self.seq,
             &self.events,
             &self.stdin,
@@ -1802,6 +1730,7 @@ impl Session {
         attachment_paths: &[String],
         issues: &[IssueRef],
         from: Option<MessageSender>,
+        sent_at: Option<&str>,
     ) -> QueuedMessage {
         let message = QueuedMessage {
             id: Uuid::now_v7().to_string(),
@@ -1810,6 +1739,7 @@ impl Session {
             attachment_paths: attachment_paths.to_vec(),
             from,
             issues: issues.to_vec(),
+            sent_at: sent_at.map(str::to_string),
         };
         self.queued.lock().await.push(message.clone());
         message
@@ -1831,18 +1761,22 @@ impl Session {
     ///
     /// fx has no injection point, so a prompt for a live turn only ever waits
     /// here for its end; there is no write-through path to take.
-    async fn fx_queue_if_in_flight(
+    async fn acp_queue_if_in_flight(
         &self,
         prompt: &str,
         attachment_paths: &[String],
         issues: &[IssueRef],
         from: Option<MessageSender>,
+        sent_at: Option<&str>,
     ) -> Option<QueuedMessage> {
         let _turn = self.status.lock().await;
         if !_turn.turn_in_flight() {
             return None;
         }
-        Some(self.queue_msg(prompt, attachment_paths, issues, from).await)
+        Some(
+            self.queue_msg(prompt, attachment_paths, issues, from, sent_at)
+                .await,
+        )
     }
 
     /// Takes back the newest held prompt, newest-first because that is the one
@@ -1853,55 +1787,6 @@ impl Session {
     /// learns so from the `user_message` that follows.
     pub async fn cancel_queued(&self) -> Option<QueuedMessage> {
         self.queued.lock().await.pop()
-    }
-
-    /// Sends a prompt *into* the turn already running, for a harness that takes
-    /// one.
-    ///
-    /// pi does, and it is the reason this is not a queue. `streamingBehavior:
-    /// "steer"` puts the prompt on pi's own steering queue, which it drains at
-    /// the next tool-call boundary inside the run — before the model call after
-    /// it, verified live. So the boundary is pi's to find and the prompt is
-    /// pi's to hold, where Dray's queue exists precisely because Claude Code
-    /// offers neither.
-    ///
-    /// Written through rather than held, which trades the same thing
-    /// [`queue_and_flush`](Self::queue_and_flush) trades and buys more for it:
-    /// there is no window to cancel in, and in exchange the prompt lands at a
-    /// boundary pi guarantees rather than one this side raced for. The UI
-    /// states the trade by itself — a prompt written straight through draws no
-    /// pending row, so it offers no Esc.
-    pub async fn steer(
-        &mut self,
-        prompt: &str,
-        attachment_paths: &[String],
-        issues: &[IssueRef],
-        from: Option<MessageSender>,
-        app: &AppHandle,
-    ) -> Result<()> {
-        deliver_prompt(
-            &self.id,
-            self.harness,
-            prompt,
-            attachment_paths,
-            issues,
-            // No baseline, for the reason a flushed prompt has none: the
-            // changes panel pairs the newest baseline with the newest head
-            // after it, so a snapshot taken mid-turn would cut the running
-            // turn's range in two and credit it with only the work that
-            // followed this prompt.
-            None,
-            false,
-            crate::harness::pi::Delivery::Steer,
-            true,
-            from,
-            &self.seq,
-            &self.events,
-            &self.stdin,
-            app,
-        )
-        .await
-        .map(|_| ())
     }
 
     /// Holds a prompt and immediately hands it over, for the case where a tool
@@ -1915,9 +1800,11 @@ impl Session {
         attachment_paths: &[String],
         issues: &[IssueRef],
         from: Option<MessageSender>,
+        sent_at: Option<&str>,
         app: &AppHandle,
     ) {
-        self.queue_msg(prompt, attachment_paths, issues, from).await;
+        self.queue_msg(prompt, attachment_paths, issues, from, sent_at)
+            .await;
         flush_queued(
             &self.id,
             self.harness,
@@ -1931,175 +1818,132 @@ impl Session {
         .await;
     }
 
-    /// Switches the model of a running child. Verified against the CLI: the
-    /// reply after this arrives from the new model, so no respawn is needed.
-    /// There is no `set_effort` counterpart — the CLI rejects that subtype, and
-    /// an `effort` field on this request is accepted but ignored.
+    /// Switches the model of a running child. mcode takes it as a session config
+    /// option on the running connection, and the reply restates that model's
+    /// whole ladder — which is what the composer's effort menu is drawn from, so
+    /// the picker is told to re-read.
     pub async fn set_model(&mut self, model: &Model, app: &AppHandle) -> Result<()> {
-        if let Transport::Fx(session) = &self.stdin {
-            // `app` reaches fx alone, and for one reason: its reply restates
-            // the new model's effort ladder, which the composer's picker has to
-            // be told about or it keeps offering the old model's levels.
-            let outcome = crate::harness::fx::set_model(session, model, app).await;
-            // **What the child is on, not what was asked for, and the refusal
-            // path is the whole reason.** A cross-provider switch moves the
-            // provider first, and fx answers that by putting the session on the
-            // *new provider's* own remembered model — so a model call refused
-            // after it leaves the child somewhere neither side chose. Adopting
-            // fx's own answer is what stops this struct, the index and the
-            // child naming three different models, which is a session whose
-            // every later send retries the same refusal.
-            if let Some(landed) = crate::harness::fx::landed_model(session) {
-                self.model = landed;
-            }
-            outcome?;
-            self.model = model.id.clone();
-            return Ok(());
+        let Transport::Acp(session) = &self.stdin;
+        mcode::set_model(session, model, app).await?;
+
+        // **What the child is on, not what was asked for.** A refusal leaves the
+        // session on whatever model it had, and adopting the CLI's own answer is
+        // what keeps this struct, the index and the child from naming three
+        // different models — a session whose every later send retries the same
+        // refusal.
+        if let Some(landed) = mcode::landed_model(session) {
+            self.model = landed;
         }
 
-        write_line(
-            self.stdin.lines()?,
-            &ControlLine::new(ControlRequest::SetModel { model: &model.arg }),
-        )
-        .await?;
-        self.model = model.id.clone();
-
         Ok(())
     }
 
-    /// Moves a running child on or off its harness's faster tier — Claude Code
-    /// alone, whose `apply_flag_settings` carries the same `flagSettings` layer
-    /// `--settings` fills at spawn.
+    /// Switches the effort of a running child.
     ///
-    /// `Capabilities::fast_mode` is what keeps the other three off this path:
-    /// Codex's rides its spawn, fx's is stamped on its session at creation, and
-    /// pi has none. The recorded value moves only once the write has, so a
-    /// failed control leaves the session describing what the child is still on.
-    pub async fn set_fast(&mut self, fast: bool) -> Result<()> {
-        write_line(
-            self.stdin.lines()?,
-            &ControlLine::new(ControlRequest::ApplyFlagSettings {
-                settings: FlagSettings { fast_mode: fast },
-            }),
-        )
-        .await?;
-        self.fast = fast;
-
-        Ok(())
-    }
-
-    /// Switches the effort of a running child — fx alone, whose ACP session
-    /// takes it as a config option. Every other harness respawns for one, and
-    /// `caps().applies_effort_in_place` is what keeps them off this path.
-    ///
-    /// `None` is fx's own `auto`, which nothing here can spell back onto the
-    /// wire, so it is recorded and left to the next respawn.
+    /// A refusal is **not** fatal: mcode declines a level on a model that does
+    /// no reasoning, and killing the child over that would make a session whose
+    /// recorded level its model has since stopped taking unresumable. So the
+    /// level is dropped, the session runs on mcode's own default, and stderr
+    /// says which level was refused.
     pub async fn set_effort(&mut self, effort: Option<Effort>, app: &AppHandle) -> Result<()> {
-        let Transport::Fx(session) = &self.stdin else {
-            bail!("this harness has no in-place effort switch");
-        };
+        let _ = app;
+        let Transport::Acp(session) = &self.stdin;
+
         if let Some(effort) = effort {
-            // `app` is here for the same reason `set_model` has it: fx accepting
-            // the level is what proves the active model takes it, and the
-            // picker is drawn from a list that cannot otherwise learn so.
-            let config = crate::harness::fx::set_effort(session, effort).await?;
-            crate::harness::fx::note_effort(session, &config, effort, app);
+            if let Err(error) = mcode::set_effort(session, effort).await {
+                mcode::note_effort(effort, &error.to_string());
+            }
         }
         self.effort = effort;
 
         Ok(())
     }
 
-    /// Interrupts the in-flight turn without killing the child. Verified
-    /// against the CLI: it acks with a `control_response`, aborts running tools
-    /// (`terminal_reason: "aborted_tools"`) or streaming
-    /// (`"aborted_streaming"`), ends the turn as `error_during_execution`, and
-    /// usually opens a follow-up turn to narrate the abort — so the status
-    /// machine needs nothing special here, the resulting events drive it.
-    pub async fn interrupt(&mut self) -> Result<()> {
-        // Codex answers the ack immediately and ends the turn with its own
-        // `turn/completed` carrying `interrupted`, so the reader is what
-        // reports the stop — nothing waits here for the turn to actually end.
-        if let Transport::Rpc(thread) = &self.stdin {
-            return crate::harness::codex::interrupt_turn(thread).await;
-        }
-
-        // A notification: fx answers the prompt itself with `cancelled`, and
-        // the reader reports the stop off that.
-        if let Transport::Fx(session) = &self.stdin {
-            return crate::harness::fx::cancel(session);
-        }
-
-        // omp's Stop is `abort` alone, and OMP-PLAN §7 states why that is short
-        // of pi's: its RPC has no `clear_queue` at all, and its `abort` does not
-        // drain the queue either — a queued steer resumes the run. The gap is
-        // closed on this side instead: the omp transport never steers, so the
-        // queue Dray could fill is empty by the time this runs.
-        if let Transport::Omp(client) = &self.stdin {
-            return crate::harness::omp::interrupt(client).await;
-        }
-
-        // pi never reaches here: its Stop goes through
-        // [`pi::desk`](crate::harness::pi::desk), which is registered for the
-        // life of the reader. Arriving means the desk has gone and the child
-        // with it, so there is nothing left to abort.
-        if matches!(self.stdin, Transport::Pi(_)) {
-            bail!("that pi session is no longer running");
-        }
-
-        write_line(self.stdin.lines()?, &ControlLine::new(ControlRequest::Interrupt)).await?;
-
-        Ok(())
-    }
-
-    /// Stops one background task by id.
+    /// Switches the permission stance of a running child.
     ///
-    /// Separate from [`interrupt`](Self::interrupt) because the CLI keeps them
-    /// separate, and because they are asked for separately: Stop ends the turn
-    /// and leaves every running task alone, so this is the only way to name one.
-    ///
-    /// Nothing is emitted here. The CLI republishes the task set and files a
-    /// `task_notification` with `status: "stopped"` on its own, which is what
-    /// settles the panel row — so minting anything would be a second source for
-    /// what already arrives. The session's status is not among the things it
-    /// settles: that followed the turn, which ended without waiting for this.
-    ///
-    /// The model is not told, and that is Claude Code's own behaviour rather
-    /// than a gap left here. It notifies on a task *completing* — a
-    /// `<task-notification>` user line naming the task and its exit — and says
-    /// of stops in its own orphan-scan text that those made "via the UI, Monitor
-    /// timeout, or agent teardown … leave no transcript marker". Synthesizing
-    /// one would mean waking the model for a turn to announce something the
-    /// harness deliberately keeps quiet.
-    pub async fn stop_task(&mut self, task_id: &str) -> Result<()> {
-        write_line(
-            self.stdin.lines()?,
-            &ControlLine::new(ControlRequest::StopTask { task_id }),
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    /// Switches the permission stance of a running child. Unlike effort, the CLI
-    /// does have a `set_permission_mode` subtype, so this needs no respawn.
+    /// ACP answers the permission modes as a session setting, and the two that
+    /// are *modes* — plan and default — as a mode change; `mcode::set_mode`
+    /// decides between them.
     pub async fn set_permission_mode(&mut self, mode: ApprovalPolicy) -> Result<()> {
-        if let Transport::Fx(session) = &self.stdin {
-            crate::harness::fx::set_mode(session, mode).await?;
-            self.permission_mode = mode;
-            return Ok(());
-        }
-
-        write_line(
-            self.stdin.lines()?,
-            &ControlLine::new(ControlRequest::SetPermissionMode {
-                mode: mode.as_arg(),
-            }),
-        )
-        .await?;
+        let Transport::Acp(session) = &self.stdin;
+        mcode::set_mode(session, mode).await?;
         self.permission_mode = mode;
 
         Ok(())
+    }
+
+    /// Interrupts the in-flight turn without killing the child.
+    ///
+    /// ACP asks for this as a *notification*: nothing answers it, and the
+    /// prompt's own response comes back with `stopReason: "cancelled"` — which
+    /// the read loop reads as the turn's end, so the status machine needs
+    /// nothing special here.
+    pub async fn interrupt(&mut self) -> Result<()> {
+        let Transport::Acp(session) = &self.stdin;
+        mcode::cancel(session)
+    }
+
+    /// Hands held prompts into the running turn instead of waiting for it to end.
+    ///
+    /// **The alternative to interrupting, and the whole point of steering.** A
+    /// held prompt used to have one way out — stop the turn, which throws away
+    /// whatever the agent was part way through — because ACP has one prompt per
+    /// turn. mcode's extension takes a message *into* the live turn, so the work
+    /// in flight survives and the reader's sentence lands in it.
+    ///
+    /// All of them, oldest first, so a queue built up over a long turn arrives in
+    /// the order it was written. Each is delivered with `send: false` first,
+    /// which logs the bubble the way an ordinary prompt does without sending
+    /// anything; the join is one steer carrying every line, the same shape the
+    /// flush uses.
+    ///
+    /// Answers what it managed. A refusal — there is no live turn any more — puts
+    /// everything back at the front of the queue in its original order, so the
+    /// next boundary delivers it exactly as if this had not been asked.
+    pub async fn steer_queued(&mut self, app: &AppHandle) -> Result<usize> {
+        let held: Vec<QueuedMessage> = {
+            let mut queue = self.queued.lock().await;
+            std::mem::take(&mut *queue)
+        };
+        if held.is_empty() {
+            return Ok(0);
+        }
+
+        let mut texts = Vec::with_capacity(held.len());
+        for message in &held {
+            texts.push(
+                deliver_prompt(
+                    &self.id,
+                    self.harness,
+                    &message.text,
+                    &message.attachment_paths,
+                    &message.issues,
+                    None,
+                    true,
+                    false,
+                    message.from.clone(),
+                    message.sent_at.as_deref(),
+                    &self.seq,
+                    &self.events,
+                    &self.stdin,
+                    app,
+                )
+                .await?,
+            );
+        }
+
+        let Transport::Acp(session) = &self.stdin;
+        let joined = texts.join("\n\n");
+        if let Err(e) = mcode::steer(session, &joined).await {
+            // Put every one back, in order, and say why — a held prompt that
+            // vanished into a failed call would be a sentence the reader wrote
+            // and never saw again.
+            let mut queue = self.queued.lock().await;
+            queue.splice(0..0, held);
+            return Err(e);
+        }
+
+        Ok(texts.len())
     }
 
     /// Answers a pending permission request and records the decision.
@@ -2137,34 +1981,17 @@ impl Session {
             (pending, chosen)
         };
 
-        // Answered on the channel that asked. Codex was handed its decision by
-        // the server and sends it back whole; Claude's verdict is composed here
-        // out of the rule the button carried.
-        match (&self.stdin, &pending.reply) {
-            (Transport::Rpc(thread), Reply::Rpc(rpc_id)) => {
-                let decision = chosen
-                    .decision
-                    .clone()
-                    .context("this option carries no decision to send")?;
-                thread.client.respond(*rpc_id, json!({"decision": decision}))?;
-            }
-            // fx's decision is the whole ACP outcome envelope, built by the
-            // button, so it goes back as the result itself.
-            (Transport::Fx(session), Reply::Rpc(rpc_id)) => {
-                let outcome = chosen
-                    .decision
-                    .clone()
-                    .context("this option carries no outcome to send")?;
-                session.client.respond(*rpc_id, outcome)?;
-            }
-            _ => {
-                write_line(
-                    self.stdin.lines()?,
-                    &decision_response(request_id, &pending, &chosen),
-                )
-                .await?;
-            }
-        }
+        // Answered on the channel that asked, which is the only one there is:
+        // the decision *is* the outcome envelope the button was built with, sent
+        // back under the id the request arrived on. ACP ignores a reply aimed at
+        // the wrong id in silence, which is why the id is carried rather than
+        // recomputed here.
+        let (Transport::Acp(session), Reply::Rpc(rpc_id)) = (&self.stdin, &pending.reply);
+        let outcome = chosen
+            .decision
+            .clone()
+            .context("this option carries no outcome to send")?;
+        session.client.respond(*rpc_id, outcome)?;
 
         let payload = AgentEventPayload::PermissionDecided {
             request_id: request_id.to_string(),
@@ -2194,80 +2021,19 @@ impl Session {
         Ok(())
     }
 
-    /// Sends the user's answers back and retires the card.
+    /// Answers an `AskUserQuestion`.
     ///
-    /// Single-shot and reply-first for the same reasons as
-    /// [`respond_permission`](Self::respond_permission), and it mints the same
-    /// `PermissionDecided` — the frontend has one way to clear a pending card,
-    /// and giving questions a second one would mean two things to keep in step.
-    /// The verdict is always an allow; the label is what actually happened,
-    /// since no option was picked.
-    ///
-    /// An empty map is a skip, not an error: the harness turns it into "the user
-    /// did not answer", which is the truthful thing to tell the agent.
+    /// Unreachable rather than unimplemented: mcode asks nothing but permission
+    /// over ACP — its capabilities name no elicitation, no question and no
+    /// dialog — so a questions card has nothing that could have raised it, and
+    /// the manager refuses the call before it ever reaches a session.
     pub async fn answer_questions(
         &mut self,
-        request_id: &str,
-        answers: HashMap<String, String>,
-        app: &AppHandle,
+        _request_id: &str,
+        _answers: HashMap<String, String>,
+        _app: &AppHandle,
     ) -> Result<()> {
-        // Refused *before* the entry is taken, which is the whole of the
-        // ordering. pi never reaches here — its answers go through
-        // [`pi::desk`](crate::harness::pi::desk) — so arriving means the desk
-        // has gone and the child with it. Taking the entry first and refusing
-        // second consumed the one thing the reader's own retirement needed to
-        // find, so the card it could no longer answer was never retired either.
-        if matches!(self.stdin, Transport::Pi(_)) {
-            bail!("that pi session is no longer running");
-        }
-
-        let pending = {
-            let mut guard = self
-                .pending_permissions
-                .lock()
-                .expect("pending permissions mutex poisoned");
-
-            guard
-                .remove(request_id)
-                .with_context(|| format!("no pending permission request {request_id}"))?
-        };
-
-        // Answered in the shape the asking method reads. omp goes on its own
-        // channel rather than down a stdin line — its dialogs are answered with
-        // an `extension_ui_response` carrying omp's id, which is not a line this
-        // app's control vocabulary could compose.
-        //
-        // Unlike pi, this does not have to detour around the session map: pi asks
-        // during startup, before the session is in the map at all, which is what
-        // its desk exists for. omp's first dialog is an approval, and an approval
-        // cannot arrive before a turn, which cannot arrive before the session.
-        if let Transport::Omp(client) = &self.stdin {
-            let method = pending.reply.dialog_method().unwrap_or_default();
-            client.send(&crate::harness::omp::dialog::response(
-                &method,
-                request_id,
-                &answers,
-            ))?;
-        } else {
-            write_line(
-                self.stdin.lines()?,
-                &answer_response(request_id, &pending, &answers),
-            )
-            .await?;
-        }
-
-        let decision = dialog_decided(
-            &self.id,
-            self.harness,
-            &self.seq,
-            request_id,
-            pending.tool_use_id,
-            answers.is_empty(),
-        );
-
-        app.emit("agent_event", &decision)?;
-
-        Ok(())
+        bail!("mcode does not ask questions over ACP")
     }
 
     /// Ends the child process. Takes `self` by value — a stopped session can't
@@ -2280,89 +2046,15 @@ impl Session {
     /// caller here is one where another pi follows — a respawn for an effort
     /// change, an update install, a delete and retry.
     pub async fn kill(mut self) -> Result<()> {
-        if let Transport::Pi(client) = &self.stdin {
-            // The desk is deliberately *not* closed here. Its reader owns that,
-            // and closing ahead of the shutdown meant every explicit kill — a
-            // respawn, a delete, a first send that failed — left the reader
-            // nothing to retire and its cards up for good. Until EOF reaches the
-            // reader an answer still fails honestly: `close` breaks the writer,
-            // so the reply errors rather than being claimed as delivered.
-            crate::harness::pi::shutdown(&mut self.child, client).await;
-            return Ok(());
-        }
+        // The session is closed and the pipe handed an EOF before the process
+        // is touched: mcode runs its own teardown on a clean exit and a
+        // `SIGKILL` would leave that half-written. `shutdown` waits for it, then
+        // kills whatever is still there.
+        let Transport::Acp(session) = &self.stdin;
+        mcode::shutdown(&mut self.child, session).await;
 
-        // fx holds a `session.lock` per session, released on a clean exit.
-        if let Transport::Fx(session) = &self.stdin {
-            crate::harness::fx::shutdown(&mut self.child, session).await;
-            return Ok(());
-        }
-
-        // omp is asked to leave for fx's shape of reason: it runs its own
-        // teardown, closing its session file and its SQLite handles, where a
-        // `SIGKILL` leaves both mid-write. Not pi's reason — omp has no auth
-        // lock for a kill to strand onto the next spawn.
-        if let Transport::Omp(client) = &self.stdin {
-            crate::harness::omp::shutdown(&mut self.child, client).await;
-            return Ok(());
-        }
-
-        let _ = self.child.kill().await?;
         Ok(())
     }
-}
-
-/// The event that retires an answered question's card.
-///
-/// Shared with [`pi::desk`](crate::harness::pi::desk), which answers pi's
-/// dialogs without going through the session map at all — so this is the one
-/// place the shape is stated. Two copies would differ on exactly the field
-/// nobody is watching, and the card is retired by this event alone.
-///
-/// Always `Allow`: a question is not a consent, the call runs either way, and
-/// the answer *is* the reply. `Skipped` is a real answer too — pi resolves the
-/// dialog to the default it was built with — so the label reports which of the
-/// two happened rather than whether anything did.
-pub fn dialog_decided(
-    session_id: &str,
-    harness: Harness,
-    seq: &Arc<AtomicU64>,
-    request_id: &str,
-    tool_use_id: String,
-    skipped: bool,
-) -> AgentEvent {
-    AgentEvent {
-        id: Uuid::now_v7().to_string(),
-        session_id: session_id.to_string(),
-        harness,
-        seq: seq.fetch_add(1, Relaxed),
-        ts: now_rfc3339(),
-        turn_id: None,
-        subagent: None,
-        payload: AgentEventPayload::PermissionDecided {
-            request_id: request_id.to_string(),
-            tool_use_id,
-            behavior: PermissionBehavior::Allow,
-            label: if skipped { "Skipped" } else { "Answered" }.to_string(),
-            automatic: false,
-        },
-        raw: None,
-    }
-}
-
-/// Writes one JSON line to a child's stdin. The CLI's input format is
-/// line-delimited, so the newline and the flush are part of the message rather
-/// than tidiness.
-///
-/// Takes anything serializable rather than a built [`Value`](serde_json::Value),
-/// so a typed line goes out without being rendered into one first.
-pub async fn write_line(stdin: &Arc<Mutex<ChildStdin>>, value: &impl Serialize) -> Result<()> {
-    let mut line = serde_json::to_string(value)?;
-    line.push('\n');
-
-    let mut guard = stdin.lock().await;
-    guard.write_all(line.as_bytes()).await?;
-    guard.flush().await?;
-    Ok(())
 }
 
 /// Persists the user's own prompt event, emits it, then writes it to the
@@ -2375,7 +2067,7 @@ pub async fn write_line(stdin: &Arc<Mutex<ChildStdin>>, value: &impl Serialize) 
 async fn deliver_prompt(
     session_id: &str,
     // Whose conversation this prompt joins. Recorded on the event rather than
-    // assumed, since this is the one event Dray mints itself for every harness.
+    // assumed, since this is the one event hz mints itself for every harness.
     harness: Harness,
     prompt: &str,
     attachment_paths: &[String],
@@ -2384,21 +2076,21 @@ async fn deliver_prompt(
     // model was told — the same rule a non-image attachment's `@path` follows.
     //
     // fx is the one exception, and it is deliberate: it has no system-prompt
-    // surface, so [`crate::harness::fx::start_turn`] appends Dray's rules to
+    // surface, so [`crate::harness::fx::start_turn`] appends hz's rules to
     // the wire text alone and the transcript shows strictly less than the
     // model was told. Nothing else may take that liberty.
     issues: &[IssueRef],
     baseline: Option<String>,
     queued: bool,
-    // Where this lands on a harness that can take a prompt into a turn already
-    // running. Ignored by every other transport, which has one way in.
-    delivery: crate::harness::pi::Delivery,
     // `false` logs the prompt and hands its prepared text back without sending
-    // it — [`flush_fx`] alone, which logs every held message as its own bubble
-    // and then opens **one** turn with the lot, fx taking one prompt per turn.
-    // No other transport is written to answer it, and none passes it.
+    // it — [`flush_acp`] alone, which logs every held message as its own bubble
+    // and then opens **one** turn with the lot, ACP taking one prompt per turn.
     send: bool,
     from: Option<MessageSender>,
+    // When the reader pressed send, where a clock outside this process saw it.
+    // `None` for a prompt nothing pressed — a relayed message, `hz new` — which
+    // is stamped now, the only thing left to say.
+    sent_at: Option<&str>,
     seq: &Arc<AtomicU64>,
     events: &Arc<Mutex<Vec<AgentEvent>>>,
     transport: &Transport,
@@ -2411,19 +2103,6 @@ async fn deliver_prompt(
     // the transcript has to show what the model was actually given.
     let prepared = attachments::prepare(session_id, prompt, attachment_paths, harness).await?;
     let text = prepared.text;
-
-    // Ahead of the event for a second reason, and this one is about failure
-    // rather than content. Codex resolves a leading `/skill` by asking its own
-    // child, which can go unanswered — and everything below this line is
-    // irreversible: the event is emitted, held in memory and appended to a log
-    // that only grows. Failing after it leaves a bubble with no turn behind it,
-    // and the retry the error invites draws the reader's sentence twice.
-    let codex = match transport {
-        Transport::Rpc(thread) if send => {
-            Some((thread, crate::harness::codex::turn_input(thread, &text).await?))
-        }
-        _ => None,
-    };
 
     let payload = AgentEventPayload::UserMessage {
         text: text.clone(),
@@ -2449,7 +2128,7 @@ async fn deliver_prompt(
         session_id: session_id.to_string(),
         harness,
         seq,
-        ts: now_rfc3339(),
+        ts: prompt_ts(sent_at),
         // Nothing tracks turns yet; Claude Code opens one per `init`.
         turn_id: None,
         subagent: None,
@@ -2470,63 +2149,21 @@ async fn deliver_prompt(
         return Ok(text);
     }
 
-    // Codex takes a prompt as a request that opens a turn, so the write is the
-    // send rather than a line the child picks up on its own schedule. Images
-    // ride a different shape there and are not wired yet; the text still goes.
-    // Its input was built above, where a failure could still be a no-op.
-    if let Some((thread, input)) = codex {
-        crate::harness::codex::start_turn(thread, input).await?;
-        return Ok(text);
-    }
-    // pi takes a prompt as a command whose answer says it was accepted, so the
-    // write is the send rather than a line the child picks up on its own
-    // schedule.
-    if let Transport::Pi(client) = transport {
-        crate::harness::pi::send_prompt(client, &text, delivery, &prepared.images).await?;
-        return Ok(text);
-    }
-    // omp answers the same way, and one thing is narrower here: no
-    // `streamingBehavior` is ever named, because this transport does not steer.
-    // See `omp.rs` — the field is required while a turn runs, so a mid-turn
-    // prompt would be refused, and Dray never sends one there.
-    if let Transport::Omp(client) = transport {
-        crate::harness::omp::send_prompt(client, &text, &prepared.images).await?;
-        return Ok(text);
-    }
-    // fx takes a prompt as a request that blocks for the turn, so the write
-    // is the send and the reader settles the answer. Images not wired: the
-    // Codex provider answered `refused` to one on capture.
-    if let Transport::Fx(session) = transport {
-        crate::harness::fx::start_turn(session, &text).await?;
-        return Ok(text);
-    }
-    let stdin = transport.lines()?;
+    // mcode takes a prompt as a request that blocks for the whole turn, so the
+    // write *is* the send and the read loop settles the answer off the id.
+    // Images are not wired at all: the agent answers `image: false` to the
+    // prompt-capability question, and `attachments::prepare` has already named
+    // any attachment in prose — which is also why nothing here builds a
+    // content-block array.
+    //
+    // **One prompt per turn**, and that is the connection's own rule rather
+    // than a preference: a second `session/prompt` while one is in flight moves
+    // the single id the reader is watching, and the first answer would arrive as
+    // a stray. Everything queued during a turn is flushed at the boundary,
+    // joined into one.
+    let Transport::Acp(session) = transport;
+    mcode::start_turn(session, &text).await?;
 
-    // A bare string is the whole content when nothing is attached — the
-    // shape every fixture captures, kept rather than always sending the
-    // one-element block array it is sugar for.
-    let content = if prepared.images.is_empty() {
-        json!(text)
-    } else {
-        let mut blocks = Vec::new();
-        if !text.is_empty() {
-            blocks.push(json!({"type": "text", "text": text}));
-        }
-        for image in &prepared.images {
-            blocks.push(json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": image.mime_type,
-                    "data": image.data,
-                },
-            }));
-        }
-        json!(blocks)
-    };
-
-    let line = json!({"type":"user","message":{"role":"user","content": content}});
-    write_line(stdin, &line).await?;
     Ok(text)
 }
 
@@ -2555,7 +2192,7 @@ pub struct Ingest<'a> {
 /// Lives here rather than in a harness because none of it is one harness's
 /// business: which payloads are persisted, when the tree is snapshotted, where
 /// a tool result's images are archived, and what counts as a boundary are all
-/// properties of Dray's own event model. With a copy per harness they would
+/// properties of hz's own event model. With a copy per harness they would
 /// drift, and the drift would be silent — a second harness whose deltas were
 /// persisted looks exactly like one whose logs are simply larger.
 pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHandle) {
@@ -2592,10 +2229,11 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // would have waited here for.
     let at_boundary = match agent_event.payload {
         AgentEventPayload::TurnCompleted { .. } => true,
-        // A tool boundary is a place to hand over only where the child has a
-        // buffer to absorb the prompt into; fx's next prompt is its next turn.
+        // A tool boundary is not one of these: ACP's next prompt is its next
+        // turn, so there is no buffer at a tool call for a held prompt to go
+        // into.
         AgentEventPayload::ToolCallStarted { .. } | AgentEventPayload::ToolCallCompleted { .. } => {
-            !matches!(ctx.flush_transport, Transport::Fx(_))
+            false
         }
         _ => false,
     };
@@ -2616,7 +2254,7 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // sit two awaits (publish, append). A send racing that gap would read no
     // turn in flight and start a second fx prompt over the one id.
     //
-    // A send decides queue-vs-deliver in `fx_queue_if_in_flight`, which takes
+    // A send decides queue-vs-deliver in `acp_queue_if_in_flight`, which takes
     // this same status lock across its `turn_in_flight` read *and* its enqueue.
     // So this section and that one cannot interleave: whichever holds the lock
     // runs whole. Either the send queues first and this sees the message and
@@ -2634,7 +2272,7 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
             tracker.note_tool_call(&agent_event.payload);
         }
         tracker.on_event(&agent_event.payload);
-        let reserve = matches!(ctx.flush_transport, Transport::Fx(_))
+        let reserve = matches!(ctx.flush_transport, Transport::Acp(_))
             && matches!(agent_event.payload, AgentEventPayload::TurnCompleted { .. })
             && !ctx.queued.lock().await.is_empty();
         if reserve {
@@ -2711,35 +2349,12 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
         return;
     }
 
-    // On a request/response transport the flush must not run on the read loop.
-    //
-    // Delivering a prompt there means `turn/start`, which waits for a response
-    // that only the read loop can deliver — so awaiting it here is the reader
-    // waiting on itself, and the session stops dead. Reachable, not theoretical:
-    // type while Codex is working and the next tool boundary hangs the session.
-    //
-    // Spawned rather than made fire-and-forget so the send still reports its own
-    // failure. Ordering is unaffected — the queue was drained under one lock, and
-    // `flush_queued` already logs rather than propagates.
-    if matches!(ctx.flush_transport, Transport::Rpc(_)) {
-        let session_id = ctx.session_id.to_string();
-        let harness = ctx.harness;
-        let queued = ctx.queued.clone();
-        let seq = ctx.flush_seq.clone();
-        let events = ctx.flush_events.clone();
-        let transport = ctx.flush_transport.clone();
-        let status = ctx.status.clone();
-        let app = app.clone();
-
-        tokio::spawn(async move {
-            flush_queued(
-                &session_id, harness, &queued, &seq, &events, &transport, &status, &app,
-            )
-            .await;
-        });
-        return;
-    }
-
+    // The flush is awaited rather than spawned, and that is the difference the
+    // old request/response transport forced: its prompt *was* a request the
+    // reader had to answer, so awaiting the flush here was the reader waiting on
+    // itself and the session stopped dead at the next tool boundary. mcode's
+    // write is a detached request — it hands the line to the writer task and
+    // returns — so there is nothing to wait on and no reason to spawn.
     flush_queued(
         ctx.session_id,
         ctx.harness,
@@ -2768,6 +2383,14 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
 ///
 /// Failures are logged, not propagated — the stdout loop must survive anything,
 /// and a prompt that cannot be written is one the user can retype.
+// Eight arguments, and every one of them distinct plumbing: a session id, its
+// harness, the counter, the event list, the transport, the status tracker and
+// the app handle. `Ingest` groups the same set for the read loop and exists for
+// the same reason — this is that grouping one function short of being worth a
+// second struct, and a struct-of-handles that only ever has one literal built
+// at its call site is the list with more ceremony. What would earn one is a
+// *request*: `SendRequest` has three callers building it from three places.
+#[allow(clippy::too_many_arguments)]
 pub async fn flush_queued(
     session_id: &str,
     harness: Harness,
@@ -2778,11 +2401,11 @@ pub async fn flush_queued(
     status: &Arc<Mutex<StatusTracker>>,
     app: &AppHandle,
 ) {
-    // fx drains one prompt per turn and reserves the next in `ingest`, so its
+    // ACP drains one prompt per turn and reserves the next in `ingest`, so its
     // release is a two-lock affair the batch model has no answer to. Its own
     // path.
-    if matches!(transport, Transport::Fx(_)) {
-        flush_fx(session_id, harness, queued, seq, events, transport, status, app).await;
+    if matches!(transport, Transport::Acp(_)) {
+        flush_acp(session_id, harness, queued, seq, events, transport, status, app).await;
         return;
     }
 
@@ -2827,7 +2450,7 @@ pub async fn flush_queued(
 /// and its own line in the log; what they share is the turn they open.
 ///
 /// The empty-check and the release of the reservation are done **while holding
-/// both status and queued** — the crux, symmetric to `fx_queue_if_in_flight`
+/// both status and queued** — the crux, symmetric to `acp_queue_if_in_flight`
 /// on the send side. Release the queue lock before marking the turn Completed
 /// and a send can enqueue in the gap, leaving a prompt with no turn to flush
 /// it. Holding both, a send either lands its message before the take (drained
@@ -2842,7 +2465,15 @@ pub async fn flush_queued(
 ///
 /// Order is status -> queued, as everywhere; nothing holds queued while
 /// awaiting status, so no deadlock.
-async fn flush_fx(
+// Eight arguments, and every one of them distinct plumbing: a session id, its
+// harness, the counter, the event list, the transport, the status tracker and
+// the app handle. `Ingest` groups the same set for the read loop and exists for
+// the same reason — this is that grouping one function short of being worth a
+// second struct, and a struct-of-handles that only ever has one literal built
+// at its call site is the list with more ceremony. What would earn one is a
+// *request*: `SendRequest` has three callers building it from three places.
+#[allow(clippy::too_many_arguments)]
+async fn flush_acp(
     session_id: &str,
     harness: Harness,
     queued: &QueuedMessages,
@@ -2890,9 +2521,9 @@ async fn flush_fx(
                 // No baseline, for `deliver_batch`'s reason.
                 None,
                 true,
-                crate::harness::pi::Delivery::WhenIdle,
                 false,
                 message.from,
+                message.sent_at.as_deref(),
                 seq,
                 events,
                 transport,
@@ -2909,12 +2540,13 @@ async fn flush_fx(
             }
         }
 
-        // One prompt, blank-line separated, because one is all fx takes. On
-        // success the reservation stands as `InProgress` and the turn is this
-        // batch's; on failure every message is already on screen and in the log,
-        // so the sentence saying why is the only thing still owing.
-        if let (false, Transport::Fx(session)) = (texts.is_empty(), transport) {
-            match crate::harness::fx::start_turn(session, &texts.join("\n\n")).await {
+        // One prompt, blank-line separated, because one is all ACP takes without
+        // moving the id the reader is watching. On success the reservation
+        // stands as `InProgress` and the turn is this batch's; on failure every
+        // message is already on screen and in the log, so the sentence saying
+        // why is the only thing still owing.
+        if let (false, Transport::Acp(session)) = (texts.is_empty(), transport) {
+            match crate::harness::mcode::start_turn(session, &texts.join("\n\n")).await {
                 Ok(()) => return,
                 Err(err) => {
                     eprintln!("[queued flush err] {err}");
@@ -2931,6 +2563,14 @@ async fn flush_fx(
 }
 
 /// Hands one drained batch to the child, oldest first, counting what landed.
+// Eight arguments, and every one of them distinct plumbing: a session id, its
+// harness, the counter, the event list, the transport, the status tracker and
+// the app handle. `Ingest` groups the same set for the read loop and exists for
+// the same reason — this is that grouping one function short of being worth a
+// second struct, and a struct-of-handles that only ever has one literal built
+// at its call site is the list with more ceremony. What would earn one is a
+// *request*: `SendRequest` has three callers building it from three places.
+#[allow(clippy::too_many_arguments)]
 async fn deliver_batch(
     batch: Vec<QueuedMessage>,
     session_id: &str,
@@ -2955,10 +2595,9 @@ async fn deliver_batch(
             &message.issues,
             None,
             true,
-            // A flush runs at a boundary, so there is no turn to steer into.
-            crate::harness::pi::Delivery::WhenIdle,
             true,
             message.from,
+            message.sent_at.as_deref(),
             seq,
             events,
             transport,
@@ -3095,7 +2734,7 @@ pub async fn strand_queue_on_exit(
             session_id: session_id.to_string(),
             harness,
             seq: seq.fetch_add(1, Relaxed),
-            ts: now_rfc3339(),
+            ts: prompt_ts(message.sent_at.as_deref()),
             turn_id: None,
             subagent: None,
             payload: AgentEventPayload::UserMessage {
@@ -3128,382 +2767,11 @@ pub async fn strand_queue_on_exit(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::harness::claude_code::{mapper::Mapper, parser};
-
-    /// Drives the real capture through the counter that decides whether a
-    /// prompt is written now or held. Two things have to hold across it: a call
-    /// in flight is visible while it runs, and nothing is left in flight once
-    /// the turns are over — a counter that drifted up would make every later
-    /// prompt skip the queue and lose its cancel window for the rest of the
-    /// session.
-    #[test]
-    fn tool_flight_tracks_calls_and_settles_at_zero() {
-        let mut mapper = Mapper::default();
-        let mut tracker = StatusTracker::default();
-        let mut ever_in_flight = false;
-
-        for line in include_str!("harness/claude_code/fixtures/complex.jsonl")
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-        {
-            let Ok(Some(event)) = mapper.map(parser::parse_line(line).unwrap()) else {
-                continue;
-            };
-            // Mirrors `read_stdout`: a subagent's call is not a boundary the CLI
-            // injects a queued prompt at, so it must not count.
-            if event.subagent.is_none() {
-                tracker.note_tool_call(&event.payload);
-            }
-            ever_in_flight |= tracker.tool_in_flight();
-        }
-
-        assert!(ever_in_flight, "the fixture runs main-thread tool calls");
-        assert!(
-            !tracker.tool_in_flight(),
-            "every call is closed by the end of the capture"
-        );
-    }
-
-    /// An interrupt ends a turn with its calls still open, so `turn_completed`
-    /// is what clears them. Without it the count only ever climbs.
-    #[test]
-    fn an_interrupted_turn_clears_its_open_calls() {
-        let mut mapper = Mapper::default();
-        let mut tracker = StatusTracker::default();
-
-        for line in include_str!("harness/claude_code/fixtures/interrupted_tools.jsonl")
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-        {
-            let Ok(Some(event)) = mapper.map(parser::parse_line(line).unwrap()) else {
-                continue;
-            };
-            if event.subagent.is_none() {
-                tracker.note_tool_call(&event.payload);
-            }
-        }
-
-        assert!(!tracker.tool_in_flight());
-    }
-
-    /// fx reserves its next turn the instant one ends with a prompt queued, so
-    /// the tracker never reads idle in the window before the flush hands the
-    /// queued prompt over — a send racing that window would otherwise start a
-    /// second fx prompt over the one id. The reservation nets `InProgress`, and
-    /// a flush that then delivers nothing gives the turn back to `Completed`.
-    #[test]
-    fn an_fx_reservation_holds_the_turn_across_the_flush() {
-        let done = AgentEventPayload::TurnCompleted {
-            status: crate::events::TurnStatus::Success,
-            stop_reason: None,
-            final_text: None,
-            usage: None,
-            duration_ms: None,
-            head: None,
-            auth_failed: false,
-        };
-
-        let mut tracker = StatusTracker::default();
-        tracker.on_send();
-
-        // The completion followed at once by the reservation, as `ingest` does
-        // it under one lock: net `InProgress`, and the turn still in flight, so
-        // a racing send queues rather than sending.
-        assert_eq!(tracker.on_event(&done), Some(SessionStatus::Completed));
-        assert_eq!(tracker.on_send(), Some(SessionStatus::InProgress));
-        assert!(tracker.turn_in_flight());
-
-        // The flush delivered nothing — every queued prompt failed, or a cancel
-        // emptied the queue — so the reservation is given back.
-        assert_eq!(
-            tracker.release_reserved_turn(),
-            Some(SessionStatus::Completed)
-        );
-        assert!(!tracker.turn_in_flight());
-    }
-
-    /// The fixture's second turn spawns a background agent: its `result`
-    /// arrives while a task is outstanding, the set drains later, and the CLI
-    /// opens a promptless turn to report. The trajectory pins all of it — most
-    /// importantly that the mid-flight `result` completes the turn, and that
-    /// the set draining moves nothing.
-    #[test]
-    fn a_result_completes_the_turn_whatever_tasks_are_outstanding() {
-        let mut mapper = Mapper::default();
-        let mut tracker = StatusTracker::default();
-
-        let mut transitions = vec![tracker.on_send().expect("a send starts work")];
-
-        for line in include_str!("harness/claude_code/fixtures/multi_turn.jsonl")
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-        {
-            let Ok(Some(event)) = mapper.map(parser::parse_line(line).unwrap()) else {
-                continue;
-            };
-            if let Some(next) = tracker.on_event(&event.payload) {
-                transitions.push(next);
-            }
-        }
-
-        use SessionStatus::*;
-        assert_eq!(
-            transitions,
-            vec![
-                InProgress, // the send
-                Completed,  // turn 1: result with nothing outstanding
-                InProgress, // turn 2 opens
-                Completed,  // turn 2's result, with a background task still open
-                // the task set draining is *absent*: it is not a status input
-                InProgress, // the promptless report-back turn
-                Completed,  // its result
-            ]
-        );
-    }
-
-    /// The capture that settled the rule. Background Bash and Monitor both
-    /// register as `local_bash`, and a `result` lands with both still open —
-    /// so the turn completes with two tasks outstanding, and the reader is not
-    /// left clicking Stop to end a turn that already ended.
-    #[test]
-    fn a_monitor_is_a_local_bash_task_and_holds_nothing() {
-        let mut mapper = Mapper::default();
-        let mut tracker = StatusTracker::default();
-        tracker.on_send();
-
-        let mut kinds = Vec::new();
-        let mut outstanding_at_result = None;
-
-        for line in include_str!("harness/claude_code/fixtures/background_bash_monitor.jsonl")
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-        {
-            let Ok(Some(event)) = mapper.map(parser::parse_line(line).unwrap()) else {
-                continue;
-            };
-            if let AgentEventPayload::BackgroundTasksChanged { tasks } = &event.payload {
-                kinds.extend(tasks.iter().map(|t| t.task_type.clone()));
-            }
-            let next = tracker.on_event(&event.payload);
-            if matches!(event.payload, AgentEventPayload::TurnCompleted { .. }) {
-                outstanding_at_result = Some((next, tracker.background_task_ids().len()));
-            }
-        }
-
-        assert!(!kinds.is_empty() && kinds.iter().all(|k| k == "local_bash"));
-        assert_eq!(
-            outstanding_at_result,
-            Some((Some(SessionStatus::Completed), 2)),
-            "the result completes the turn with both tasks still running"
-        );
-    }
-
-    fn turn_completed() -> AgentEventPayload {
-        turn_completed_auth(false)
-    }
-
-    fn turn_completed_auth(auth_failed: bool) -> AgentEventPayload {
-        AgentEventPayload::TurnCompleted {
-            status: crate::events::TurnStatus::Success,
-            stop_reason: None,
-            auth_failed,
-            final_text: None,
-            usage: None,
-            duration_ms: None,
-            head: None,
-        }
-    }
-
-    /// The asymmetry between the two reasons to replace a child. A setting
-    /// change defers to a background task; an auth failure cannot, since a
-    /// `local_bash` task never ends and the session would stay logged out for
-    /// as long as it ran.
-    #[test]
-    fn only_an_auth_failure_outranks_a_background_task() {
-        // auth_failed, turn_in_flight, busy, settings_changed
-        assert!(!respawn_needed(false, false, false, false), "nothing to do");
-        assert!(
-            respawn_needed(false, false, false, true),
-            "an idle pick applies"
-        );
-        assert!(
-            !respawn_needed(false, false, true, true),
-            "a pick waits for the task rather than killing it"
-        );
-        assert!(
-            respawn_needed(true, false, true, false),
-            "a login does not wait for a task that may never end"
-        );
-        assert!(
-            !respawn_needed(true, true, true, true),
-            "nothing replaces a child mid-turn"
-        );
-    }
-
-    /// What makes a logged-out session curable without restarting the app. The
-    /// child answers every later prompt "not logged in" from its own memory, so
-    /// `send_msg` replaces it — and it must stop doing that the moment a turn
-    /// completes, or every send respawns for the rest of the session.
-    #[test]
-    fn an_auth_failure_lasts_until_the_next_turn_completes() {
-        let mut tracker = StatusTracker::default();
-        assert!(!tracker.auth_failed(), "a fresh session has not failed");
-
-        tracker.on_send();
-        tracker.on_event(&turn_completed_auth(true));
-        assert!(tracker.auth_failed());
-
-        tracker.on_send();
-        assert!(tracker.auth_failed(), "sending is not logging in");
-
-        tracker.on_event(&turn_completed());
-        assert!(
-            !tracker.auth_failed(),
-            "a turn that completed says so itself"
-        );
-    }
-
-    /// The reason the two readings exist separately. A background task keeps
-    /// the child from being replaced after its turn ended, but must not hold
-    /// the turn: a `local_bash` task — dev server, Monitor, poll loop — may
-    /// never end, and the CLI's main thread is idle meanwhile (verified against
-    /// v2.1.232, a prompt written in this state is answered in under two
-    /// seconds).
-    #[test]
-    fn a_background_task_holds_the_child_but_not_the_turn() {
-        let mut tracker = StatusTracker::default();
-        tracker.on_send();
-
-        tracker.on_event(&AgentEventPayload::BackgroundTasksChanged {
-            tasks: vec![crate::events::BackgroundTask {
-                task_id: "b0n57ez9b".to_string(),
-                task_type: "local_bash".to_string(),
-                description: "sleep 300".to_string(),
-            }],
-        });
-        assert!(tracker.turn_in_flight(), "the turn that spawned it is open");
-        assert_eq!(
-            tracker.background_task_ids(),
-            vec!["b0n57ez9b".to_string()],
-            "recorded as sent — Stop deliberately leaves it running"
-        );
-
-        assert_eq!(
-            tracker.on_event(&turn_completed()),
-            Some(SessionStatus::Completed),
-            "the turn is over whatever the task is doing"
-        );
-        assert!(
-            tracker.has_outstanding_work(),
-            "but the child must not be replaced while it carries the task"
-        );
-        assert!(
-            !tracker.turn_in_flight(),
-            "and the main thread is idle, so a prompt goes straight out"
-        );
-
-        // Stopping it drains the set, which is what the CLI republishes. Not a
-        // status change: the turn already ended.
-        assert_eq!(
-            tracker.on_event(&AgentEventPayload::BackgroundTasksChanged { tasks: vec![] }),
-            None
-        );
-        assert!(!tracker.has_outstanding_work());
-    }
-
-    /// What [`SessionManager::fork`] reads. A dev server, a Monitor, a poll
-    /// loop — a `local_bash` task never ends, so guarding fork on the wide
-    /// reading took Fork away from that session for the rest of its life. The
-    /// transcript it copies is not being appended to mid-turn here; the turn
-    /// ended, and a task reporting back later opens a turn of its own.
-    #[test]
-    fn a_session_carrying_a_background_task_can_still_be_forked() {
-        let mut tracker = StatusTracker::default();
-        tracker.on_send();
-
-        tracker.on_event(&AgentEventPayload::BackgroundTasksChanged {
-            tasks: vec![crate::events::BackgroundTask {
-                task_id: "b0n57ez9b".to_string(),
-                task_type: "local_bash".to_string(),
-                description: "pnpm dev".to_string(),
-            }],
-        });
-        assert!(tracker.turn_in_flight(), "mid-turn, fork is refused");
-
-        tracker.on_event(&turn_completed());
-        assert!(
-            tracker.has_outstanding_work(),
-            "the child still carries the task, so it must not be replaced"
-        );
-        assert!(
-            !tracker.turn_in_flight(),
-            "but no model call is open, so there is no half a turn to inherit"
-        );
-    }
-
-    /// The two guards on Fork are one question, and this is what keeps them so.
-    /// The backend refuses on `turn_in_flight`; the sidebar disables the menu
-    /// item on `status === "in_progress"`. Neither side can call the other, so
-    /// the rule is stated twice — and a disabled item disagreeing with a
-    /// refusal is exactly what made Fork read as broken rather than busy.
-    #[test]
-    fn the_fork_guard_is_the_status_the_sidebar_reads() {
-        let mut mapper = Mapper::default();
-        let mut tracker = StatusTracker::default();
-
-        let check = |tracker: &StatusTracker| {
-            assert_eq!(
-                tracker.turn_in_flight(),
-                tracker.status() == SessionStatus::InProgress,
-                "the backend's fork guard and the word the sidebar reads have drifted"
-            );
-        };
-
-        check(&tracker);
-        tracker.on_send();
-        check(&tracker);
-
-        // The state this is all about: the turn over, tasks still running.
-        let mut forkable_with_a_task_running = false;
-
-        for line in include_str!("harness/claude_code/fixtures/background_bash_monitor.jsonl")
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-        {
-            let Ok(Some(event)) = mapper.map(parser::parse_line(line).unwrap()) else {
-                continue;
-            };
-            tracker.on_event(&event.payload);
-            check(&tracker);
-            forkable_with_a_task_running |=
-                !tracker.turn_in_flight() && tracker.has_outstanding_work();
-        }
-
-        // Reading the finished session moves it off `Completed`, the one
-        // transition that touches the status without touching the turn.
-        tracker.mark_seen();
-        check(&tracker);
-        assert!(
-            forkable_with_a_task_running,
-            "the fixture runs its turn out with both tasks outstanding, which is the case that was refused"
-        );
-    }
-
-    /// Only a finished-and-unread session clears on read; selecting a running
-    /// one must not stop it reading as busy.
-    #[test]
-    fn mark_seen_clears_only_completed() {
-        let mut tracker = StatusTracker::default();
-        assert_eq!(tracker.mark_seen(), None, "idle has nothing to clear");
-
-        tracker.on_send();
-        assert_eq!(tracker.mark_seen(), None, "a running session stays busy");
-
-        tracker.on_event(&turn_completed());
-        assert_eq!(tracker.mark_seen(), Some(SessionStatus::Idle));
-        assert_eq!(tracker.mark_seen(), None, "already read");
-    }
-}
+// The behaviours these tests pinned — a call in flight being visible while it
+// runs, nothing left in flight when the turns are over, the counter that
+// decides whether a prompt is written now or held — are the read loop's, and
+// they are **not covered here yet**. They were written against Claude Code's
+// wire format, which this build no longer speaks; the same assertions need
+// rebuilding on `harness/mcode/fixtures/live_turn.jsonl`. Until then the
+// coverage for that path is the mapper and parser tests, which pin what the
+// loop feeds them rather than what it does with it.

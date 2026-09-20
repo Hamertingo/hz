@@ -119,7 +119,7 @@ baseline: string | null,
  */
 queued: boolean, 
 /**
- * The Dray session that relayed this prompt, when one did.
+ * The hz session that relayed this prompt, when one did.
  *
  * `None` — the ordinary case — means the user typed it. Carried as a
  * field rather than named in `text` because the transcript draws the
@@ -313,13 +313,86 @@ linearAccount: TrackerAccount | null,
 /**
  * Which speech-to-text model and microphone to use.
  *
- * Here rather than in the webview's local storage, unlike every other
- * composer pick, because Rust is what reads it: the recording commands
- * resolve the model and device themselves, and a value the backend has to
- * ask the frontend for is a value that can be missing when a keypress
- * needs it.
+ * Here rather than inside [`AppSettings::composer_prefs`], beside the rest
+ * of the composer's picks, because Rust is what reads it: the recording
+ * commands resolve the model and device themselves, and a value the
+ * backend has to ask the frontend for is a value that can be missing when
+ * a keypress needs it.
  */
-transcription: TranscriptionSettings, };
+transcription: TranscriptionSettings, 
+/**
+ * The composer's sticky row: which agent, the model picked on each, effort
+ * per model, permission stance, worktree and role defaults, fast mode.
+ *
+ * Stored verbatim, and every field of it is listed where it means
+ * something — `ComposerPrefs` in `src/hooks/useComposerPrefs.ts`.
+ */
+composerPrefs: JsonValue | null, 
+/**
+ * The models the reader keeps in their rotation, in their own order — or
+ * `None`, which means **every model the agent serves**. A fact about the
+ * reader rather than about a session, so it is stored with them instead of on
+ * an index entry a session could be handed away with.
+ *
+ * **Not carried over from `starredModels`, and that is deliberate.** The
+ * field this replaces held a *shortlist*: the few models a reader had picked
+ * out of a list the picker otherwise drew in full. The meaning is now the
+ * opposite — everything is in the rotation unless it is switched off — so a
+ * shortlist read here would leave a reader who had chosen two models with
+ * exactly two rows switched on under a heading that says everything is.
+ * Absent is the honest reading of a file that build wrote, and it costs the
+ * reader a pick they can make again in one click.
+ */
+modelRotation: Array<string> | null, 
+/**
+ * The reader's rebindings, keyed by shortcut id. Only overrides, so a
+ * default that changes in a later build still reaches everyone who never
+ * touched that row.
+ *
+ * Verbatim for the same reason as `composer_prefs`: the ids and the chord
+ * shape are `src/lib/shortcuts.ts`'s.
+ */
+shortcuts: JsonValue | null, 
+/**
+ * Which release channel the updater follows. Read on this side only to be
+ * handed back — the check that uses it runs in the frontend.
+ */
+updateChannel: UpdateChannel | null, 
+/**
+ * Which app a session's working directory is opened in, by bundle path.
+ *
+ * The path and not the name: two builds of one editor differ by path
+ * alone, and a name that stopped matching would silently reseat.
+ */
+openWith: string | null, 
+/**
+ * Which app a *filename* in the transcript opens in, by bundle path. Its
+ * own preference — that one holds terminals and Finder too.
+ */
+openFileWith: string | null, 
+/**
+ * Which terminal hz opens for a command the reader runs themselves, by
+ * bundle path.
+ */
+runInTerminal: string | null, 
+/**
+ * The space the reader is looking at, or `None` for every project.
+ *
+ * Nothing on this side reads it. **A space is two records and neither is
+ * derived from the other**: its *membership* is the tag on the project in
+ * `projects.json` (this side's, see `crate::projects`), and which one is
+ * *up* is this pick, read by the frontend's `activeSpace` in
+ * `src/lib/space.ts` beside those tags. So a rename moves the tags and a
+ * switch moves this, and neither is a copy of the other.
+ */
+space: string | null, 
+/**
+ * The spaces the reader has declared, in the order the switcher walks
+ * them. A space is made before it holds anything, and one holding nothing
+ * is exactly what has no project to carry its tag — see
+ * [`crate::projects::Project::space`].
+ */
+spaces: Array<string> | null, };
 
 /**
  * Permission stance a session *runs under*, in roughly increasing order of
@@ -474,6 +547,66 @@ authorEmail: string,
  */
 authoredAt: string, };
 
+/**
+ * One line of a reading's breakdown.
+ */
+export type ContextComponent = { 
+/**
+ * The agent's own words — `System prompt`, `Tools`, `Skills`, `Messages`,
+ * `Memory`, `Other`. Carried verbatim rather than mapped onto an enum of
+ * ours: the list is the agent's, and a category added after this build
+ * should draw as itself rather than as nothing.
+ */
+label: string, tokens: number, };
+
+/**
+ * A snapshot **with when it was taken**, which is what makes it storable.
+ *
+ * The pair is the whole reason this type exists: a snapshot on its own is a
+ * reading of a moment, and a reading outlives the moment — the app keeps the
+ * newest one per session (see `SessionIndexItem::context_reading`) so a session
+ * reopened with no child still shows the agent's own rows instead of the
+ * composer's estimate. `Context: live` in the snapshot is the agent's word
+ * about its own runtime and says nothing about whether *this* copy is still
+ * current; the stamp is what does.
+ */
+export type ContextReading = { 
+/**
+ * When the agent answered, in the app's own stamp format — the same one
+ * `SessionIndexItem::created` carries, so the frontend formats the two the
+ * same way.
+ */
+ts: string, snapshot: ContextSnapshot, };
+
+/**
+ * One reading of a session's context: what the agent counted, and how large the
+ * window it counted against was.
+ */
+export type ContextSnapshot = { 
+/**
+ * The agent's own word for whether this is the running session or its last
+ * completed run.
+ */
+live: boolean, 
+/**
+ * The model the snapshot was taken on, as the agent spells it.
+ */
+model: string, 
+/**
+ * What the runtime counts in the window, and how large the window is.
+ * `None` on a line that did not parse, which is the only pair that can be
+ * missing without the block being unusable.
+ */
+used: number | null, max: number | null, 
+/**
+ * When compaction last ran, in the agent's words.
+ */
+compaction: string | null, 
+/**
+ * The breakdown, in the order the agent wrote it.
+ */
+components: Array<ContextComponent>, };
+
 export type ContextWindow = { usedTokens: number, maxTokens: number, };
 
 /**
@@ -611,6 +744,29 @@ newText: string | null,
 unreadable: Unreadable | null, };
 
 /**
+ * Who `gh` is signed in as, and what its credential may read.
+ */
+export type GhAccount = { 
+/**
+ * Where the credential came from — `keyring` for `gh auth login`, or the
+ * name of the variable when a token was handed in from the environment.
+ * **The distinction matters to the cure**: one is refreshed with
+ * `gh auth refresh`, the other has to be regenerated where it was made.
+ */
+tokenSource: string | null, host: string | null, login: string | null, 
+/**
+ * As `gh` reports them, split on the commas it separates them with. Empty
+ * for a token that carries no scopes at all, which is every fine-grained
+ * personal access token — its permissions are on GitHub, not in here.
+ */
+scopes: Array<string>, 
+/**
+ * **`gh`'s own sentence where it found a credential and was refused**,
+ * which is the state a reader is in when the token is there and wrong.
+ */
+error: string | null, };
+
+/**
  * Which agent runs a session.
  *
  * **Unknown spellings are kept, not refused.** `index.json` is a shared store
@@ -634,7 +790,7 @@ unreadable: Unreadable | null, };
  *
  * [`SessionIndexItem.unknown`]: crate::store::SessionIndexItem
  */
-export type Harness = "claude_code" | "codex" | "pi" | "fx" | "omp";
+export type Harness = "mcode";
 
 export type HookPhase = "started" | "finished";
 
@@ -694,7 +850,7 @@ team: string | null, project: string | null, updatedAt: string, };
  *
  * **The whole reason this command exists.** Linear's uploads live behind the
  * same auth the API does, so the `<img src>` in a description resolves to a
- * 401 and the webview draws its broken-image box — which reads as "Dray cannot
+ * 401 and the webview draws its broken-image box — which reads as "hz cannot
  * show this" rather than "this needs a key". Fetching here and handing back a
  * `data:` URL is what makes an image in an issue an image on screen.
  *
@@ -904,6 +1060,23 @@ id: ModelId, label: string,
  */
 efforts: Array<Effort>, defaultEffort: Effort | null, 
 /**
+ * The model without its variant, as the wire spells it (`m:<provider>:<model>`,
+ * no `:v:` tail) — the key a picker groups rows by. Empty where the id is not
+ * a wire ref at all, which reads as "do not group".
+ *
+ * mcode lists **one choice per variant**, so `minimax-m3` arrives as a single
+ * row named `minimax-m3 · thinking` and a model with two variants arrives as
+ * two rows. Grouping them here rather than in the frontend keeps the parse
+ * where the wire format is: `:v:` is ACP's, not the picker's.
+ */
+baseId: string, 
+/**
+ * The variant's own name (`thinking`, `fast`), or empty where the id names
+ * none. Drawn as the row's second control rather than glued to the model's
+ * name — which is what `label` used to carry.
+ */
+variant: string, 
+/**
  * What `--model` receives, where that differs from the persisted id.
  *
  * The two genuinely differ — `gpt56_sol` on disk, `gpt-5.6-sol` on the
@@ -994,6 +1167,25 @@ model: string, inputTokens: number | null, outputTokens: number | null, cachedIn
  */
 contextWindow: number | null, maxOutputTokens: number | null, };
 
+/**
+ * What the composer's add form collects.
+ */
+export type NewProvider = { name: string, baseUrl: string, 
+/**
+ * `anthropic-messages`, `openai-completions` or `openai-responses`.
+ */
+apiFormat: string, 
+/**
+ * One id per row, in the order the reader typed them. **Empty is the
+ * ordinary case**: it means "ask the provider", and [`add`] fills it in
+ * from [`discover`] before the CLI is called.
+ */
+models: Array<string>, apiKey: string, 
+/**
+ * Test the first model, then save and select it as the default.
+ */
+makeDefault: boolean, };
+
 export type PermissionBehavior = "allow" | "deny";
 
 /**
@@ -1083,7 +1275,94 @@ resolved: boolean,
  * any: a PR's own conversation is flat, so a reply is either part of a
  * review thread or it is a new comment.
  */
-replies: Array<PrComment>, };
+replies: Array<PrComment>, 
+/**
+ * GitHub's node id for the review thread this comment opens, on the one
+ * comment that does open one.
+ *
+ * **Carried so the panel can answer a thread and settle one.** Both are
+ * GraphQL mutations keyed on this id and on nothing else — not on the PR
+ * number, not on the path, not on the line, all three of which a reply or a
+ * resolve has no way to address. `None` everywhere that is not a thread
+ * root, which is every timeline row.
+ */
+threadId: string | null, };
+
+/**
+ * One label, as a row draws it: the name, and the colour so the dot beside it
+ * is the one GitHub shows rather than a shade this app invented.
+ */
+export type PrLabel = { name: string, 
+/**
+ * Six hex digits without the `#`, or `None` for a label with no colour set.
+ */
+color: string | null, };
+
+/**
+ * One row of the pull-request page: what a *list* needs, and nothing that only
+ * a detail read can answer.
+ *
+ * Deliberately not [`PullRequest`]. A page shows fifty rows and a detail pane
+ * shows one: asking for the full shape fifty times is fifty comment trees and
+ * fifty check lists nobody scrolls. What a row cannot answer — the checks
+ * themselves, the conversation, the threads — the detail read answers, and the
+ * page uses the same `prs_for_branch` for it that the session's own tab does.
+ */
+export type PrListItem = { number: number, title: string, url: string, 
+/**
+ * `OPEN`, `CLOSED` or `MERGED`, GitHub's own word.
+ */
+state: string, isDraft: boolean, author: string, avatar: string | null, headRefName: string, baseRefName: string, updatedAt: string, 
+/**
+ * When it was opened. The list can be ordered by age, and `updatedAt` cannot
+ * answer that: a year-old pull request touched this morning is the newest by
+ * one and the oldest by the other.
+ */
+createdAt: string, additions: number, deletions: number, changedFiles: number, reviewDecision: string | null, mergeable: string, mergeStateStatus: string, 
+/**
+ * The tip commit's checks, folded to one word — the same fold the sidebar's
+ * marks use, for the same reason: a row has space for running or failing,
+ * not for fifty contexts.
+ */
+checksState: PrChecksState, 
+/**
+ * Everyone asked to review it — people by login, teams by slug.
+ *
+ * This is what the page's "waiting on you" grouping asks about, and it is
+ * why the grouping is done here rather than with three `gh` calls: one
+ * listing plus the viewer's own login (cached for the process) answers
+ * "mine", "waiting on me" and "everything else" without a spawn per group.
+ */
+reviewRequests: Array<string>, 
+/**
+ * What the repository has filed it under.
+ *
+ * Carried because the page's own filter menu wants them and a label is the
+ * one narrowing GitHub cannot answer for: `--label` exists on `gh pr list`,
+ * and a filter that re-read the host on every tick would be a spawn per
+ * click against labels the listing already holds.
+ */
+labels: Array<PrLabel>, };
+
+/**
+ * The rows and who is asking.
+ */
+export type PrListPage = { items: Array<PrListItem>, 
+/**
+ * The signed-in account, or `None` where `gh` would not say — in which case
+ * nothing is filed under the reader's own name and every row lands under
+ * Others, which is the honest answer rather than a guess.
+ */
+viewer: string | null, };
+
+/**
+ * Which pull requests a listing wants.
+ *
+ * GitHub's three states plus "all", because a page that only ever showed open
+ * ones could not answer "did this land?" — the question the panel exists for,
+ * asked about work that is not on screen.
+ */
+export type PrListState = "all" | "open" | "closed" | "merged";
 
 /**
  * One pull request, cut down to what a sidebar row can draw.
@@ -1128,7 +1407,73 @@ export type PrMarkState = "OPEN" | "MERGED";
  * logged out keeps the tab and says so, since someone who installed it clearly
  * works with GitHub and the fix is one command.
  */
-export type PrUnavailable = { "kind": "no_cli" } | { "kind": "not_authenticated" } | { "kind": "no_remote" } | { "kind": "other", "detail": string };
+export type PrUnavailable = { "kind": "no_cli" } | { "kind": "not_authenticated" } | { "kind": "no_remote" } | { "kind": "missing_permission" } | { "kind": "other", "detail": string };
+
+/**
+ * Every preference the frontend owns, as the file holds them.
+ *
+ * One payload for all of them, read once before the first render: a command
+ * per key would be a round trip per picker to draw the app. **Every field is
+ * `None` where the file says nothing**, which is what a build that has just
+ * moved these out of the webview's store reads to tell a key the file already
+ * answers for from one still to adopt; a field that is present has been
+ * answered for, whether or not the frontend would read the same value back.
+ *
+ * Not [`AppSettings`] itself: that carries the install id and the Linear
+ * account, and neither is the webview's business.
+ */
+export type Preferences = { 
+/**
+ * See [`AppSettings::composer_prefs`].
+ */
+composerPrefs: JsonValue | null, 
+/**
+ * See [`AppSettings::model_rotation`].
+ */
+modelRotation: Array<string> | null, 
+/**
+ * See [`AppSettings::shortcuts`].
+ */
+shortcuts: JsonValue | null, 
+/**
+ * See [`AppSettings::update_channel`].
+ */
+updateChannel: UpdateChannel | null, 
+/**
+ * See [`AppSettings::open_with`].
+ */
+openWith: string | null, 
+/**
+ * See [`AppSettings::open_file_with`].
+ */
+openFileWith: string | null, 
+/**
+ * See [`AppSettings::run_in_terminal`].
+ */
+runInTerminal: string | null, 
+/**
+ * See [`AppSettings::space`].
+ */
+space: string | null, 
+/**
+ * See [`AppSettings::spaces`].
+ */
+spaces: Array<string> | null, };
+
+/**
+ * One preference to change, and what to change it to.
+ *
+ * **A patch names one preference, and that is what makes an update partial**:
+ * the command takes a batch of these, and nothing a batch does not name is
+ * touched. `None` clears what a patch does name — the active space going away
+ * when the last thing filed under it is renamed out, which has to be sayable,
+ * since "no space" is not a value a space can hold.
+ *
+ * Tagged rather than a struct of optional fields so that a name that does not
+ * exist is an error rather than a field that silently writes nothing, and so
+ * that the value each one carries is typed where it is declared.
+ */
+export type PreferencesPatch = { "field": "composerPrefs", "value": JsonValue | null } | { "field": "modelRotation", "value": Array<string> | null } | { "field": "shortcuts", "value": JsonValue | null } | { "field": "updateChannel", "value": UpdateChannel | null } | { "field": "openWith", "value": string | null } | { "field": "openFileWith", "value": string | null } | { "field": "runInTerminal", "value": string | null } | { "field": "space", "value": string | null } | { "field": "spaces", "value": Array<string> | null };
 
 /**
  * A directory the user attached, and the root a session runs in. Distinct from
@@ -1160,6 +1505,87 @@ space: string | null,
  */
 lastSelected: string, };
 
+/**
+ * One row of `provider list --json`.
+ */
+export type Provider = { providerId: string, name: string, 
+/**
+ * `minimax-oauth`, `minimax-api-key` or `custom`.
+ */
+kind: string, 
+/**
+ * The one the agent draws its models from. More than one may be enabled.
+ */
+active: boolean, enabled: boolean, 
+/**
+ * hz may list it and may not edit it — the managed account's own entry.
+ */
+readOnly: boolean, 
+/**
+ * **A bool, never the key**: the CLI reports whether one is stored, and
+ * the app neither reads nor holds the secret after handing it over.
+ */
+hasApiKey: boolean, models: Array<ProviderModel>, };
+
+/**
+ * One row of a provider's `models` — **an object, not an id.**
+ *
+ * Read as a bare string this parses to nothing on a provider that has any
+ * model at all, and takes the whole `provider list` down with it: the list is
+ * one JSON value, so one unreadable row is every row the reader loses. The
+ * gateway's own list endpoint has the same shape, which is why [`discover`]
+ * reads `id` off it the same way.
+ */
+export type ProviderModel = { modelId: string, 
+/**
+ * The provider's own label, when it offers one. Usually absent.
+ */
+displayName?: string | null, 
+/**
+ * The default this provider's first model is pinned to, if any.
+ */
+selected: boolean, };
+
+/**
+ * A gateway the agent already knows how to talk to, ready to be filled in with
+ * a key.
+ *
+ * **The CLI's own wiring, not a guess.** OpenCode Go is special-cased inside
+ * this agent: `packages/shared/opencode-go-headers.ts` recognises
+ * `https://opencode.ai/zen/go`, stamps an `x-opencode-session` header on every
+ * request and routes inference **by conversation** — which is why pointing a
+ * provider at that URL is all "native support" means, and why the URL and the
+ * dialect below are the ones that answer. Read off a working install rather
+ * than from documentation.
+ *
+ * A preset only saves typing: what lands on disk is a `custom_provider` like
+ * any other, and the manual form can still write every one of its fields. This
+ * shape is what the reader sees when they pick a preset, and it is deliberately
+ * two lines of text and a key — everything else is a fact the app holds, and
+ * fields nobody is meant to touch invite touching.
+ */
+export type ProviderPreset = { 
+/**
+ * What the reader sees, and what the CLI `name`s the provider.
+ */
+name: string, baseUrl: string, 
+/**
+ * `openai-completions` here, which is the dialect this gateway speaks —
+ * the CLI's own default for `provider add` is `anthropic-messages`, so
+ * this is the field a reader would most often get wrong by hand.
+ */
+apiFormat: string, 
+/**
+ * Left empty on purpose, and empty is not "no models": [`add`] asks the
+ * provider's own list endpoint and registers everything it serves. Naming
+ * two ids would offer a reader a fraction of what they paid for.
+ */
+models: Array<string>, 
+/**
+ * One line about what the reader is signing up for, drawn under the name.
+ */
+note: string, };
+
 export type PullRequest = { number: number, title: string, url: string, 
 /**
  * `OPEN`, `CLOSED` or `MERGED`, carried through as GitHub's own word.
@@ -1174,7 +1600,7 @@ headRefExists: boolean,
 /**
  * Whether the head branch lives in a fork rather than in this repo.
  *
- * `head_ref_name` is bare either way — a PR from `alice/dray:feature`
+ * `head_ref_name` is bare either way — a PR from `alice/hz:feature`
  * reports `feature` — so the name cannot be told apart from a branch of
  * our own, and joining it to this repo's slug addresses a *different*
  * branch that merely shares its name. Unknown reads as `true`, because
@@ -1287,7 +1713,14 @@ from: MessageSender | null,
  * the boundary would put a network call — and its failure — inside the
  * flush.
  */
-issues: Array<IssueRef>, };
+issues: Array<IssueRef>, 
+/**
+ * The reader's clock at the press, carried through the wait rather than
+ * read at the flush. A held prompt can wait out a whole turn, and the one
+ * it opens is timed from the press — the boundary that released it is not
+ * something the reader did.
+ */
+sentAt: string | null, };
 
 export type RateLimit = { usedPercent: number | null, windowMinutes: number | null, 
 /**
@@ -1318,6 +1751,15 @@ branch: string | null,
  * Uncommitted paths, so a row can say which repository is mid-work.
  */
 dirty: number, };
+
+/**
+ * What the reviewer decided.
+ *
+ * GitHub's own three, and they are not interchangeable: approving a PR and
+ * leaving a comment on it are different acts in the repo's history, and a
+ * "request changes" blocks the merge where a comment does not.
+ */
+export type ReviewVerdict = "approve" | "request_changes" | "comment";
 
 /**
  * One responsibility, and the instructions that carry it.
@@ -1424,7 +1866,7 @@ permissionMode: ApprovalPolicy,
  * has exactly one of them — Claude Code's `fastMode` flag setting, Codex's
  * `priority` service tier, fx's `fast_mode` — and a two-valued switch is
  * the honest shape for all three. A variant is also what an older build
- * sharing `~/.dray` cannot spell, which fails the line and reads the whole
+ * sharing `~/.hz` cannot spell, which fails the line and reads the whole
  * index as no sessions at all; `false` is what a bool degrades to there,
  * which is a session running at ordinary speed and nothing worse.
  *
@@ -1456,7 +1898,7 @@ forkFrom: string | null,
  * two ids and this is the mapping between them.
  *
  * Ours stays primary — it keys the index, the log filename, the
- * attachments directory and every `dray` address, and all of those are
+ * attachments directory and every `hz` address, and all of those are
  * written *before* the child answers. This is read by resume alone.
  */
 threadId: string | null, 
@@ -1488,7 +1930,27 @@ parentSessionId: string | null,
  * index is rewritten whole, so an entry written before the field existed
  * failing to parse is *every session* gone.
  */
-roleId: string | null, created: string, modified: string, archived: boolean, pinned: boolean, };
+roleId: string | null, 
+/**
+ * The newest context reading the agent has given for this session, with the
+ * moment it was taken.
+ *
+ * **Kept because a session outlives its child.** The reading is a question
+ * only a live agent can answer — `/context` is a prompt, and the rows are
+ * computed from runtime state ACP never sends — so a session reopened after
+ * a restart has no way to ask one, and the panel fell back to hz's own
+ * estimate of the conversation's text: a worse answer, drawn where the
+ * reader had seen the agent's own rows a moment before. This is that answer
+ * kept, and the panel draws it, stamped, until a live reading replaces it.
+ *
+ * `skip_serializing_if` so an entry without one stays byte-identical to what
+ * shipped, and `serde(default)` for the reason every field here has it: the
+ * index is parsed as one `Vec`, so a field an older entry lacks failing to
+ * parse is *every session* gone. An older build reading this keeps it — the
+ * flatten below carries keys it does not know — so the round trip through a
+ * shared `~/.hz` is lossless.
+ */
+contextReading?: ContextReading | null, created: string, modified: string, archived: boolean, pinned: boolean, };
 
 /**
  * Session-level facts, known at startup.
@@ -1548,7 +2010,7 @@ permissionMode: ApprovalPolicy,
  * has exactly one of them — Claude Code's `fastMode` flag setting, Codex's
  * `priority` service tier, fx's `fast_mode` — and a two-valued switch is
  * the honest shape for all three. A variant is also what an older build
- * sharing `~/.dray` cannot spell, which fails the line and reads the whole
+ * sharing `~/.hz` cannot spell, which fails the line and reads the whole
  * index as no sessions at all; `false` is what a bool degrades to there,
  * which is a session running at ordinary speed and nothing worse.
  *
@@ -1580,7 +2042,7 @@ forkFrom: string | null,
  * two ids and this is the mapping between them.
  *
  * Ours stays primary — it keys the index, the log filename, the
- * attachments directory and every `dray` address, and all of those are
+ * attachments directory and every `hz` address, and all of those are
  * written *before* the child answers. This is read by resume alone.
  */
 threadId: string | null, 
@@ -1612,7 +2074,27 @@ parentSessionId: string | null,
  * index is rewritten whole, so an entry written before the field existed
  * failing to parse is *every session* gone.
  */
-roleId: string | null, created: string, modified: string, archived: boolean, pinned: boolean, };
+roleId: string | null, 
+/**
+ * The newest context reading the agent has given for this session, with the
+ * moment it was taken.
+ *
+ * **Kept because a session outlives its child.** The reading is a question
+ * only a live agent can answer — `/context` is a prompt, and the rows are
+ * computed from runtime state ACP never sends — so a session reopened after
+ * a restart has no way to ask one, and the panel fell back to hz's own
+ * estimate of the conversation's text: a worse answer, drawn where the
+ * reader had seen the agent's own rows a moment before. This is that answer
+ * kept, and the panel draws it, stamped, until a live reading replaces it.
+ *
+ * `skip_serializing_if` so an entry without one stays byte-identical to what
+ * shipped, and `serde(default)` for the reason every field here has it: the
+ * index is parsed as one `Vec`, so a field an older entry lacks failing to
+ * parse is *every session* gone. An older build reading this keeps it — the
+ * flatten below carries keys it does not know — so the round trip through a
+ * shared `~/.hz` is lossless.
+ */
+contextReading?: ContextReading | null, created: string, modified: string, archived: boolean, pinned: boolean, };
 
 /**
  * Driven by [`StatusTracker`](crate::session::StatusTracker). `Completed`
@@ -1668,8 +2150,11 @@ export type SettingsView = {
 analyticsEnabled: boolean, analyticsLocked: boolean, };
 
 /**
- * One command the user may type. `name` carries no leading slash — the picker
- * adds it — and may be namespaced by its plugin (`railway:deploy`).
+ * One row of the composer's slash menu.
+ *
+ * Defined here rather than in a shared module because there is one harness
+ * left to have one, and the shape is the frontend's: it names what the menu
+ * draws and nothing about where it came from.
  */
 export type SlashCommand = { name: string, description: string, 
 /**
@@ -1681,6 +2166,37 @@ argumentHint: string,
  * Other names that reach the same command. Absent on most.
  */
 aliases: Array<string>, };
+
+/**
+ * Emitted as `slash_commands` when the agent states its list, which it does
+ * when a session opens and again whenever the set changes.
+ *
+ * **Not an `AgentEvent`**, for `SessionTitleEvent`'s reason: no line of the
+ * log produced it, and a replayed session has no child to have published one —
+ * so it must never reach the `.jsonl`. The list belongs to the live connection
+ * and crosses as it arrives, which is also why the app asks nobody for it: the
+ * agent pushes, and a request made later would have to guess when.
+ */
+export type SlashCommandsEvent = { sessionId: string, commands: Array<SlashCommand>, };
+
+/**
+ * Git and GitHub as one read, for the settings section that explains them.
+ *
+ * **About the machine, not about a checkout**, and that is the whole reason it
+ * is not another `cwd`-taking command: every other read here answers for one
+ * repository, and the questions a reader has when pull requests will not load —
+ * is `gh` even here, who is it signed in as, what may that token read — are
+ * answered once for the whole app.
+ */
+export type SourceControlState = { 
+/**
+ * `git --version`'s own words, or `None` where git is not on the PATH.
+ */
+git: string | null, 
+/**
+ * `None` where the CLI is not installed at all.
+ */
+gh: GhAccount | null, };
 
 /**
  * Why a press could not start recording, or `None` where it did.
@@ -1745,7 +2261,7 @@ isError: boolean,
 structured: JsonValue | null, exitCode: number | null, durationMs: number | null, 
 /**
  * Pictures the tool handed back — a `Read` of a screenshot, an MCP tool
- * that answers in images. Archived under `~/.dray/attachments` before the
+ * that answers in images. Archived under `~/.hz/attachments` before the
  * event is written, so this carries a path and never the bytes: the CLI
  * sends the same image twice on one line and a session of screenshots was
  * 12MB of base64 in a 14MB log.

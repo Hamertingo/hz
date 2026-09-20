@@ -10,7 +10,7 @@ import {
   type ThemeName,
 } from "./theme";
 
-// The pre-paint script in index.html reads `ade.theme` with a bare `getItem` and
+// The pre-paint script in index.html reads `hz.theme` with a bare `getItem` and
 // cannot import this module, so the two agree only by hand.
 
 describe("coerceTheme", () => {

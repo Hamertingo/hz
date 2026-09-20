@@ -10,7 +10,7 @@ import { PiGlyph } from "@/components/PiGlyph";
 import { Sponsors } from "@/components/Sponsors";
 import { UsedBy } from "@/components/UsedBy";
 import { DOWNLOAD_SIZE } from "@/lib/links";
-import hero from "../../public/hero-pr-dray.png";
+import hero from "../../public/hero-pr-hz.png";
 
 /// Two widths, nested. The shell caps at 6xl and only the hero screenshot
 /// uses all of it — a capture of a whole window wants every pixel it can
@@ -104,7 +104,7 @@ export default function Home() {
       <Image
         src={hero}
         priority
-        alt="Dray showing a session transcript beside its pull request's checks and comments"
+        alt="hz showing a session transcript beside its pull request's checks and comments"
         sizes="(max-width: 1152px) calc(100vw - 24px), 1128px"
         className="mb-12 block h-auto w-full rounded-lg border border-border sm:mb-16"
       />

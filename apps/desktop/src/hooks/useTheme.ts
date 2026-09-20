@@ -58,7 +58,7 @@ function rewatch() {
   unwatch?.();
   unwatch = null;
   const state = current;
-  if (!state || state.mode !== "system") return;
+  if (state?.mode !== "system") return;
   unwatch = watchSystemMode(() => {
     const resolvedMode = applyTheme(state.name, state.mode);
     if (resolvedMode === current?.resolvedMode) return;

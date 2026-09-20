@@ -1,23 +1,33 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Globe } from "lucide-react";
 
 import AgentTrace from "@/components/chat/AgentTrace";
 import EventRow from "@/components/chat/EventRow";
 import { countChanges, editSides } from "@/lib/diff";
 import { groupLabel, groupVerb } from "@/lib/tools";
+import { isPlanTool, planLine, planOf, type TodoTask } from "@/lib/todo";
 import type { ToolGroup } from "@/lib/transcript";
 import type { FileEdit, ToolResult } from "@/types/events";
 
 /// A run of consecutive same-tool calls behind one trace header. Expanding
 /// reveals the individual calls, each still its own expandable `ToolCall`.
-export default function ToolGroupRow({
+///
+/// Memoised on identity: `group` and the three `Map`s are all built once per
+/// walk, so a preview delta — which builds none of them — leaves this row alone.
+/// A comparator is not the alternative. A `ToolGroup` carries its own `calls`
+/// array, rebuilt wholesale by the next walk, so any comparison short of walking
+/// every call would be comparing arrays of events it has just been handed fresh;
+/// the memo belongs on the walk, not on the props it produced.
+function ToolGroupRow({
   group,
   resultByCallId,
   editsByCallId,
+  todosByCallId,
 }: {
   group: ToolGroup;
   resultByCallId: Map<string, ToolResult>;
   editsByCallId?: Map<string, FileEdit[]>;
+  todosByCallId?: Map<string, TodoTask[]>;
 }) {
   // Any call still awaiting its result keeps the group live, so a run that
   // settles mid-flight still shimmers.
@@ -75,22 +85,44 @@ export default function ToolGroupRow({
     return any ? { added, removed } : null;
   }, [group.key, group.calls.length]);
 
+  // A run of plan calls is one list being moved, not a count of tasks: the
+  // header says where the plan stood after the run, which is the one fact every
+  // row underneath agrees on. Counting them out instead said the agent had
+  // "planned six tasks" on a run that created two and finished one.
+  const planned = useMemo(() => {
+    if (!isPlanTool(group.name)) return null;
+    let last: TodoTask[] | null = null;
+    for (const event of group.calls) {
+      if (event.payload.type !== "tool_call_started") continue;
+      const tasks = todosByCallId?.get(event.payload.callId);
+      if (tasks) last = tasks;
+    }
+    return last;
+  }, [group.key, group.calls.length, todosByCallId]);
+
   // One target names it instead of counting to one, so the header reads like the
   // rows underneath — same mono, same truncation. Both tenses are built here
   // rather than conjugated after the fact: `groupVerb` is the only thing that
   // knows how a tool conjugates.
-  const active = group.target
-    ? `${groupVerb(group.name, true)} ${group.target}`
-    : groupLabel(group.name, group.targets, true);
+  const label = (pending: boolean) => {
+    const verb = groupVerb(group.name, pending);
+    const plan = planned ? planOf(planned) : null;
+    if (plan) return `${verb} · ${planLine(plan)}`;
+    return group.target
+      ? `${verb} ${group.target}`
+      : groupLabel(group.name, group.targets, pending);
+  };
+
+  const active = label(true);
 
   // The churn rides the header text rather than a separate slot, because the
   // trace header is one sentence and a second column beside it would be read as
   // a second fact about something else.
-  const done = `${
-    group.target
-      ? `${groupVerb(group.name, false)} ${group.target}`
-      : groupLabel(group.name, group.targets, false)
-  }${changes && (changes.added > 0 || changes.removed > 0) ? ` · +${changes.added} -${changes.removed}` : ""}`;
+  const done = `${label(false)}${
+    changes && (changes.added > 0 || changes.removed > 0)
+      ? ` · +${changes.added} -${changes.removed}`
+      : ""
+  }`;
 
   return (
     <AgentTrace
@@ -106,9 +138,12 @@ export default function ToolGroupRow({
           event={event}
           resultByCallId={resultByCallId}
           editsByCallId={editsByCallId}
+          todosByCallId={todosByCallId}
           hideToolLabel
         />
       ))}
     />
   );
 }
+
+export default memo(ToolGroupRow);

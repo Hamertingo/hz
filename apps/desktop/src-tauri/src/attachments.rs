@@ -139,12 +139,111 @@ pub async fn read_attachments(paths: Vec<String>) -> Vec<Attachment> {
     out
 }
 
-/// `~/.dray/attachments/<session-id>`.
+/// `~/.hz/attachments/<session-id>`.
 async fn attachments_path(session_id: &str) -> Result<PathBuf> {
     Ok(get_home_app_dir()
         .await?
         .join("attachments")
         .join(session_id))
+}
+
+/// `~/.hz/pasted/`, created on demand.
+///
+/// Where a paste too large to sit in the composer goes. Beside the transcripts
+/// rather than in the session's own directory because the composer can paste
+/// before there is a session to file it under, and a directory per session here
+/// would mean moving the file at send — one more write for a path the prompt has
+/// already named.
+async fn pasted_dir() -> Result<PathBuf> {
+    let dir = get_home_app_dir().await?.join("pasted");
+    fs::create_dir_all(&dir)
+        .await
+        .context("could not create the pasted directory")?;
+    Ok(dir)
+}
+
+/// How long a pasted file is kept. Long enough for every turn that could be
+/// reading it, and for a session resumed the next day.
+const PASTED_RETAIN: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Writes pasted text out as a file and answers the attachment for it.
+///
+/// The composer's own escape hatch: 32KB of pasted log is a whole context window
+/// spent on something the agent could have read in one tool call, and a file is a
+/// path the prompt names rather than tokens it carries.
+///
+/// **The name is one a reader can read back.** It was a v7 uuid, which is right
+/// for a copy nobody looks at and wrong for this one: the name is what the
+/// composer writes into the draft as the attachment's chip, so `0192a1b7-…` was
+/// a chip full of noise in the middle of a sentence. `pasted-text` says exactly
+/// what happened, and the number keeps two pastes from sharing one name — a
+/// second paste overwriting the first would be the reader's own words gone.
+///
+/// **The file outlives the turn but not much longer.** It is not copied into the
+/// session's directory the way an image is — a non-image attachment is referenced
+/// where it lies, which is the same bargain a file dragged in from the reader's
+/// own tree makes — so it is swept after [`PASTED_RETAIN`] by the same reasoning
+/// that keeps a recording: nothing else would ever clear the last one.
+pub async fn write_pasted_text(text: &str) -> Result<Attachment> {
+    let dir = pasted_dir().await?;
+    let path = free_pasted_path(&dir).await;
+    fs::write(&path, text)
+        .await
+        .with_context(|| format!("could not write {}", path.display()))?;
+
+    prune_pasted().await;
+    describe(&path.to_string_lossy()).await
+}
+
+/// `pasted-text.txt`, or `pasted-text-2.txt` and so on where that name is taken.
+async fn free_pasted_path(dir: &Path) -> PathBuf {
+    for n in 1..1_000 {
+        let name = if n == 1 {
+            "pasted-text.txt".to_string()
+        } else {
+            format!("pasted-text-{n}.txt")
+        };
+        let path = dir.join(name);
+        if !fs::try_exists(&path).await.unwrap_or(false) {
+            return path;
+        }
+    }
+
+    // A thousand pastes nobody has cleared out. Fall back to a unique name rather
+    // than refusing the paste: the sweep is what this is for, and the reader's
+    // text is worth more than the name.
+    dir.join(format!("pasted-text-{}.txt", Uuid::now_v7()))
+}
+
+/// Deletes pasted files older than [`PASTED_RETAIN`].
+async fn prune_pasted() {
+    let Ok(dir) = pasted_dir().await else { return };
+    prune_dir(&dir, PASTED_RETAIN).await;
+}
+
+/// Deletes every file in `dir` older than `retain`. Best effort throughout: a
+/// sweep that cannot run is not worth an error on a paste that just worked.
+async fn prune_dir(dir: &Path, retain: std::time::Duration) {
+    let Ok(mut entries) = fs::read_dir(dir).await else {
+        return;
+    };
+
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(retain)
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else { continue };
+        if modified >= cutoff {
+            continue;
+        }
+        if let Err(e) = fs::remove_file(entry.path()).await {
+            eprintln!("[pasted cleanup err] {e}");
+        }
+    }
 }
 
 /// [`attachments_path`], created if needed.
@@ -187,7 +286,7 @@ pub async fn archive_result_images(session_id: &str, images: &mut [ImageRef]) {
         // A picture named by path rather than carried as bytes — Codex's
         // `imageView` hands over the file it looked at. Copied for the same
         // reason the decoded ones are, plus one this side cannot ignore: the
-        // asset protocol is scoped to `~/.dray/attachments`, so a row pointing
+        // asset protocol is scoped to `~/.hz/attachments`, so a row pointing
         // anywhere else does not merely go stale, it refuses to load at all.
         if image.url.is_none() {
             if let Some(src) = image.path.clone() {
@@ -236,7 +335,7 @@ pub async fn archive_result_images(session_id: &str, images: &mut [ImageRef]) {
 ///
 /// Two things make this necessary rather than tidy. The file is the agent's to
 /// delete — an `imageView` of a screenshot under `/tmp` outlives nothing — and
-/// the asset protocol is scoped to `~/.dray/attachments`, so the transcript
+/// the asset protocol is scoped to `~/.hz/attachments`, so the transcript
 /// cannot load a row pointing anywhere else even while the file is still there.
 ///
 /// A path already inside that directory is left alone: replay runs this again
@@ -375,28 +474,23 @@ mod tests {
     /// *text*, and a path that does not exist is skipped before it reaches it.
     #[tokio::test]
     async fn a_file_is_named_the_way_its_harness_can_read_it() {
-        let dir = std::env::temp_dir().join(format!("dray-att-{}", Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("hz-att-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.expect("temp dir");
         let file = dir.join("rows.csv");
         fs::write(&file, b"a,b\n1,2\n").await.expect("temp file");
         let path = file.to_string_lossy().into_owned();
 
-        let claude = prepare("s", "look at this", &[path.clone()], Harness::ClaudeCode)
+        // No mention expansion: mcode's prompt is text and nothing parses
+        // `@` out of it, so the file is named in prose where punctuation would
+        // arrive as literal characters the model has to guess at.
+        let prepared = prepare("s", "look at this", &[path.clone()], Harness::Mcode)
             .await
             .expect("prepared");
-        assert_eq!(claude.text, format!("look at this\n@{path}"));
-
-        for harness in [Harness::Pi, Harness::Codex] {
-            let other = prepare("s", "look at this", &[path.clone()], harness)
-                .await
-                .expect("prepared");
-
-            assert_eq!(
-                other.text,
-                format!("look at this\nAttached file: {path}"),
-                "{harness:?} expands no mention, so punctuation says nothing"
-            );
-        }
+        assert_eq!(
+            prepared.text,
+            format!("look at this\nAttached file: {path}"),
+            "mcode expands no mention, so punctuation says nothing"
+        );
 
         let _ = fs::remove_dir_all(&dir).await;
     }
@@ -414,9 +508,55 @@ mod tests {
         assert_eq!(parse_data_url("https://example.com/a.png"), None);
         assert_eq!(parse_data_url("data:image/png;base64"), None);
     }
+
+    /// A paste is the only attachment this app writes itself, so the bytes are
+    /// its own to get wrong. And the name is the chip the composer writes into
+    /// the draft, so it has to be one a reader would put in a sentence — and two
+    /// pastes must not land on one name, or the second silently replaces the
+    /// first.
+    #[tokio::test]
+    async fn names_a_paste_something_a_reader_can_read_back() {
+        let dir = std::env::temp_dir().join(format!("hz-pasted-{}", Uuid::now_v7()));
+        fs::create_dir_all(&dir).await.unwrap();
+
+        let first = free_pasted_path(&dir).await;
+        assert_eq!(first.file_name().and_then(|n| n.to_str()), Some("pasted-text.txt"));
+        assert_eq!(first.extension().and_then(|e| e.to_str()), Some("txt"));
+        fs::write(&first, "one").await.unwrap();
+
+        let second = free_pasted_path(&dir).await;
+        assert_eq!(
+            second.file_name().and_then(|n| n.to_str()),
+            Some("pasted-text-2.txt")
+        );
+        assert_ne!(first, second);
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// The sweep is the only thing that ever clears this directory, so it has to
+    /// actually delete — and has to leave a file inside its retention alone.
+    /// `Duration::ZERO` stands in for "everything here is old" without backdating
+    /// an mtime; the sleep is what makes the file older than the prune itself.
+    #[tokio::test]
+    async fn sweeps_pastes_past_their_retention() {
+        let dir = std::env::temp_dir().join(format!("hz-pasted-{}", Uuid::now_v7()));
+        fs::create_dir_all(&dir).await.unwrap();
+        let path = free_pasted_path(&dir).await;
+        fs::write(&path, "keep me").await.unwrap();
+
+        prune_dir(&dir, PASTED_RETAIN).await;
+        assert!(fs::try_exists(&path).await.unwrap(), "swept a fresh paste");
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        prune_dir(&dir, std::time::Duration::ZERO).await;
+        assert!(!fs::try_exists(&path).await.unwrap(), "left an old paste");
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
 }
 
-/// Writes into the real `~/.dray/attachments`, so it's `#[ignore]`d:
+/// Writes into the real `~/.hz/attachments`, so it's `#[ignore]`d:
 /// `cargo test -- --ignored archives_an_image_result` when changing the archive
 /// path or the `data:` URL the mapper mints.
 #[cfg(test)]
@@ -450,7 +590,7 @@ mod archive_tests {
     }
 
     /// Codex names a picture by path instead of carrying its bytes, and the
-    /// asset protocol is scoped to `~/.dray/attachments` — so a row left
+    /// asset protocol is scoped to `~/.hz/attachments` — so a row left
     /// pointing at the original does not go stale later, it fails to load now.
     #[tokio::test]
     #[ignore]

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { usePreference } from "@/lib/prefs";
 import type { ModelByHarness } from "@/lib/model";
 import type { ApprovalPolicy, Effort, Harness, ModelId } from "@/types/events";
 
@@ -11,7 +11,7 @@ import type { ApprovalPolicy, Effort, Harness, ModelId } from "@/types/events";
 /// `rememberedModel` answers per harness. A single seeded id could only ever be
 /// right for one of them.
 const SEED: ComposerPrefs = {
-  harness: "claude_code",
+  harness: "mcode",
   modelByHarness: {},
   effortByModel: {},
   permissionMode: "auto",
@@ -29,7 +29,7 @@ export type EffortByModel = Partial<Record<ModelId, Effort>>;
 /// seeds from whatever the repo is checked out to, since restoring a name without
 /// running the checkout would have the composer claim a branch the tree isn't on;
 /// `projectPath` is already persisted backend-side by `set_last_selected_project`.
-type ComposerPrefs = {
+export type ComposerPrefs = {
   /// Which agent a new session starts on. Sticky like the rest of this row —
   /// somebody who works in Codex should not re-pick it every time.
   harness: Harness;
@@ -61,10 +61,13 @@ type ComposerPrefs = {
 /// so "I always want acceptEdits on Sonnet" survives both a session switch and a
 /// relaunch, and `handleNewSession` seeds from it instead of from a constant.
 ///
+/// A durable preference: written to `~/.hz/settings.json`, so it is the same pick
+/// in a dev build and a released one.
+///
 /// Restoring a *session's* settings must never write here — clicking through old
 /// sessions would otherwise rewrite the defaults behind the user's back.
 export function useComposerPrefs() {
-  const [prefs, setPrefs] = useLocalStorage<ComposerPrefs>("ade.composerPrefs", SEED);
+  const [prefs, setPrefs] = usePreference("hz.composerPrefs", SEED);
 
   // Merged over the seed on read, so a record written by an older build that
   // lacks a key gets the seed for it rather than `undefined` reaching a picker.

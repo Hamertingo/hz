@@ -58,21 +58,25 @@ export const SHORTCUTS = [
   { id: "view.files", label: "Files view", group: "Panels and views", chord: k("4", { alt: true, code: "Digit4" }) },
   { id: "chat.bottom", label: "Scroll chat to bottom", group: "Panels and views", chord: k("ArrowDown") },
   { id: "issues.open", label: "Open issues", group: "Panels and views", chord: k("i") },
+  { id: "prs.open", label: "Open pull requests", group: "Panels and views", chord: k("l", { shift: true }) },
   { id: "issues.search", label: "Search issues", group: "Panels and views", chord: k("f", { shift: true }) },
 
   { id: "dictate", label: "Dictate", group: "Composer", chord: k("d") },
   { id: "attach", label: "Attach files", group: "Composer", chord: k("o", { alt: true }) },
   { id: "model.next", label: "Next model", group: "Composer", chord: k("Tab", { meta: false, shift: true }) },
   { id: "effort.next", label: "Next effort level", group: "Composer", chord: k("e", { shift: true }) },
-  { id: "harness.next", label: "Next agent", group: "Composer", chord: k("a", { shift: true }) },
   { id: "worktree.toggle", label: "Toggle worktree", group: "Composer", chord: k("t", { shift: true }) },
   { id: "project.next", label: "Next project in picker", group: "Composer", chord: k("p", { shift: true }) },
   { id: "queue.send", label: "Send queued prompts now", group: "Composer", chord: k("Enter") },
+  // Not ⌘S, which is the Docs panel's own save — two ids cannot share a default,
+  // and the doc panel's is the older owner of that chord.
+  { id: "stash.prompt", label: "Stash the draft", group: "Composer", chord: k("s", { shift: true }) },
 
   { id: "notice.take", label: "Open the notification", group: "Notifications", chord: k("g") },
   { id: "notice.delete", label: "Delete worktree from notification", group: "Notifications", chord: k("d", { shift: true }) },
 
   { id: "settings", label: "Settings", group: "General", chord: k(",") },
+  { id: "palette.open", label: "Command palette", group: "General", chord: k("k") },
 ] as const satisfies readonly { id: string; label: string; group: ShortcutGroup; chord: Chord }[];
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];

@@ -57,6 +57,19 @@ export async function addAttachmentPaths(sessionId: string | null, paths: string
   write(sessionId, [...now, ...added.filter((a) => !now.some((b) => b.path === a.path))]);
 }
 
+/// Parks a paste too large for the box and pins the file it landed in.
+///
+/// Nothing is deduped here, unlike a drop: two pastes of the same text are two
+/// files on disk, and the reader who pasted twice meant to attach twice.
+export async function addPastedText(sessionId: string | null, text: string) {
+  const added = await invoke<Attachment>("write_pasted_text", { text });
+
+  // Re-read rather than closing over a snapshot taken before the await, the same
+  // bargain `addAttachmentPaths` makes: a drop landing in between must survive.
+  const now = bySession.get(sessionId) ?? EMPTY;
+  write(sessionId, [...now, added]);
+}
+
 /// Opens the system file picker and pins whatever comes back. Resolves to
 /// nothing when the user cancels.
 export async function pickAttachments(sessionId: string | null) {
@@ -74,6 +87,23 @@ export function removeAttachment(sessionId: string | null, path: string) {
     sessionId,
     current.filter((a) => a.path !== path),
   );
+}
+
+/// Keeps only the attachments a set of names still holds — called by the
+/// composer when the draft stops naming one.
+///
+/// **The text is the record of what is attached.** A chip in the draft is a
+/// token; deleting it detaches the file, and without this the store would keep
+/// the entry and write the chip back on the next attach (which is the bug this
+/// exists for). A reader who only *edits* the name away detaches it too, which is
+/// the honest reading of "the message no longer names this file".
+export function keepAttachments(sessionId: string | null, names: ReadonlySet<string>) {
+  const current = bySession.get(sessionId);
+  if (!current) return;
+
+  const kept = current.filter((attachment) => names.has(attachment.name));
+  if (kept.length === current.length) return;
+  write(sessionId, kept);
 }
 
 export function clearAttachments(sessionId: string | null) {

@@ -63,7 +63,7 @@ describe("containingProject", () => {
 });
 
 describe("projectKey", () => {
-  /// **The backward-compatibility case.** Every session Dray had before
+  /// **The backward-compatibility case.** Every session hz had before
   /// workspaces existed recorded a path that is itself an attached project, so
   /// the key is that path and nothing about the sidebar moves.
   it("is the identity for a path that is its own project", () => {

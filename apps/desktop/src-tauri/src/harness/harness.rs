@@ -3,20 +3,10 @@
 //! [`AgentEvent`](crate::events::AgentEvent)). A wire-format change then touches
 //! only the parser, a vocabulary change only the mapper.
 
-#[path = "claude_code/claude_code.rs"]
-pub mod claude_code;
+#[path = "mcode/mcode.rs"]
+pub mod mcode;
 
-#[path = "codex/codex.rs"]
-pub mod codex;
-
-#[path = "pi/pi.rs"]
-pub mod pi;
-
-#[path = "fx/fx.rs"]
-pub mod fx;
-
-#[path = "omp/omp.rs"]
-pub mod omp;
+pub mod permissions;
 
 pub mod rpc;
 
@@ -57,6 +47,33 @@ pub fn agent_path(bin: &std::path::Path) -> String {
         .collect();
     dirs.extend(crate::binpath::resolved_bin_dirs());
     crate::binpath::child_path(dirs)
+}
+
+/// The environment every agent child is spawned with.
+///
+/// Two things, and both are the app taking responsibility for something the
+/// reader's shell must not decide:
+///
+/// - **`PATH`**, so the launcher can find its own `node` and its own tools.
+/// - **`MINIMAX_DATA_DIR`**, which is where the CLI keeps its sessions, its
+///   provider configuration, its credentials and its login. Left unset the CLI
+///   resolves it from the environment it inherited, so a reader with that
+///   variable set — for their own TUI, another profile, anything — would have
+///   *their* agent state written wherever it pointed. Measured the hard way: a
+///   probe spawned from a shell with `MAVIS_DATA_DIR` set wrote its provider
+///   credentials into hz's own data directory, where the app's issue-tracker
+///   store then failed to read them and reported it once per launch.
+///
+/// So it is pinned to a directory of the agent's own inside hz's:
+/// `~/.hz/agent`. Nothing else writes there, the app's own files stay the
+/// app's, and a reader's provider setup belongs to this install of hz rather
+/// than to whatever the shell happened to say.
+pub async fn agent_env(command: &mut tokio::process::Command, bin: &std::path::Path) {
+    command.env("PATH", agent_path(bin));
+
+    if let Ok(dir) = crate::store::get_home_app_dir().await {
+        command.env("MINIMAX_DATA_DIR", dir.join("agent"));
+    }
 }
 
 /// Whether a harness's failure text names a login problem, case-insensitively.
@@ -310,53 +327,110 @@ mod wire_tests {
 mod capability_tests {
     use super::{FastMode, Harness};
 
-    /// Claude Code is the only CLI with a worktree flag, and a harness wrongly
-    /// marked here never gets a tree at all — it bails inside `Session::init`
-    /// with its index row already written.
+    /// Everything in place, and that is a measured claim rather than a
+    /// convenient one: `session/set_config_option` moves the model and the
+    /// thinking effort on a running session (verified live against `mcode acp`
+    /// 0.4.12), and the permission stance rides the same call. A `false` here
+    /// costs a respawn for a setting the wire can carry, and reads on screen as
+    /// the composer's model list resetting itself.
     #[test]
-    fn only_claude_code_makes_its_own_worktree() {
-        assert!(Harness::ClaudeCode.caps().creates_own_worktree);
+    fn mcode_takes_every_setting_in_place() {
+        let caps = Harness::Mcode.caps();
+        assert!(caps.applies_model_in_place);
+        assert!(caps.applies_effort_in_place);
+        assert!(caps.applies_permission_in_place);
+    }
 
-        for harness in Harness::ALL {
-            if harness != Harness::ClaudeCode {
-                assert!(
-                    !harness.caps().creates_own_worktree,
-                    "{harness:?} has no `-w`, so Dray has to make the tree"
-                );
-            }
+    /// No `-w` — mcode has no worktree concept at all — so hz resolves the base
+    /// ref and makes the tree itself before the spawn. A `true` here is a
+    /// session that never gets one: `Session::init` refuses a worktree name with
+    /// the index row already written.
+    #[test]
+    fn mcode_makes_no_worktree_of_its_own() {
+        assert!(!Harness::Mcode.caps().creates_own_worktree);
+    }
+
+    /// Where every harness's fast mode can be reached from, row by row out of
+    /// `shared_rules.json` — the same table `FAST_MODE_BY_HARNESS` is read from
+    /// in `src/lib/mcode.test.ts`, so the backend's answer and the switch the
+    /// composer draws cannot come apart.
+    ///
+    /// A row here is a claim about the CLI's wire, and mcode's has no tier on it
+    /// at all: `serviceTier` is not a thing on this CLI and the ACP surface has
+    /// no field for one — which is why no model of its list draws a switch, and
+    /// why the row is absent rather than inert.
+    ///
+    /// A harness this build cannot name is not in the table and cannot be: it
+    /// has no variant to write a spelling for, and `an_unknown_harness_offers_nothing`
+    /// below is where its answer is pinned.
+    #[test]
+    fn the_fast_mode_each_harness_has_is_the_route_the_frontend_draws_from() {
+        for row in crate::shared_rules::rules().fast_mode {
+            let fast = harness_named(&row.harness).caps().fast_mode;
+
+            assert_eq!(fast_mode_name(fast), row.support, "{} route", row.harness);
+            assert_eq!(fast.offered(), row.offered, "{} offered", row.harness);
         }
     }
 
-    /// fx is the one CLI with an in-place effort switch —
-    /// `session/set_config_option {configId: "effort"}`, verified live — so
-    /// every other effort change replaces the child. Stated because `true`
-    /// here silently drops the change on a harness whose wire cannot carry it.
-    #[test]
-    fn only_fx_applies_effort_in_place() {
-        assert!(Harness::Fx.caps().applies_effort_in_place);
-
-        for harness in Harness::ALL {
-            if harness != Harness::Fx {
-                assert!(
-                    !harness.caps().applies_effort_in_place,
-                    "{harness:?} claims an effort route its CLI does not have"
-                );
-            }
+    /// The frontend's four words for [`FastMode`], which is the one thing the
+    /// two sides have to spell identically — the fixture's `support` column.
+    fn fast_mode_name(fast: FastMode) -> &'static str {
+        match fast {
+            FastMode::Unsupported => "none",
+            FastMode::InPlace => "in-place",
+            FastMode::OnSpawn => "on-spawn",
+            FastMode::AtCreation => "at-creation",
         }
     }
 
-    /// Each answer was captured, not chosen, and each is a different shape —
-    /// which is why one enum holds them rather than a pair of bools that could
-    /// spell a combination nothing has. Stated because the wrong arm fails
-    /// *silently*: a pick recorded in the index that never reaches the child.
+    /// A harness by its wire spelling, which is how the frontend keys its own
+    /// table. A row naming one this build has no variant for is a fixture
+    /// nothing here can answer, rather than a row quietly skipped.
+    fn harness_named(name: &str) -> Harness {
+        Harness::from_wire_name(name).unwrap_or_else(|| {
+            panic!("fixture names a harness this build has no variant for: {name}")
+        })
+    }
+
+    /// `session/fork` answers a whole new session on the CLI's side, so there is
+    /// nothing left for hz to perform on a tree — where `fork_needs_cli` true
+    /// would have hz copy a transcript the CLI is about to write itself.
     #[test]
-    fn each_harness_reaches_fast_mode_its_own_way() {
-        assert_eq!(Harness::ClaudeCode.caps().fast_mode, FastMode::InPlace);
-        assert_eq!(Harness::Codex.caps().fast_mode, FastMode::OnSpawn);
-        assert_eq!(Harness::Fx.caps().fast_mode, FastMode::AtCreation);
-        assert_eq!(Harness::Pi.caps().fast_mode, FastMode::Unsupported);
-        assert!(!Harness::Pi.caps().fast_mode.offered());
-        assert!(Harness::Fx.caps().fast_mode.offered());
+    fn mcode_forks_through_the_cli_alone() {
+        assert!(Harness::Mcode.caps().forkable);
+        assert!(!Harness::Mcode.caps().fork_needs_cli);
+    }
+
+    /// No `@path` expansion: mcode's prompt path has no parser for it, so a
+    /// mention would reach the model as literal punctuation it has to guess the
+    /// meaning of. The composer names the file in prose instead.
+    #[test]
+    fn mcode_expands_no_mentions() {
+        assert!(!Harness::Mcode.caps().expands_at_mentions);
+    }
+
+    /// Nothing spawns for a harness this build cannot name, and every
+    /// capability is `false` so nothing is offered either — the row still draws
+    /// and its transcript still reads, which is the whole of what the tolerant
+    /// read bought.
+    #[test]
+    fn an_unknown_harness_offers_nothing() {
+        let unknown = Harness::Other("pi");
+        let caps = unknown.caps();
+
+        assert!(!unknown.names_a_cli());
+        assert!(!caps.creates_own_worktree);
+        assert!(!caps.applies_model_in_place);
+        assert!(!caps.applies_effort_in_place);
+        assert!(!caps.applies_permission_in_place);
+        assert!(!caps.forkable);
+        assert_eq!(caps.fast_mode, FastMode::Unsupported);
+        // And nothing to copy: there is no CLI to install and no guide to link,
+        // because what is missing is this build rather than the agent.
+        assert_eq!(unknown.install_command(), "");
+        assert_eq!(unknown.docs_url(), "");
+        assert_eq!(unknown.login_command(), "");
     }
 }
 
@@ -364,40 +438,20 @@ mod capability_tests {
 mod install_tests {
     use super::Harness;
 
-    /// The cure has to be nameable for every agent, or the notice degrades to
-    /// the errno it was written to replace. A harness added later fails here
-    /// rather than shipping a card with an empty command in it.
+    /// **The agent ships with the app, so there is no cure to name.** An
+    /// install command here would be a reader sent to fetch a second copy of
+    /// what is already inside the bundle they just opened.
     #[test]
-    fn every_agent_names_its_own_cure() {
-        for harness in Harness::ALL {
-            assert!(!harness.label().is_empty());
-            assert!(
-                harness.install_command().starts_with("curl -fsSL "),
-                "{:?} has no copyable install command",
-                harness
-            );
-            assert!(
-                harness.docs_url().starts_with("https://"),
-                "{:?} has no install guide to link",
-                harness
-            );
-        }
+    fn the_shipped_agent_names_no_installer() {
+        assert_eq!(Harness::Mcode.install_command(), "");
+        assert_eq!(Harness::Mcode.docs_url(), "");
+        assert_eq!(Harness::Mcode.login_command(), "");
+        assert!(!Harness::Mcode.label().is_empty());
 
-        // And they are not each other's. One `match` arm copied and left
-        // unedited is the way this goes wrong, and it reads as correct. Over
-        // every pair rather than the one pair, or the third harness ships
-        // Codex's installer and this still passes.
-        for (i, a) in Harness::ALL.iter().enumerate() {
-            for b in &Harness::ALL[i + 1..] {
-                assert_ne!(
-                    a.install_command(),
-                    b.install_command(),
-                    "{a:?} and {b:?} share an install command"
-                );
-                assert_ne!(a.docs_url(), b.docs_url(), "{a:?} and {b:?} share a docs URL");
-                assert_ne!(a.label(), b.label(), "{a:?} and {b:?} share a label");
-            }
-        }
+        // And the name is the app's own, because the prose around it is: a
+        // reader told to install "MiniMax Code" would go looking for a second
+        // download.
+        assert_eq!(Harness::Mcode.label(), "hz");
     }
 
     /// The login command is stated twice — once for the reader to copy, once
@@ -416,10 +470,11 @@ mod install_tests {
             );
         }
 
-        assert_ne!(
-            Harness::ClaudeCode.login_command(),
-            Harness::Codex.login_command()
-        );
+        // Both halves empty, and that is the shape: there is no `mcode` on the
+        // reader's PATH to type, so the notice draws the hint alone and the
+        // reader acts in Settings.
+        assert_eq!(Harness::Mcode.login_command(), "");
+        assert!(Harness::Mcode.login_args().is_empty());
     }
 }
 
@@ -450,17 +505,18 @@ use ts_rs::TS;
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "snake_case", into = "String")]
 pub enum Harness {
-    ClaudeCode,
-    Codex,
-    Pi,
-    Fx,
-    /// omp, the `oh-my-pi` fork of pi. Its own variant rather than a flag on
-    /// [`Harness::Pi`] despite the shared lineage: the two diverge on the one
-    /// thing this enum exists to answer — what closes a turn — and on the
-    /// session file's format, the permission surface and the command set.
-    Omp,
+    /// MiniMax Code, the `mcode` CLI. The only one this build runs, and the
+    /// only one it knows how to spawn: what was five harnesses with five
+    /// dialects is one ACP peer.
+    Mcode,
     /// A harness some other build named and this one has never heard of, with
     /// its spelling kept so a round trip does not lose it.
+    ///
+    /// An index written by an older build names `claude_code`, `codex`, `pi`,
+    /// `omp` or `fx`, and every one of those lands here — the session still
+    /// lists, its transcript still reads, and nothing spawns for it, because
+    /// [`names_a_cli`](Self::names_a_cli) is false. That is the whole reason
+    /// this variant is not deleted along with its harnesses.
     ///
     /// `&'static str` rather than `String`, from the intern table below, so
     /// this type stays `Copy`. It is passed by value through most of
@@ -513,13 +569,7 @@ impl Harness {
     /// [`Harness::Other`] is deliberately absent: it is a value read off disk,
     /// never one to pick, so a picker or an availability read built from this
     /// cannot offer it.
-    pub const ALL: [Harness; 5] = [
-        Harness::ClaudeCode,
-        Harness::Codex,
-        Harness::Pi,
-        Harness::Fx,
-        Harness::Omp,
-    ];
+    pub const ALL: [Harness; 1] = [Harness::Mcode];
 
     /// How the wire spells it — what `dray new --harness` takes and what an
     /// index entry holds.
@@ -534,11 +584,7 @@ impl Harness {
     /// would recurse.
     pub fn wire_name(self) -> String {
         match self {
-            Harness::ClaudeCode => "claude_code".to_string(),
-            Harness::Codex => "codex".to_string(),
-            Harness::Pi => "pi".to_string(),
-            Harness::Fx => "fx".to_string(),
-            Harness::Omp => "omp".to_string(),
+            Harness::Mcode => "mcode".to_string(),
             Harness::Other(name) => name.to_string(),
         }
     }
@@ -671,97 +717,29 @@ impl Harness {
     /// question the last one was asked.
     pub fn caps(self) -> Capabilities {
         match self {
-            // Both switches are control requests on its own channel, verified
-            // against the CLI: the reply after `set_model` comes from the new
-            // model, so no respawn is needed.
-            Harness::ClaudeCode => Capabilities {
-                creates_own_worktree: true,
-                applies_model_in_place: true,
-                applies_effort_in_place: false,
-                applies_permission_in_place: true,
-                fast_mode: FastMode::InPlace,
-                expands_at_mentions: true,
-                forkable: true,
-                fork_needs_cli: true,
-            },
-            // `turn/start` carries model, effort and approval policy on every
-            // turn, so this is not for want of a per-turn override. A stance is
-            // *two* settings and only one has a turn-level form: `sandbox` is
-            // thread-level, so applying a change in place would move the
-            // approval policy and leave the sandbox where it was — exactly the
-            // half-applied setting that makes a session freer than was asked
-            // for. Respawning settles both, and `thread/resume` carries the
-            // conversation across it.
-            Harness::Codex => Capabilities {
-                creates_own_worktree: false,
-                applies_model_in_place: false,
-                applies_effort_in_place: false,
-                applies_permission_in_place: false,
-                fast_mode: FastMode::OnSpawn,
-                expands_at_mentions: false,
-                forkable: false,
-                fork_needs_cli: false,
-            },
-            // pi has no worktree flag, and the three settings are ones it takes
-            // at spawn and nowhere else, so changing any of them is a respawn.
+            // Every one of these is ACP's own surface, verified live against
+            // `mcode acp` 0.4.12: `session/set_config_option` moves the model
+            // and the thinking effort on a running session,
+            // `session/set_config_option permissionMode` moves the stance, and
+            // `session/fork` forks. So all three changes are requests rather
+            // than respawns, and the fork has no second half for the CLI to
+            // perform — `session/fork` answers a whole new session.
             //
-            // Forkable, and by the cheapest route of the three. pi's own `fork`
-            // is still the wrong tool — `clone` hijacks the running process,
-            // and `--fork` and `--session` are refused together, so pi would
-            // name the file rather than take the one Dray chose. It is not
-            // needed: pi's resume handle *is* a file, so copying it is the whole
-            // fork. Verified live — a pi spawned on a copy reports the new path,
-            // counts the parent's messages, and quotes its first prompt back.
-            Harness::Pi => Capabilities {
-                creates_own_worktree: false,
-                applies_model_in_place: false,
-                applies_effort_in_place: false,
-                applies_permission_in_place: false,
-                fast_mode: FastMode::Unsupported,
-                expands_at_mentions: false,
-                forkable: true,
-                fork_needs_cli: false,
-            },
-            // ACP carries all three as session settings —
-            // `session/set_config_option` for model and effort,
-            // `session/set_mode` for the stance — each verified live to move
-            // the session's own `currentValue` and to write nothing to fx's
-            // settings file. So fx is the one harness where an effort change
-            // is a request rather than a respawn.
+            // No `-w` flag: mcode has no worktree concept, so hz resolves a
+            // base ref and makes the tree before the spawn.
             //
-            // Not forkable: fx has no fork and its resume handle is an id it
-            // minted, not a file to copy. No `-w` either; Dray makes the tree.
-            Harness::Fx => Capabilities {
+            // No fast mode. `serviceTier` is not a thing here at all and the
+            // ACP surface has no field for one.
+            //
+            // No `@path` expansion: mcode's prompt path has no parser for it,
+            // so a mention reaches the model as literal punctuation it has to
+            // guess the meaning of. The composer names the file in prose
+            // instead.
+            Harness::Mcode => Capabilities {
                 creates_own_worktree: false,
                 applies_model_in_place: true,
                 applies_effort_in_place: true,
                 applies_permission_in_place: true,
-                fast_mode: FastMode::AtCreation,
-                expands_at_mentions: false,
-                forkable: false,
-                fork_needs_cli: false,
-            },
-            // Worktrees and the three settings are pi's answers, for pi's
-            // reasons: no `-w` flag, and `set_model` / `set_thinking_level` are
-            // commands nothing here drives on a live connection yet, so every
-            // change is a respawn — which always applies it.
-            //
-            // Forkable, and by pi's route: omp's resume handle is a *file*, so
-            // copying it is the whole fork and no CLI half is needed. Verified
-            // live — two spawns on one path report the same `sessionId`, and
-            // `--resume <path>` reports it too. `store::copy_omp_session_file`
-            // does the copy; its own directory, since omp forked the wire
-            // protocol but not the session file's format.
-            //
-            // `expands_at_mentions` is false for pi's reason and one more: omp's
-            // RPC notes say `@file` *arguments* are rejected in that mode, and
-            // there is no parser on the prompt path to expand one anyway, so a
-            // mention reaches the model as literal punctuation.
-            Harness::Omp => Capabilities {
-                creates_own_worktree: false,
-                applies_model_in_place: false,
-                applies_effort_in_place: false,
-                applies_permission_in_place: false,
                 fast_mode: FastMode::Unsupported,
                 expands_at_mentions: false,
                 forkable: true,
@@ -787,13 +765,11 @@ impl Harness {
     /// What to call it in a sentence somebody reads.
     pub fn label(self) -> &'static str {
         match self {
-            Harness::ClaudeCode => "Claude Code",
-            Harness::Codex => "Codex",
-            Harness::Pi => "pi",
-            Harness::Fx => "fx",
-            // The binary's own name, and the one its reader types. The project
-            // is `oh-my-pi`; nothing on the machine is called that.
-            Harness::Omp => "omp",
+            // **The agent is hz's own.** It ships inside the app, so prose that
+            // named the vendor would read as a second thing the reader had to
+            // install and keep in step — which is exactly what this build does
+            // away with.
+            Harness::Mcode => "hz",
             // Its own spelling, the only thing known about it — and the honest
             // thing to put in a sentence, since the name a newer build wrote is
             // the one its reader will recognise.
@@ -815,21 +791,13 @@ impl Harness {
     /// theirs to follow.
     pub fn install_command(self) -> &'static str {
         match self {
-            Harness::ClaudeCode => "curl -fsSL https://claude.ai/install.sh | bash",
-            Harness::Codex => "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
-            // pi also publishes to npm, and the page below names that route for
-            // anyone who wants it. This is the one that needs nothing already
-            // installed, which is the rule the other two follow.
-            Harness::Pi => "curl -fsSL https://pi.dev/install.sh | sh",
-            // Vercel's own installer, off fx.sh/docs/getting-started/installation.
-            Harness::Fx => "curl -fsSL https://fx.sh/setup.sh | bash",
-            // omp's own installer, off its README. The URL answers 200 and is
-            // the one the README prints; it has not been dry-parsed, so treat
-            // that half as unverified. omp also publishes to npm and Homebrew,
-            // and the docs page below names both for anyone who wants them;
-            // this is the route that needs nothing already on the machine,
-            // which is the rule the other three follow.
-            Harness::Omp => "curl -fsSL https://omp.sh/install | sh",
+            // **Empty, and that is the product.** The CLI is staged into the
+            // bundle by `scripts/vendor-mcode.sh`, so hz is one download and
+            // there is no command a reader could be given. A copyable installer
+            // here would send them to fetch a second copy of what they already
+            // have — and the notice is built to draw the sentence alone where
+            // this is empty.
+            Harness::Mcode => "",
             // Empty, because there is nothing to install: the CLI is not what
             // is missing, this build is. A command guessed from the name would
             // be the one thing worse than no command.
@@ -843,48 +811,25 @@ impl Harness {
     /// behind.
     pub fn docs_url(self) -> &'static str {
         match self {
-            Harness::ClaudeCode => "https://code.claude.com/docs/en/quickstart",
-            Harness::Codex => "https://learn.chatgpt.com/docs/codex/cli",
-            Harness::Pi => "https://pi.dev/docs/latest",
-            Harness::Fx => "https://fx.sh/docs/getting-started/installation",
-            // omp's own docs root, which is where the install page and the RPC
-            // reference both live. Its README also points at the repo.
-            Harness::Omp => "https://omp.sh/docs",
+            // Nothing to link either: the documentation a reader needs is the
+            // provider form in Settings, which is in this app.
+            Harness::Mcode => "",
             // Empty, so the notice draws no link rather than a wrong one: the
-            // cure here is a newer Dray, not a CLI to install.
+            // cure here is a newer hz, not a CLI to install.
             Harness::Other(_) => "",
         }
     }
 
     /// The command that logs it in, spelled the way a reader would type it.
     ///
-    /// Both verified against the installed CLIs rather than guessed:
-    /// `claude auth --help` lists `login`, and Claude Code's own error prose
-    /// names `claude auth login` outright. `codex login` is a top-level
-    /// subcommand. Neither has a non-interactive form worth reaching for, so
-    /// both want a real terminal — which is the whole shape of the cure.
+    /// Empty for every harness this build can name, and that is the answer
+    /// rather than a gap: the agent ships inside the app, so there is no
+    /// `mcode` on the reader's PATH to type — the copy inside the bundle is
+    /// addressed by the app rather than by them. What is left to configure
+    /// happens in Settings, where they are looking at it.
     pub fn login_command(self) -> &'static str {
         match self {
-            Harness::ClaudeCode => "claude auth login",
-            Harness::Codex => "codex login",
-            // pi's login is a slash command inside its TUI, not a subcommand:
-            // `pi auth` offers `print-api-key`, `print-bearer-token` and
-            // `check` and nothing that signs anyone in. So the command opens
-            // pi, and [`Harness::login_hint`] carries the rest — bare `pi`
-            // lands the reader in a TUI with no idea what to type next, which
-            // is a cure that does not cure.
-            Harness::Pi => "pi",
-            // `fx login [vercel|codex|grok]` — bare, it asks which. Verified
-            // against `fx --help`.
-            Harness::Fx => "fx login",
-            // pi's shape, verified against `omp --help`: there is no `login`
-            // subcommand. `omp setup` is not it either — it refuses without a
-            // `COMPONENT` (python|speech) and is about optional dependencies,
-            // not auth. Signing in is `/login` inside the TUI, so the command
-            // opens omp and [`Harness::login_hint`] carries the rest. The RPC
-            // does expose `login` / `get_login_providers`, which is a later
-            // slice's route rather than this notice's.
-            Harness::Omp => "omp",
+            Harness::Mcode => "",
             // Nothing to log in to, for the same reason there is nothing to
             // install: this build cannot name the CLI, let alone drive it.
             Harness::Other(_) => "",
@@ -894,19 +839,13 @@ impl Harness {
     /// The same command as arguments after the *resolved* binary.
     ///
     /// The launcher cannot use [`login_command`](Self::login_command): a
-    /// `.command` script runs under launchd's `PATH`, which holds no `claude`
-    /// installed to `~/.local/bin` — the trap [`binpath`](crate::binpath)
-    /// exists to solve, one layer out. So the reader copies one spelling and
-    /// the terminal runs another, and a test pins the two together.
+    /// `.command` script runs under launchd's `PATH`, which holds none of the
+    /// directories [`binpath`](crate::binpath) exists to search. So the reader
+    /// copies one spelling and the terminal runs another, and a test pins the
+    /// two together. Both are empty here — there is no command either way.
     pub fn login_args(self) -> &'static [&'static str] {
         match self {
-            Harness::ClaudeCode => &["auth", "login"],
-            Harness::Codex => &["login"],
-            Harness::Pi => &[],
-            Harness::Fx => &["login"],
-            // Empty, so this is the same shape as pi's: the command opens the
-            // CLI rather than starting a login, and the hint says what to type.
-            Harness::Omp => &[],
+            Harness::Mcode => &[],
             Harness::Other(_) => &[],
         }
     }
@@ -914,29 +853,18 @@ impl Harness {
     /// What the reader still has to do once [`Harness::login_command`] has run,
     /// or `None` where the command is the whole cure.
     ///
-    /// Only pi needs one, and it needs one badly: its command opens a TUI
-    /// rather than starting a login, so without this the notice hands over a
-    /// terminal and no next step. Drawn beside the sentence rather than in the
-    /// button's tooltip — a reader who clicks without hovering would otherwise
-    /// meet the TUI never having been told.
-    ///
-    /// pi's credentials are **per provider**, which is why the hint names
-    /// picking one. It is also why pi can be logged in for one provider and
-    /// out for another, and why a working Codex session says nothing about
-    /// whether pi can reach the same account: the two keep separate stores.
+    /// The shipped agent has no command at all — nothing about its setup happens
+    /// in a terminal — so this line *is* what the notice has to say, and it says
+    /// where to go rather than what to type. The failure it answers is the
+    /// agent's own "Authentication required: Run `mcode login`", which on this
+    /// build means no provider is connected: the managed account is never
+    /// signed in to and its models are not drawn.
     pub fn login_hint(self) -> Option<&'static str> {
         match self {
-            Harness::Pi => Some("then type /login and pick the provider"),
-            // Per provider too, and the command asks which. A working Codex
-            // login says nothing about fx: it keeps its own store.
-            Harness::Fx => Some("and pick the provider it asks for"),
-            // pi's hint verbatim, because it is pi's situation: the command
-            // opens a TUI rather than starting a login, and omp's credentials
-            // are per provider — so it can be signed in for one and out for
-            // another, which is why a working Codex session says nothing about
-            // whether omp can reach the same account. Separate stores.
-            Harness::Omp => Some("then type /login and pick the provider"),
-            Harness::ClaudeCode | Harness::Codex | Harness::Other(_) => None,
+            // Where the reader can actually act: Settings' Agent tab is where a
+            // provider is connected, and there is no sign-in here to point at.
+            Harness::Mcode => Some("Connect a provider in Settings → Agent"),
+            Harness::Other(_) => None,
         }
     }
 }
@@ -945,15 +873,18 @@ impl Harness {
 mod login_tests {
     use super::Harness;
 
-    /// A harness that can be driven has to be able to say how to log into it.
-    /// An empty command reaches the notice as a Log in button that runs the
-    /// binary bare and a Copy button that copies nothing.
+    /// A harness that can be driven has to be able to say *where* the reader
+    /// fixes a login — and that is not a command any more. The agent ships
+    /// inside the app, so there is nothing on their PATH to run: an empty
+    /// command with no hint would reach the notice as a sentence and two dead
+    /// buttons.
     #[test]
-    fn every_drivable_harness_names_a_login() {
+    fn every_drivable_harness_says_where_a_login_is_fixed() {
         for harness in Harness::ALL {
+            let (command, hint) = (harness.login_command(), harness.login_hint());
             assert!(
-                !harness.login_command().is_empty(),
-                "{harness:?} draws a login notice with no command in it"
+                !command.is_empty() || hint.is_some(),
+                "{harness:?} draws a login notice with nothing the reader can act on"
             );
         }
     }

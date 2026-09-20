@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds `dray-helper` and lays out the five helper apps CEF launches for its
+# Builds `hz-helper` and lays out the five helper apps CEF launches for its
 # renderer, GPU, plugin and alert processes: one binary under five names,
 # since only the bundle name tells them apart. The dev layout and the release
 # bundle both take theirs from here; the framework is never part of it.
@@ -51,7 +51,7 @@ FLAG=""
 [ "$PROFILE" = release ] && FLAG=--release
 
 build() {
-  [ -n "$TAURI_ENV_TARGET_TRIPLE" ] || cargo build $FLAG --bin dray-helper --features cef "$@"
+  [ -n "$TAURI_ENV_TARGET_TRIPLE" ] || cargo build $FLAG --bin hz-helper --features cef "$@"
 }
 
 # Hardened-runtime codesign, or nothing without SIGN_IDENTITY. An ad-hoc
@@ -69,9 +69,9 @@ if [ -n "$TARGETS" ]; then
   BINS=""
   for t in $TARGETS; do
     build --target "$t"
-    BINS="$BINS target/$t/$PROFILE/dray-helper"
+    BINS="$BINS target/$t/$PROFILE/hz-helper"
   done
-  BIN="$OUT/dray-helper"
+  BIN="$OUT/hz-helper"
   lipo -create $BINS -output "$BIN"
   # Tauri's universal build lipos the app binary alone, then its bundler
   # demands every [[bin]] in the package at that same path — so a universal
@@ -80,16 +80,16 @@ if [ -n "$TARGETS" ]; then
   # not build, and an unsigned Mach-O in Contents/MacOS fails notarization.
   UNI="target/universal-apple-darwin/$PROFILE"
   mkdir -p "$UNI"
-  cp "$BIN" "$UNI/dray-helper"
-  sign "$UNI/dray-helper"
+  cp "$BIN" "$UNI/hz-helper"
+  sign "$UNI/hz-helper"
 else
   build
-  BIN="target/$PROFILE/dray-helper"
-  [ -n "$TRIPLE" ] && [ -e "target/$TRIPLE/$PROFILE/dray-helper" ] && BIN="target/$TRIPLE/$PROFILE/dray-helper"
+  BIN="target/$PROFILE/hz-helper"
+  [ -n "$TRIPLE" ] && [ -e "target/$TRIPLE/$PROFILE/hz-helper" ] && BIN="target/$TRIPLE/$PROFILE/hz-helper"
 fi
 
 for suffix in "" " (GPU)" " (Renderer)" " (Plugin)" " (Alerts)"; do
-  name="Dray Helper$suffix"
+  name="hz Helper$suffix"
   app="$OUT/$name.app"
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS"
@@ -100,7 +100,7 @@ for suffix in "" " (GPU)" " (Renderer)" " (Plugin)" " (Alerts)"; do
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>$name</string>
-  <key>CFBundleIdentifier</key><string>com.yogesh.dray.helper${id:+.$id}</string>
+  <key>CFBundleIdentifier</key><string>com.hamerti.hz.helper${id:+.$id}</string>
   <key>CFBundleName</key><string>$name</string>
   <key>CFBundleDisplayName</key><string>$name</string>
   <key>CFBundlePackageType</key><string>APPL</string>

@@ -19,20 +19,21 @@ import type { AgentEvent, Harness, Model, ModelId } from "@/types/events";
 export type FastModeSupport = "none" | "in-place" | "on-spawn" | "at-creation";
 
 export const FAST_MODE_BY_HARNESS: Record<Harness, FastModeSupport> = {
-  claude_code: "in-place",
-  codex: "on-spawn",
-  fx: "at-creation",
-  pi: "none",
-  omp: "none",
+  // **None at all.** `serviceTier` is not a thing on this CLI and ACP carries no
+  // field for a tier — measured against `mcode acp` 0.4.12, whose capabilities
+  // answer nothing about one. So the row is never drawn on any of its models,
+  // and the vocabulary above is kept for a harness that has a route rather than
+  // because this one does.
+  mcode: "none",
 };
 
 /// Whether a harness's fast mode stands even with no model picked.
 ///
 /// fx alone, and it falls out of the same fact its `supportsFast` does: fx
 /// decides per model itself ("when the model supports it") and publishes no
-/// list, so Dray never knows which. A pick of "let fx decide" is therefore
+/// list, so hz never knows which. A pick of "let fx decide" is therefore
 /// exactly as able to run fast as any named model — and it is the *ordinary*
-/// state there, since Dray names no default for a multi-provider CLI whose own
+/// state there, since hz names no default for a multi-provider CLI whose own
 /// settings already hold one. The other two answer no: with no model named,
 /// nothing here can tell, and Codex takes an unknown tier without complaint.
 function standsWithNoModel(harness: Harness): boolean {

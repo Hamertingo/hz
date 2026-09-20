@@ -1,4 +1,4 @@
-//! The wire shape between the Dray app and the `dray` CLI.
+//! The wire shape between the hz app and the `hz` CLI.
 //!
 //! Compiled into both sides so the two cannot drift. That is the whole reason
 //! this is a crate rather than a struct in each: a drifted request shape is not
@@ -26,7 +26,7 @@ use std::path::PathBuf;
 /// right work is what earns a bump.
 ///
 /// Refusing costs every command, not just the new one — but that cost falls
-/// where it is cheapest. A CLI behind the app is told to run `dray update` and
+/// where it is cheapest. A CLI behind the app is told to run `hz update` and
 /// fixes itself in one step; an app behind the CLI cannot be fixed from here at
 /// all, and that is exactly the direction a silent default does the most
 /// damage in. See [`Envelope`] and the app's own `mismatch`, which names which
@@ -35,17 +35,17 @@ use std::path::PathBuf;
 pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Where the app listens, unless [`endpoint`] is overridden.
-pub const SOCKET_NAME: &str = "dray.sock";
+pub const SOCKET_NAME: &str = "hz.sock";
 
 /// Where a `pnpm tauri dev` build listens instead.
 ///
 /// One name per build, because the socket is a single file: a dev app binding
 /// the release app's path unlinks it and takes the channel over, so from then
-/// on every `dray` call reaches the dev app and the release app's own agents
+/// on every `hz` call reaches the dev app and the release app's own agents
 /// write into a socket nothing is listening on. Restarting the release app
 /// takes it back the same way. Two names let the two run side by side, which
 /// is the ordinary state while developing this app.
-pub const SOCKET_NAME_DEV: &str = "dray-dev.sock";
+pub const SOCKET_NAME_DEV: &str = "hz-dev.sock";
 
 /// A line longer than this is refused unread. The socket is `0600`, so this is
 /// hygiene rather than a threat model — but a length-prefixed-by-newline
@@ -228,7 +228,7 @@ pub enum BrowserAction {
         load: Option<String>,
     },
     /// PNG to `path`, which must sit under the session's checkout, or a file
-    /// under `~/.dray/browser/shots`; `full` is the whole document rather
+    /// under `~/.hz/browser/shots`; `full` is the whole document rather
     /// than the viewport.
     Screenshot {
         #[serde(default)]
@@ -272,7 +272,7 @@ pub struct CreateSession {
     /// Claude Code with no parent.
     #[serde(default)]
     pub harness: Option<String>,
-    /// The session whose agent is making this call, from `DRAY_SESSION_ID`.
+    /// The session whose agent is making this call, from `HZ_SESSION_ID`.
     /// Absent for a call from the user's own terminal, which is ordinary.
     #[serde(default)]
     pub parent_session_id: Option<String>,
@@ -458,14 +458,14 @@ pub struct IssueLink {
     pub url: String,
 }
 
-/// Where to reach the app: `DRAY_ENDPOINT` if set, else the socket under the
+/// Where to reach the app: `HZ_ENDPOINT` if set, else the socket under the
 /// app's own directory.
 ///
 /// The env var is what lets this survive the app moving to a server — a cloud
 /// build hands the child an HTTPS URL instead, and nothing above this function
 /// knows the difference.
 pub fn endpoint() -> Option<String> {
-    if let Ok(value) = std::env::var("DRAY_ENDPOINT") {
+    if let Ok(value) = std::env::var("HZ_ENDPOINT") {
         if !value.is_empty() {
             return Some(value);
         }
@@ -474,16 +474,16 @@ pub fn endpoint() -> Option<String> {
     Some(socket_path(false)?.to_string_lossy().into_owned())
 }
 
-/// The socket one build of the app listens on, `~/.dray/dray.sock` by default.
+/// The socket one build of the app listens on, `~/.hz/hz.sock` by default.
 /// Resolved through `dirs` rather than `$HOME` so it agrees with the app's own
 /// `get_home_app_dir`, which creates the directory this sits in.
 ///
-/// The CLI never asks for the dev one: `dray` typed in a terminal means the app
-/// the reader installed, and a dev app hands its own children `DRAY_ENDPOINT`
+/// The CLI never asks for the dev one: `hz` typed in a terminal means the app
+/// the reader installed, and a dev app hands its own children `HZ_ENDPOINT`
 /// rather than leaving them to guess which build spawned them.
 pub fn socket_path(dev: bool) -> Option<PathBuf> {
     let name = if dev { SOCKET_NAME_DEV } else { SOCKET_NAME };
-    Some(std::env::home_dir()?.join(".dray").join(name))
+    Some(std::env::home_dir()?.join(".hz").join(name))
 }
 
 /// One request or response as it goes on the wire. Newline-delimited JSON, the
@@ -502,7 +502,7 @@ mod tests {
     /// Deliberately a v1 line, and that is half the point: an envelope from a
     /// version we no longer speak still has to *parse*, or the app answers
     /// "could not parse the request" where it should be answering "run
-    /// `dray update`". The version check is a layer above this, not a way in.
+    /// `hz update`". The version check is a layer above this, not a way in.
     #[test]
     fn absent_optionals_parse_as_none() {
         let envelope: Envelope =
@@ -524,14 +524,14 @@ mod tests {
     fn endpoint_prefers_the_environment() {
         // Serialized against the other env-reading test by running in one
         // process; `set_var` is process-wide.
-        std::env::set_var("DRAY_ENDPOINT", "/tmp/custom.sock");
+        std::env::set_var("HZ_ENDPOINT", "/tmp/custom.sock");
         assert_eq!(endpoint().as_deref(), Some("/tmp/custom.sock"));
 
         // Empty reads as unset rather than as an address, so an exported-but-
         // blank var falls back instead of failing to connect to "".
-        std::env::set_var("DRAY_ENDPOINT", "");
-        assert!(endpoint().unwrap().ends_with("dray.sock"));
+        std::env::set_var("HZ_ENDPOINT", "");
+        assert!(endpoint().unwrap().ends_with("hz.sock"));
 
-        std::env::remove_var("DRAY_ENDPOINT");
+        std::env::remove_var("HZ_ENDPOINT");
     }
 }

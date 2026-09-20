@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTranscript, isToolGroup, segmentWork, type Turn } from "@/lib/transcript";
+import { buildTranscript, isToolGroup, pendingAsksOf, segmentWork, type Turn } from "@/lib/transcript";
 import type { AgentEvent, AgentEventPayload } from "@/types/events";
 
 /// Only the envelope fields `buildTranscript` orders and keys by are filled;
@@ -9,7 +9,7 @@ function event(seq: number, payload: AgentEventPayload): AgentEvent {
   return {
     id: `e-${seq}`,
     sessionId: "s",
-    harness: "claude_code",
+    harness: "mcode",
     seq,
     ts: "2026-08-13T00:00:00Z",
     turnId: null,
@@ -600,69 +600,60 @@ describe("a call whose background task the child still holds", () => {
     expect(resultByCallId.get("c1")?.text).toMatch(ABANDONED);
   });
 
-  /// fx reports nothing at all about a child: no events, no progress, and no
-  /// handle a stop could name. Both readings that follow from that are made
-  /// here rather than in the renderer, so both are pinned here.
-  describe("a run from a harness that streams nothing", () => {
-    const fx = (seq: number, payload: AgentEventPayload): AgentEvent => ({
-      ...event(seq, payload),
-      harness: "fx",
-    });
+});
 
-    const fxCall = (seq: number, callId: string): AgentEvent =>
-      fx(seq, {
-        type: "tool_call_started",
-        callId,
-        name: "subagent",
-        toolType: "subagent_spawn",
-        input: { request: { action: "run", task: "Reply with exactly: hi" } },
-        rawInput: null,
-        title: null,
-      } as AgentEventPayload);
+describe("pendingAsksOf", () => {
+  function asked(seq: number, requestId: string): AgentEvent {
+    return event(seq, {
+      type: "permission_requested",
+      requestId,
+      toolUseId: "call-1",
+      toolName: "Write",
+      displayName: null,
+      title: null,
+      description: null,
+      input: {},
+      blockedPath: null,
+      decisionReason: null,
+      decisionReasonType: null,
+      agentId: null,
+      options: [],
+    } as AgentEventPayload);
+  }
 
-    /// `agentId` is empty on the wire because fx publishes no handle, and the
-    /// spawning call's id is what the envelope correlates on.
-    const fxSpawn = (seq: number, callId: string): AgentEvent => ({
-      ...fx(seq, {
-        type: "subagent_started",
-        agentId: "",
-        label: "Subagent",
-        description: "Reply with exactly: hi",
-        prompt: null,
-      } as AgentEventPayload),
-      subagent: { id: callId, label: "Subagent" },
-    });
+  function decided(seq: number, requestId: string): AgentEvent {
+    return event(seq, {
+      type: "permission_decided",
+      requestId,
+      toolUseId: "call-1",
+      behavior: "allow",
+      label: "Allow once",
+      automatic: false,
+    } as unknown as AgentEventPayload);
+  }
 
-    it("files the run against the call that spawned it", () => {
-      const { subagentById, turns } = buildTranscript(
-        [prompt(0, "go", false), fxCall(1, "c1"), fxSpawn(2, "c1"), completed(3)],
-        false,
+  /// **The whole reason this is split out of the walk.** Two surfaces draw these
+  /// cards — the transcript and the composer — and if they disagreed about which
+  /// one is live, an answered request would sit at one of them with buttons that
+  /// can no longer answer anything.
+  it("agrees with the walk it was taken out of", () => {
+    for (const events of [
+      [asked(0, "r1")],
+      [asked(0, "r1"), decided(1, "r1")],
+      [asked(0, "r1"), decided(1, "r1"), asked(2, "r2")],
+      [asked(0, "r1"), asked(1, "r2"), decided(2, "r1")],
+    ]) {
+      const { pendingAsks } = buildTranscript(events, true);
+      expect(pendingAsksOf(events).map((ask) => ask.requestId)).toEqual(
+        pendingAsks.map((ask) => ask.requestId),
       );
+    }
+  });
 
-      const run = subagentById.get("c1");
-      expect(run?.description).toBe("Reply with exactly: hi");
-      expect(run?.spawn?.payload.type).toBe("tool_call_started");
-      // The lifecycle event belongs to the run, not to the conversation, so it
-      // draws no row — the spawning call is the only thing in the turn.
-      expect(turns[0].work).toHaveLength(1);
-    });
-
-    /// `inline` is what keeps the chat drawing the tool row. A row that only
-    /// navigated would open a panel holding what the reader was already reading.
-    it("is drawn inline, where a harness that streams the child's work is not", () => {
-      const { subagentById } = buildTranscript([fxCall(0, "c1"), fxSpawn(1, "c1")], true);
-      expect(subagentById.get("c1")?.inline).toBe(true);
-
-      const claude = buildTranscript([callStarted(0, "c2"), spawn(1, "c2", "t1")], true);
-      expect(claude.subagentById.get("c2")?.inline).toBe(false);
-    });
-
-    /// An empty `agentId` is *no handle*, not a handle that has yet to arrive —
-    /// filled with the call id it would read as stoppable and the panel would
-    /// offer a button whose request fx could not take.
-    it("names no task, so nothing offers to stop it", () => {
-      const { subagentById } = buildTranscript([fxCall(0, "c1"), fxSpawn(1, "c1")], true);
-      expect(subagentById.get("c1")?.taskId).toBeNull();
-    });
+  /// Oldest first, and the order is the walk's own: the reader answers the one
+  /// that has been waiting longest.
+  it("keeps the order they arrived in", () => {
+    const events = [asked(0, "first"), asked(1, "second")];
+    expect(pendingAsksOf(events).map((ask) => ask.requestId)).toEqual(["first", "second"]);
   });
 });
