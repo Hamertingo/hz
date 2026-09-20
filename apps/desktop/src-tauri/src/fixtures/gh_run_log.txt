@@ -1,0 +1,1511 @@
+build	UNKNOWN STEP	﻿2026-09-05T12:02:02.8625270Z Current runner version: '2.337.0'
+build	UNKNOWN STEP	2026-09-05T12:02:02.8641420Z ##[group]Runner Image Provisioner
+build	UNKNOWN STEP	2026-09-05T12:02:02.8642070Z Hosted Compute Agent
+build	UNKNOWN STEP	2026-09-05T12:02:02.8642500Z Version: 20260707.563
+build	UNKNOWN STEP	2026-09-05T12:02:02.8643010Z Commit: 02667638d2b423fbc733a8e32a88b44996a3ba6e
+build	UNKNOWN STEP	2026-09-05T12:02:02.8643550Z Build Date: 2026-07-07T19:33:50Z
+build	UNKNOWN STEP	2026-09-05T12:02:02.8644050Z Worker ID: {c98a8c21-f95f-4f75-b542-55300941523a}
+build	UNKNOWN STEP	2026-09-05T12:02:02.8644570Z Azure Region: westus
+build	UNKNOWN STEP	2026-09-05T12:02:02.8644990Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:02.8646450Z ##[group]Operating System
+build	UNKNOWN STEP	2026-09-05T12:02:02.8646900Z macOS
+build	UNKNOWN STEP	2026-09-05T12:02:02.8647280Z 26.5.2
+build	UNKNOWN STEP	2026-09-05T12:02:02.8647680Z 25F84
+build	UNKNOWN STEP	2026-09-05T12:02:02.8648080Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:02.8648490Z ##[group]Runner Image
+build	UNKNOWN STEP	2026-09-05T12:02:02.8648990Z Image: macos-26-arm64
+build	UNKNOWN STEP	2026-09-05T12:02:02.8649430Z Version: 20260728.0273.1
+build	UNKNOWN STEP	2026-09-05T12:02:02.8650370Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20260728.0273/images/macos/macos-26-arm64-Readme.md
+build	UNKNOWN STEP	2026-09-05T12:02:02.8651460Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20260728.0273
+build	UNKNOWN STEP	2026-09-05T12:02:02.8652170Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:02.8653060Z ##[group]GITHUB_TOKEN Permissions
+build	UNKNOWN STEP	2026-09-05T12:02:02.8654420Z Contents: write
+build	UNKNOWN STEP	2026-09-05T12:02:02.8654860Z Metadata: read
+build	UNKNOWN STEP	2026-09-05T12:02:02.8655280Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:02.8656980Z Secret source: Actions
+build	UNKNOWN STEP	2026-09-05T12:02:02.8657740Z Prepare workflow directory
+build	UNKNOWN STEP	2026-09-05T12:02:02.8991250Z Prepare all required actions
+build	UNKNOWN STEP	2026-09-05T12:02:02.9030800Z Getting action download info
+build	UNKNOWN STEP	2026-09-05T12:02:03.0954760Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+build	UNKNOWN STEP	2026-09-05T12:02:03.4890830Z Download action repository 'apple-actions/import-codesign-certs@v3' (SHA:63fff01cd422d4b7b855d40ca1e9d34d2de9427d)
+build	UNKNOWN STEP	2026-09-05T12:02:04.3401830Z Download action repository 'tauri-apps/tauri-action@v0' (SHA:84b9d35b5fc46c1e45415bdb6144030364f7ebc5)
+build	UNKNOWN STEP	2026-09-05T12:02:05.5061400Z Complete job name: build
+build	UNKNOWN STEP	2026-09-05T12:02:05.5761360Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:02:05.5770140Z ##[group]Run actions/checkout@v4
+build	UNKNOWN STEP	2026-09-05T12:02:05.5771060Z with:
+build	UNKNOWN STEP	2026-09-05T12:02:05.5771780Z   repository: monorepo-labs/dray
+build	UNKNOWN STEP	2026-09-05T12:02:05.5777630Z   token: ***
+build	UNKNOWN STEP	2026-09-05T12:02:05.5778300Z   ssh-strict: true
+build	UNKNOWN STEP	2026-09-05T12:02:05.5779000Z   ssh-user: git
+build	UNKNOWN STEP	2026-09-05T12:02:05.5779700Z   persist-credentials: true
+build	UNKNOWN STEP	2026-09-05T12:02:05.5780430Z   clean: true
+build	UNKNOWN STEP	2026-09-05T12:02:05.5781130Z   sparse-checkout-cone-mode: true
+build	UNKNOWN STEP	2026-09-05T12:02:05.5781930Z   fetch-depth: 1
+build	UNKNOWN STEP	2026-09-05T12:02:05.5782600Z   fetch-tags: false
+build	UNKNOWN STEP	2026-09-05T12:02:05.5783300Z   show-progress: true
+build	UNKNOWN STEP	2026-09-05T12:02:05.5784130Z   lfs: false
+build	UNKNOWN STEP	2026-09-05T12:02:05.5784850Z   submodules: false
+build	UNKNOWN STEP	2026-09-05T12:02:05.5785560Z   set-safe-directory: true
+build	UNKNOWN STEP	2026-09-05T12:02:05.5786350Z   allow-unsafe-pr-checkout: false
+build	UNKNOWN STEP	2026-09-05T12:02:05.5787410Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:05.5788070Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:05.5788760Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:06.3308440Z Syncing repository: monorepo-labs/dray
+build	UNKNOWN STEP	2026-09-05T12:02:06.3314450Z ##[group]Getting Git version info
+build	UNKNOWN STEP	2026-09-05T12:02:06.3316830Z Working directory is '/Users/runner/work/dray/dray'
+build	UNKNOWN STEP	2026-09-05T12:02:06.3320690Z [command]/opt/homebrew/bin/git version
+build	UNKNOWN STEP	2026-09-05T12:02:06.3323080Z git version 2.55.0
+build	UNKNOWN STEP	2026-09-05T12:02:06.3329100Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:06.3383910Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/ab672f32-6e2b-4a0c-8a7b-7b129e3be4e0/.gitconfig'
+build	UNKNOWN STEP	2026-09-05T12:02:06.3386190Z Temporarily overriding HOME='/Users/runner/work/_temp/ab672f32-6e2b-4a0c-8a7b-7b129e3be4e0' before making global git config changes
+build	UNKNOWN STEP	2026-09-05T12:02:06.3388360Z Adding repository directory to the temporary git global config as a safe directory
+build	UNKNOWN STEP	2026-09-05T12:02:06.3390790Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/dray/dray
+build	UNKNOWN STEP	2026-09-05T12:02:06.3393400Z Deleting the contents of '/Users/runner/work/dray/dray'
+build	UNKNOWN STEP	2026-09-05T12:02:06.3394910Z ##[group]Initializing the repository
+build	UNKNOWN STEP	2026-09-05T12:02:06.3395900Z [command]/opt/homebrew/bin/git init /Users/runner/work/dray/dray
+build	UNKNOWN STEP	2026-09-05T12:02:06.3397230Z hint: Using 'master' as the name for the initial branch. This default branch name
+build	UNKNOWN STEP	2026-09-05T12:02:06.3398590Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+build	UNKNOWN STEP	2026-09-05T12:02:06.3400010Z hint: to use in all of your new repositories, which will suppress this warning,
+build	UNKNOWN STEP	2026-09-05T12:02:06.3401080Z hint: call:
+build	UNKNOWN STEP	2026-09-05T12:02:06.3401720Z hint:
+build	UNKNOWN STEP	2026-09-05T12:02:06.3402590Z hint: 	git config --global init.defaultBranch <name>
+build	UNKNOWN STEP	2026-09-05T12:02:06.3403530Z hint:
+build	UNKNOWN STEP	2026-09-05T12:02:06.3404520Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+build	UNKNOWN STEP	2026-09-05T12:02:06.3405940Z hint: 'development'. The just-created branch can be renamed via this command:
+build	UNKNOWN STEP	2026-09-05T12:02:06.3407060Z hint:
+build	UNKNOWN STEP	2026-09-05T12:02:06.3407730Z hint: 	git branch -m <name>
+build	UNKNOWN STEP	2026-09-05T12:02:06.3408470Z hint:
+build	UNKNOWN STEP	2026-09-05T12:02:06.3409380Z hint: Disable this message with "git config set advice.defaultBranchName false"
+build	UNKNOWN STEP	2026-09-05T12:02:06.3410710Z Initialized empty Git repository in /Users/runner/work/dray/dray/.git/
+build	UNKNOWN STEP	2026-09-05T12:02:06.3413060Z [command]/opt/homebrew/bin/git remote add origin https://github.com/monorepo-labs/dray
+build	UNKNOWN STEP	2026-09-05T12:02:06.3415680Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:06.3416920Z ##[group]Disabling automatic garbage collection
+build	UNKNOWN STEP	2026-09-05T12:02:06.3418020Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+build	UNKNOWN STEP	2026-09-05T12:02:06.3484860Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:06.3486140Z ##[group]Setting up auth
+build	UNKNOWN STEP	2026-09-05T12:02:06.3493730Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+build	UNKNOWN STEP	2026-09-05T12:02:06.3581170Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+build	UNKNOWN STEP	2026-09-05T12:02:06.5252970Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+build	UNKNOWN STEP	2026-09-05T12:02:06.5331600Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+build	UNKNOWN STEP	2026-09-05T12:02:06.6731030Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+build	UNKNOWN STEP	2026-09-05T12:02:06.6938830Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+build	UNKNOWN STEP	2026-09-05T12:02:06.8128230Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+build	UNKNOWN STEP	2026-09-05T12:02:06.8193190Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:06.8198950Z ##[group]Fetching the repository
+build	UNKNOWN STEP	2026-09-05T12:02:06.8200970Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ceea4119c3b625596784962dd0472624d6034667:refs/tags/v0.14.0-beta.5
+build	UNKNOWN STEP	2026-09-05T12:02:08.3044090Z From https://github.com/monorepo-labs/dray
+build	UNKNOWN STEP	2026-09-05T12:02:08.3044700Z  * [new ref]         ceea4119c3b625596784962dd0472624d6034667 -> v0.14.0-beta.5
+build	UNKNOWN STEP	2026-09-05T12:02:08.3049120Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:08.3049680Z ##[group]Determining the checkout info
+build	UNKNOWN STEP	2026-09-05T12:02:08.3050490Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:08.3055430Z [command]/opt/homebrew/bin/git sparse-checkout disable
+build	UNKNOWN STEP	2026-09-05T12:02:08.3173260Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+build	UNKNOWN STEP	2026-09-05T12:02:08.3273770Z ##[group]Checking out the ref
+build	UNKNOWN STEP	2026-09-05T12:02:08.3280470Z [command]/opt/homebrew/bin/git checkout --progress --force refs/tags/v0.14.0-beta.5
+build	UNKNOWN STEP	2026-09-05T12:02:08.5009180Z HEAD is now at ceea411 chore(release): 0.14.0-beta.5
+build	UNKNOWN STEP	2026-09-05T12:02:08.5038900Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:08.5208510Z [command]/opt/homebrew/bin/git log -1 --format=%H
+build	UNKNOWN STEP	2026-09-05T12:02:08.5341970Z ceea4119c3b625596784962dd0472624d6034667
+build	UNKNOWN STEP	2026-09-05T12:02:08.5580790Z ##[group]Run V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+build	UNKNOWN STEP	2026-09-05T12:02:08.5581330Z ^[[36;1mV="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.5581700Z ^[[36;1mif [ "v$V" != "${GITHUB_REF_NAME}" ]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.5582140Z ^[[36;1m  echo "tag ${GITHUB_REF_NAME} does not match tauri.conf.json version v$V" >&2^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.5582490Z ^[[36;1m  exit 1^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.5582660Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.5628950Z shell: /bin/bash -e {0}
+build	UNKNOWN STEP	2026-09-05T12:02:08.5629210Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:08.5629380Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:08.5629640Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:08.6227510Z ##[group]Run if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+build	UNKNOWN STEP	2026-09-05T12:02:08.6228590Z ^[[36;1mif [[ "${GITHUB_REF_NAME}" == *-* ]]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6229370Z ^[[36;1m  echo "channel=beta" >> "$GITHUB_OUTPUT"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6230230Z ^[[36;1m  echo "prerelease=true" >> "$GITHUB_OUTPUT"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6230990Z ^[[36;1melse^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6231650Z ^[[36;1m  echo "channel=stable" >> "$GITHUB_OUTPUT"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6232550Z ^[[36;1m  echo "prerelease=false" >> "$GITHUB_OUTPUT"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6233360Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6281840Z shell: /bin/bash -e {0}
+build	UNKNOWN STEP	2026-09-05T12:02:08.6282160Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:08.6303960Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:08.6304340Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:08.6689280Z ##[group]Run V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+build	UNKNOWN STEP	2026-09-05T12:02:08.6689890Z ^[[36;1mV="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6690240Z ^[[36;1mBODY="$(awk -v want="## $V" '^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6690500Z ^[[36;1m  $0 == want { found = 1; next }^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6690800Z ^[[36;1m  found && /^## / { exit }^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6691050Z ^[[36;1m  found { print }^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6691270Z ^[[36;1m' apps/desktop/CHANGELOG.md)"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6691520Z ^[[36;1m^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6691830Z ^[[36;1m# A stable release with no section would publish notes saying nothing,^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6692320Z ^[[36;1m# which is worth stopping for — same reason the version guard above^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6692720Z ^[[36;1m# is fatal. A prerelease is allowed to ship without one.^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6693100Z ^[[36;1mif [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6693520Z ^[[36;1m  if [ "beta" = "stable" ]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6693860Z ^[[36;1m    echo "apps/desktop/CHANGELOG.md has no '## $V' section" >&2^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6694160Z ^[[36;1m    exit 1^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6694360Z ^[[36;1m  fi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6694550Z ^[[36;1m  BODY=""^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6694740Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6694930Z ^[[36;1m^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6695280Z ^[[36;1m{^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6695550Z ^[[36;1m  echo "body<<CHANGELOG_EOF"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6695800Z ^[[36;1m  printf '%s\n' "$BODY"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6696030Z ^[[36;1m  echo "CHANGELOG_EOF"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6696270Z ^[[36;1m} >> "$GITHUB_OUTPUT"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:08.6728380Z shell: /bin/bash -e {0}
+build	UNKNOWN STEP	2026-09-05T12:02:08.6728940Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:08.6729280Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:08.6729550Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:08.7264950Z Prepare all required actions
+build	UNKNOWN STEP	2026-09-05T12:02:08.7265580Z Getting action download info
+build	UNKNOWN STEP	2026-09-05T12:02:08.8493860Z Download action repository 'pnpm/action-setup@v4' (SHA:b906affcce14559ad1aafd4ab0e942779e9f58b1)
+build	UNKNOWN STEP	2026-09-05T12:02:09.8995000Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+build	UNKNOWN STEP	2026-09-05T12:02:10.0168840Z Download action repository 'dtolnay/rust-toolchain@stable' (SHA:6bed0761d98439e5a578e2877258200ad565ba87)
+build	UNKNOWN STEP	2026-09-05T12:02:10.5339690Z Download action repository 'actions/cache@v4' (SHA:0057852bfaa89a56745cba8c7296529d2fc39830)
+build	UNKNOWN STEP	2026-09-05T12:02:10.7881120Z ##[group]Run ./.github/actions/desktop-setup
+build	UNKNOWN STEP	2026-09-05T12:02:10.7881810Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:10.7882280Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:10.7882780Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:10.8007570Z ##[start-action display=Run pnpm/action-setup@v4;id=__self.__pnpm_action-setup]
+build	UNKNOWN STEP	2026-09-05T12:02:10.8067560Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:02:10.8068960Z ##[group]Run pnpm/action-setup@v4
+build	UNKNOWN STEP	2026-09-05T12:02:10.8069180Z with:
+build	UNKNOWN STEP	2026-09-05T12:02:10.8069340Z   dest: ~/setup-pnpm
+build	UNKNOWN STEP	2026-09-05T12:02:10.8069520Z   run_install: null
+build	UNKNOWN STEP	2026-09-05T12:02:10.8069680Z   cache: false
+build	UNKNOWN STEP	2026-09-05T12:02:10.8069930Z   cache_dependency_path: pnpm-lock.yaml
+build	UNKNOWN STEP	2026-09-05T12:02:10.8070170Z   package_json_file: package.json
+build	UNKNOWN STEP	2026-09-05T12:02:10.8070430Z   standalone: false
+build	UNKNOWN STEP	2026-09-05T12:02:10.8070590Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:10.8070740Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:10.8070910Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:11.0490030Z ##[group]Running self-installer...
+build	UNKNOWN STEP	2026-09-05T12:02:11.4899450Z (node:17777) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+build	UNKNOWN STEP	2026-09-05T12:02:11.4901440Z (Use `node --trace-deprecation ...` to show where the warning was created)
+build	UNKNOWN STEP	2026-09-05T12:02:11.7176150Z Progress: resolved 1, reused 0, downloaded 0, added 0
+build	UNKNOWN STEP	2026-09-05T12:02:11.7272940Z Packages: +1
+build	UNKNOWN STEP	2026-09-05T12:02:11.7378420Z +
+build	UNKNOWN STEP	2026-09-05T12:02:12.6550820Z Progress: resolved 1, reused 0, downloaded 1, added 1, done
+build	UNKNOWN STEP	2026-09-05T12:02:12.7196720Z 
+build	UNKNOWN STEP	2026-09-05T12:02:12.7215600Z dependencies:
+build	UNKNOWN STEP	2026-09-05T12:02:12.7226650Z + pnpm 11.9.0 (11.25.0 is available)
+build	UNKNOWN STEP	2026-09-05T12:02:12.7376140Z 
+build	UNKNOWN STEP	2026-09-05T12:02:12.7477110Z Done in 1.5s
+build	UNKNOWN STEP	2026-09-05T12:02:12.7650270Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:12.7653130Z Installation Completed!
+build	UNKNOWN STEP	2026-09-05T12:02:12.7775940Z ##[end-action id=__self.__pnpm_action-setup;outcome=success;conclusion=success;duration_ms=1976]
+build	UNKNOWN STEP	2026-09-05T12:02:12.7780280Z ##[start-action display=Run actions/setup-node@v4;id=__self.__actions_setup-node]
+build	UNKNOWN STEP	2026-09-05T12:02:12.7852150Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:02:12.7853480Z ##[group]Run actions/setup-node@v4
+build	UNKNOWN STEP	2026-09-05T12:02:12.7853780Z with:
+build	UNKNOWN STEP	2026-09-05T12:02:12.7854060Z   node-version: 22
+build	UNKNOWN STEP	2026-09-05T12:02:12.7854360Z   cache: pnpm
+build	UNKNOWN STEP	2026-09-05T12:02:12.7854710Z   always-auth: false
+build	UNKNOWN STEP	2026-09-05T12:02:12.7855060Z   check-latest: false
+build	UNKNOWN STEP	2026-09-05T12:02:12.7857250Z   token: ***
+build	UNKNOWN STEP	2026-09-05T12:02:12.7857540Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:12.7857830Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:12.7858240Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:12.7858660Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:13.0244940Z (node:17908) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+build	UNKNOWN STEP	2026-09-05T12:02:13.0350400Z (Use `node --trace-deprecation ...` to show where the warning was created)
+build	UNKNOWN STEP	2026-09-05T12:02:13.1191530Z Found in cache @ /Users/runner/hostedtoolcache/node/22.23.1/arm64
+build	UNKNOWN STEP	2026-09-05T12:02:13.1292830Z ##[group]Environment details
+build	UNKNOWN STEP	2026-09-05T12:02:13.7488480Z node: v22.23.1
+build	UNKNOWN STEP	2026-09-05T12:02:13.7529950Z npm: 10.9.8
+build	UNKNOWN STEP	2026-09-05T12:02:13.7530780Z yarn: 1.22.22
+build	UNKNOWN STEP	2026-09-05T12:02:13.7532260Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:13.7533000Z [command]/Users/runner/setup-pnpm/node_modules/.bin/pnpm store path --silent
+build	UNKNOWN STEP	2026-09-05T12:02:14.3808330Z /Users/runner/setup-pnpm/node_modules/.bin/store/v11
+build	UNKNOWN STEP	2026-09-05T12:02:14.5322490Z Cache hit for: node-cache-macOS-arm64-pnpm-191dbe2f29dfa8af93741b8b09919aec9323b0e927479a2f1a06e257a52b19e5
+build	UNKNOWN STEP	2026-09-05T12:02:14.5372390Z (node:17908) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+build	UNKNOWN STEP	2026-09-05T12:02:15.7852780Z Received 134217728 of 169608581 (79.1%), 105.9 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:16.1708600Z Received 169608581 of 169608581 (100.0%), 101.3 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:16.1814290Z Cache Size: ~162 MB (169608581 B)
+build	UNKNOWN STEP	2026-09-05T12:02:16.1916970Z [command]/opt/homebrew/bin/gtar -xf /Users/runner/work/_temp/afbd13f5-728f-49a5-9950-9c4d48cddc57/cache.tzst -P -C /Users/runner/work/dray/dray --delay-directory-restore --use-compress-program unzstd
+build	UNKNOWN STEP	2026-09-05T12:02:23.2616190Z Cache restored successfully
+build	UNKNOWN STEP	2026-09-05T12:02:23.2723420Z Cache restored from key: node-cache-macOS-arm64-pnpm-191dbe2f29dfa8af93741b8b09919aec9323b0e927479a2f1a06e257a52b19e5
+build	UNKNOWN STEP	2026-09-05T12:02:23.3147450Z ##[end-action id=__self.__actions_setup-node;outcome=success;conclusion=success;duration_ms=10536]
+build	UNKNOWN STEP	2026-09-05T12:02:23.3179390Z ##[start-action display=Run dtolnay/rust-toolchain@stable;id=__self.rust]
+build	UNKNOWN STEP	2026-09-05T12:02:23.3339640Z ##[group]Run dtolnay/rust-toolchain@stable
+build	UNKNOWN STEP	2026-09-05T12:02:23.3340080Z with:
+build	UNKNOWN STEP	2026-09-05T12:02:23.3340440Z   targets: aarch64-apple-darwin,x86_64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:02:23.3340860Z   toolchain: stable
+build	UNKNOWN STEP	2026-09-05T12:02:23.3341180Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:23.3341490Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:23.3341910Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:23.3342360Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:23.3358550Z ##[start-action display=Parse toolchain version;id=__self.rust.parse]
+build	UNKNOWN STEP	2026-09-05T12:02:23.3380340Z ##[group]Run if [[ -z $toolchain ]]; then
+build	UNKNOWN STEP	2026-09-05T12:02:23.3380920Z ^[[36;1mif [[ -z $toolchain ]]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3381610Z ^[[36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3382290Z ^[[36;1m  echo "'toolchain' is a required input" >&2^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3382680Z ^[[36;1m  exit 1^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3383180Z ^[[36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3383700Z ^[[36;1m  if [[ macOS == macOS ]]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3384270Z ^[[36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3384820Z ^[[36;1m  else^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3385270Z ^[[36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3385780Z ^[[36;1m  fi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3386150Z ^[[36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3386710Z ^[[36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3387280Z ^[[36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3387980Z ^[[36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3388510Z ^[[36;1melse^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3420970Z ^[[36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3421560Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.3482310Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:23.3482700Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:23.3482920Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:23.3483190Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:23.3483560Z   toolchain: stable
+build	UNKNOWN STEP	2026-09-05T12:02:23.3483810Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:23.4557490Z ##[end-action id=__self.rust.parse;outcome=success;conclusion=success;duration_ms=119]
+build	UNKNOWN STEP	2026-09-05T12:02:23.4572640Z ##[start-action display=Construct rustup command line;id=__self.rust.flags]
+build	UNKNOWN STEP	2026-09-05T12:02:23.4614870Z ##[group]Run echo "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT
+build	UNKNOWN STEP	2026-09-05T12:02:23.4615470Z ^[[36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.4616080Z ^[[36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.4616520Z ^[[36;1mecho "downgrade=" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.4678280Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:23.4678640Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:23.4678880Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:23.4679180Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:23.4679590Z   targets: aarch64-apple-darwin,x86_64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:02:23.4679920Z   components: 
+build	UNKNOWN STEP	2026-09-05T12:02:23.4680200Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:23.5430360Z ##[end-action id=__self.rust.flags;outcome=success;conclusion=success;duration_ms=85]
+build	UNKNOWN STEP	2026-09-05T12:02:23.5435870Z ##[start-action display=Set $CARGO_HOME;id=__self.rust.__run]
+build	UNKNOWN STEP	2026-09-05T12:02:23.5472830Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+build	UNKNOWN STEP	2026-09-05T12:02:23.5473300Z ^[[36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.5561630Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:23.5562150Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:23.5564050Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:23.5564380Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:23.5564720Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:23.6316300Z ##[end-action id=__self.rust.__run;outcome=success;conclusion=success;duration_ms=87]
+build	UNKNOWN STEP	2026-09-05T12:02:23.6318670Z ##[start-action display=Install rustup if needed;id=__self.rust.__run_2]
+build	UNKNOWN STEP	2026-09-05T12:02:23.6373640Z ##[group]Run if ! command -v rustup &>/dev/null; then
+build	UNKNOWN STEP	2026-09-05T12:02:23.6374270Z ^[[36;1mif ! command -v rustup &>/dev/null; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.6375210Z ^[[36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.6376100Z ^[[36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.6376510Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.6462960Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:23.6463350Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:23.6463620Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:23.6463980Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:23.6464430Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:23.6464690Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:23.7043840Z ##[end-action id=__self.rust.__run_2;outcome=success;conclusion=success;duration_ms=72]
+build	UNKNOWN STEP	2026-09-05T12:02:23.7046510Z ##[start-action display=Install rustup if needed on windows;id=__self.rust.__run_3]
+build	UNKNOWN STEP	2026-09-05T12:02:23.7054090Z ##[end-action id=__self.rust.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+build	UNKNOWN STEP	2026-09-05T12:02:23.7057100Z ##[start-action display=rustup toolchain install stable;id=__self.rust.__run_4]
+build	UNKNOWN STEP	2026-09-05T12:02:23.7094390Z ##[group]Run rustup toolchain install stable --target aarch64-apple-darwin --target x86_64-apple-darwin --profile minimal --no-self-update
+build	UNKNOWN STEP	2026-09-05T12:02:23.7095670Z ^[[36;1mrustup toolchain install stable --target aarch64-apple-darwin --target x86_64-apple-darwin --profile minimal --no-self-update^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:23.7129880Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:23.7130170Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:23.7130370Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:23.7130640Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:23.7130950Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:23.7131200Z   RUSTUP_PERMIT_COPY_RENAME: 1
+build	UNKNOWN STEP	2026-09-05T12:02:23.7131430Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:24.1935110Z info: syncing channel updates for stable-aarch64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:02:24.3842970Z info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+build	UNKNOWN STEP	2026-09-05T12:02:24.3959370Z info: removing previous version of component clippy
+build	UNKNOWN STEP	2026-09-05T12:02:24.3992580Z info: removing previous version of component rustfmt
+build	UNKNOWN STEP	2026-09-05T12:02:24.4022570Z info: removing previous version of component cargo
+build	UNKNOWN STEP	2026-09-05T12:02:24.4276890Z info: removing previous version of component rust-std
+build	UNKNOWN STEP	2026-09-05T12:02:24.4798700Z info: removing previous version of component rustc
+build	UNKNOWN STEP	2026-09-05T12:02:24.4938070Z info: downloading 6 components
+build	UNKNOWN STEP	2026-09-05T12:02:32.9617130Z 
+build	UNKNOWN STEP	2026-09-05T12:02:33.0080840Z   stable-aarch64-apple-darwin updated - rustc 1.98.1 (48a229cea 2026-09-01) (from rustc 1.97.1 (8bab26f4f 2026-07-14))
+build	UNKNOWN STEP	2026-09-05T12:02:33.0082460Z info: self-update is disabled for this build of rustup
+build	UNKNOWN STEP	2026-09-05T12:02:33.0083230Z info: any updates to rustup will need to be fetched with your system package manager
+build	UNKNOWN STEP	2026-09-05T12:02:33.0083650Z 
+build	UNKNOWN STEP	2026-09-05T12:02:33.0243240Z ##[end-action id=__self.rust.__run_4;outcome=success;conclusion=success;duration_ms=9318]
+build	UNKNOWN STEP	2026-09-05T12:02:33.0258950Z ##[start-action display=rustup default stable;id=__self.rust.__run_5]
+build	UNKNOWN STEP	2026-09-05T12:02:33.0286790Z ##[group]Run rustup default stable
+build	UNKNOWN STEP	2026-09-05T12:02:33.0287340Z ^[[36;1mrustup default stable^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.0343590Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.0344020Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.0344330Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.0344830Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.0345240Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.0345570Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.1156420Z info: using existing install for stable-aarch64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:02:33.1175090Z info: default toolchain set to stable-aarch64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:02:33.1176050Z 
+build	UNKNOWN STEP	2026-09-05T12:02:33.1383400Z   stable-aarch64-apple-darwin unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+build	UNKNOWN STEP	2026-09-05T12:02:33.1384660Z 
+build	UNKNOWN STEP	2026-09-05T12:02:33.1405820Z ##[end-action id=__self.rust.__run_5;outcome=success;conclusion=success;duration_ms=114]
+build	UNKNOWN STEP	2026-09-05T12:02:33.1408580Z ##[start-action display=Create cachekey;id=__self.rust.rustc-version]
+build	UNKNOWN STEP	2026-09-05T12:02:33.1434760Z ##[group]Run DATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+build	UNKNOWN STEP	2026-09-05T12:02:33.1435760Z ^[[36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.1436540Z ^[[36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.1437220Z ^[[36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.1472250Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.1472590Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.1472890Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.1473360Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.1473770Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.1474160Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.2572550Z ##[end-action id=__self.rust.rustc-version;outcome=success;conclusion=success;duration_ms=116]
+build	UNKNOWN STEP	2026-09-05T12:02:33.2575790Z ##[start-action display=Disable incremental compilation;id=__self.rust.__run_6]
+build	UNKNOWN STEP	2026-09-05T12:02:33.2603810Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+build	UNKNOWN STEP	2026-09-05T12:02:33.2604200Z ^[[36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.2613170Z ^[[36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.2614280Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.2666550Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.2667060Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.2667420Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.2667820Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.2668190Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.2668570Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.3041240Z ##[end-action id=__self.rust.__run_6;outcome=success;conclusion=success;duration_ms=46]
+build	UNKNOWN STEP	2026-09-05T12:02:33.3043440Z ##[start-action display=Enable colors in Cargo output;id=__self.rust.__run_7]
+build	UNKNOWN STEP	2026-09-05T12:02:33.3074280Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+build	UNKNOWN STEP	2026-09-05T12:02:33.3075200Z ^[[36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3076020Z ^[[36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3076740Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3126530Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.3127150Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.3127400Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.3127680Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.3128060Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.3128290Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.3453950Z ##[end-action id=__self.rust.__run_7;outcome=success;conclusion=success;duration_ms=40]
+build	UNKNOWN STEP	2026-09-05T12:02:33.3456560Z ##[start-action display=Enable Cargo sparse registry;id=__self.rust.__run_8]
+build	UNKNOWN STEP	2026-09-05T12:02:33.3476130Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+build	UNKNOWN STEP	2026-09-05T12:02:33.3476650Z ^[[36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3477420Z ^[[36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3478160Z ^[[36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3478760Z ^[[36;1m    touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3479280Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3479760Z ^[[36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3480280Z ^[[36;1m    touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3480780Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3481110Z ^[[36;1m  fi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3481300Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.3518850Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.3519160Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.3519360Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.3519630Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.3519970Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.3520220Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:02:33.3520440Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.4584550Z ##[end-action id=__self.rust.__run_8;outcome=success;conclusion=success;duration_ms=112]
+build	UNKNOWN STEP	2026-09-05T12:02:33.4588300Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__self.rust.__run_9]
+build	UNKNOWN STEP	2026-09-05T12:02:33.4619610Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+build	UNKNOWN STEP	2026-09-05T12:02:33.4621450Z ^[[36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.4623000Z ^[[36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.4624150Z ^[[36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.4625000Z ^[[36;1mfi^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.4706700Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.4707340Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.4708030Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.4708320Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.4708630Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.4708880Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:02:33.4709100Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.5356930Z ##[end-action id=__self.rust.__run_9;outcome=success;conclusion=success;duration_ms=76]
+build	UNKNOWN STEP	2026-09-05T12:02:33.5360540Z ##[start-action display=rustc +stable --version --verbose;id=__self.rust.__run_10]
+build	UNKNOWN STEP	2026-09-05T12:02:33.5405130Z ##[group]Run rustc +stable --version --verbose
+build	UNKNOWN STEP	2026-09-05T12:02:33.5406640Z ^[[36;1mrustc +stable --version --verbose^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.5463400Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.5463730Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.5463940Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.5464240Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.5464540Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.5464780Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:02:33.5464990Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.6155160Z rustc 1.98.1 (48a229cea 2026-09-01)
+build	UNKNOWN STEP	2026-09-05T12:02:33.6156160Z binary: rustc
+build	UNKNOWN STEP	2026-09-05T12:02:33.6157140Z commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+build	UNKNOWN STEP	2026-09-05T12:02:33.6157990Z commit-date: 2026-09-01
+build	UNKNOWN STEP	2026-09-05T12:02:33.6159070Z host: aarch64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:02:33.6159710Z release: 1.98.1
+build	UNKNOWN STEP	2026-09-05T12:02:33.6160760Z LLVM version: 22.1.8
+build	UNKNOWN STEP	2026-09-05T12:02:33.6181570Z ##[end-action id=__self.rust.__run_10;outcome=success;conclusion=success;duration_ms=81]
+build	UNKNOWN STEP	2026-09-05T12:02:33.6217320Z ##[end-action id=__self.rust;outcome=success;conclusion=success;duration_ms=10303]
+build	UNKNOWN STEP	2026-09-05T12:02:33.6219790Z ##[start-action display=Run {;id=__self.paths]
+build	UNKNOWN STEP	2026-09-05T12:02:33.6239180Z ##[group]Run {
+build	UNKNOWN STEP	2026-09-05T12:02:33.6239450Z ^[[36;1m{^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6239640Z ^[[36;1m  echo 'paths<<EOF'^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6239980Z ^[[36;1m  printf '%s\n' '~/.cargo/registry/index' '~/.cargo/registry/cache' \^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6240420Z ^[[36;1m    '~/.cargo/registry/src' '~/.cargo/git/db' '~/.cache/cef' \^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6240770Z ^[[36;1m    'apps/desktop/src-tauri/target'^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6241040Z ^[[36;1m  echo 'EOF'^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6241280Z ^[[36;1m} >> "$GITHUB_OUTPUT"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:02:33.6277640Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:02:33.6277970Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:33.6278180Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:33.6278510Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:33.6278890Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:33.6279150Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:02:33.6279370Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:33.6636910Z ##[end-action id=__self.paths;outcome=success;conclusion=success;duration_ms=41]
+build	UNKNOWN STEP	2026-09-05T12:02:33.6639460Z ##[start-action display=Run actions/cache/restore@v4;id=__self.cache]
+build	UNKNOWN STEP	2026-09-05T12:02:34.0462690Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:02:34.0477200Z ##[group]Run actions/cache/restore@v4
+build	UNKNOWN STEP	2026-09-05T12:02:34.0477440Z with:
+build	UNKNOWN STEP	2026-09-05T12:02:34.0477870Z   path: ~/.cargo/registry/index
+build	UNKNOWN STEP	~/.cargo/registry/cache
+build	UNKNOWN STEP	~/.cargo/registry/src
+build	UNKNOWN STEP	~/.cargo/git/db
+build	UNKNOWN STEP	~/.cache/cef
+build	UNKNOWN STEP	apps/desktop/src-tauri/target
+build	UNKNOWN STEP	2026-09-05T12:02:34.0478580Z   key: darwin-cargo-2026090148a2-1a19bf34d28b5a6489efeeb8016088abcb6edd0065dfc2674639a74d10d23a4f
+build	UNKNOWN STEP	2026-09-05T12:02:34.0479040Z   restore-keys: darwin-cargo-2026090148a2-
+build	UNKNOWN STEP	2026-09-05T12:02:34.0479310Z   enableCrossOsArchive: false
+build	UNKNOWN STEP	2026-09-05T12:02:34.0479550Z   fail-on-cache-miss: false
+build	UNKNOWN STEP	2026-09-05T12:02:34.0479780Z   lookup-only: false
+build	UNKNOWN STEP	2026-09-05T12:02:34.0479960Z env:
+build	UNKNOWN STEP	2026-09-05T12:02:34.0480150Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:02:34.0480400Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:02:34.0481120Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:02:34.0481380Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:02:34.0481590Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:02:34.1838140Z (node:18329) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+build	UNKNOWN STEP	2026-09-05T12:02:34.1840680Z (Use `node --trace-deprecation ...` to show where the warning was created)
+build	UNKNOWN STEP	2026-09-05T12:02:34.2451730Z Cache hit for restore-key: darwin-cargo-2026090148a2-1981c0ebeba5eb9b6f8d941c13fc585e8cc1e2481387961b6b73bde495e9fe02
+build	UNKNOWN STEP	2026-09-05T12:02:34.2550220Z (node:18329) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+build	UNKNOWN STEP	2026-09-05T12:02:35.3022730Z Received 134217728 of 2064021937 (6.5%), 127.9 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:36.3034170Z Received 268435456 of 2064021937 (13.0%), 127.9 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:37.3114720Z Received 402653184 of 2064021937 (19.5%), 127.8 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:38.3144330Z Received 553648128 of 2064021937 (26.8%), 131.8 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:39.3068800Z Received 704643072 of 2064021937 (34.1%), 134.2 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:40.3075660Z Received 859832320 of 2064021937 (41.7%), 136.5 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:41.3136740Z Received 1019215872 of 2064021937 (49.4%), 138.6 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:42.3178900Z Received 1207959552 of 2064021937 (58.5%), 143.7 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:43.3278240Z Received 1396703232 of 2064021937 (67.7%), 147.6 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:44.3242120Z Received 1589641216 of 2064021937 (77.0%), 151.3 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:45.3321530Z Received 1744830464 of 2064021937 (84.5%), 150.8 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:46.3334020Z Received 1937768448 of 2064021937 (93.9%), 153.6 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:46.9668050Z Received 2064021937 of 2064021937 (100.0%), 155.4 MBs/sec
+build	UNKNOWN STEP	2026-09-05T12:02:46.9685640Z Cache Size: ~1968 MB (2064021937 B)
+build	UNKNOWN STEP	2026-09-05T12:02:46.9862680Z [command]/opt/homebrew/bin/gtar -xf /Users/runner/work/_temp/33f38c92-2256-4d00-8579-58ea7950a4f5/cache.tzst -P -C /Users/runner/work/dray/dray --delay-directory-restore --use-compress-program unzstd
+build	UNKNOWN STEP	2026-09-05T12:03:14.5643180Z Cache restored successfully
+build	UNKNOWN STEP	2026-09-05T12:03:14.6562540Z Cache restored from key: darwin-cargo-2026090148a2-1981c0ebeba5eb9b6f8d941c13fc585e8cc1e2481387961b6b73bde495e9fe02
+build	UNKNOWN STEP	2026-09-05T12:03:14.7361860Z ##[end-action id=__self.cache;outcome=success;conclusion=success;duration_ms=41072]
+build	UNKNOWN STEP	2026-09-05T12:03:14.7371330Z ##[start-action display=Run pnpm install --frozen-lockfile;id=__self.__run]
+build	UNKNOWN STEP	2026-09-05T12:03:14.7414540Z ##[group]Run pnpm install --frozen-lockfile
+build	UNKNOWN STEP	2026-09-05T12:03:14.7415000Z ^[[36;1mpnpm install --frozen-lockfile^[[0m
+build	UNKNOWN STEP	2026-09-05T12:03:14.7813360Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:03:14.7814450Z env:
+build	UNKNOWN STEP	2026-09-05T12:03:14.7815270Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:03:14.7816170Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:03:14.7817170Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:03:14.7818010Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:03:14.7818800Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:03:15.9225070Z Scope: all 3 workspace projects
+build	UNKNOWN STEP	2026-09-05T12:03:16.0351980Z ? Verifying lockfile against supply-chain policies (828 entries)...
+build	UNKNOWN STEP	2026-09-05T12:03:16.0430690Z Lockfile is up to date, resolution step is skipped
+build	UNKNOWN STEP	2026-09-05T12:03:16.2177600Z Progress: resolved 1, reused 0, downloaded 0, added 0
+build	UNKNOWN STEP	2026-09-05T12:03:16.3010840Z Packages: +718
+build	UNKNOWN STEP	2026-09-05T12:03:16.3012400Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+build	UNKNOWN STEP	2026-09-05T12:03:17.2127700Z Progress: resolved 718, reused 81, downloaded 0, added 0
+build	UNKNOWN STEP	2026-09-05T12:03:18.2184700Z Progress: resolved 718, reused 234, downloaded 0, added 0
+build	UNKNOWN STEP	2026-09-05T12:03:19.2529460Z Progress: resolved 718, reused 397, downloaded 0, added 0
+build	UNKNOWN STEP	2026-09-05T12:03:20.2535550Z Progress: resolved 718, reused 708, downloaded 0, added 0
+build	UNKNOWN STEP	2026-09-05T12:03:21.1313460Z ✓ Lockfile passes supply-chain policies (828 entries in 5s)
+build	UNKNOWN STEP	2026-09-05T12:03:21.2556520Z Progress: resolved 718, reused 718, downloaded 0, added 15
+build	UNKNOWN STEP	2026-09-05T12:03:22.2598530Z Progress: resolved 718, reused 718, downloaded 0, added 144
+build	UNKNOWN STEP	2026-09-05T12:03:23.2642050Z Progress: resolved 718, reused 718, downloaded 0, added 231
+build	UNKNOWN STEP	2026-09-05T12:03:24.2634660Z Progress: resolved 718, reused 718, downloaded 0, added 532
+build	UNKNOWN STEP	2026-09-05T12:03:25.2692040Z Progress: resolved 718, reused 718, downloaded 0, added 665
+build	UNKNOWN STEP	2026-09-05T12:03:26.2714130Z Progress: resolved 718, reused 718, downloaded 0, added 717
+build	UNKNOWN STEP	2026-09-05T12:03:27.1099160Z Progress: resolved 718, reused 718, downloaded 0, added 718, done
+build	UNKNOWN STEP	2026-09-05T12:03:27.6933480Z .../sharp@0.34.5/node_modules/sharp install$ node install/check.js || npm run build
+build	UNKNOWN STEP	2026-09-05T12:03:36.7404220Z .../sharp@0.34.5/node_modules/sharp install: Done
+build	UNKNOWN STEP	2026-09-05T12:03:37.0819720Z 
+build	UNKNOWN STEP	2026-09-05T12:03:37.1687650Z Done in 21.8s using pnpm v11.9.0
+build	UNKNOWN STEP	2026-09-05T12:03:37.2207480Z ##[end-action id=__self.__run;outcome=success;conclusion=success;duration_ms=22483]
+build	UNKNOWN STEP	2026-09-05T12:03:37.2215090Z ##[start-action display=Run brew install ninja;id=__self.__run_2]
+build	UNKNOWN STEP	2026-09-05T12:03:37.2277190Z ##[group]Run brew install ninja
+build	UNKNOWN STEP	2026-09-05T12:03:37.2279070Z ^[[36;1mbrew install ninja^[[0m
+build	UNKNOWN STEP	2026-09-05T12:03:37.2280290Z ^[[36;1mecho "CEF_PATH=$HOME/.cache/cef" >> "$GITHUB_ENV"^[[0m
+build	UNKNOWN STEP	2026-09-05T12:03:37.3337920Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+build	UNKNOWN STEP	2026-09-05T12:03:37.3338530Z env:
+build	UNKNOWN STEP	2026-09-05T12:03:37.3338950Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:03:37.3339490Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:03:37.3339950Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:03:37.3340370Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:03:37.3340740Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:03:38.9154230Z ^[[33mWarning:^[[0m ninja 1.13.2 is already installed and up-to-date.
+build	UNKNOWN STEP	2026-09-05T12:03:38.9156300Z To reinstall 1.13.2, run:
+build	UNKNOWN STEP	2026-09-05T12:03:38.9157420Z   brew reinstall ninja
+build	UNKNOWN STEP	2026-09-05T12:03:38.9340300Z ##[end-action id=__self.__run_2;outcome=success;conclusion=success;duration_ms=1712]
+build	UNKNOWN STEP	2026-09-05T12:03:38.9521090Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:03:38.9522340Z ##[group]Run apple-actions/import-codesign-certs@v3
+build	UNKNOWN STEP	2026-09-05T12:03:38.9522830Z with:
+build	UNKNOWN STEP	2026-09-05T12:03:38.9539950Z   p12-file-base64: ***
+build	UNKNOWN STEP	2026-09-05T12:03:38.9540330Z   p12-password: ***
+build	UNKNOWN STEP	2026-09-05T12:03:38.9540640Z   keychain: signing_temp
+build	UNKNOWN STEP	2026-09-05T12:03:38.9540980Z   create-keychain: true
+build	UNKNOWN STEP	2026-09-05T12:03:38.9541320Z env:
+build	UNKNOWN STEP	2026-09-05T12:03:38.9541640Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:03:38.9542200Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:03:38.9542610Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:03:38.9542980Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:03:38.9543410Z   CEF_PATH: /Users/runner/.cache/cef
+build	UNKNOWN STEP	2026-09-05T12:03:38.9543780Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:03:39.4816020Z [command]/usr/bin/security create-keychain -p *** signing_temp.keychain
+build	UNKNOWN STEP	2026-09-05T12:03:39.5347320Z [command]/usr/bin/security set-keychain-settings -lut 21600 signing_temp.keychain
+build	UNKNOWN STEP	2026-09-05T12:03:39.5713000Z [command]/usr/bin/security unlock-keychain -p *** signing_temp.keychain
+build	UNKNOWN STEP	2026-09-05T12:03:39.5930820Z [command]/usr/bin/security import /var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/tmp-20101-1WhZO1s0fY9Z -k signing_temp.keychain -f pkcs12 -A -T /usr/bin/codesign -T /usr/bin/security -P ***
+build	UNKNOWN STEP	2026-09-05T12:03:39.7200550Z [command]/usr/bin/security set-key-partition-list -S apple-tool:,apple: -k *** signing_temp.keychain
+build	UNKNOWN STEP	2026-09-05T12:03:39.7607210Z keychain: "/Users/runner/Library/Keychains/signing_temp.keychain-db"
+build	UNKNOWN STEP	2026-09-05T12:03:39.7708120Z version: 512
+build	UNKNOWN STEP	2026-09-05T12:03:39.7824070Z class: 0x00000010 
+build	UNKNOWN STEP	2026-09-05T12:03:39.7931470Z attributes:
+build	UNKNOWN STEP	2026-09-05T12:03:39.8037600Z     0x00000000 <uint32>=0x00000010 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8138900Z     0x00000001 <blob>="Imported Private Key"
+build	UNKNOWN STEP	2026-09-05T12:03:39.8187310Z     0x00000002 <blob>=<NULL>
+build	UNKNOWN STEP	2026-09-05T12:03:39.8189590Z     0x00000003 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8204550Z     0x00000004 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8218170Z     0x00000005 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8229860Z     0x00000006 <blob>=0xB79B53254E9C17B5D760F1AC0EF02CCC3CE15DC5  "\267\233S%N\234\027\265\327`\361\254\016\360,\314<\341]\305"
+build	UNKNOWN STEP	2026-09-05T12:03:39.8234920Z     0x00000007 <blob>=<NULL>
+build	UNKNOWN STEP	2026-09-05T12:03:39.8237370Z     0x00000008 <blob>=0x7B38373139316361322D306663392D313164342D383439612D3030303530326235323132327D00  "{87191ca2-0fc9-11d4-849a-000502b52122}\000"
+build	UNKNOWN STEP	2026-09-05T12:03:39.8241140Z     0x00000009 <uint32>=0x0000002A  "\000\000\000*"
+build	UNKNOWN STEP	2026-09-05T12:03:39.8245770Z     0x0000000A <uint32>=0x00000800 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8250120Z     0x0000000B <uint32>=0x00000800 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8251160Z     0x0000000C <blob>=0x0000000000000000 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8256200Z     0x0000000D <blob>=0x0000000000000000 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8259870Z     0x0000000E <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8261110Z     0x0000000F <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8262410Z     0x00000010 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8263750Z     0x00000011 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8264710Z     0x00000012 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8267190Z     0x00000013 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8269410Z     0x00000014 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8271680Z     0x00000015 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8272460Z     0x00000016 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8275420Z     0x00000017 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8277200Z     0x00000018 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8278280Z     0x00000019 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8280250Z     0x0000001A <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:03:39.8283660Z [command]/usr/bin/security list-keychains -d user -s signing_temp.keychain login.keychain
+build	UNKNOWN STEP	2026-09-05T12:03:39.8556240Z ##[group]Run scripts/cef-helpers.sh src-tauri/target/cef-helpers
+build	UNKNOWN STEP	2026-09-05T12:03:39.8556710Z ^[[36;1mscripts/cef-helpers.sh src-tauri/target/cef-helpers^[[0m
+build	UNKNOWN STEP	2026-09-05T12:03:39.8622540Z shell: /bin/bash -e {0}
+build	UNKNOWN STEP	2026-09-05T12:03:39.8622840Z env:
+build	UNKNOWN STEP	2026-09-05T12:03:39.8623060Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:03:39.8623350Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:03:39.8623690Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:03:39.8623960Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:03:39.8624210Z   CEF_PATH: /Users/runner/.cache/cef
+build	UNKNOWN STEP	2026-09-05T12:03:39.8624460Z   PROFILE: release
+build	UNKNOWN STEP	2026-09-05T12:03:39.8624710Z   TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+build	UNKNOWN STEP	2026-09-05T12:03:39.8625400Z   SIGN_IDENTITY: ***
+build	UNKNOWN STEP	2026-09-05T12:03:39.8625650Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:03:44.1520060Z ^[[1m^[[92m   Compiling^[[0m objc2-exception-helper v0.1.1
+build	UNKNOWN STEP	2026-09-05T12:03:44.1822860Z ^[[1m^[[92m   Compiling^[[0m tauri v2.11.5
+build	UNKNOWN STEP	2026-09-05T12:03:44.1900720Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+build	UNKNOWN STEP	2026-09-05T12:03:52.8066830Z ^[[1m^[[92m   Compiling^[[0m objc2 v0.6.4
+build	UNKNOWN STEP	2026-09-05T12:03:55.7792430Z ^[[1m^[[92m   Compiling^[[0m block2 v0.6.2
+build	UNKNOWN STEP	2026-09-05T12:03:56.4008840Z ^[[1m^[[92m   Compiling^[[0m dispatch2 v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:03:56.8696160Z ^[[1m^[[92m   Compiling^[[0m objc2-core-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:03:59.1690450Z ^[[1m^[[92m   Compiling^[[0m objc2-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:00.4368790Z ^[[1m^[[92m   Compiling^[[0m objc2-core-graphics v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:01.0891460Z ^[[1m^[[92m   Compiling^[[0m objc2-core-video v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:01.1212590Z ^[[1m^[[92m   Compiling^[[0m objc2-core-text v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:01.4929070Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.43
+build	UNKNOWN STEP	2026-09-05T12:04:03.7090220Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.14
+build	UNKNOWN STEP	2026-09-05T12:04:08.8404460Z ^[[1m^[[92m   Compiling^[[0m tauri-macros v2.6.3
+build	UNKNOWN STEP	2026-09-05T12:04:22.3687240Z ^[[1m^[[92m   Compiling^[[0m ureq v3.4.0
+build	UNKNOWN STEP	2026-09-05T12:04:24.0149770Z ^[[1m^[[92m   Compiling^[[0m objc2-quartz-core v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:24.5469280Z ^[[1m^[[92m   Compiling^[[0m objc2-cloud-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:24.7935420Z ^[[1m^[[92m   Compiling^[[0m objc2-core-image v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:25.2173900Z ^[[1m^[[92m   Compiling^[[0m objc2-core-data v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:25.8664250Z ^[[1m^[[92m   Compiling^[[0m objc2-app-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:33.4484370Z ^[[1m^[[92m   Compiling^[[0m libz-sys v1.1.29
+build	UNKNOWN STEP	2026-09-05T12:04:34.0716090Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+build	UNKNOWN STEP	2026-09-05T12:04:34.5537680Z ^[[1m^[[92m   Compiling^[[0m download-cef v2.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:35.6389240Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-fs v2.5.1
+build	UNKNOWN STEP	2026-09-05T12:04:35.7626340Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.9
+build	UNKNOWN STEP	2026-09-05T12:04:36.6049070Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio-types v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:36.9382540Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:37.2359210Z ^[[1m^[[92m   Compiling^[[0m libgit2-sys v0.18.7+1.9.6
+build	UNKNOWN STEP	2026-09-05T12:04:37.4364780Z ^[[1m^[[92m   Compiling^[[0m lmdb-master-sys v0.2.6
+build	UNKNOWN STEP	2026-09-05T12:04:39.5868650Z ^[[1m^[[92m   Compiling^[[0m cef-dll-sys v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:04:41.0142070Z ^[[1m^[[92m   Compiling^[[0m objc2-core-location v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:41.1709430Z ^[[1m^[[92m   Compiling^[[0m objc2-core-services v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:41.3100290Z ^[[1m^[[92m   Compiling^[[0m notify v9.0.0-rc.4
+build	UNKNOWN STEP	2026-09-05T12:04:46.7674980Z ^[[1m^[[92m   Compiling^[[0m mac-notification-sys v0.6.15
+build	UNKNOWN STEP	2026-09-05T12:04:49.1185180Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-opener v2.5.4
+build	UNKNOWN STEP	2026-09-05T12:04:49.1788480Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-updater v2.10.1
+build	UNKNOWN STEP	2026-09-05T12:04:49.3018540Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-dialog v2.7.2
+build	UNKNOWN STEP	2026-09-05T12:04:49.3604260Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-macos-permissions v2.3.0
+build	UNKNOWN STEP	2026-09-05T12:04:49.4269090Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-aptabase v1.0.0
+build	UNKNOWN STEP	2026-09-05T12:04:49.4858970Z ^[[1m^[[92m   Compiling^[[0m objc2-user-notifications v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:56.5629630Z ^[[1m^[[92m   Compiling^[[0m objc2-web-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:04:58.0954270Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime v2.11.3
+build	UNKNOWN STEP	2026-09-05T12:04:59.0561680Z ^[[1m^[[92m   Compiling^[[0m wry v0.55.1
+build	UNKNOWN STEP	2026-09-05T12:05:04.0924750Z ^[[1m^[[92m   Compiling^[[0m tao v0.35.3
+build	UNKNOWN STEP	2026-09-05T12:05:10.2702070Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime-wry v2.11.4
+build	UNKNOWN STEP	2026-09-05T12:05:11.8885650Z ^[[1m^[[92m   Compiling^[[0m window-vibrancy v0.6.0
+build	UNKNOWN STEP	2026-09-05T12:05:12.0839580Z ^[[1m^[[92m   Compiling^[[0m muda v0.19.3
+build	UNKNOWN STEP	2026-09-05T12:05:12.6645700Z ^[[1m^[[92m   Compiling^[[0m objc2-osa-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:05:17.2070780Z ^[[1m^[[92m   Compiling^[[0m objc2-audio-toolbox v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:05:18.0487700Z ^[[1m^[[92m   Compiling^[[0m rustls-platform-verifier v0.7.0
+build	UNKNOWN STEP	2026-09-05T12:05:18.6836440Z ^[[1m^[[92m   Compiling^[[0m fff-notify-debouncer-full v0.9.4
+build	UNKNOWN STEP	2026-09-05T12:05:20.2914000Z ^[[1m^[[92m   Compiling^[[0m mac-usernotifications v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:05:26.5271390Z ^[[1m^[[92m   Compiling^[[0m coreaudio-rs v0.13.0
+build	UNKNOWN STEP	2026-09-05T12:05:28.4859430Z ^[[1m^[[92m   Compiling^[[0m heed v0.22.1
+build	UNKNOWN STEP	2026-09-05T12:05:30.1384250Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.12.28
+build	UNKNOWN STEP	2026-09-05T12:05:37.3002460Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.13.4
+build	UNKNOWN STEP	2026-09-05T12:05:52.2100990Z ^[[1m^[[92m   Compiling^[[0m os_info v3.15.0
+build	UNKNOWN STEP	2026-09-05T12:05:53.1145130Z ^[[1m^[[92m   Compiling^[[0m git2 v0.21.0
+build	UNKNOWN STEP	2026-09-05T12:05:53.3774950Z ^[[1m^[[92m   Compiling^[[0m osakit v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:05:57.0615160Z ^[[1m^[[92m   Compiling^[[0m rfd v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:05:58.7203540Z ^[[1m^[[92m   Compiling^[[0m dray v0.14.0-beta.5 (/Users/runner/work/dray/dray/apps/desktop/src-tauri)
+build	UNKNOWN STEP	2026-09-05T12:06:03.0534450Z ^[[1m^[[92m   Compiling^[[0m fff-search v0.10.3
+build	UNKNOWN STEP	2026-09-05T12:06:04.0724150Z ^[[1m^[[92m   Compiling^[[0m cpal v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:06:05.3612920Z ^[[1m^[[92m   Compiling^[[0m cef v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:06:05.8735860Z ^[[1m^[[92m   Compiling^[[0m notify-rust v4.18.0
+build	UNKNOWN STEP	2026-09-05T12:06:07.7180890Z ^[[1m^[[92m   Compiling^[[0m dray-proto v0.1.0 (/Users/runner/work/dray/dray/crates/dray-proto)
+build	UNKNOWN STEP	2026-09-05T12:11:26.7476720Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:11:26.7479550Z   | 
+build	UNKNOWN STEP	2026-09-05T12:11:26.7481520Z   | other 
+build	UNKNOWN STEP	2026-09-05T12:11:26.7482060Z   | 
+build	UNKNOWN STEP	2026-09-05T12:11:26.7513070Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:11:26.8258960Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:11:26.8260480Z   | 
+build	UNKNOWN STEP	2026-09-05T12:11:26.8261390Z   | alias = "acceptEdits"
+build	UNKNOWN STEP	2026-09-05T12:11:26.8262170Z   | 
+build	UNKNOWN STEP	2026-09-05T12:11:26.8263130Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:11:27.0810620Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:11:27.0830350Z   | 
+build	UNKNOWN STEP	2026-09-05T12:11:27.0831100Z   | into = "String"
+build	UNKNOWN STEP	2026-09-05T12:11:27.0831960Z   | 
+build	UNKNOWN STEP	2026-09-05T12:11:27.0832650Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:13:28.9244590Z ^[[1m^[[92m    Finished^[[0m `release` profile [optimized] target(s) in 9m 48s
+build	UNKNOWN STEP	2026-09-05T12:13:31.7380330Z ^[[1m^[[92m   Compiling^[[0m objc2-exception-helper v0.1.1
+build	UNKNOWN STEP	2026-09-05T12:13:31.7712850Z ^[[1m^[[92m   Compiling^[[0m tauri v2.11.5
+build	UNKNOWN STEP	2026-09-05T12:13:31.7923010Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+build	UNKNOWN STEP	2026-09-05T12:13:32.0775420Z ^[[1m^[[92m   Compiling^[[0m libz-sys v1.1.29
+build	UNKNOWN STEP	2026-09-05T12:13:32.6261440Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-fs v2.5.1
+build	UNKNOWN STEP	2026-09-05T12:13:32.7240060Z ^[[1m^[[92m   Compiling^[[0m objc2 v0.6.4
+build	UNKNOWN STEP	2026-09-05T12:13:32.7811700Z ^[[1m^[[92m   Compiling^[[0m libgit2-sys v0.18.7+1.9.6
+build	UNKNOWN STEP	2026-09-05T12:13:35.5625600Z ^[[1m^[[92m   Compiling^[[0m block2 v0.6.2
+build	UNKNOWN STEP	2026-09-05T12:13:36.0420220Z ^[[1m^[[92m   Compiling^[[0m dispatch2 v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:13:36.6267510Z ^[[1m^[[92m   Compiling^[[0m objc2-core-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:13:38.8966930Z ^[[1m^[[92m   Compiling^[[0m objc2-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:13:42.6601950Z ^[[1m^[[92m   Compiling^[[0m objc2-core-video v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:13:43.1405210Z ^[[1m^[[92m   Compiling^[[0m objc2-core-text v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:13:43.7674250Z ^[[1m^[[92m   Compiling^[[0m objc2-core-graphics v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:13:50.9330040Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.14
+build	UNKNOWN STEP	2026-09-05T12:13:53.6218790Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.43
+build	UNKNOWN STEP	2026-09-05T12:14:04.8710000Z ^[[1m^[[92m   Compiling^[[0m objc2-core-image v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:05.4225280Z ^[[1m^[[92m   Compiling^[[0m objc2-quartz-core v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:06.2929700Z ^[[1m^[[92m   Compiling^[[0m objc2-core-data v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:07.4695330Z ^[[1m^[[92m   Compiling^[[0m objc2-cloud-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:07.9104440Z ^[[1m^[[92m   Compiling^[[0m objc2-app-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:17.1978840Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+build	UNKNOWN STEP	2026-09-05T12:14:17.7244290Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.9
+build	UNKNOWN STEP	2026-09-05T12:14:18.7377110Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio-types v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:19.1196570Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:19.3396860Z ^[[1m^[[92m   Compiling^[[0m objc2-core-location v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:19.5311380Z ^[[1m^[[92m   Compiling^[[0m objc2-core-services v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:19.6415640Z ^[[1m^[[92m   Compiling^[[0m lmdb-master-sys v0.2.6
+build	UNKNOWN STEP	2026-09-05T12:14:21.9595020Z ^[[1m^[[92m   Compiling^[[0m notify v9.0.0-rc.4
+build	UNKNOWN STEP	2026-09-05T12:14:27.8312040Z ^[[1m^[[92m   Compiling^[[0m mac-notification-sys v0.6.15
+build	UNKNOWN STEP	2026-09-05T12:14:29.8428640Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-updater v2.10.1
+build	UNKNOWN STEP	2026-09-05T12:14:29.9035370Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-dialog v2.7.2
+build	UNKNOWN STEP	2026-09-05T12:14:29.9726340Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-macos-permissions v2.3.0
+build	UNKNOWN STEP	2026-09-05T12:14:30.0283760Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-opener v2.5.4
+build	UNKNOWN STEP	2026-09-05T12:14:30.0887130Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-aptabase v1.0.0
+build	UNKNOWN STEP	2026-09-05T12:14:30.1392570Z ^[[1m^[[92m   Compiling^[[0m cef-dll-sys v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:14:31.6435970Z ^[[1m^[[92m   Compiling^[[0m objc2-user-notifications v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:32.8145630Z ^[[1m^[[92m   Compiling^[[0m objc2-audio-toolbox v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:33.4161570Z ^[[1m^[[92m   Compiling^[[0m rustls-platform-verifier v0.7.0
+build	UNKNOWN STEP	2026-09-05T12:14:34.0505570Z ^[[1m^[[92m   Compiling^[[0m fff-notify-debouncer-full v0.9.4
+build	UNKNOWN STEP	2026-09-05T12:14:35.8208930Z ^[[1m^[[92m   Compiling^[[0m mac-usernotifications v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:14:39.8352230Z ^[[1m^[[92m   Compiling^[[0m objc2-web-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:14:41.2095650Z ^[[1m^[[92m   Compiling^[[0m wry v0.55.1
+build	UNKNOWN STEP	2026-09-05T12:14:46.7004550Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime v2.11.3
+build	UNKNOWN STEP	2026-09-05T12:14:47.6356860Z ^[[1m^[[92m   Compiling^[[0m tao v0.35.3
+build	UNKNOWN STEP	2026-09-05T12:14:50.6807670Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime-wry v2.11.4
+build	UNKNOWN STEP	2026-09-05T12:14:54.3189720Z ^[[1m^[[92m   Compiling^[[0m muda v0.19.3
+build	UNKNOWN STEP	2026-09-05T12:14:56.4455120Z ^[[1m^[[92m   Compiling^[[0m window-vibrancy v0.6.0
+build	UNKNOWN STEP	2026-09-05T12:15:00.6913820Z ^[[1m^[[92m   Compiling^[[0m objc2-osa-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:15:01.2903730Z ^[[1m^[[92m   Compiling^[[0m osakit v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:15:02.1306070Z ^[[1m^[[92m   Compiling^[[0m git2 v0.21.0
+build	UNKNOWN STEP	2026-09-05T12:15:02.2896150Z ^[[1m^[[92m   Compiling^[[0m rfd v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:15:04.6696580Z ^[[1m^[[92m   Compiling^[[0m coreaudio-rs v0.13.0
+build	UNKNOWN STEP	2026-09-05T12:15:06.7288840Z ^[[1m^[[92m   Compiling^[[0m heed v0.22.1
+build	UNKNOWN STEP	2026-09-05T12:15:09.9451820Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.12.28
+build	UNKNOWN STEP	2026-09-05T12:15:11.2203440Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.13.4
+build	UNKNOWN STEP	2026-09-05T12:15:20.3768980Z ^[[1m^[[92m   Compiling^[[0m os_info v3.15.0
+build	UNKNOWN STEP	2026-09-05T12:15:28.9122800Z ^[[1m^[[92m   Compiling^[[0m fff-search v0.10.3
+build	UNKNOWN STEP	2026-09-05T12:15:31.7844210Z ^[[1m^[[92m   Compiling^[[0m cpal v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:15:34.8382710Z ^[[1m^[[92m   Compiling^[[0m cef v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:15:38.4982390Z ^[[1m^[[92m   Compiling^[[0m dray v0.14.0-beta.5 (/Users/runner/work/dray/dray/apps/desktop/src-tauri)
+build	UNKNOWN STEP	2026-09-05T12:15:38.9580360Z ^[[1m^[[92m   Compiling^[[0m notify-rust v4.18.0
+build	UNKNOWN STEP	2026-09-05T12:15:40.3144900Z ^[[1m^[[92m   Compiling^[[0m dray-proto v0.1.0 (/Users/runner/work/dray/dray/crates/dray-proto)
+build	UNKNOWN STEP	2026-09-05T12:22:21.2839070Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:22:21.2839820Z   | 
+build	UNKNOWN STEP	2026-09-05T12:22:21.2843690Z   | other 
+build	UNKNOWN STEP	2026-09-05T12:22:21.2844030Z   | 
+build	UNKNOWN STEP	2026-09-05T12:22:21.2844460Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:22:21.3458360Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:22:21.3462040Z   | 
+build	UNKNOWN STEP	2026-09-05T12:22:21.3471410Z   | alias = "acceptEdits"
+build	UNKNOWN STEP	2026-09-05T12:22:21.3471830Z   | 
+build	UNKNOWN STEP	2026-09-05T12:22:21.3472260Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:22:21.5946280Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:22:21.5946750Z   | 
+build	UNKNOWN STEP	2026-09-05T12:22:21.5950740Z   | into = "String"
+build	UNKNOWN STEP	2026-09-05T12:22:21.5951060Z   | 
+build	UNKNOWN STEP	2026-09-05T12:22:21.5953960Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:24:10.9006440Z ^[[1m^[[92m    Finished^[[0m `release` profile [optimized] target(s) in 10m 41s
+build	UNKNOWN STEP	2026-09-05T12:24:12.6261830Z target/universal-apple-darwin/release/dray-helper: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:24:13.1044490Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/cef-helpers/Dray Helper.app: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:24:13.3487930Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/cef-helpers/Dray Helper (GPU).app: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:24:13.5999840Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/cef-helpers/Dray Helper (Renderer).app: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:24:13.9551110Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/cef-helpers/Dray Helper (Plugin).app: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:24:14.2195960Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/cef-helpers/Dray Helper (Alerts).app: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:24:14.4304910Z cef helpers at /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/cef-helpers
+build	UNKNOWN STEP	2026-09-05T12:24:14.4787610Z ##[group]Run tauri-apps/tauri-action@v0
+build	UNKNOWN STEP	2026-09-05T12:24:14.4788080Z with:
+build	UNKNOWN STEP	2026-09-05T12:24:14.4788360Z   projectPath: apps/desktop
+build	UNKNOWN STEP	2026-09-05T12:24:14.4788690Z   tagName: v0.14.0-beta.5
+build	UNKNOWN STEP	2026-09-05T12:24:14.4788990Z   releaseName: v0.14.0-beta.5
+build	UNKNOWN STEP	2026-09-05T12:24:14.4789310Z   prerelease: true
+build	UNKNOWN STEP	2026-09-05T12:24:14.4800040Z   releaseBody: 
+build	UNKNOWN STEP	### Added
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	- **⌘F searches the sidebar.** It works with the sidebar collapsed, and Esc
+build	UNKNOWN STEP	  clears the field. Settling a session clears the query too — you found the
+build	UNKNOWN STEP	  row you came for, and the list it lands in is filtered by that same query.
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	### Changed
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	- **Transcripts you have stopped looking at leave memory.** Every one opened
+build	UNKNOWN STEP	  since launch used to stay resident, around 650MB after a day. A transcript
+build	UNKNOWN STEP	  is dropped on archive, on settle, and after ten minutes unviewed — never
+build	UNKNOWN STEP	  the one on screen, never one mid-turn, never one holding a card. Pictures
+build	UNKNOWN STEP	  in a transcript load as you reach them rather than all at once.
+build	UNKNOWN STEP	- **A large amount of unused code is gone** — dead components, duplicated
+build	UNKNOWN STEP	  helpers, a marketing page's worth of unshipped sections. Nothing here was
+build	UNKNOWN STEP	  meant to change what the app does, which is exactly why a beta is where it
+build	UNKNOWN STEP	  lands: anything that behaves differently is a bug, so say so.
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	### Fixed
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	- **Keyboard shortcuts keep working after you use the browser — properly
+build	UNKNOWN STEP	  this time.** beta.4 claimed this and did not deliver it: the code looked
+build	UNKNOWN STEP	  for the window's web view by name, and the name it looked for is not the
+build	UNKNOWN STEP	  one the window actually uses, so focus stayed in the hidden Chromium view
+build	UNKNOWN STEP	  and ⌘E and the rest still did nothing until you clicked. ⌘⇧[ and ⌘⇧] work
+build	UNKNOWN STEP	  there now too.
+build	UNKNOWN STEP	- **A dismissed notice no longer swallows the next one's shortcut.** A card
+build	UNKNOWN STEP	  that says "Deleted" sits for a moment on its way out, and it stayed what
+build	UNKNOWN STEP	  ⌘G and ⌘⇧D acted on for that whole moment — so one did nothing and the
+build	UNKNOWN STEP	  other dismissed a card already leaving.
+build	UNKNOWN STEP	- **Opening a browser tab no longer freezes every session.** Chromium's
+build	UNKNOWN STEP	  startup reset the signal handler Dray reaps child processes through, so
+build	UNKNOWN STEP	  the first `git` command after the first tab waited forever — and since a
+build	UNKNOWN STEP	  send waits on one, every session went unsendable and unstoppable until
+build	UNKNOWN STEP	  restart.
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	### Added
+build	UNKNOWN STEP	
+build	UNKNOWN STEP	- **Dray has a browser.** ⌘3 for the full view, or the Browser tab in the
+build	UNKNOWN STEP	  right pane. Tabs with favicons, device sizes, zoom, hard reload and
+build	UNKNOWN STEP	  DevTools on their chords, and a list of local servers that shows only
+build	UNKNOWN STEP	  this checkout's — another worktree's dev server never appears. Each
+build	UNKNOWN STEP	  session gets its own tabs and its own cookies.
+build	UNKNOWN STEP	- **Chromium is not in the download.** The app fetches it a few seconds
+build	UNKNOWN STEP	  after the first window opens, ~330MB, and Settings → Integrations shows
+build	UNKNOWN STEP	  where it has got to. Keeping it out of the bundle keeps it out of every
+build	UNKNOWN STEP	  update too.
+build	UNKNOWN STEP	- **`dray browser` lets an agent drive that browser** — open pages, click,
+build	UNKNOWN STEP	  type, read and screenshot, in its own session's tabs and nowhere else.
+build	UNKNOWN STEP	  It needs a matching CLI: run `dray update`.
+build	UNKNOWN STEP	- **A link in the chat asks where to open.** Dray's browser or the system
+build	UNKNOWN STEP	  one, with ⌘-click skipping the question. URLs you type in your own
+build	UNKNOWN STEP	  messages are clickable now too.
+build	UNKNOWN STEP	2026-09-05T12:24:14.4830280Z   generateReleaseNotes: true
+build	UNKNOWN STEP	2026-09-05T12:24:14.4831480Z   args: --target universal-apple-darwin --features cef --config src-tauri/tauri.cef.conf.json
+build	UNKNOWN STEP	2026-09-05T12:24:14.4832980Z   releaseDraft: false
+build	UNKNOWN STEP	2026-09-05T12:24:14.4833290Z   includeDebug: false
+build	UNKNOWN STEP	2026-09-05T12:24:14.4833670Z   includeRelease: true
+build	UNKNOWN STEP	2026-09-05T12:24:14.4834100Z   includeUpdaterJson: true
+build	UNKNOWN STEP	2026-09-05T12:24:14.4834500Z   updaterJsonKeepUniversal: false
+build	UNKNOWN STEP	2026-09-05T12:24:14.4834870Z   isGitea: false
+build	UNKNOWN STEP	2026-09-05T12:24:14.4835210Z   uploadPlainBinary: false
+build	UNKNOWN STEP	2026-09-05T12:24:14.4835580Z env:
+build	UNKNOWN STEP	2026-09-05T12:24:14.4835930Z   CARGO_INCREMENTAL: 0
+build	UNKNOWN STEP	2026-09-05T12:24:14.4836310Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+build	UNKNOWN STEP	2026-09-05T12:24:14.4836750Z   CARGO_HOME: /Users/runner/.cargo
+build	UNKNOWN STEP	2026-09-05T12:24:14.4837060Z   CARGO_TERM_COLOR: always
+build	UNKNOWN STEP	2026-09-05T12:24:14.4838170Z   CEF_PATH: /Users/runner/.cache/cef
+build	UNKNOWN STEP	2026-09-05T12:24:14.4841810Z   GITHUB_TOKEN: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4843850Z   TAURI_SIGNING_PRIVATE_KEY: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4844100Z   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: 
+build	UNKNOWN STEP	2026-09-05T12:24:14.4861020Z   APPLE_CERTIFICATE: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4861460Z   APPLE_CERTIFICATE_PASSWORD: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4869420Z   APPLE_SIGNING_IDENTITY: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4869880Z   KEYCHAIN_PASSWORD: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4870240Z   APPLE_ID: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4870600Z   APPLE_PASSWORD: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4870970Z   APPLE_TEAM_ID: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4871380Z   APTABASE_KEY: ***
+build	UNKNOWN STEP	2026-09-05T12:24:14.4871750Z ##[endgroup]
+build	UNKNOWN STEP	2026-09-05T12:24:15.3602110Z Couldn't parse --config flag as inline JSON. This is not an error if it's a file path. Source: "Unexpected token 's', "src-tauri/"... is not valid JSON"
+build	UNKNOWN STEP	2026-09-05T12:24:15.3645610Z running npm [
+build	UNKNOWN STEP	2026-09-05T12:24:15.3646480Z   'run',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3646700Z   'tauri',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3647590Z   'build',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3647910Z   '--',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3648190Z   '--target',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3648430Z   'universal-apple-darwin',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3648690Z   '--features',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3648900Z   'cef',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3649090Z   '--config',
+build	UNKNOWN STEP	2026-09-05T12:24:15.3649340Z   'src-tauri/tauri.cef.conf.json'
+build	UNKNOWN STEP	2026-09-05T12:24:15.3649610Z ]
+build	UNKNOWN STEP	2026-09-05T12:24:15.9256640Z 
+build	UNKNOWN STEP	2026-09-05T12:24:15.9257480Z > dray@0.14.0-beta.5 tauri
+build	UNKNOWN STEP	2026-09-05T12:24:15.9258340Z > node scripts/tauri.mjs build --target universal-apple-darwin --features cef --config src-tauri/tauri.cef.conf.json
+build	UNKNOWN STEP	2026-09-05T12:24:15.9258850Z 
+build	UNKNOWN STEP	2026-09-05T12:24:16.2132270Z         Info Looking up installed tauri packages to check mismatched versions...
+build	UNKNOWN STEP	2026-09-05T12:24:18.4728670Z      Running beforeBuildCommand `pnpm build`
+build	UNKNOWN STEP	2026-09-05T12:24:18.8648120Z $ tsc && vite build
+build	UNKNOWN STEP	2026-09-05T12:24:28.2764270Z ^[[36mvite v7.3.6 ^[[32mbuilding client environment for production...^[[36m^[[39m
+build	UNKNOWN STEP	2026-09-05T12:24:28.4512940Z transforming...
+build	UNKNOWN STEP	2026-09-05T12:24:33.7788140Z ^[[32m✓^[[39m 2980 modules transformed.
+build	UNKNOWN STEP	2026-09-05T12:24:34.2776220Z rendering chunks...
+build	UNKNOWN STEP	2026-09-05T12:24:35.0633360Z computing gzip size...
+build	UNKNOWN STEP	2026-09-05T12:24:35.2539250Z ^[[2mdist/^[[22m^[[32mindex.html                                                 ^[[39m^[[1m^[[2m    2.04 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.99 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.2640730Z ^[[33m
+build	UNKNOWN STEP	2026-09-05T12:24:35.2642220Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-mono-symbols2-wght-normal-CO5SzqOn.woff2      ^[[39m^[[1m^[[2m    5.81 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.2743930Z (!) Some chunks are larger than 500 kB after minification. Consider:
+build	UNKNOWN STEP	2026-09-05T12:24:35.2745130Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-mono-cyrillic-ext-wght-normal-X_5orZeX.woff2  ^[[39m^[[1m^[[2m    6.18 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.2846620Z - Using dynamic import() to code-split the application
+build	UNKNOWN STEP	2026-09-05T12:24:35.2847630Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-cyrillic-ext-wght-normal-DjL33-gN.woff2       ^[[39m^[[1m^[[2m    7.42 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.2950140Z - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+build	UNKNOWN STEP	2026-09-05T12:24:35.2952150Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-mono-vietnamese-wght-normal-DadHysG0.woff2    ^[[39m^[[1m^[[2m    7.70 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3056320Z - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.^[[39m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3057370Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-vietnamese-wght-normal-6IgcOCM7.woff2         ^[[39m^[[1m^[[2m    8.00 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3159710Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-mono-cyrillic-wght-normal-DiZS0aHC.woff2      ^[[39m^[[1m^[[2m   12.94 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3263210Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-mono-latin-ext-wght-normal-Bwz-egvJ.woff2     ^[[39m^[[1m^[[2m   14.70 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3365820Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-cyrillic-wght-normal-BEAKL7Jp.woff2           ^[[39m^[[1m^[[2m   15.08 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3470740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-latin-ext-wght-normal-DC-KSUi6.woff2          ^[[39m^[[1m^[[2m   16.51 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3573430Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-mono-latin-wght-normal-XN7g48iV.woff2         ^[[39m^[[1m^[[2m   23.13 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3654630Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mgeist-latin-wght-normal-BgDaEnEv.woff2              ^[[39m^[[1m^[[2m   29.40 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3659400Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mdictate-start-Zi_23PoH.wav                          ^[[39m^[[1m^[[2m  102.27 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3719710Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mdictate-stop-BfPs1M4m.wav                           ^[[39m^[[1m^[[2m  139.07 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3738090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[32mworker-D-vsGHpg.js                                  ^[[39m^[[1m^[[2m  207.69 kB^[[22m^[[1m^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3744570Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[35mindex-KIIv-AdQ.css                                  ^[[39m^[[1m^[[2m  119.59 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  19.81 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3747900Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhighlighted-body-OFNGDK62-j1fRNEDz.js               ^[[39m^[[1m^[[2m    0.44 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.31 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3750430Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcodeowners-Bp6g37R7.js                              ^[[39m^[[1m^[[2m    0.55 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.32 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3799770Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mshellsession-BADoaaVG.js                            ^[[39m^[[1m^[[2m    0.71 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.43 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3806330Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtsv-B_m7g4N7.js                                     ^[[39m^[[1m^[[2m    0.74 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.34 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3812070Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhtml-derivative-BFtXZ54Q.js                         ^[[39m^[[1m^[[2m    0.90 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.50 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3842240Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgit-rebase-r7XF79zn.js                              ^[[39m^[[1m^[[2m    0.98 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.44 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3854550Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mqmldir-C8lEn-DE.js                                  ^[[39m^[[1m^[[2m    1.00 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.45 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3856930Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcsv-fuZLfV_i.js                                     ^[[39m^[[1m^[[2m    1.14 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.37 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3867740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgit-commit-F4YmCXRG.js                              ^[[39m^[[1m^[[2m    1.23 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.53 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3870030Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mxsl-CtQFsRM5.js                                     ^[[39m^[[1m^[[2m    1.39 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3908740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdotenv-Da5cRb03.js                                  ^[[39m^[[1m^[[2m    1.42 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.53 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3913520Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msparql-rVzFXLq3.js                                  ^[[39m^[[1m^[[2m    1.48 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.82 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3914760Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mini-BEwlwnbL.js                                     ^[[39m^[[1m^[[2m    1.53 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.50 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3915990Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mfortran-fixed-form-CkoXwp7k.js                      ^[[39m^[[1m^[[2m    1.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.69 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3917120Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdocker-BcOcwvcX.js                                  ^[[39m^[[1m^[[2m    1.74 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.60 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3919620Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhxml-Bvhsp5Yf.js                                    ^[[39m^[[1m^[[2m    1.74 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.88 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3923060Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdesktop-BmXAJ9_W.js                                 ^[[39m^[[1m^[[2m    1.83 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.76 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3930920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwenyan-BV7otONQ.js                                  ^[[39m^[[1m^[[2m    2.16 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.09 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3934530Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjssm-C2t-YnRu.js                                    ^[[39m^[[1m^[[2m    2.24 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.62 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3940200Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mreg-C-SQnVFl.js                                     ^[[39m^[[1m^[[2m    2.35 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.70 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3942830Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36medge-BkV0erSs.js                                    ^[[39m^[[1m^[[2m    2.36 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.70 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3944510Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdiff-D97Zzqfu.js                                    ^[[39m^[[1m^[[2m    2.57 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.70 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3945950Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgleam-BspZqrRM.js                                   ^[[39m^[[1m^[[2m    2.58 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.82 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3947660Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36merb-B12qg9BL.js                                     ^[[39m^[[1m^[[2m    2.61 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.84 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3951610Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhy-DFXneXwc.js                                      ^[[39m^[[1m^[[2m    2.65 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3963190Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjson-Cp-IABpG.js                                    ^[[39m^[[1m^[[2m    2.82 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.78 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3986220Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mopenscad-C4EeE6gA.js                                ^[[39m^[[1m^[[2m    2.82 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.01 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3995150Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlog-2UxHyX5q.js                                     ^[[39m^[[1m^[[2m    2.85 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.90 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.3996920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcairo-KRGpt6FW.js                                   ^[[39m^[[1m^[[2m    2.94 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.81 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4000760Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mberry-uYugtg8r.js                                   ^[[39m^[[1m^[[2m    3.01 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.81 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4005500Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjsonl-DcaNXYhu.js                                   ^[[39m^[[1m^[[2m    3.01 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.79 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4009480Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjsonc-Des-eS-w.js                                   ^[[39m^[[1m^[[2m    3.11 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.80 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4013670Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlogo-BtOb2qkB.js                                    ^[[39m^[[1m^[[2m    3.13 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.47 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4015010Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpo-BTJTHyun.js                                      ^[[39m^[[1m^[[2m    3.24 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.91 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4016370Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjson5-C9tS-k6U.js                                   ^[[39m^[[1m^[[2m    3.25 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.83 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4017500Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmipsasm-CKIfxQSi.js                                 ^[[39m^[[1m^[[2m    3.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4018620Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtasl-QIJgUcNo.js                                    ^[[39m^[[1m^[[2m    3.29 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.85 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4020090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgenie-D0YGMca9.js                                   ^[[39m^[[1m^[[2m    3.36 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.21 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4022060Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrel-C3B-1QV4.js                                     ^[[39m^[[1m^[[2m    3.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4024270Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvala-CsfeWuGM.js                                    ^[[39m^[[1m^[[2m    3.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.19 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4025720Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msplunk-BtCnVYZw.js                                  ^[[39m^[[1m^[[2m    3.44 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4026930Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mfluent-C4IJs8-o.js                                  ^[[39m^[[1m^[[2m    3.61 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.90 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4028210Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mssh-config-_ykCGR6B.js                              ^[[39m^[[1m^[[2m    3.62 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.60 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4029380Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjsonnet-DFQXde-d.js                                 ^[[39m^[[1m^[[2m    3.62 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.05 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4030400Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mkdl-DV7GczEv.js                                     ^[[39m^[[1m^[[2m    3.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.04 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4031770Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mglsl-DplSGwfg.js                                    ^[[39m^[[1m^[[2m    3.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.41 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4032890Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhurl-irOxFIW8.js                                    ^[[39m^[[1m^[[2m    3.65 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.16 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4033970Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnarrat-DRg8JJMk.js                                  ^[[39m^[[1m^[[2m    3.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4035020Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mturtle-BsS91CYL.js                                  ^[[39m^[[1m^[[2m    3.70 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.98 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4036090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mzenscript-DVFEvuxE.js                               ^[[39m^[[1m^[[2m    3.91 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.28 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4037350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mron-D8l8udqQ.js                                     ^[[39m^[[1m^[[2m    3.91 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.98 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4038540Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgn-n2N0HUVH.js                                      ^[[39m^[[1m^[[2m    4.00 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.49 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4039690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpascal-D93ZcfNL.js                                  ^[[39m^[[1m^[[2m    4.15 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.67 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4040880Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtcl-dwOrl1Do.js                                     ^[[39m^[[1m^[[2m    4.43 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4042180Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnextflow-Zz6hmt5N.js                                ^[[39m^[[1m^[[2m    4.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.17 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4043440Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrosmsg-BJDFO7_C.js                                  ^[[39m^[[1m^[[2m    4.52 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4044600Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhttp-jrhK8wxY.js                                    ^[[39m^[[1m^[[2m    4.55 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.12 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4045760Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpolar-C0HS_06l.js                                   ^[[39m^[[1m^[[2m    4.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.12 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4046950Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msdbl-DVxCFoDh.js                                    ^[[39m^[[1m^[[2m    4.70 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.01 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4048080Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mfennel-BYunw83y.js                                  ^[[39m^[[1m^[[2m    4.77 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.53 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4049140Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mbibtex-CHM0blh-.js                                  ^[[39m^[[1m^[[2m    4.80 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   0.83 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4050620Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mllvm-DjAJT7YJ.js                                    ^[[39m^[[1m^[[2m    5.05 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.01 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4051730Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwgsl-Dx-B1_4e.js                                    ^[[39m^[[1m^[[2m    5.14 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.39 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4052840Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgdresource-BOOCDP_w.js                              ^[[39m^[[1m^[[2m    5.29 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.34 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4053920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mqml-3beO22l8.js                                     ^[[39m^[[1m^[[2m    5.34 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.38 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4054960Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mzig-VOosw3JB.js                                     ^[[39m^[[1m^[[2m    5.34 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.55 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4056040Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdax-CEL-wOlO.js                                     ^[[39m^[[1m^[[2m    5.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.23 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4057270Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mbicep-Bmn6On1c.js                                   ^[[39m^[[1m^[[2m    5.38 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.15 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4058410Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mxml-sdJ4AIDG.js                                     ^[[39m^[[1m^[[2m    5.38 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.21 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4059460Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mawk-DMzUqQB5.js                                     ^[[39m^[[1m^[[2m    5.46 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.38 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4060510Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcoq-DkFqJrB1.js                                     ^[[39m^[[1m^[[2m    5.53 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.92 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4061610Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjinja-4LBKfQ-Z.js                                   ^[[39m^[[1m^[[2m    5.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.40 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4062690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlean-BZvkOJ9d.js                                    ^[[39m^[[1m^[[2m    5.78 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.92 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4063760Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmoonbit-_H4v1dQx.js                                 ^[[39m^[[1m^[[2m    5.90 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.68 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4064740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpowerquery-CEu0bR-o.js                              ^[[39m^[[1m^[[2m    5.90 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4065680Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mshaderlab-Dg9Lc6iA.js                               ^[[39m^[[1m^[[2m    5.92 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.08 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4066780Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mverilog-BQ8w6xss.js                                 ^[[39m^[[1m^[[2m    5.93 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.89 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4067730Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcypher-COkxafJQ.js                                  ^[[39m^[[1m^[[2m    5.96 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.73 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4068660Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvb-D17OF-Vu.js                                      ^[[39m^[[1m^[[2m    6.09 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.34 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4069560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mred-bN70gL4F.js                                     ^[[39m^[[1m^[[2m    6.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.60 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4070470Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmin-dark-CafNBF8u.js                                ^[[39m^[[1m^[[2m    6.29 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.71 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4071390Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgdshader-DkwncUOv.js                                ^[[39m^[[1m^[[2m    6.33 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.73 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4072330Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mprisma-Dd19v3D-.js                                  ^[[39m^[[1m^[[2m    6.33 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.39 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4073430Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mara-BRHolxvo.js                                     ^[[39m^[[1m^[[2m    6.36 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.81 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4074380Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mclojure-P80f7IUj.js                                 ^[[39m^[[1m^[[2m    6.41 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.42 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4075320Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpostcss-CXtECtnM.js                                 ^[[39m^[[1m^[[2m    6.42 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.91 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4076230Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtoml-vGWfd6FD.js                                    ^[[39m^[[1m^[[2m    6.43 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.28 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4077240Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msolarized-light-L9t79GZl.js                         ^[[39m^[[1m^[[2m    6.48 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.73 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4078260Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mr-Dspwwk_N.js                                       ^[[39m^[[1m^[[2m    6.54 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.78 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4079290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mproto-C7zT0LnQ.js                                   ^[[39m^[[1m^[[2m    6.55 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.42 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4080720Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msmalltalk-BERRCDM3.js                               ^[[39m^[[1m^[[2m    6.59 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.62 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4081920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtalonscript-CkByrt1z.js                             ^[[39m^[[1m^[[2m    6.76 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.49 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4083390Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msolarized-dark-DXbdFlpD.js                          ^[[39m^[[1m^[[2m    6.85 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.80 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4084520Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mriscv-BM1_JUlF.js                                   ^[[39m^[[1m^[[2m    6.91 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.98 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4085470Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmin-light-CTRr51gU.js                               ^[[39m^[[1m^[[2m    6.97 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.89 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4086420Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msoy-Brmx7dQM.js                                     ^[[39m^[[1m^[[2m    6.98 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.66 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4087340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mscheme-C98Dy4si.js                                  ^[[39m^[[1m^[[2m    7.17 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.05 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4088260Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhlsl-D3lLCCz7.js                                    ^[[39m^[[1m^[[2m    7.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.19 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4089350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mqss-IeuSbFQv.js                                     ^[[39m^[[1m^[[2m    7.47 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.58 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4090470Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdart-CF10PKvl.js                                    ^[[39m^[[1m^[[2m    7.81 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.91 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4091570Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msystemd-4A_iFExJ.js                                 ^[[39m^[[1m^[[2m    7.87 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.55 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4093040Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmonokai-D4h5O-jR.js                                 ^[[39m^[[1m^[[2m    7.88 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.91 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4094140Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mregexp-CDVJQ6XC.js                                  ^[[39m^[[1m^[[2m    7.99 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.42 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4095180Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhaml-B8DHNrY2.js                                    ^[[39m^[[1m^[[2m    8.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.81 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4096240Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtypst-DHCkPAjA.js                                   ^[[39m^[[1m^[[2m    8.39 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.67 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4097260Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvue-html-AaS7Mt5G.js                                ^[[39m^[[1m^[[2m    8.47 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.68 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4098700Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mplsql-ChMvpjG-.js                                   ^[[39m^[[1m^[[2m    8.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.00 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4099990Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhorizon-BUw7H-hv.js                                 ^[[39m^[[1m^[[2m    8.78 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.96 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4101270Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mkotlin-BdnUsdx6.js                                  ^[[39m^[[1m^[[2m    8.79 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4102490Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhorizon-bright-Cn-bp-IR.js                          ^[[39m^[[1m^[[2m    8.79 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.97 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4103510Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mts-tags-zn1MmPIZ.js                                 ^[[39m^[[1m^[[2m    8.95 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.22 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4104560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmake-CHLpvVh8.js                                    ^[[39m^[[1m^[[2m    8.96 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.77 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4105820Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mandromeeda-C4gqWexZ.js                              ^[[39m^[[1m^[[2m    9.02 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.36 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4106790Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msas-cz2c8ADy.js                                     ^[[39m^[[1m^[[2m    9.06 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.81 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4107820Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdark-plus-C3mMm8J8.js                               ^[[39m^[[1m^[[2m    9.10 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.10 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4109920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mslack-dark-BthQWCQV.js                              ^[[39m^[[1m^[[2m    9.12 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.97 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4111170Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msass-Cj5Yp3dK.js                                    ^[[39m^[[1m^[[2m    9.29 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.49 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4112230Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mplastic-3e1v2bzS.js                                 ^[[39m^[[1m^[[2m    9.30 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.98 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4113560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mslack-ochin-DqwNpetd.js                             ^[[39m^[[1m^[[2m    9.43 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.10 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4114990Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtex-idrVyKtj.js                                     ^[[39m^[[1m^[[2m    9.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4116080Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjison-wvAkD_A8.js                                   ^[[39m^[[1m^[[2m    9.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.85 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4117590Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcmake-D1j8_8rp.js                                   ^[[39m^[[1m^[[2m    9.86 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.37 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4119280Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlight-plus-B7mTdjB0.js                              ^[[39m^[[1m^[[2m    9.94 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.27 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4120530Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhcl-BWvSN4gD.js                                     ^[[39m^[[1m^[[2m   10.05 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.93 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4121650Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpkl-u5AG7uiY.js                                     ^[[39m^[[1m^[[2m   10.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.38 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4122690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mbeancount-k_qm7-4y.js                               ^[[39m^[[1m^[[2m   10.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.44 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4123920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnextflow-groovy-BeH2EWoN.js                         ^[[39m^[[1m^[[2m   10.41 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4125340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdream-maker-BtqSS_iP.js                             ^[[39m^[[1m^[[2m   10.47 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.25 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4128080Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mraku-DXvB9xmW.js                                    ^[[39m^[[1m^[[2m   10.47 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.94 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4129540Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36myaml-Buea-lGh.js                                    ^[[39m^[[1m^[[2m   10.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.27 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4130590Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrst-BrH8l1NY.js                                     ^[[39m^[[1m^[[2m   10.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.42 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4131550Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36melm-DbKCFpqz.js                                     ^[[39m^[[1m^[[2m   10.97 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.12 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4132550Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjust-Cw27pwNe.js                                    ^[[39m^[[1m^[[2m   11.16 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.78 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4134020Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-light-DAi9KRSo.js                            ^[[39m^[[1m^[[2m   11.18 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.51 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4135290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mprolog-CbFg5uaA.js                                  ^[[39m^[[1m^[[2m   11.36 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.83 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4136610Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mterraform-BETggiCN.js                               ^[[39m^[[1m^[[2m   11.39 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.51 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4137670Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-dark-DHJKELXO.js                             ^[[39m^[[1m^[[2m   11.41 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.55 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4138800Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpuppet-BMWR74SV.js                                  ^[[39m^[[1m^[[2m   11.44 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4139830Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlaserwave-DUszq2jm.js                               ^[[39m^[[1m^[[2m   11.50 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.58 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4140870Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgherkin-DyxjwDmM.js                                 ^[[39m^[[1m^[[2m   11.95 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.05 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4141960Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwasm-MzD3tlZU.js                                    ^[[39m^[[1m^[[2m   12.01 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.19 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4143040Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhjson-D5-asLiD.js                                   ^[[39m^[[1m^[[2m   12.05 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.64 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4144160Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhandlebars-BL8al0AC.js                              ^[[39m^[[1m^[[2m   12.15 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.38 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4145150Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mapache-Pmp26Uib.js                                  ^[[39m^[[1m^[[2m   12.46 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.72 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4146100Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvesper-DU1UobuO.js                                  ^[[39m^[[1m^[[2m   12.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.97 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4147360Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mbat-BkioyH1T.js                                     ^[[39m^[[1m^[[2m   12.89 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.22 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4148340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mfish-BvzEVeQv.js                                    ^[[39m^[[1m^[[2m   13.04 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   1.74 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4149370Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mv-BcVCzyr7.js                                       ^[[39m^[[1m^[[2m   13.21 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.74 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4150640Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvitesse-light-CVO1_9PV.js                           ^[[39m^[[1m^[[2m   13.62 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.04 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4151670Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36maurora-x-D-2ljcwZ.js                                ^[[39m^[[1m^[[2m   13.66 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.28 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4152650Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvitesse-black-Bkuqu6BP.js                           ^[[39m^[[1m^[[2m   13.68 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4154180Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvitesse-dark-D0r3Knsf.js                            ^[[39m^[[1m^[[2m   13.76 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4155160Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpug-CGlum2m_.js                                     ^[[39m^[[1m^[[2m   13.84 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.58 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4156120Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mluau-C-HG3fhB.js                                    ^[[39m^[[1m^[[2m   13.96 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4166160Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msynthwave-84-CbfX1IO0.js                            ^[[39m^[[1m^[[2m   14.04 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.87 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4167180Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-light-default-D7oLnXFd.js                    ^[[39m^[[1m^[[2m   14.16 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.04 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4168190Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-light-high-contrast-BfjtVDDH.js              ^[[39m^[[1m^[[2m   14.28 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.02 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4169410Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mclarity-D53aC0YG.js                                 ^[[39m^[[1m^[[2m   14.28 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.46 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4170360Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-dark-dimmed-DH5Ifo-i.js                      ^[[39m^[[1m^[[2m   14.43 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4171340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-dark-default-Cuk6v7N8.js                     ^[[39m^[[1m^[[2m   14.44 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4172340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgithub-dark-high-contrast-E3gJ1_iC.js               ^[[39m^[[1m^[[2m   14.60 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.09 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4173410Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgnuplot-DdkO51Og.js                                 ^[[39m^[[1m^[[2m   14.78 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.27 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4174350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrust-B1yitclQ.js                                    ^[[39m^[[1m^[[2m   15.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.72 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4175270Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mkusto-DZf3V79B.js                                   ^[[39m^[[1m^[[2m   15.17 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.92 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4176280Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mactionscript-3-CoDkCxhg.js                          ^[[39m^[[1m^[[2m   15.21 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.66 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4177240Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnix-CwoSXNpI.js                                     ^[[39m^[[1m^[[2m   15.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.48 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4178130Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlua-BaeVxFsk.js                                     ^[[39m^[[1m^[[2m   15.54 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.16 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4179030Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mabap-BdImnpbu.js                                    ^[[39m^[[1m^[[2m   15.85 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.91 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4180060Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msolidity-rGO070M0.js                                ^[[39m^[[1m^[[2m   16.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4181090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmatlab-D7o27uSR.js                                  ^[[39m^[[1m^[[2m   16.09 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4182000Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcue-D82EKSYY.js                                     ^[[39m^[[1m^[[2m   16.20 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4182910Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36melixir-CDX3lj18.js                                  ^[[39m^[[1m^[[2m   16.32 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.80 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4183820Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36modin-BBf5iR-q.js                                    ^[[39m^[[1m^[[2m   16.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.94 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4185060Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mbird2-DPOp833l.js                                   ^[[39m^[[1m^[[2m   16.97 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.85 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4186120Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mkanagawa-wave-DWedfzmr.js                           ^[[39m^[[1m^[[2m   17.12 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.93 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4187150Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mkanagawa-lotus-CfQXZHmo.js                          ^[[39m^[[1m^[[2m   17.13 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.93 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4188250Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mkanagawa-dragon-CkXjmgJE.js                         ^[[39m^[[1m^[[2m   17.13 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.95 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4189350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmove-IF9eRakj.js                                    ^[[39m^[[1m^[[2m   17.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.07 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4190840Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgraphql-ChdNCCLP.js                                 ^[[39m^[[1m^[[2m   18.00 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4191970Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mliquid-DYVedYrR.js                                  ^[[39m^[[1m^[[2m   18.09 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.16 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4193600Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msvelte-C_ipcX3V.js                                  ^[[39m^[[1m^[[2m   18.24 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.14 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4194750Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmaterial-theme-D5KoaKCx.js                          ^[[39m^[[1m^[[2m   18.62 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4195930Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmaterial-theme-darker-BfHTSMKl.js                   ^[[39m^[[1m^[[2m   18.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4197040Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmaterial-theme-ocean-CyktbL80.js                    ^[[39m^[[1m^[[2m   18.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.14 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4198130Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmaterial-theme-lighter-B0m2ddpp.js                  ^[[39m^[[1m^[[2m   18.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.11 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4199350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmaterial-theme-palenight-Csfq5Kiy.js                ^[[39m^[[1m^[[2m   18.64 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4200340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgdscript-C5YyOfLZ.js                                ^[[39m^[[1m^[[2m   18.99 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.75 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4201420Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgroovy-gcz8RCvz.js                                  ^[[39m^[[1m^[[2m   19.18 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.60 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4202500Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmdc-BMNejdWA.js                                     ^[[39m^[[1m^[[2m   19.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.66 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4204370Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mglimmer-js-Rg0-pVw9.js                              ^[[39m^[[1m^[[2m   20.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.95 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4205510Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mglimmer-ts-U6CK756n.js                              ^[[39m^[[1m^[[2m   20.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.94 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4206470Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mayu-dark-DYE7WIF3.js                                ^[[39m^[[1m^[[2m   20.08 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.94 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4207520Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mayu-mirage-32ctXXKs.js                              ^[[39m^[[1m^[[2m   20.09 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.94 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4208490Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpowershell-Dpen1YoG.js                              ^[[39m^[[1m^[[2m   20.15 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.07 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4209440Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mayu-light-BA47KaF1.js                               ^[[39m^[[1m^[[2m   20.15 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.93 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4210380Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mviml-CJc9bBzg.js                                    ^[[39m^[[1m^[[2m   20.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.73 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4211690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnushell-Cz2AlsmD.js                                 ^[[39m^[[1m^[[2m   20.41 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.22 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4212760Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msnazzy-light-Bw305WKR.js                            ^[[39m^[[1m^[[2m   20.77 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.83 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4213800Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdracula-BzJJZx-M.js                                 ^[[39m^[[1m^[[2m   21.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.00 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4214900Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mdracula-soft-BXkSAIEj.js                            ^[[39m^[[1m^[[2m   21.08 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.04 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4215990Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtwig-DNn4PbVi.js                                    ^[[39m^[[1m^[[2m   21.36 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.87 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4216910Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwit-5i3qLPDT.js                                     ^[[39m^[[1m^[[2m   21.47 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.89 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4217980Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrose-pine-qdsjHGoJ.js                               ^[[39m^[[1m^[[2m   21.74 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.87 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4219010Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrose-pine-moon-D4_iv3hh.js                          ^[[39m^[[1m^[[2m   21.75 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.89 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4219960Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrose-pine-dawn-DHQR4-dF.js                          ^[[39m^[[1m^[[2m   21.75 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.89 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4220950Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnim-CVrawwO9.js                                     ^[[39m^[[1m^[[2m   22.46 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.16 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4222060Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcommon-lisp-Cg-RD9OK.js                             ^[[39m^[[1m^[[2m   22.58 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.06 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4223020Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msurrealql-Bq5Q-fJD.js                               ^[[39m^[[1m^[[2m   22.58 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.32 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4224000Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgruvbox-dark-hard-CFHQjOhq.js                       ^[[39m^[[1m^[[2m   22.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4225050Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgruvbox-dark-soft-CVdnzihN.js                       ^[[39m^[[1m^[[2m   22.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.17 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4226030Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgruvbox-light-hard-CH1njM8p.js                      ^[[39m^[[1m^[[2m   22.64 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4227020Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgruvbox-light-soft-hJgmCMqR.js                      ^[[39m^[[1m^[[2m   22.64 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4227980Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgruvbox-dark-medium-GsRaNv29.js                     ^[[39m^[[1m^[[2m   22.64 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4229030Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgruvbox-light-medium-DRw_LuNl.js                    ^[[39m^[[1m^[[2m   22.64 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4230000Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msql-BLtJtn59.js                                     ^[[39m^[[1m^[[2m   23.41 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   7.40 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4230920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcadence-Bv_4Rxtq.js                                 ^[[39m^[[1m^[[2m   23.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.67 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4231830Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mastro-CbQHKStN.js                                   ^[[39m^[[1m^[[2m   24.01 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   7.54 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4232750Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtypespec-BGHnOYBU.js                                ^[[39m^[[1m^[[2m   24.02 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.59 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4233920Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mapl-dKokRX4l.js                                     ^[[39m^[[1m^[[2m   24.04 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.20 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4234880Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtempl-P3uqSqPl.js                                   ^[[39m^[[1m^[[2m   24.06 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.40 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4235800Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvhdl-CeAyd5Ju.js                                    ^[[39m^[[1m^[[2m   24.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.87 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4236730Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mangular-html-CU67Zn6k.js                            ^[[39m^[[1m^[[2m   24.29 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.01 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4237660Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvue-DN_0RTcg.js                                     ^[[39m^[[1m^[[2m   24.48 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   2.97 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4238580Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpurescript-CklMAg4u.js                              ^[[39m^[[1m^[[2m   24.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.25 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4239530Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mone-light-C3Wv6jpd.js                               ^[[39m^[[1m^[[2m   25.30 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.67 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4240720Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mfsharp-CXgrBDvD.js                                  ^[[39m^[[1m^[[2m   25.31 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4241620Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmarko-CnJfTvn9.js                                   ^[[39m^[[1m^[[2m   25.48 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.59 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4242520Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mc3-eo99z4R2.js                                      ^[[39m^[[1m^[[2m   25.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.87 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4243660Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnight-owl-light-CMTm3GFP.js                         ^[[39m^[[1m^[[2m   25.90 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.26 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4244690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36msystem-verilog-CnnmHF94.js                          ^[[39m^[[1m^[[2m   26.20 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.85 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4245640Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnord-Ddv68eIx.js                                    ^[[39m^[[1m^[[2m   26.72 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.40 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4246560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcodeql-DsOJ9woJ.js                                  ^[[39m^[[1m^[[2m   26.88 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.79 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4247470Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mscss-OYdSNvt2.js                                    ^[[39m^[[1m^[[2m   27.20 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.20 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4248440Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjava-CylS5w8V.js                                    ^[[39m^[[1m^[[2m   27.22 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.26 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4249400Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcoffee-Ch7k5sss.js                                  ^[[39m^[[1m^[[2m   27.42 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.35 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4251290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mrazor-Uh8Bk_45.js                                   ^[[39m^[[1m^[[2m   27.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.57 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4252280Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mscala-C151Ov-r.js                                   ^[[39m^[[1m^[[2m   28.88 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.94 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4253290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnight-owl-C39BiMTA.js                               ^[[39m^[[1m^[[2m   28.91 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.16 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4254270Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcrystal-tKQVLTB8.js                                 ^[[39m^[[1m^[[2m   29.39 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.44 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4255640Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmermaid-mWjccvbQ.js                                 ^[[39m^[[1m^[[2m   29.51 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   3.66 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4256610Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mapplescript-Co6uUVPk.js                             ^[[39m^[[1m^[[2m   29.57 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.93 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4258070Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-dark-CyvmCCZW.js                             ^[[39m^[[1m^[[2m   30.55 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.76 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4259090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-light-480U9XYS.js                            ^[[39m^[[1m^[[2m   30.55 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.75 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4260050Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-dark-soft-BHGpRqa4.js                        ^[[39m^[[1m^[[2m   30.56 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.79 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4261000Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-light-soft-CVdyfjmI.js                       ^[[39m^[[1m^[[2m   30.56 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.76 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4261980Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-dark-tritanopia-Beq2gCRQ.js                  ^[[39m^[[1m^[[2m   30.57 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.70 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4262970Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-light-tritanopia-B4_gpKOM.js                 ^[[39m^[[1m^[[2m   30.57 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.70 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4264230Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-dark-protanopia-deuteranopia-Rgc0TwpF.js     ^[[39m^[[1m^[[2m   30.60 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.78 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4265320Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-light-protanopia-deuteranopia-CaVOBURG.js    ^[[39m^[[1m^[[2m   30.60 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.73 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4266340Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjulia-CxzCAyBv.js                                   ^[[39m^[[1m^[[2m   31.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.33 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4267330Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mstylus-BEDo0Tqx.js                                  ^[[39m^[[1m^[[2m   31.07 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   7.99 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4268250Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpoimandres-CS3Unz2-.js                              ^[[39m^[[1m^[[2m   33.49 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.50 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4269190Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mone-dark-pro-DVMEJ2y_.js                            ^[[39m^[[1m^[[2m   33.79 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4270130Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mbsl-BO_Y6i37.js                                     ^[[39m^[[1m^[[2m   33.87 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.35 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4271090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhaxe-CzTSHFRz.js                                    ^[[39m^[[1m^[[2m   35.16 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.91 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4272070Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mnginx-BpAMiNFr.js                                   ^[[39m^[[1m^[[2m   35.37 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.43 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4273030Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhouston-DnULxvSX.js                                 ^[[39m^[[1m^[[2m   35.42 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.78 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4273960Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtokyo-night-hegEt444.js                             ^[[39m^[[1m^[[2m   35.67 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.24 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4274880Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36merlang-DsQrWhSR.js                                  ^[[39m^[[1m^[[2m   37.48 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.40 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4275790Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcobol-nwyudZeR.js                                   ^[[39m^[[1m^[[2m   39.15 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  10.87 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4276690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36masm-D_Q5rh1f.js                                     ^[[39m^[[1m^[[2m   40.72 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.21 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4277610Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mshellscript-Yzrsuije.js                             ^[[39m^[[1m^[[2m   41.48 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.09 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4278560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhaskell-Df6bDoY_.js                                 ^[[39m^[[1m^[[2m   41.49 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.44 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4279660Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mperl-C0TMdlhV.js                                    ^[[39m^[[1m^[[2m   43.16 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.67 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4280620Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36md-85-TOEBH.js                                       ^[[39m^[[1m^[[2m   43.80 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.47 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4281560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-dark-vibrant-BWBVywrn.js                     ^[[39m^[[1m^[[2m   44.76 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.33 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4282550Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpierre-light-vibrant-DdTDNdfJ.js                    ^[[39m^[[1m^[[2m   44.76 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.31 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4283510Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mruby-Dw2BHqvy.js                                    ^[[39m^[[1m^[[2m   45.95 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.68 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4284520Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mgo-CxLEBnE3.js                                      ^[[39m^[[1m^[[2m   46.81 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.18 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4285430Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mapex-D8_7TLub.js                                    ^[[39m^[[1m^[[2m   46.99 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.77 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4286760Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcatppuccin-mocha-D87Tk5Gz.js                        ^[[39m^[[1m^[[2m   47.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.00 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4287740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcatppuccin-latte-C9dUb6Cb.js                        ^[[39m^[[1m^[[2m   47.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.00 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4288700Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcatppuccin-frappe-DFWUc33u.js                       ^[[39m^[[1m^[[2m   47.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.02 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4289700Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcatppuccin-macchiato-DQyhUUbL.js                    ^[[39m^[[1m^[[2m   47.26 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.01 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4290780Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mada-bCR0ucgS.js                                     ^[[39m^[[1m^[[2m   48.08 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.03 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4291740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcss-DPfMkruS.js                                     ^[[39m^[[1m^[[2m   49.02 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  11.85 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4292650Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mimba-DGztddWO.js                                    ^[[39m^[[1m^[[2m   49.93 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   9.46 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4294710Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36meverforest-dark-BgDCqdQA.js                         ^[[39m^[[1m^[[2m   53.75 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.42 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4295690Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36meverforest-light-C8M2exoo.js                        ^[[39m^[[1m^[[2m   53.75 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.42 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4296630Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwikitext-BhOHFoWU.js                                ^[[39m^[[1m^[[2m   55.89 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   4.76 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4297560Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mstata-BH5u7GGu.js                                   ^[[39m^[[1m^[[2m   56.99 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  12.36 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4298550Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhtml-GMplVEZG.js                                    ^[[39m^[[1m^[[2m   57.25 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  11.69 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4299470Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mballerina-BFfxhgS-.js                               ^[[39m^[[1m^[[2m   58.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   8.15 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4300390Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmarkdown-Cvjx9yec.js                                ^[[39m^[[1m^[[2m   59.34 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.64 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4301390Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mocaml-C0hk2d4L.js                                   ^[[39m^[[1m^[[2m   62.45 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   5.02 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4302290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmojo-rZm6bMo-.js                                    ^[[39m^[[1m^[[2m   69.80 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   9.27 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4303480Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mpython-B6aJPvgy.js                                  ^[[39m^[[1m^[[2m   69.95 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   9.13 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4304390Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mc-BIGW1oBm.js                                       ^[[39m^[[1m^[[2m   72.11 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  10.51 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4305280Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mlatex-CWtU0Tv5.js                                   ^[[39m^[[1m^[[2m   72.64 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   6.72 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4306190Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvyper-CDx5xZoG.js                                   ^[[39m^[[1m^[[2m   74.65 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  10.74 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4307090Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mhack-CaT9iCJl.js                                    ^[[39m^[[1m^[[2m   80.24 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  26.21 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4307980Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mswift-D82vCrfD.js                                   ^[[39m^[[1m^[[2m   86.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  14.73 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4309020Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mfortran-free-form-BxgE0vQu.js                       ^[[39m^[[1m^[[2m   88.97 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  11.27 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4309950Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcsharp-COcwbKMJ.js                                  ^[[39m^[[1m^[[2m   89.69 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  10.69 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4310850Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mracket-BqYA7rlc.js                                  ^[[39m^[[1m^[[2m   92.39 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  15.02 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4311750Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mless-B1dDrJ26.js                                    ^[[39m^[[1m^[[2m   97.63 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  14.70 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4312740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mblade-D4QpJJKB.js                                   ^[[39m^[[1m^[[2m  104.98 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  28.20 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4313740Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mobjective-c-DXmwc3jG.js                             ^[[39m^[[1m^[[2m  105.41 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  23.33 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4314820Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mphp-Dhbhpdrm.js                                     ^[[39m^[[1m^[[2m  111.06 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  28.52 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4315950Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36masciidoc-Ve4PFQV2.js                                ^[[39m^[[1m^[[2m  131.53 kB^[[22m^[[1m^[[22m^[[2m │ gzip:   9.34 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4316970Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mmdx-Cmh6b_Ma.js                                     ^[[39m^[[1m^[[2m  136.11 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  23.35 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4317890Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mobjective-cpp-CLxacb5B.js                           ^[[39m^[[1m^[[2m  171.97 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  30.62 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4319030Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjavascript-wDzz0qaB.js                              ^[[39m^[[1m^[[2m  174.83 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  16.51 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4320150Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtsx-COt5Ahok.js                                     ^[[39m^[[1m^[[2m  175.54 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  16.51 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4321250Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mjsx-g9-lgVsj.js                                     ^[[39m^[[1m^[[2m  177.79 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  16.61 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4322200Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mtypescript-BPQ3VLAy.js                              ^[[39m^[[1m^[[2m  181.08 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  16.04 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4323290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mangular-ts-BwZT4LLn.js                              ^[[39m^[[1m^[[2m  183.82 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  16.63 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4324330Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mvue-vine-CQOfvN7w.js                                ^[[39m^[[1m^[[2m  190.05 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  17.98 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4325350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwolfram-lXgVvXCa.js                                 ^[[39m^[[1m^[[2m  262.39 kB^[[22m^[[1m^[[22m^[[2m │ gzip:  77.14 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4326540Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mwasm-CG6Dc4jp.js                                    ^[[39m^[[1m^[[33m  622.34 kB^[[39m^[[22m^[[2m │ gzip: 230.29 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4328230Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mcpp-CofmeUqb.js                                     ^[[39m^[[1m^[[33m  626.08 kB^[[39m^[[22m^[[2m │ gzip:  44.82 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4329350Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36memacs-lisp-C9XAeP06.js                              ^[[39m^[[1m^[[33m  779.85 kB^[[39m^[[22m^[[2m │ gzip: 196.03 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4330290Z ^[[2mdist/^[[22m^[[2massets/^[[22m^[[36mindex-CuSfLnCE.js                                   ^[[39m^[[1m^[[33m1,803.34 kB^[[39m^[[22m^[[2m │ gzip: 535.74 kB^[[22m
+build	UNKNOWN STEP	2026-09-05T12:24:35.4330820Z ^[[32m✓ built in 6.90s^[[39m
+build	UNKNOWN STEP	2026-09-05T12:24:36.8798110Z ^[[1m^[[92m   Compiling^[[0m objc2-exception-helper v0.1.1
+build	UNKNOWN STEP	2026-09-05T12:24:36.9094520Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+build	UNKNOWN STEP	2026-09-05T12:24:37.1373430Z ^[[1m^[[92m   Compiling^[[0m objc2 v0.6.4
+build	UNKNOWN STEP	2026-09-05T12:24:38.8718030Z ^[[1m^[[92m   Compiling^[[0m block2 v0.6.2
+build	UNKNOWN STEP	2026-09-05T12:24:39.1066780Z ^[[1m^[[92m   Compiling^[[0m dispatch2 v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:24:39.5953950Z ^[[1m^[[92m   Compiling^[[0m objc2-core-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:24:41.7162220Z ^[[1m^[[92m   Compiling^[[0m objc2-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:24:42.5113710Z ^[[1m^[[92m   Compiling^[[0m objc2-core-text v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:24:42.8050840Z ^[[1m^[[92m   Compiling^[[0m objc2-core-video v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:24:42.8241230Z ^[[1m^[[92m   Compiling^[[0m objc2-core-graphics v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:24:43.3723370Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.43
+build	UNKNOWN STEP	2026-09-05T12:24:45.8446020Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.14
+build	UNKNOWN STEP	2026-09-05T12:24:56.1288330Z ^[[1m^[[92m   Compiling^[[0m ureq v3.4.0
+build	UNKNOWN STEP	2026-09-05T12:24:58.9010650Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+build	UNKNOWN STEP	2026-09-05T12:24:59.3475550Z ^[[1m^[[92m   Compiling^[[0m libz-sys v1.1.29
+build	UNKNOWN STEP	2026-09-05T12:24:59.9218150Z ^[[1m^[[92m   Compiling^[[0m download-cef v2.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:01.1185690Z ^[[1m^[[92m   Compiling^[[0m objc2-core-data v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:02.3401450Z ^[[1m^[[92m   Compiling^[[0m objc2-core-image v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:03.1680850Z ^[[1m^[[92m   Compiling^[[0m objc2-cloud-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:03.7083170Z ^[[1m^[[92m   Compiling^[[0m objc2-quartz-core v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:04.4098100Z ^[[1m^[[92m   Compiling^[[0m objc2-app-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:16.5546950Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.9
+build	UNKNOWN STEP	2026-09-05T12:25:17.9394980Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio-types v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:18.3893490Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:18.7218910Z ^[[1m^[[92m   Compiling^[[0m libgit2-sys v0.18.7+1.9.6
+build	UNKNOWN STEP	2026-09-05T12:25:21.7164710Z ^[[1m^[[92m   Compiling^[[0m lmdb-master-sys v0.2.6
+build	UNKNOWN STEP	2026-09-05T12:25:24.9745480Z ^[[1m^[[92m   Compiling^[[0m cef-dll-sys v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:25:26.6065550Z ^[[1m^[[92m   Compiling^[[0m objc2-core-location v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:26.8826990Z ^[[1m^[[92m   Compiling^[[0m objc2-core-services v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:27.0145580Z ^[[1m^[[92m   Compiling^[[0m notify v9.0.0-rc.4
+build	UNKNOWN STEP	2026-09-05T12:25:33.2613740Z ^[[1m^[[92m   Compiling^[[0m mac-notification-sys v0.6.15
+build	UNKNOWN STEP	2026-09-05T12:25:35.5773870Z ^[[1m^[[92m   Compiling^[[0m objc2-user-notifications v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:38.6707610Z ^[[1m^[[92m   Compiling^[[0m objc2-audio-toolbox v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:39.3256790Z ^[[1m^[[92m   Compiling^[[0m rustls-platform-verifier v0.7.0
+build	UNKNOWN STEP	2026-09-05T12:25:39.7824560Z ^[[1m^[[92m   Compiling^[[0m coreaudio-rs v0.13.0
+build	UNKNOWN STEP	2026-09-05T12:25:41.3797140Z ^[[1m^[[92m   Compiling^[[0m fff-notify-debouncer-full v0.9.4
+build	UNKNOWN STEP	2026-09-05T12:25:42.9308820Z ^[[1m^[[92m   Compiling^[[0m mac-usernotifications v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:25:46.2573620Z ^[[1m^[[92m   Compiling^[[0m objc2-web-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:25:47.3704490Z ^[[1m^[[92m   Compiling^[[0m wry v0.55.1
+build	UNKNOWN STEP	2026-09-05T12:25:53.0208430Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime v2.11.3
+build	UNKNOWN STEP	2026-09-05T12:25:53.7206770Z ^[[1m^[[92m   Compiling^[[0m tao v0.35.3
+build	UNKNOWN STEP	2026-09-05T12:25:59.3163670Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime-wry v2.11.4
+build	UNKNOWN STEP	2026-09-05T12:25:59.9218090Z ^[[1m^[[92m   Compiling^[[0m muda v0.19.3
+build	UNKNOWN STEP	2026-09-05T12:26:02.7716120Z ^[[1m^[[92m   Compiling^[[0m window-vibrancy v0.6.0
+build	UNKNOWN STEP	2026-09-05T12:26:03.0694490Z ^[[1m^[[92m   Compiling^[[0m tauri v2.11.5
+build	UNKNOWN STEP	2026-09-05T12:26:06.3939520Z ^[[1m^[[92m   Compiling^[[0m objc2-osa-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:26:07.2549700Z ^[[1m^[[92m   Compiling^[[0m osakit v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:26:07.9707840Z ^[[1m^[[92m   Compiling^[[0m rfd v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:26:10.0901090Z ^[[1m^[[92m   Compiling^[[0m heed v0.22.1
+build	UNKNOWN STEP	2026-09-05T12:26:11.2573360Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-fs v2.5.1
+build	UNKNOWN STEP	2026-09-05T12:26:12.3720480Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.12.28
+build	UNKNOWN STEP	2026-09-05T12:26:21.9398330Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.13.4
+build	UNKNOWN STEP	2026-09-05T12:26:31.5833540Z ^[[1m^[[92m   Compiling^[[0m git2 v0.21.0
+build	UNKNOWN STEP	2026-09-05T12:26:33.1870390Z ^[[1m^[[92m   Compiling^[[0m os_info v3.15.0
+build	UNKNOWN STEP	2026-09-05T12:26:38.1694430Z ^[[1m^[[92m   Compiling^[[0m cpal v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:26:39.5962830Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-updater v2.10.1
+build	UNKNOWN STEP	2026-09-05T12:26:40.4012810Z ^[[1m^[[92m   Compiling^[[0m fff-search v0.10.3
+build	UNKNOWN STEP	2026-09-05T12:26:43.2553740Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-aptabase v1.0.0
+build	UNKNOWN STEP	2026-09-05T12:26:43.3254080Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-opener v2.5.4
+build	UNKNOWN STEP	2026-09-05T12:26:44.0739110Z ^[[1m^[[92m   Compiling^[[0m cef v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:26:50.7187230Z ^[[1m^[[92m   Compiling^[[0m dray v0.14.0-beta.5 (/Users/runner/work/dray/dray/apps/desktop/src-tauri)
+build	UNKNOWN STEP	2026-09-05T12:26:50.9318660Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-macos-permissions v2.3.0
+build	UNKNOWN STEP	2026-09-05T12:26:51.2109260Z ^[[1m^[[92m   Compiling^[[0m notify-rust v4.18.0
+build	UNKNOWN STEP	2026-09-05T12:26:52.0252540Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-dialog v2.7.2
+build	UNKNOWN STEP	2026-09-05T12:31:47.3446730Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:31:47.3450530Z   | 
+build	UNKNOWN STEP	2026-09-05T12:31:47.3451200Z   | other 
+build	UNKNOWN STEP	2026-09-05T12:31:47.3451530Z   | 
+build	UNKNOWN STEP	2026-09-05T12:31:47.3452810Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:31:47.4379150Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:31:47.4380950Z   | 
+build	UNKNOWN STEP	2026-09-05T12:31:47.4385340Z   | alias = "acceptEdits"
+build	UNKNOWN STEP	2026-09-05T12:31:47.4386450Z   | 
+build	UNKNOWN STEP	2026-09-05T12:31:47.4386920Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:31:47.7496660Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:31:47.7498570Z   | 
+build	UNKNOWN STEP	2026-09-05T12:31:47.7499550Z   | into = "String"
+build	UNKNOWN STEP	2026-09-05T12:31:47.7500550Z   | 
+build	UNKNOWN STEP	2026-09-05T12:31:47.7501910Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:33:45.3287040Z ^[[1m^[[92m    Finished^[[0m `release` profile [optimized] target(s) in 9m 09s
+build	UNKNOWN STEP	2026-09-05T12:33:47.1116080Z ^[[1m^[[92m   Compiling^[[0m objc2-exception-helper v0.1.1
+build	UNKNOWN STEP	2026-09-05T12:33:47.1586840Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+build	UNKNOWN STEP	2026-09-05T12:33:47.1818550Z ^[[1m^[[92m   Compiling^[[0m libz-sys v1.1.29
+build	UNKNOWN STEP	2026-09-05T12:33:47.3919840Z ^[[1m^[[92m   Compiling^[[0m objc2 v0.6.4
+build	UNKNOWN STEP	2026-09-05T12:33:47.4387180Z ^[[1m^[[92m   Compiling^[[0m libgit2-sys v0.18.7+1.9.6
+build	UNKNOWN STEP	2026-09-05T12:33:49.9198180Z ^[[1m^[[92m   Compiling^[[0m block2 v0.6.2
+build	UNKNOWN STEP	2026-09-05T12:33:50.2151940Z ^[[1m^[[92m   Compiling^[[0m dispatch2 v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:33:50.7319630Z ^[[1m^[[92m   Compiling^[[0m objc2-core-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:33:52.5812110Z ^[[1m^[[92m   Compiling^[[0m objc2-foundation v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:33:55.6574710Z ^[[1m^[[92m   Compiling^[[0m objc2-core-video v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:33:55.7876230Z ^[[1m^[[92m   Compiling^[[0m objc2-core-text v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:33:56.0077830Z ^[[1m^[[92m   Compiling^[[0m objc2-core-graphics v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:00.5749350Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.14
+build	UNKNOWN STEP	2026-09-05T12:34:02.4787700Z ^[[1m^[[92m   Compiling^[[0m objc2-cloud-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:02.6741620Z ^[[1m^[[92m   Compiling^[[0m objc2-core-data v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:03.1226860Z ^[[1m^[[92m   Compiling^[[0m objc2-core-image v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:03.5050970Z ^[[1m^[[92m   Compiling^[[0m objc2-quartz-core v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:03.9041100Z ^[[1m^[[92m   Compiling^[[0m objc2-app-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:09.2315960Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.43
+build	UNKNOWN STEP	2026-09-05T12:34:26.0342750Z ^[[1m^[[92m   Compiling^[[0m objc2-web-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:26.9414280Z ^[[1m^[[92m   Compiling^[[0m wry v0.55.1
+build	UNKNOWN STEP	2026-09-05T12:34:30.9876710Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime v2.11.3
+build	UNKNOWN STEP	2026-09-05T12:34:31.6323850Z ^[[1m^[[92m   Compiling^[[0m tao v0.35.3
+build	UNKNOWN STEP	2026-09-05T12:34:34.2550510Z ^[[1m^[[92m   Compiling^[[0m tauri-runtime-wry v2.11.4
+build	UNKNOWN STEP	2026-09-05T12:34:35.5185290Z ^[[1m^[[92m   Compiling^[[0m window-vibrancy v0.6.0
+build	UNKNOWN STEP	2026-09-05T12:34:35.6749390Z ^[[1m^[[92m   Compiling^[[0m muda v0.19.3
+build	UNKNOWN STEP	2026-09-05T12:34:35.8346460Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+build	UNKNOWN STEP	2026-09-05T12:34:36.1058010Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.9
+build	UNKNOWN STEP	2026-09-05T12:34:36.6027590Z ^[[1m^[[92m   Compiling^[[0m tauri v2.11.5
+build	UNKNOWN STEP	2026-09-05T12:34:39.3917220Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio-types v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:39.6357170Z ^[[1m^[[92m   Compiling^[[0m objc2-core-audio v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:39.8178310Z ^[[1m^[[92m   Compiling^[[0m objc2-core-location v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:39.9532170Z ^[[1m^[[92m   Compiling^[[0m objc2-core-services v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:40.0499250Z ^[[1m^[[92m   Compiling^[[0m lmdb-master-sys v0.2.6
+build	UNKNOWN STEP	2026-09-05T12:34:41.8268210Z ^[[1m^[[92m   Compiling^[[0m notify v9.0.0-rc.4
+build	UNKNOWN STEP	2026-09-05T12:34:45.6288670Z ^[[1m^[[92m   Compiling^[[0m mac-notification-sys v0.6.15
+build	UNKNOWN STEP	2026-09-05T12:34:46.2934140Z ^[[1m^[[92m   Compiling^[[0m cef-dll-sys v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:34:47.0826180Z ^[[1m^[[92m   Compiling^[[0m objc2-user-notifications v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:47.0935440Z ^[[1m^[[92m   Compiling^[[0m objc2-audio-toolbox v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:47.5937040Z ^[[1m^[[92m   Compiling^[[0m objc2-osa-kit v0.3.2
+build	UNKNOWN STEP	2026-09-05T12:34:47.9092150Z ^[[1m^[[92m   Compiling^[[0m rustls-platform-verifier v0.7.0
+build	UNKNOWN STEP	2026-09-05T12:34:48.0610950Z ^[[1m^[[92m   Compiling^[[0m mac-usernotifications v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:34:48.3160130Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.13.4
+build	UNKNOWN STEP	2026-09-05T12:34:50.5809350Z ^[[1m^[[92m   Compiling^[[0m fff-notify-debouncer-full v0.9.4
+build	UNKNOWN STEP	2026-09-05T12:34:51.6072020Z ^[[1m^[[92m   Compiling^[[0m coreaudio-rs v0.13.0
+build	UNKNOWN STEP	2026-09-05T12:34:52.6804110Z ^[[1m^[[92m   Compiling^[[0m heed v0.22.1
+build	UNKNOWN STEP	2026-09-05T12:34:52.6927560Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.12.28
+build	UNKNOWN STEP	2026-09-05T12:34:53.6542690Z ^[[1m^[[92m   Compiling^[[0m osakit v0.3.1
+build	UNKNOWN STEP	2026-09-05T12:34:56.0314030Z ^[[1m^[[92m   Compiling^[[0m os_info v3.15.0
+build	UNKNOWN STEP	2026-09-05T12:34:57.4863380Z ^[[1m^[[92m   Compiling^[[0m rfd v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:34:59.0191500Z ^[[1m^[[92m   Compiling^[[0m git2 v0.21.0
+build	UNKNOWN STEP	2026-09-05T12:35:03.9119750Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-fs v2.5.1
+build	UNKNOWN STEP	2026-09-05T12:35:04.7760750Z ^[[1m^[[92m   Compiling^[[0m cpal v0.16.0
+build	UNKNOWN STEP	2026-09-05T12:35:05.7523320Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-updater v2.10.1
+build	UNKNOWN STEP	2026-09-05T12:35:06.8153180Z ^[[1m^[[92m   Compiling^[[0m fff-search v0.10.3
+build	UNKNOWN STEP	2026-09-05T12:35:08.0439340Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-aptabase v1.0.0
+build	UNKNOWN STEP	2026-09-05T12:35:10.1816010Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-opener v2.5.4
+build	UNKNOWN STEP	2026-09-05T12:35:10.4692530Z ^[[1m^[[92m   Compiling^[[0m cef v151.8.0+151.3.24
+build	UNKNOWN STEP	2026-09-05T12:35:11.0078250Z ^[[1m^[[92m   Compiling^[[0m dray v0.14.0-beta.5 (/Users/runner/work/dray/dray/apps/desktop/src-tauri)
+build	UNKNOWN STEP	2026-09-05T12:35:11.1051410Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-dialog v2.7.2
+build	UNKNOWN STEP	2026-09-05T12:35:11.6000090Z ^[[1m^[[92m   Compiling^[[0m tauri-plugin-macos-permissions v2.3.0
+build	UNKNOWN STEP	2026-09-05T12:35:11.8120920Z ^[[1m^[[92m   Compiling^[[0m notify-rust v4.18.0
+build	UNKNOWN STEP	2026-09-05T12:39:41.9170310Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:39:41.9173610Z   | 
+build	UNKNOWN STEP	2026-09-05T12:39:41.9174090Z   | other 
+build	UNKNOWN STEP	2026-09-05T12:39:41.9174740Z   | 
+build	UNKNOWN STEP	2026-09-05T12:39:41.9175190Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:39:41.9656410Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:39:41.9657280Z   | 
+build	UNKNOWN STEP	2026-09-05T12:39:41.9657610Z   | alias = "acceptEdits"
+build	UNKNOWN STEP	2026-09-05T12:39:41.9657910Z   | 
+build	UNKNOWN STEP	2026-09-05T12:39:41.9658320Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:39:42.1602560Z warning: failed to parse serde attribute
+build	UNKNOWN STEP	2026-09-05T12:39:42.1603070Z   | 
+build	UNKNOWN STEP	2026-09-05T12:39:42.1603460Z   | into = "String"
+build	UNKNOWN STEP	2026-09-05T12:39:42.1613760Z   | 
+build	UNKNOWN STEP	2026-09-05T12:39:42.1614290Z   = note: ts-rs failed to parse this attribute. It will be ignored.
+build	UNKNOWN STEP	2026-09-05T12:41:12.6283230Z ^[[1m^[[92m    Finished^[[0m `release` profile [optimized] target(s) in 7m 27s
+build	UNKNOWN STEP	2026-09-05T12:41:12.9406580Z        Built application at: /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/dray
+build	UNKNOWN STEP	2026-09-05T12:41:13.1023170Z     Bundling Dray.app (/Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app)
+build	UNKNOWN STEP	2026-09-05T12:41:13.3901310Z 1 identity imported.
+build	UNKNOWN STEP	2026-09-05T12:41:13.4945480Z keychain: "/Users/runner/Library/Keychains/ms2Z3laaD1L2IXQm.keychain-db"
+build	UNKNOWN STEP	2026-09-05T12:41:13.4946540Z version: 512
+build	UNKNOWN STEP	2026-09-05T12:41:13.4946960Z class: 0x00000010 
+build	UNKNOWN STEP	2026-09-05T12:41:13.4947500Z attributes:
+build	UNKNOWN STEP	2026-09-05T12:41:13.4948380Z     0x00000000 <uint32>=0x00000010 
+build	UNKNOWN STEP	2026-09-05T12:41:13.4948970Z     0x00000001 <blob>="Yogesh Dhakal"
+build	UNKNOWN STEP	2026-09-05T12:41:13.4949540Z     0x00000002 <blob>=<NULL>
+build	UNKNOWN STEP	2026-09-05T12:41:13.5011450Z     0x00000003 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5011880Z     0x00000004 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5012250Z     0x00000005 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5012940Z     0x00000006 <blob>=0xB79B53254E9C17B5D760F1AC0EF02CCC3CE15DC5  "\267\233S%N\234\027\265\327`\361\254\016\360,\314<\341]\305"
+build	UNKNOWN STEP	2026-09-05T12:41:13.5013550Z     0x00000007 <blob>=<NULL>
+build	UNKNOWN STEP	2026-09-05T12:41:13.5014260Z     0x00000008 <blob>=0x7B38373139316361322D306663392D313164342D383439612D3030303530326235323132327D00  "{87191ca2-0fc9-11d4-849a-000502b52122}\000"
+build	UNKNOWN STEP	2026-09-05T12:41:13.5014940Z     0x00000009 <uint32>=0x0000002A  "\000\000\000*"
+build	UNKNOWN STEP	2026-09-05T12:41:13.5015450Z     0x0000000A <uint32>=0x00000800 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5015830Z     0x0000000B <uint32>=0x00000800 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5016260Z     0x0000000C <blob>=0x0000000000000000 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5016640Z     0x0000000D <blob>=0x0000000000000000 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5017050Z     0x0000000E <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5017440Z     0x0000000F <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5017790Z     0x00000010 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5018140Z     0x00000011 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5018490Z     0x00000012 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5018900Z     0x00000013 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5019300Z     0x00000014 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5019730Z     0x00000015 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5020080Z     0x00000016 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5020530Z     0x00000017 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5020960Z     0x00000018 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5021330Z     0x00000019 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.5021720Z     0x0000001A <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:41:13.6253680Z found cert "***" with organization "Yogesh Dhakal"
+build	UNKNOWN STEP	2026-09-05T12:41:13.6317080Z      Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:41:13.6322960Z Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:41:13.6324870Z Signing /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app/Contents/MacOS/dray-helper
+build	UNKNOWN STEP	2026-09-05T12:41:13.7472570Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app/Contents/MacOS/dray-helper: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:41:14.0281720Z Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:41:14.0283770Z Signing /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app/Contents/MacOS/dray
+build	UNKNOWN STEP	2026-09-05T12:41:14.0543570Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app/Contents/MacOS/dray: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:41:14.6074410Z Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:41:14.6076140Z Signing /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app
+build	UNKNOWN STEP	2026-09-05T12:41:14.6391200Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app: replacing existing signature
+build	UNKNOWN STEP	2026-09-05T12:41:17.7445920Z Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:41:17.7446730Z Signing /var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/.tmp4Mighn/Dray.zip
+build	UNKNOWN STEP	2026-09-05T12:41:17.8891670Z Notarizing /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app
+build	UNKNOWN STEP	2026-09-05T12:41:46.1351040Z Notarizing Finished with status Accepted for id 59036821-f858-41bf-81fb-69b1b7238866 (Processing complete)
+build	UNKNOWN STEP	2026-09-05T12:41:46.1358440Z Stapling app...
+build	UNKNOWN STEP	2026-09-05T12:41:48.1700840Z     Bundling Dray_0.14.0-beta.5_universal.dmg (/Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Dray_0.14.0-beta.5_universal.dmg)
+build	UNKNOWN STEP	2026-09-05T12:41:48.1973800Z      Running bundle_dmg.sh
+build	UNKNOWN STEP	2026-09-05T12:42:24.1756320Z 1 identity imported.
+build	UNKNOWN STEP	2026-09-05T12:42:24.2149040Z keychain: "/Users/runner/Library/Keychains/v4HnAkpaeu3kPLGq.keychain-db"
+build	UNKNOWN STEP	2026-09-05T12:42:24.2158210Z version: 512
+build	UNKNOWN STEP	2026-09-05T12:42:24.2158910Z class: 0x00000010 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2159400Z attributes:
+build	UNKNOWN STEP	2026-09-05T12:42:24.2160350Z     0x00000000 <uint32>=0x00000010 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2161040Z     0x00000001 <blob>="Yogesh Dhakal"
+build	UNKNOWN STEP	2026-09-05T12:42:24.2161720Z     0x00000002 <blob>=<NULL>
+build	UNKNOWN STEP	2026-09-05T12:42:24.2162730Z     0x00000003 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2163520Z     0x00000004 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2164020Z     0x00000005 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2165390Z     0x00000006 <blob>=0xB79B53254E9C17B5D760F1AC0EF02CCC3CE15DC5  "\267\233S%N\234\027\265\327`\361\254\016\360,\314<\341]\305"
+build	UNKNOWN STEP	2026-09-05T12:42:24.2166500Z     0x00000007 <blob>=<NULL>
+build	UNKNOWN STEP	2026-09-05T12:42:24.2167510Z     0x00000008 <blob>=0x7B38373139316361322D306663392D313164342D383439612D3030303530326235323132327D00  "{87191ca2-0fc9-11d4-849a-000502b52122}\000"
+build	UNKNOWN STEP	2026-09-05T12:42:24.2168370Z     0x00000009 <uint32>=0x0000002A  "\000\000\000*"
+build	UNKNOWN STEP	2026-09-05T12:42:24.2169010Z     0x0000000A <uint32>=0x00000800 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2169490Z     0x0000000B <uint32>=0x00000800 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2169980Z     0x0000000C <blob>=0x0000000000000000 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2170510Z     0x0000000D <blob>=0x0000000000000000 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2171000Z     0x0000000E <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2171480Z     0x0000000F <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2197060Z     0x00000010 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2197600Z     0x00000011 <uint32>=0x00000000 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2197920Z     0x00000012 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2198460Z     0x00000013 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2198880Z     0x00000014 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2199190Z     0x00000015 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2199610Z     0x00000016 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2199970Z     0x00000017 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2200430Z     0x00000018 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2200810Z     0x00000019 <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.2201280Z     0x0000001A <uint32>=0x00000001 
+build	UNKNOWN STEP	2026-09-05T12:42:24.3123690Z found cert "***" with organization "Yogesh Dhakal"
+build	UNKNOWN STEP	2026-09-05T12:42:24.3130570Z      Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:42:24.3133230Z Signing with identity "***"
+build	UNKNOWN STEP	2026-09-05T12:42:24.3134700Z Signing /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Dray_0.14.0-beta.5_universal.dmg
+build	UNKNOWN STEP	2026-09-05T12:42:26.0959670Z     Bundling /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz (/Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz)
+build	UNKNOWN STEP	2026-09-05T12:42:26.0961660Z     Finished 2 bundles at:
+build	UNKNOWN STEP	2026-09-05T12:42:26.0962310Z         /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app
+build	UNKNOWN STEP	2026-09-05T12:42:26.0964360Z         /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Dray_0.14.0-beta.5_universal.dmg
+build	UNKNOWN STEP	2026-09-05T12:42:26.0965690Z         /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz (updater)
+build	UNKNOWN STEP	2026-09-05T12:42:26.0966250Z 
+build	UNKNOWN STEP	2026-09-05T12:42:26.2970560Z     Finished 1 updater signature at:
+build	UNKNOWN STEP	2026-09-05T12:42:26.2972030Z         /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz.sig
+build	UNKNOWN STEP	2026-09-05T12:42:26.2973290Z 
+build	UNKNOWN STEP	2026-09-05T12:42:26.3834570Z Looking for artifacts in:
+build	UNKNOWN STEP	2026-09-05T12:42:26.3835480Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Dray_0.14.0-beta.5_universal.dmg
+build	UNKNOWN STEP	2026-09-05T12:42:26.3836660Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app
+build	UNKNOWN STEP	2026-09-05T12:42:26.3837640Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz
+build	UNKNOWN STEP	2026-09-05T12:42:26.3839090Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz.sig
+build	UNKNOWN STEP	2026-09-05T12:42:26.3839970Z Found artifacts:
+build	UNKNOWN STEP	2026-09-05T12:42:26.3840870Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Dray_0.14.0-beta.5_universal.dmg
+build	UNKNOWN STEP	2026-09-05T12:42:26.3842340Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app
+build	UNKNOWN STEP	2026-09-05T12:42:26.3843450Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz
+build	UNKNOWN STEP	2026-09-05T12:42:26.3844620Z /Users/runner/work/dray/dray/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Dray.app.tar.gz.sig
+build	UNKNOWN STEP	2026-09-05T12:42:26.4252850Z Couldn't parse --config flag as inline JSON. This is not an error if it's a file path. Source: "Unexpected token 's', "src-tauri/"... is not valid JSON"
+build	UNKNOWN STEP	2026-09-05T12:42:26.8988720Z Couldn't find release with tag v0.14.0-beta.5. Creating one.
+build	UNKNOWN STEP	2026-09-05T12:42:27.3170350Z ##[error]Resource not accessible by integration - https://docs.github.com/rest/releases/releases#create-a-release
+build	UNKNOWN STEP	2026-09-05T12:42:27.3706820Z Post job cleanup.
+build	UNKNOWN STEP	2026-09-05T12:42:27.3718420Z ##[start-action display=Run actions/setup-node@v4;id=__43670c60-3465-4f9d-b5ec-a9727d8a61d8.__actions_setup-node]
+build	UNKNOWN STEP	2026-09-05T12:42:27.3722500Z ##[end-action id=__43670c60-3465-4f9d-b5ec-a9727d8a61d8.__actions_setup-node;outcome=skipped;conclusion=skipped;duration_ms=0]
+build	UNKNOWN STEP	2026-09-05T12:42:27.3725480Z ##[start-action display=Run pnpm/action-setup@v4;id=__43670c60-3465-4f9d-b5ec-a9727d8a61d8.__pnpm_action-setup]
+build	UNKNOWN STEP	2026-09-05T12:42:27.3786700Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:42:27.3787840Z Post job cleanup.
+build	UNKNOWN STEP	2026-09-05T12:42:27.5517010Z Pruning is unnecessary.
+build	UNKNOWN STEP	2026-09-05T12:42:27.5547390Z ##[end-action id=__43670c60-3465-4f9d-b5ec-a9727d8a61d8.__pnpm_action-setup;outcome=success;conclusion=success;duration_ms=182]
+build	UNKNOWN STEP	2026-09-05T12:42:27.5626880Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build	UNKNOWN STEP	2026-09-05T12:42:27.5627850Z Post job cleanup.
+build	UNKNOWN STEP	2026-09-05T12:42:27.6788150Z [command]/opt/homebrew/bin/git version
+build	UNKNOWN STEP	2026-09-05T12:42:27.7290970Z git version 2.55.0
+build	UNKNOWN STEP	2026-09-05T12:42:27.7310330Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/c286c92f-af55-4b2d-839f-57cf9df35321/.gitconfig'
+build	UNKNOWN STEP	2026-09-05T12:42:27.7317070Z Temporarily overriding HOME='/Users/runner/work/_temp/c286c92f-af55-4b2d-839f-57cf9df35321' before making global git config changes
+build	UNKNOWN STEP	2026-09-05T12:42:27.7318110Z Adding repository directory to the temporary git global config as a safe directory
+build	UNKNOWN STEP	2026-09-05T12:42:27.7321780Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/dray/dray
+build	UNKNOWN STEP	2026-09-05T12:42:27.7462110Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+build	UNKNOWN STEP	2026-09-05T12:42:27.7514460Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+build	UNKNOWN STEP	2026-09-05T12:42:27.8391540Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+build	UNKNOWN STEP	2026-09-05T12:42:27.8442010Z http.https://github.com/.extraheader
+build	UNKNOWN STEP	2026-09-05T12:42:27.8449000Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+build	UNKNOWN STEP	2026-09-05T12:42:27.8514690Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+build	UNKNOWN STEP	2026-09-05T12:42:27.9221300Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+build	UNKNOWN STEP	2026-09-05T12:42:27.9278960Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+build	UNKNOWN STEP	2026-09-05T12:42:28.0098020Z Evaluate and set job outputs
+build	UNKNOWN STEP	2026-09-05T12:42:28.0101760Z Set output 'channel'
+build	UNKNOWN STEP	2026-09-05T12:42:28.0103080Z Cleaning up orphan processes
+build	UNKNOWN STEP	2026-09-05T12:42:28.2940670Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache/restore@v4, actions/checkout@v4, actions/setup-node@v4, apple-actions/import-codesign-certs@v3, pnpm/action-setup@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

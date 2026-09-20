@@ -1,5 +1,12 @@
 <!doctype html>
 <html lang="en" data-theme="default" data-mode="dark" data-transparency class="dark">
+    <script>
+      // A palette of the reader's choosing, so the log's own surface can be
+      // looked at in the themes where it would be wrong — One Dark Pro's page is
+      // blue-grey, and a black scrim over it reads as a hole.
+      const asked = new URLSearchParams(location.search).get("theme");
+      if (asked) document.documentElement.dataset.theme = asked;
+    </script>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

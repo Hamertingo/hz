@@ -4,7 +4,6 @@ import {
   ANY,
   DEFAULT_RUN_FILTERS,
   stepLabel,
-  waterfall,
   applyRunFilters,
   eventOptions,
   groupRuns,
@@ -14,7 +13,7 @@ import {
   runState,
   workflowOptions,
 } from "@/lib/runs";
-import type { WorkflowJob, WorkflowRun, WorkflowStep } from "@/types/events";
+import type { WorkflowRun } from "@/types/events";
 
 /// Built from a base and cast, the way the sibling tests build a row: every
 /// field the rules do not read is noise per run, and one that *is* read is named
@@ -120,89 +119,6 @@ describe("groupRuns", () => {
     expect(grouped[2].runs.map((r) => r.id)).toEqual([4]);
 
     expect(groupRuns([run({ conclusion: "failure" })]).map((g) => g.key)).toEqual(["failed"]);
-  });
-});
-
-describe("waterfall", () => {
-  const step = (over: Partial<WorkflowStep> = {}) =>
-    ({
-      number: 1,
-      name: "a step",
-      status: "completed",
-      conclusion: "success",
-      startedAt: "2026-09-01T10:00:00Z",
-      completedAt: "2026-09-01T10:00:10Z",
-      ...over,
-    }) as WorkflowStep;
-
-  const job = (over: Partial<WorkflowJob> = {}) =>
-    ({
-      id: 1,
-      name: "build",
-      status: "completed",
-      conclusion: "success",
-      startedAt: "2026-09-01T10:00:00Z",
-      completedAt: "2026-09-01T10:01:00Z",
-      steps: [],
-      ...over,
-    }) as WorkflowJob;
-
-  it("measures each step against the job it is in", () => {
-    const bar = waterfall(
-      job({
-        steps: [
-          step({ number: 1, startedAt: "2026-09-01T10:00:00Z", completedAt: "2026-09-01T10:00:15Z" }),
-          step({ number: 2, startedAt: "2026-09-01T10:00:45Z", completedAt: "2026-09-01T10:01:00Z" }),
-        ],
-      }),
-    )!;
-    expect(bar).toHaveLength(2);
-    expect(bar[0]).toMatchObject({ number: 1, offset: 0, width: 0.25 });
-    // The gap between them is the gap: measured from the job's own start, the
-    // second begins at three quarters, not where the first ended.
-    expect(bar[1].offset).toBeCloseTo(0.75, 5);
-    expect(bar[1].width).toBeCloseTo(0.25, 5);
-  });
-
-  it("draws nothing where there is nothing to draw", () => {
-    // A skipped job: a start and an end and nothing in between.
-    expect(waterfall(job({ conclusion: "skipped" }))).toBeNull();
-    // No stamps to measure from at all.
-    expect(waterfall(job({ startedAt: null }))).toBeNull();
-    // A zero-length job is not a span.
-    expect(waterfall(job({ completedAt: "2026-09-01T10:00:00Z", steps: [step()] }))).toBeNull();
-    // Steps that carry no stamps of their own are left out rather than guessed
-    // at, and a bar with nothing in it is no bar.
-    expect(waterfall(job({ steps: [step({ startedAt: null, completedAt: null })] }))).toBeNull();
-  });
-
-  /// **Never a negative width.** GitHub's clocks and this machine's disagree by
-  /// seconds at a time, and a step that ended before its job started draws
-  /// leftwards — which a browser renders as nothing at all, silently.
-  it("clamps a step to the job's own span", () => {
-    const bar = waterfall(
-      job({
-        steps: [
-          step({ number: 1, startedAt: "2026-09-01T09:59:00Z", completedAt: "2026-09-01T10:00:30Z" }),
-          step({ number: 2, startedAt: "2026-09-01T10:00:30Z", completedAt: "2026-09-01T10:05:00Z" }),
-        ],
-      }),
-    )!;
-    expect(bar[0]).toMatchObject({ offset: 0, width: 0.5 });
-    expect(bar[1].offset).toBeCloseTo(0.5, 5);
-    expect(bar[1].width).toBeCloseTo(0.5, 5);
-  });
-
-  it("measures a job still going against the clock it is given", () => {
-    const bar = waterfall(
-      job({
-        status: "in_progress",
-        completedAt: null,
-        steps: [step({ startedAt: "2026-09-01T10:00:00Z", completedAt: "2026-09-01T10:00:30Z" })],
-      }),
-      Date.parse("2026-09-01T10:01:30Z"),
-    )!;
-    expect(bar[0].width).toBeCloseTo(1 / 3, 5);
   });
 });
 

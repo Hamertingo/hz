@@ -1178,6 +1178,7 @@ pub fn run() {
             github::list_workflow_runs,
             github::get_workflow_run,
             github::rerun_workflow,
+            github::get_run_log,
             github::merge_pr,
             github::delete_branch,
             github::reopen_pr,

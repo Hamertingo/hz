@@ -1,4 +1,4 @@
-import type { WorkflowJob, WorkflowRun } from "@/types/events";
+import type { WorkflowRun } from "@/types/events";
 
 /// What a run's two words add up to, as one thing a row can draw.
 ///
@@ -113,65 +113,6 @@ export function groupRuns<T extends WorkflowRun>(
     { key: "failed" as const, label: "Failed", runs: failed },
     { key: "past" as const, label: "Finished", runs: past },
   ].filter((group) => group.runs.length > 0);
-}
-
-/// Where one step sat inside its job, as fractions of the job's own span.
-export type WaterfallSegment = {
-  number: number;
-  label: string;
-  /// Both 0–1, measured from the job's start — so a gap between two steps is
-  /// drawn as the gap it is rather than as slack in the bar.
-  offset: number;
-  width: number;
-  state: RunState;
-};
-
-/// The shape of a job, as the bar under its header draws it.
-///
-/// **A proportion of the job, never of the run.** Two jobs of a matrix build run
-/// at once, so a bar measured against the run would draw one of them finishing
-/// before it started; the job is the only span its steps are ordered inside.
-///
-/// `null` where there is nothing to draw: a job with no stamps, a job whose
-/// steps carry none, or one whose steps are all zero-length. A skipped job is
-/// the ordinary case — it has a start and an end and nothing in between, and a
-/// bar for it would be a picture of nothing.
-export function waterfall(
-  job: Pick<WorkflowJob, "status" | "conclusion" | "startedAt" | "completedAt" | "steps">,
-  now: number = Date.now(),
-): WaterfallSegment[] | null {
-  const from = Date.parse(job.startedAt ?? "");
-  const live = job.status !== "completed";
-  const to = completion(job.completedAt, live, now);
-  if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return null;
-
-  const span = to - from;
-  const within = (ms: number) => Math.min(1, Math.max(0, ms / span));
-
-  const segments: WaterfallSegment[] = [];
-  for (const step of job.steps) {
-    const start = Date.parse(step.startedAt ?? "");
-    // A step that has not finished measures against the clock, like its job.
-    const end = completion(step.completedAt, step.status !== "completed", now);
-    if (Number.isNaN(start) || Number.isNaN(end)) continue;
-
-    const offset = within(start - from);
-    const width = within(end - from) - offset;
-    // Zero-length is nothing to draw, and a segment with no width would be a
-    // hairline the reader reads as a rendering fault.
-    if (width <= 0) continue;
-
-    segments.push({ number: step.number, label: step.name, offset, width, state: runState(step) });
-  }
-
-  return segments.length > 0 ? segments : null;
-}
-
-/// The end of a span: the stamp, or the clock for something still going.
-function completion(stamp: string | null, live: boolean, now: number): number {
-  const at = Date.parse(stamp ?? "");
-  if (!Number.isNaN(at)) return at;
-  return live ? now : NaN;
 }
 
 /// A step's name, with GitHub's own shell prefix taken off.

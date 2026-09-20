@@ -9,6 +9,8 @@ import PrsView from "@/components/PrsView";
 import { inboxItems } from "@/lib/inbox";
 import type { PrRow } from "@/hooks/usePrList";
 import type { Issue, IssueStateKind, PrListItem } from "@/types/events";
+import { setTheme } from "@/hooks/useTheme";
+import type { ThemeName } from "@/lib/theme";
 import "./App.css";
 
 /// Runs written down, one of every state a row can wear — including the two a
@@ -126,6 +128,7 @@ const PRS: PrListItem[] = [
     if (cmd === "list_pull_requests") return { items: PRS, viewer: "hamerti" };
     if (cmd === "list_workflow_runs") return RUNS;
     if (cmd === "get_workflow_run") return RUN_DETAIL;
+    if (cmd === "get_run_log") return RUN_LOG;
     if (cmd === "rerun_workflow") return null;
     if (cmd === "list_issues") return [];
     if (cmd === "list_issue_filters") return { teams: [], projects: [], teamStates: {} };
@@ -322,6 +325,46 @@ const RUN_DETAIL = {
   ],
 };
 
+/// A run's log, in `gh`'s own three-column shape, with the runner's markers in
+/// the messages — one step that passed, one that failed with an error among its
+/// output, and a nested group inside the one that passed.
+const logLine = (message: string) =>
+  `build\tUNKNOWN STEP\t2026-09-20T14:46:38.0000000Z ${message}\n`;
+
+const RUN_LOG = [
+  logLine("Current runner version: '2.337.0'"),
+  logLine("##[group]Runner Image Provisioner"),
+  logLine("Hosted Compute Agent"),
+  logLine("##[endgroup]"),
+  logLine("##[group]Run actions/checkout@v4"),
+  logLine("Syncing repository: example/hz"),
+  logLine("##[group]Getting Git version info"),
+  logLine("git version 2.51.0"),
+  logLine("##[endgroup]"),
+  logLine("##[command]git config --local --name-only --get-regexp core\\.\\*"),
+  logLine("##[endgroup]"),
+  logLine("##[group]Run pnpm install --frozen-lockfile"),
+  logLine("##[command]pnpm install --frozen-lockfile"),
+  logLine("Lockfile is up to date, resolution step is skipped"),
+  logLine("Progress: resolved 812, reused 776, downloaded 0, added 0, done"),
+  logLine("##[endgroup]"),
+  logLine("##[group]Run pnpm lint"),
+  logLine("##[command]pnpm lint"),
+  logLine("> hz@0.22.2 lint /Users/you/code/hz/apps/desktop"),
+  logLine("> biome lint src"),
+  logLine(""),
+  logLine("src/harness/mcode.rs:214:9 lint/style/noNonNullAssertion  FIXABLE"),
+  logLine(""),
+  logLine("  × Forbidden non-null assertion."),
+  logLine(""),
+  logLine("Checked 352 files in 84ms. No fixes applied."),
+  logLine("##[error]Process completed with exit code 1."),
+  logLine("##[endgroup]"),
+  logLine("##[group]Post Run actions/checkout@v4"),
+  logLine("##[command]git config --local --unset-all extensions.worktreeConfig"),
+  logLine("##[endgroup]"),
+].join("");
+
 function Case({
   title,
   note,
@@ -378,6 +421,14 @@ if (params.get("tab")) {
 if (params.get("menu")) {
   press((text) => text.startsWith("filters"), "pointerdown");
 }
+
+// **The palette is asked for by name, and applied before the first paint.** A
+// demo draws the real components, so the app's own store would otherwise put the
+// default palette back on mount — and the whole point of asking is to see a
+// *ported* theme's own surfaces, where a token that is nearly invisible in the
+// default ramp can be a slab.
+const asked = new URLSearchParams(location.search).get("theme");
+if (asked) setTheme(asked as ThemeName);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

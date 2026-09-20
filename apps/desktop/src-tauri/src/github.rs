@@ -2178,6 +2178,26 @@ async fn get_workflow_run_inner(cwd: &str, id: u64) -> Result<WorkflowRunDetail,
     })
 }
 
+/// A run's log, whole, as `gh` prints it: `job<TAB>step<TAB>timestamp message`
+/// per line.
+///
+/// **A string, and the string is the wire format.** The only structure in it is
+/// the `##[group]` / `##[error]` markers GitHub wrote into the message itself,
+/// and which of those belong to which step is a display rule — so it is parsed
+/// where the display rules live, in [logs.ts](../..), and this is one call that
+/// carries bytes and nothing else.
+///
+/// **Read on demand and never in the listing.** This is the biggest thing this
+/// app asks GitHub for — a failed release is ~190KB — and a pane that fetched it
+/// to draw a row would be paying for it thirty times a page.
+#[tauri::command]
+pub async fn get_run_log(cwd: String, id: u64) -> Result<String, PrUnavailable> {
+    let id = id.to_string();
+    gh(&cwd, &["run", "view", &id, "--log"])
+        .await
+        .map_err(unavailable)
+}
+
 /// Asks GitHub to run it again.
 ///
 /// **The one write this page has, and it is the reader's own press.** CI is the
