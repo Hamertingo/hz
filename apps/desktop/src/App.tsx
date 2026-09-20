@@ -1127,7 +1127,7 @@ function App() {
       return true;
     }
     if (prsOpen) {
-      if (pickedPr) setPickedPr(null);
+      if (activePrKey) closePr(activePrKey);
       else setPrsOpen(false);
       return true;
     }
@@ -2015,8 +2015,12 @@ function App() {
                 // and it was missing here: the only toggle on this page was the
                 // *session's*, which a reader pointed at the detail beside it —
                 // and whose press closed the whole page instead.
-                pickedPr && (
-                  <PanelToggle onToggle={() => setPickedPr(null)} open changes={false} />
+                activePrKey && (
+                  <PanelToggle
+                    onToggle={() => closePr(activePrKey)}
+                    open
+                    changes={false}
+                  />
                 )
               : selectedSession && (
                   <PanelToggle
