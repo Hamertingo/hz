@@ -61,7 +61,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUyRjQxNERDMkE4NDU0MkEKUldRcVZJUXEzQlQwVWcxVUdGL1hkaGpibFBxOE5PVWc4WURveTh4MFpuZGMwVkNZVWQ5QkZtalEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1NjNFNjg3QjAyMDQ4OTkKUldTWlNDQ3doK1pqNVIranBJNXVpUjB3aldLbHZ2SlpPTVIvMnZSSVRITUZicnFPdmh5K3NGNkQK",
       "endpoints": [
         "https://hamertingo.github.io/hz/stable.json"
       ]

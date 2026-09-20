@@ -38,12 +38,20 @@ if [ -n "$TAURI_ENV_TARGET_TRIPLE" ]; then
     # profile dir; an explicit one puts it under the triple. Tried in that order.
     *) TARGETS="" ; TRIPLE=$TAURI_ENV_TARGET_TRIPLE ;;
   esac
-  # The bundler's identity. Only a debug build may fall back to ad-hoc: an
-  # ad-hoc helper passes `codesign --verify` and the entitlements grep, so a
-  # release missing the secret would go green here and fail on a user's Mac.
+  # The bundler's identity. Only a debug build may fall back to ad-hoc on its
+  # own: an ad-hoc helper passes `codesign --verify` and the entitlements grep,
+  # so a release missing the secret would go green here and fail on a user's Mac.
+  #
+  # `HZ_ADHOC_RELEASE=1` is the deliberate way past that, for a release with no
+  # Apple account behind it at all. It is a named opt-in rather than a default,
+  # so shipping unnotarized stays something somebody said out loud — the gate
+  # above could only ever catch the accident.
   SIGN_IDENTITY=${SIGN_IDENTITY:-$APPLE_SIGNING_IDENTITY}
   if [ -z "$SIGN_IDENTITY" ]; then
-    [ "$PROFILE" = debug ] || { echo "$0: release build with no APPLE_SIGNING_IDENTITY" >&2; exit 1; }
+    if [ "$PROFILE" != debug ] && [ "$HZ_ADHOC_RELEASE" != 1 ]; then
+      echo "$0: release build with no APPLE_SIGNING_IDENTITY — set HZ_ADHOC_RELEASE=1 to ship it ad-hoc" >&2
+      exit 1
+    fi
     SIGN_IDENTITY=-
   fi
 fi

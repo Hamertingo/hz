@@ -77,6 +77,62 @@ jobs:
       # why the two share it.
       - uses: ./.github/actions/desktop-setup
 
+      # `bundle.resources` in tauri.conf.json points at `resources/agent`, and
+      # tauri-build checks that path exists at *compile* time — so without this
+      # the job dies in a build script, before anything is bundled. The staged
+      # tree is gitignored (build output, a few hundred megabytes), which is why
+      # a clean checkout has nothing there.
+      #
+      # It builds `apps/agent` from this repository rather than running the
+      # vendor's own installer, and that is the difference between shipping our
+      # patches and silently shipping theirs.
+      - name: Stage the agent into the bundle
+        working-directory: apps/desktop
+        run: ./scripts/vendor-agent.sh
+
+      # **`APPLE_SIGNING` is a repository variable, and it is the whole switch.**
+      # Unset is the ordinary state for a build with no Apple account behind it:
+      # nothing below runs, `bundle.macOS.signingIdentity: "-"` signs ad-hoc, and
+      # the bundler *warns* that it skipped notarization. Set it to `true` with
+      # the secrets in place and this same job produces a signed, notarized,
+      # Gatekeeper-clean release.
+      #
+      # The credentials are exported through `$GITHUB_ENV` instead of being
+      # written into the action's `env:` block, and that is not tidiness. A
+      # `secrets` context is unavailable in a step's `if:`, so the obvious gate
+      # would have to spell its fallback as `... && secrets.X || ''` — and an env
+      # var holding the empty string is `Some("")` to Rust's `var_os`, not
+      # absent. The bundler would then try to import a certificate out of ""
+      # and fail with nothing naming the cause. A key that is never written is
+      # the only spelling of "not provided" that survives that.
+      - name: Import the Apple signing certificate
+        if: vars.APPLE_SIGNING == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Publish the Apple credentials to the build
+        if: vars.APPLE_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                   KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty while APPLE_SIGNING is true — add the secret, or unset the variable to ship ad-hoc"
+              exit 1
+            fi
+            printf '%s=%s\n' "$v" "${!v}" >> "$GITHUB_ENV"
+          done
+
       # The helper apps are signed by cef-helpers.sh, which the cef overlay
       # runs as `beforeBundleCommand` — after the CLI's own cargo build, before
       # its bundler — with the same identity the bundler puts on the app around
@@ -85,30 +141,40 @@ jobs:
       # entitlements differ from the app's too — V8 in the renderer wants JIT —
       # so a `--deep` sign would be the wrong shape even if the bundler offered
       # one. The bundler imports the certificate only once it starts signing,
-      # which is after the hook, so it is imported here first.
+      # which is after the hook, so it is imported above.
       #
       # It used to run as its own step ahead of the action, with a cargo build
       # of its own. See the script for why that compiled the tree twice.
-      - uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
-          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-
+      #
+      # `HZ_ADHOC_RELEASE` is how the script is told an ad-hoc *release* is
+      # meant rather than an accident: it refuses one otherwise, because an
+      # ad-hoc signature passes every check in this file and fails on a user's
+      # Mac.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signs the updater bundle. Separate from Apple's signature and not
           # optional: without it the client refuses the download.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Apple's, which is what stops macOS blocking the download outright.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # **Present and empty, never absent.** Tauri reads the password from
+          # the tty when this variable is missing, and a runner has none:
+          # "incorrect updater private key password: Device not configured
+          # (os error 6)", which reads like a corrupt key rather than a missing
+          # answer. Measured — absent fails, empty signs. The key this ships
+          # with has no password, so the empty string is the true value rather
+          # than a fallback standing in for one.
+          #
+          # It has none because Tauri gives no way to set one that is not argv:
+          # `generate` ignores this very variable and only takes `-p`. Argv is
+          # readable by every process on the machine, which is the same reason
+          # providers.rs hands a gateway key over in the environment. A 0600
+          # file outside the repository is the trade, and the same one the
+          # Linear key already makes.
+          #
+          # A password-protected key is a one-line change: point this at
+          # `${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}` and add it.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          HZ_ADHOC_RELEASE: ${{ vars.APPLE_SIGNING == 'true' && '0' || '1' }}
           # PostHog's write-only project key, read by `option_env!` at compile
           # time. Unset is not fatal — the build ships with analytics inert,
           # which is also what a local build does. `POSTHOG_HOST` is only needed
@@ -134,7 +200,17 @@ jobs:
       # that quietly shipped unnotarized looks exactly like one that worked,
       # until a user's Mac refuses to open it. `stapler validate` is what tells
       # the two apart: it fails unless a ticket is actually attached.
+      #
+      # Gated, because it asks a question an ad-hoc build has already answered
+      # no. With `APPLE_SIGNING` off there is no ticket and no identity for
+      # `spctl` to trust, so this step would fail on the release we deliberately
+      # asked for — and a job that goes red over the expected answer stops being
+      # read. The trade that path makes: macOS refuses the first launch, so the
+      # reader needs right-click → Open, or `xattr -dr com.apple.quarantine`.
+      # Everything else — the ad-hoc signature the microphone permission and the
+      # notification banner both depend on — is real in either case.
       - name: Verify the bundle is notarized
+        if: vars.APPLE_SIGNING == 'true'
         run: |
           APP="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/$(jq -r .productName apps/desktop/src-tauri/tauri.conf.json).app"
           xcrun stapler validate "$APP"
@@ -159,14 +235,41 @@ jobs:
   # `/releases/latest/` skips prereleases — so beta would have no fixed URL.
   # GitHub Pages serves this branch; the artifact URLs inside still point at
   # the release, which stays the CDN.
+  #
+  # **The branch is made here on first use, because nothing else would make it.**
+  # `actions/checkout` with a `ref` that does not exist fails outright —
+  # "couldn't find remote ref updates" — so the release that introduced this job
+  # could never publish a manifest, and no later run could either.
+  #
+  # Pages itself is the one switch no token here can flip: a `GITHUB_TOKEN`
+  # cannot enable a Pages site, and on a private repository Pages needs a paid
+  # plan. Until somebody turns it on — Settings → Pages → Deploy from a branch →
+  # `updates` / `/` — the endpoint 404s, which costs auto-update and nothing
+  # else. Downloads still come off the release.
   manifest:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # Full history, so the orphan branch below can be created on this clone.
       - uses: actions/checkout@v4
         with:
-          ref: updates
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Check out the manifest branch, creating it if it is not there
+        run: |
+          set -euo pipefail
+          # A full fetch, not `--depth=1`: this clone is complete, and dropping
+          # one shallow ref into it is the kind of mixture git warns about and
+          # the branch is a few kilobytes anyway.
+          if git fetch origin updates 2>/dev/null; then
+            git checkout -B updates FETCH_HEAD
+          else
+            # An orphan, or the first manifest would commit the whole repository
+            # beside it and Pages would serve the tree.
+            git checkout --orphan updates
+            git rm -rf --cached . >/dev/null
+            find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          fi
 
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -216,7 +319,12 @@ jobs:
           # A release that moved no manifest — a re-tag older than every
           # channel — leaves nothing staged, and an empty commit would fail
           # the job over a push that had nothing to say.
+          #
+          # The destination is spelled out because the first run pushes a branch
+          # this clone created: an orphan has no upstream, and a bare `git push`
+          # refuses with "no upstream branch" — on exactly the run that has to
+          # succeed for any of the others to.
           git diff --cached --quiet || {
             git commit -m "release ${GITHUB_REF_NAME}"
-            git push
+            git push origin HEAD:updates
           }

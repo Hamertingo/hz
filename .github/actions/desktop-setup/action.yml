@@ -65,6 +65,16 @@ runs:
     - shell: bash
       run: pnpm install --frozen-lockfile
 
+    # `bundle.resources` in tauri.conf.json names `resources/agent`, and
+    # tauri-build fails at *compile* time when that path is absent — which is
+    # every clean checkout, since the staged tree is gitignored build output.
+    # So a job that only compiles needs the directory to exist and nothing more.
+    #
+    # release.yml is the one job whose bundle has to carry the real thing, and
+    # it runs vendor-agent.sh after this, which replaces what is here.
+    - shell: bash
+      run: mkdir -p apps/desktop/src-tauri/resources/agent
+
     # The browser's bindings compile against the CEF SDK: headers plus a C++
     # wrapper that `cef-dll-sys`'s build script builds with CMake and Ninja,
     # downloading the SDK into CEF_PATH first (one per target), where the cache
