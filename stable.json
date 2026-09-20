@@ -1,0 +1,23 @@
+{
+  "version": "0.20.6",
+  "notes": "### Added\n\n- **The PR tab says how to turn pull requests on.** Without the GitHub\n  CLI the tab simply vanished, so nothing said that one install puts\n  pull requests on screen. It now stays, draws the command to run with\n  a copy button, and a terminal to paste it into.\n- **Dray can ask you a question in the app.** A short survey card may\n  appear for installs with usage reporting on; turning reporting off in\n  Settings turns it off too.",
+  "pub_date": "2026-09-20T20:36:32.427Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWlNDQ3doK1pqNVREd09JbHlOOStDblQ2RjFnazZ0OEo2Nnd1MEdzMVJJTHV6R01SNHM2UFljYWEvRlpIazYvdjQ5c2dmcFI0ZWF3QVkvSjd4ODRJMmo3YWF6WnhNM0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTM2NTc3CWZpbGU6aHouYXBwLnRhci5negp1TGZEVjYraTl1MjQxWFdlcklkZTA4UFBzWVduM0NBa2Q5N0VRazg1djBLWGFKT2VYc3ByV3lNclltZytST0thNTY4Zm9qYUVrR1h2QWIzb1hVYXJCUT09Cg==",
+      "url": "https://github.com/Hamertingo/hz/releases/download/v0.20.6/hz_universal.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWlNDQ3doK1pqNVREd09JbHlOOStDblQ2RjFnazZ0OEo2Nnd1MEdzMVJJTHV6R01SNHM2UFljYWEvRlpIazYvdjQ5c2dmcFI0ZWF3QVkvSjd4ODRJMmo3YWF6WnhNM0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTM2NTc3CWZpbGU6aHouYXBwLnRhci5negp1TGZEVjYraTl1MjQxWFdlcklkZTA4UFBzWVduM0NBa2Q5N0VRazg1djBLWGFKT2VYc3ByV3lNclltZytST0thNTY4Zm9qYUVrR1h2QWIzb1hVYXJCUT09Cg==",
+      "url": "https://github.com/Hamertingo/hz/releases/download/v0.20.6/hz_universal.app.tar.gz"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWlNDQ3doK1pqNVREd09JbHlOOStDblQ2RjFnazZ0OEo2Nnd1MEdzMVJJTHV6R01SNHM2UFljYWEvRlpIazYvdjQ5c2dmcFI0ZWF3QVkvSjd4ODRJMmo3YWF6WnhNM0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTM2NTc3CWZpbGU6aHouYXBwLnRhci5negp1TGZEVjYraTl1MjQxWFdlcklkZTA4UFBzWVduM0NBa2Q5N0VRazg1djBLWGFKT2VYc3ByV3lNclltZytST0thNTY4Zm9qYUVrR1h2QWIzb1hVYXJCUT09Cg==",
+      "url": "https://github.com/Hamertingo/hz/releases/download/v0.20.6/hz_universal.app.tar.gz"
+    },
+    "darwin-x86_64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWlNDQ3doK1pqNVREd09JbHlOOStDblQ2RjFnazZ0OEo2Nnd1MEdzMVJJTHV6R01SNHM2UFljYWEvRlpIazYvdjQ5c2dmcFI0ZWF3QVkvSjd4ODRJMmo3YWF6WnhNM0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTM2NTc3CWZpbGU6aHouYXBwLnRhci5negp1TGZEVjYraTl1MjQxWFdlcklkZTA4UFBzWVduM0NBa2Q5N0VRazg1djBLWGFKT2VYc3ByV3lNclltZytST0thNTY4Zm9qYUVrR1h2QWIzb1hVYXJCUT09Cg==",
+      "url": "https://github.com/Hamertingo/hz/releases/download/v0.20.6/hz_universal.app.tar.gz"
+    }
+  }
+}
