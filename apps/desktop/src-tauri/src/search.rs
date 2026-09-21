@@ -351,7 +351,15 @@ pub async fn search_content(cwd: String, query: String) -> Result<ContentMatches
         }
 
         matches.push(ContentMatch {
-            path: root.join(&relative).to_string_lossy().into_owned(),
+            // `git grep` spells a path with `/` on every platform, so it is
+            // translated rather than joined as it stands: a Windows path assembled
+            // from a `/`-spelled relative comes out with both separators in it, and
+            // every comparison against it downstream is then a string comparison
+            // that fails for a reason nothing on screen explains.
+            path: root
+                .join(relative.replace('/', std::path::MAIN_SEPARATOR_STR))
+                .to_string_lossy()
+                .into_owned(),
             relative,
             line: line.parse().unwrap_or(1),
             // `-z` leaves the newline that ended the line on the text, and the last
@@ -438,7 +446,9 @@ mod tests {
         assert!(!found.truncated);
         // Absolute, so the row can hand it to the file view without joining again.
         assert!(found.matches[0].path.ends_with("a.txt"));
-        assert!(found.matches[0].path.starts_with('/'));
+        // Absolute on every platform, which `/` is not: the point is that the row
+        // can hand this to the file view without joining anything again.
+        assert!(std::path::Path::new(&found.matches[0].path).is_absolute());
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
