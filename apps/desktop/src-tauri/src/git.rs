@@ -1554,6 +1554,7 @@ fn lock_owner_pid(reason: &str) -> Option<u32> {
 /// `kill(pid, 0)` — the signal number that checks for a process without
 /// sending anything. `EPERM` counts as alive: a process owned by another user
 /// is still a process holding that lock.
+#[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
@@ -1562,6 +1563,76 @@ fn pid_is_alive(pid: u32) -> bool {
     // permission check that gives this function its answer.
     let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
     rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// The same question, asked of `kernel32`.
+///
+/// Declared here rather than pulled in from `windows-sys`: this is three
+/// functions and one constant, the tree already carries two other versions of
+/// that crate transitively, and the POSIX half of this file reaches for `libc`
+/// exactly the same way. `kernel32` is linked into every Windows binary the
+/// Rust toolchain produces, so there is nothing to add to the build either.
+///
+/// The access-rights reading mirrors the POSIX one deliberately: a process that
+/// exists but belongs to somebody else answers `ERROR_ACCESS_DENIED`, which is
+/// this platform's `EPERM` and counts as **alive**. Only a pid Windows says does
+/// not exist is a false — anything else would let a locked tree be deleted out
+/// from under the session working in it.
+#[cfg(windows)]
+fn pid_is_alive(pid: u32) -> bool {
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+        fn GetExitCodeProcess(handle: *mut std::ffi::c_void, code: *mut u32) -> i32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+
+    if pid == 0 {
+        return false;
+    }
+
+    // SAFETY: `handle` is checked before it is used and closed on both paths
+    // out; `code` outlives the call it is passed to.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED);
+        }
+
+        let mut code = 0u32;
+        let read = GetExitCodeProcess(handle, &mut code);
+        CloseHandle(handle);
+        read != 0 && code == STILL_ACTIVE
+    }
+}
+
+/// The FFI above is the one part of this file a compiler cannot check, so the
+/// Windows runner asks it the two questions whose answers are known: this
+/// process is alive, and a pid nothing holds is not.
+#[cfg(all(test, windows))]
+mod pid_tests {
+    use super::pid_is_alive;
+
+    #[test]
+    fn this_process_is_alive() {
+        assert!(pid_is_alive(std::process::id()));
+    }
+
+    #[test]
+    fn pid_zero_is_not_a_process() {
+        assert!(!pid_is_alive(0));
+    }
+
+    #[test]
+    fn an_unused_pid_is_not_alive() {
+        // The top of the pid space is not reachable while anything is running,
+        // so `OpenProcess` fails with "no such process" rather than a grant.
+        assert!(!pid_is_alive(u32::MAX - 1));
+    }
 }
 
 /// The `locked` reason git records for `worktree_path`, if any.

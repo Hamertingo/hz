@@ -1,0 +1,21 @@
+[package]
+name = "hz-agent-launcher"
+# Never published. This exists to be copied into a bundle under the name
+# `hz-agent.exe`, which is why its own package name is not the binary's.
+publish = false
+version = "0.1.0"
+edition = "2021"
+
+# Deliberately dependency-free, on purpose and for one reason: this binary runs
+# *inside* the shipped agent tree, so anything it drags in is bytes every reader
+# downloads and one more thing to keep patched. It spawns a process and exits.
+
+[[bin]]
+name = "hz-agent"
+path = "src/main.rs"
+
+[profile.release]
+# It is a launcher. The smallest one wins over the fastest one.
+opt-level = "z"
+lto = true
+strip = true

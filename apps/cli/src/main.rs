@@ -14,7 +14,6 @@ use hz_proto::{
     LinkIssues, ListSessions, Locator, Request, Response, SendMessage, SessionSummary,
 };
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
@@ -825,12 +824,39 @@ fn uncertain(error: String) -> String {
     )
 }
 
+/// The connection to the app, whatever this platform calls one.
+#[cfg(unix)]
+type Conn = std::os::unix::net::UnixStream;
+
+/// A Windows named pipe, opened as the file object it is.
+///
+/// `std` has no named-pipe API, and this crate deliberately carries no
+/// dependency to get one: a pipe is a kernel object reached through
+/// `CreateFile` like any other, so `File` opens it — which is the whole reason
+/// `hz` still links neither tokio nor a Windows crate.
+#[cfg(windows)]
+type Conn = std::fs::File;
+
+#[cfg(unix)]
+fn connect(endpoint: &str) -> std::io::Result<Conn> {
+    Conn::connect(endpoint)
+}
+
+#[cfg(windows)]
+fn connect(endpoint: &str) -> std::io::Result<Conn> {
+    // Read *and* write: a pipe opened for one direction alone is not the
+    // channel the app is serving, and this one carries both.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(endpoint)
+}
+
 /// One request, one response, connection closed.
 fn send(request: Request) -> Result<Response, String> {
     let endpoint = hz_proto::endpoint().ok_or("could not work out where hz is listening")?;
 
-    let mut stream =
-        UnixStream::connect(&endpoint).map_err(|e| connect_failure(&e, &endpoint))?;
+    let mut stream = connect(&endpoint).map_err(|e| connect_failure(&e, &endpoint))?;
 
     let line =
         encode_line(&Envelope::retryable(request, request_id())).map_err(|e| e.to_string())?;

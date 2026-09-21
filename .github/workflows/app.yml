@@ -90,9 +90,16 @@ jobs:
       # though the path filter already watched `crates/**`. Both are plain
       # crates with no Tauri in them, so this is seconds — and `hz-proto` is the
       # wire shape the two sides share, which is the seam that must not drift.
-      - name: Test and lint the wire crate and the CLI
+      #
+      # The agent launcher joins them for the same reason: it is its own
+      # package, and nothing above compiles it. Windows is where it ships, but
+      # a crate that compiles on one platform and not another is a bad trade
+      # for the two lines it costs here.
+      - name: Test and lint the wire crate, the CLI and the agent launcher
         run: |
           cargo test --manifest-path crates/hz-proto/Cargo.toml
           cargo clippy --manifest-path crates/hz-proto/Cargo.toml --all-targets -- -D warnings
           cargo test --manifest-path apps/cli/Cargo.toml
           cargo clippy --manifest-path apps/cli/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path apps/agent-launcher/Cargo.toml
+          cargo clippy --manifest-path apps/agent-launcher/Cargo.toml --all-targets -- -D warnings

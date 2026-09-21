@@ -243,6 +243,12 @@ pub async fn get_home_app_dir() -> Result<PathBuf> {
 ///
 /// Best-effort: a directory that cannot be narrowed is worth carrying on with,
 /// since the alternative is an app that refuses to start.
+///
+/// **Windows has nothing to do here**, which is why this is split rather than
+/// translated: `~/.hz` sits inside the user's own profile, and Windows ACLs that
+/// profile to the account, so the directory arrives private without anybody
+/// asking. There are no mode bits to write and no `chmod` to write them with.
+#[cfg(unix)]
 async fn restrict_to_owner(path: &PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -250,6 +256,9 @@ async fn restrict_to_owner(path: &PathBuf) {
         eprintln!("[app dir permissions err] {e}");
     }
 }
+
+#[cfg(not(unix))]
+async fn restrict_to_owner(_path: &PathBuf) {}
 
 /// `~/.hz/sessions`, creating it if needed.
 pub async fn get_sessions_dir() -> Result<PathBuf> {

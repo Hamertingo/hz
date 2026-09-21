@@ -523,8 +523,45 @@ pub fn endpoint() -> Option<String> {
 /// the reader installed, and a dev app hands its own children `HZ_ENDPOINT`
 /// rather than leaving them to guess which build spawned them.
 pub fn socket_path(dev: bool) -> Option<PathBuf> {
-    let name = if dev { SOCKET_NAME_DEV } else { SOCKET_NAME };
-    Some(std::env::home_dir()?.join(".hz").join(name))
+    // Windows has no unix socket, so the same channel becomes a named pipe —
+    // and the pipe is a *file object*, which is what lets the CLI reach it with
+    // nothing but `std::fs` (see `apps/cli`). See [`pipe_name`] for why the
+    // account has to be in the name.
+    #[cfg(windows)]
+    {
+        Some(PathBuf::from(pipe_name(dev)))
+    }
+
+    #[cfg(not(windows))]
+    {
+        let name = if dev { SOCKET_NAME_DEV } else { SOCKET_NAME };
+        Some(std::env::home_dir()?.join(".hz").join(name))
+    }
+}
+
+/// The named pipe the same channel becomes on Windows.
+///
+/// **`hz` cannot be the whole name**, because a pipe namespace is machine-wide
+/// where a path under `~/.hz` is not. Two accounts on one machine would both
+/// want `\\.\pipe\hz`, and the second app to start would take the channel from
+/// the first without either of them saying anything — a session created by one
+/// agent appearing in the other's sidebar. The account name is what puts that
+/// privacy back, and it is the closest thing this platform has to the `0700`
+/// directory the unix half leans on.
+///
+/// Deliberately free of `cfg` so the name is assertable everywhere; only
+/// Windows builds call it.
+pub fn pipe_name(dev: bool) -> String {
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    let scope = if user.is_empty() {
+        String::new()
+    } else {
+        format!("-{user}")
+    };
+
+    let channel = if dev { "hz-dev" } else { "hz" };
+
+    format!(r"\\.\pipe\{channel}{scope}")
 }
 
 /// One request or response as it goes on the wire. Newline-delimited JSON, the
@@ -539,6 +576,31 @@ pub fn encode_line<T: Serialize>(value: &T) -> serde_json::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two channels stay distinct, and the account is in the name.
+    ///
+    /// The prefix assertion is the one that matters: `\\.\pipe\hz` is a prefix
+    /// of `\\.\pipe\hz-dev`, so a lookup that matched loosely would let a
+    /// release CLI reach a dev app's channel — the exact confusion the two
+    /// names exist to prevent.
+    #[test]
+    fn the_pipe_name_carries_the_channel_and_the_account() {
+        let release = pipe_name(false);
+        let dev = pipe_name(true);
+
+        assert!(release.starts_with(r"\\.\pipe\hz"), "{release}");
+        assert!(dev.starts_with(r"\\.\pipe\hz-dev"), "{dev}");
+        assert_ne!(release, dev);
+
+        // A dev name is never reachable by asking for the release one, whatever
+        // the account is called.
+        assert!(!release.contains("-dev"));
+
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        if !user.is_empty() {
+            assert!(release.ends_with(&user), "{release} should name {user}");
+        }
+    }
 
     /// The id rides beside the flattened request and survives both directions,
     /// and a line without one still parses — the two halves of an optional field
