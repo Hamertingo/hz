@@ -24,6 +24,7 @@ import { useHotkey } from "@/hooks/useHotkey";
 import { useIssues } from "@/hooks/useIssues";
 import { groupIssues } from "@/lib/issue";
 import { calendarDay } from "@/lib/format";
+import { unavailableText } from "@/lib/unavailable";
 import { cn } from "@/lib/utils";
 import type {
   Issue,
@@ -32,7 +33,6 @@ import type {
   IssueScope,
   IssueState,
   IssueStateKind,
-  IssueUnavailable,
 } from "@/types/events";
 
 /// The page's search field. Named so ⌘⇧F can reach it — the same trick the
@@ -53,26 +53,6 @@ const LINEAR_KEYS_URL = "https://linear.app/settings/account/security";
 /// Linear's own MCP documentation. The setup is theirs and it changes, so this
 /// points at it rather than reproducing it.
 const LINEAR_MCP_URL = "https://linear.app/docs/mcp";
-
-/// What a failed read says, in one line.
-///
-/// The cure is named where there is one — a key Linear has stopped accepting is
-/// fixed by disconnecting in Settings and pasting a new one here, and saying so
-/// is the difference between a sentence to act on and one to stare at. Anything
-/// unrecognised falls back to the tracker's own words rather than a shrug of
-/// our own.
-export function unavailableText(unavailable: IssueUnavailable): string {
-  switch (unavailable.kind) {
-    case "unauthorized":
-      return "Linear rejected the saved key. Disconnect it in Settings, then paste a new one.";
-    case "offline":
-      return "Could not reach Linear.";
-    case "not_connected":
-      return "No issue tracker connected.";
-    default:
-      return unavailable.detail;
-  }
-}
 
 const SCOPES: { value: IssueScope; label: string }[] = [
   { value: "assigned", label: "Assigned to me" },

@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 
 import type { InboxPage } from "@/components/InboxTabs";
-import { unavailableText } from "@/components/IssuesView";
-import { prUnavailableText } from "@/components/PrsView";
+import { prUnavailableText, unavailableText } from "@/lib/unavailable";
 import { useIssues } from "@/hooks/useIssues";
 import { usePrList, type PrRow } from "@/hooks/usePrList";
 import { inboxItems, type InboxItem, type InboxNote } from "@/lib/inbox";

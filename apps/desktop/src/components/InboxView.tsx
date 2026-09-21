@@ -14,7 +14,7 @@ import {
 import Avatar from "@/components/Avatar";
 import IssueStateIcon from "@/components/IssueStateIcon";
 import PrStateIcon from "@/components/PrStateIcon";
-import { MetaLine } from "@/components/PrsView";
+import { MetaLine } from "@/components/MetaLine";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,

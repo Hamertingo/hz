@@ -29,7 +29,6 @@ import {
   UserRound,
 } from "lucide-react";
 import {
-  Children,
   useMemo,
   useState,
   type ComponentType,
@@ -39,6 +38,7 @@ import {
 } from "react";
 
 import Avatar from "@/components/Avatar";
+import { MetaLine } from "@/components/MetaLine";
 import { LabelChip, LabelDot } from "@/components/LabelChip";
 import PrPanel from "@/components/PrPanel";
 import PrStateIcon from "@/components/PrStateIcon";
@@ -51,6 +51,7 @@ import { useWorkflowRuns, type RunRow } from "@/hooks/useWorkflowRuns";
 import { usePullRequest } from "@/hooks/usePullRequest";
 import { loginAvatar } from "@/lib/avatar";
 import { relativeTime } from "@/lib/format";
+import { prUnavailableText } from "@/lib/unavailable";
 import {
   ANY,
   authorFacets,
@@ -81,7 +82,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { PrListItem, PrListState, PrUnavailable } from "@/types/events";
+import type { PrListItem, PrListState } from "@/types/events";
 
 /// The repository's pull requests, all of them.
 ///
@@ -492,37 +493,6 @@ export function PrDetail({
   );
 }
 
-/// Why there is no listing, in the words of what to do about it.
-///
-/// **`no_remote` names the directory**, and that is the whole reason this is not
-/// a constant: a project can be a *workspace* whose root is not a repository at
-/// all, so "this repository has no GitHub remote" was said about a folder that
-/// is not one — with every repository inside it having exactly the remote the
-/// sentence denied. Naming the path is what makes the difference visible.
-///
-/// Exported for the inbox, whose pull request half is this same read: a machine
-/// with no `gh` would otherwise say "Nothing is in flight" about a list that was
-/// never read. The setup pane this page draws for that case stays here — an
-/// install is not something a one-line list can offer.
-export function prUnavailableText(error: PrUnavailable, cwd: string): string {
-  switch (error.kind) {
-    case "no_cli":
-      return "GitHub CLI (gh) is not installed. Run `brew install gh`, then Refresh.";
-    case "not_authenticated":
-      return "GitHub CLI is not logged in. Run `gh auth login`, then Refresh.";
-    case "missing_permission":
-      // **Names the repository**, because the page reads several and the whole
-      // question is *which* one was refused: a token can be fine everywhere but
-      // one organisation, and a sentence without a subject sends the reader to
-      // their GitHub settings with nothing to look up.
-      return `GitHub refused this read for ${cwd}: the token it is signed in with is missing a permission Hyze Code needs. Settings → Source control shows which account and where its credential comes from.`;
-    case "no_remote":
-      return `No GitHub repository at ${cwd} — a project that holds repositories has no pull requests of its own. Pick one in the composer, or select a session.`;
-    default:
-      return error.detail;
-  }
-}
-
 /// The pull requests the reader has open, as a strip of tabs.
 ///
 /// **Several at once, and that is the whole of it.** Reading a second attempt
@@ -770,35 +740,6 @@ function Counts({ added, removed }: { added: number; removed: number }) {
       {added > 0 && <span className="text-accent-add">+{added}</span>}
       {added > 0 && removed > 0 && " "}
       {removed > 0 && <span className="text-destructive">−{removed}</span>}
-    </span>
-  );
-}
-
-/// Dot-separated metadata that owns its own separator.
-///
-/// It draws a dot only *between* the segments that survive, so a caller can
-/// render `{condition && <span/>}` without leaving a stray separator behind.
-/// `Children.toArray` drops the nullish entries and keys what remains, which a
-/// plain array walk would not do for a single child or a fragment — and
-/// `{multiRepo && …}` is exactly the false case it has to swallow.
-///
-/// Exported because the inbox draws a meta line from two trackers and it has to
-/// be the same one: two copies part on the separator rule above the first time a
-/// segment gains a condition.
-export function MetaLine({ children, className }: { children: ReactNode; className?: string }) {
-  const segments = Children.toArray(children);
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      {segments.flatMap((segment, index) =>
-        index === 0
-          ? segment
-          : [
-              <span key={`sep-${index}`} aria-hidden className="shrink-0 text-muted-foreground/40">
-                ·
-              </span>,
-              segment,
-            ],
-      )}
     </span>
   );
 }
