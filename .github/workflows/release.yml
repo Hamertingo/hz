@@ -225,7 +225,7 @@ jobs:
           APP="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/$(jq -r .productName apps/desktop/src-tauri/tauri.conf.json).app"
           test ! -e "$APP/Contents/Frameworks/Chromium Embedded Framework.framework"
           for h in "" " (GPU)" " (Renderer)" " (Plugin)" " (Alerts)"; do
-            HELPER="$APP/Contents/Frameworks/hz Helper$h.app"
+            HELPER="$APP/Contents/Frameworks/Hyze Code Helper$h.app"
             codesign --verify --strict "$HELPER"
             codesign -d --entitlements - "$HELPER" 2>&1 | grep -q disable-library-validation
           done

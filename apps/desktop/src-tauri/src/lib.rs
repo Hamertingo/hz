@@ -275,7 +275,7 @@ async fn unavailable_reason(harness: harness::Harness) -> (String, bool) {
         );
     }
 
-    (format!("hz can't run {label} sessions yet."), false)
+    (format!("Hyze Code can't run {label} sessions yet."), false)
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]

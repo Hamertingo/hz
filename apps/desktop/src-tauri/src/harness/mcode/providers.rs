@@ -182,7 +182,7 @@ pub fn presets() -> Vec<ProviderPreset> {
             base_url: "https://api.commandcode.ai/provider/v1".to_string(),
             api_format: "openai-completions".to_string(),
             models: Vec::new(),
-            note: "One key for GPT, Gemini and the open models. hz fetches the list it serves.".to_string(),
+            note: "One key for GPT, Gemini and the open models. Hyze Code fetches the list it serves.".to_string(),
         },
         ProviderPreset {
             id: "opencode-go".to_string(),
@@ -190,7 +190,7 @@ pub fn presets() -> Vec<ProviderPreset> {
             base_url: "https://opencode.ai/zen/go/v1".to_string(),
             api_format: "openai-completions".to_string(),
             models: Vec::new(),
-            note: "Every model the gateway serves — hz asks it for the list.".to_string(),
+            note: "Every model the gateway serves — Hyze Code asks it for the list.".to_string(),
         },
     ]
 }

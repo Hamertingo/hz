@@ -315,8 +315,8 @@ mod tests {
     #[test]
     fn finds_the_bundle_an_executable_sits_in() {
         assert_eq!(
-            bundle_of(Path::new("/Applications/hz.app/Contents/MacOS/hz")),
-            Some(Path::new("/Applications/hz.app"))
+            bundle_of(Path::new("/Applications/Hyze Code.app/Contents/MacOS/Hyze Code")),
+            Some(Path::new("/Applications/Hyze Code.app"))
         );
     }
 

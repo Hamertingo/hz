@@ -319,7 +319,7 @@ pub async fn checkout_branch(cwd: &str, branch: &str, stash: bool) -> Result<Bra
     if stash {
         // Named so the entry is recognizable in `git stash list` weeks later,
         // next to whatever the user stashed by hand.
-        let msg = format!("hz: switching to {branch}");
+        let msg = format!("Hyze Code: switching to {branch}");
         run(cwd, &["stash", "push", "--include-untracked", "-m", &msg]).await?;
     }
 
@@ -1893,10 +1893,10 @@ pub async fn commit_tree(cwd: &str, tree: &str, parent: Option<&str>) -> Result<
     }
 
     let identity = [
-        ("GIT_AUTHOR_NAME", "hz"),
-        ("GIT_AUTHOR_EMAIL", "hz@localhost"),
-        ("GIT_COMMITTER_NAME", "hz"),
-        ("GIT_COMMITTER_EMAIL", "hz@localhost"),
+        ("GIT_AUTHOR_NAME", "Hyze Code"),
+        ("GIT_AUTHOR_EMAIL", "hyze-code@localhost"),
+        ("GIT_COMMITTER_NAME", "Hyze Code"),
+        ("GIT_COMMITTER_EMAIL", "hyze-code@localhost"),
     ];
     // `-m` folded into the argument rather than separated: `git commit-tree`
     // wants the message last, and the parent list is variadic in between.
@@ -1938,7 +1938,7 @@ pub async fn remove_worktree(project_path: &str, worktree_path: &str, branch: Op
     let tree = PathBuf::from(worktree_path);
 
     if !is_managed_worktree(&project, &tree) {
-        bail!("{worktree_path} is not a worktree hz created, so it will not be removed");
+        bail!("{worktree_path} is not a worktree Hyze Code created, so it will not be removed");
     }
 
     if let Some(reason) = worktree_disposition(worktree_path, project_path).await.locked_by {

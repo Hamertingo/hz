@@ -48,7 +48,7 @@ pub const QUIT_REQUESTED: &str = "quit_requested";
 /// webview no ⌘C/⌘V at all.
 #[cfg(target_os = "macos")]
 pub fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let quit = MenuItem::with_id(app, QUIT_ID, "Quit hz", true, Some("CmdOrCtrl+Q"))?;
+    let quit = MenuItem::with_id(app, QUIT_ID, "Quit Hyze Code", true, Some("CmdOrCtrl+Q"))?;
 
     // No accelerator: it is reached rarely and on purpose, and every key this
     // could take is one the webview wants.
@@ -62,7 +62,7 @@ pub fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let app_menu = Submenu::with_items(
         app,
-        "hz",
+        "Hyze Code",
         true,
         &[
             &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,

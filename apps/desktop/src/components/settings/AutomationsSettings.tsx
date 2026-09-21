@@ -86,7 +86,7 @@ export default function AutomationsSettings({
       {automations.length === 0 ? (
         <p className="text-ui text-muted-foreground">
           Nothing runs on its own yet. An automation is a prompt this app sends on a clock — in
-          its own session and its own worktree, while hz is open.
+          its own session and its own worktree, while Hyze Code is open.
         </p>
       ) : (
         <div className="flex flex-col gap-1">

@@ -515,7 +515,7 @@ function OpenFilesRow() {
   const unavailable = !IS_MAC
     ? "Opening a file in another app is macOS-only for now."
     : apps !== null && editors.length === 0
-      ? "No editor hz knows about is installed, so filenames open in Finder."
+      ? "No editor Hyze Code knows about is installed, so filenames open in Finder."
       : null;
 
   return (
@@ -987,8 +987,8 @@ function SourceControlSettings({
         label="Git"
         description={
           state.git
-            ? "Every checkout, branch and diff hz runs goes through it."
-            : "Not on this machine, so there is nothing here for hz to diff."
+            ? "Every checkout, branch and diff Hyze Code runs goes through it."
+            : "Not on this machine, so there is nothing here for Hyze Code to diff."
         }
       >
         <StatusChip bad={!state.git}>{state.git ?? "Not installed"}</StatusChip>
@@ -1057,7 +1057,7 @@ function GhDescription({ gh, stillMissing }: { gh: GhAccount | null; stillMissin
       <>
         Pull requests, their checks and their reviews all read through it.
         {stillMissing &&
-          " Still not found — hz looks where your login shell does, so an install that landed somewhere else needs the app restarted."}
+          " Still not found — Hyze Code looks where your login shell does, so an install that landed somewhere else needs the app restarted."}
       </>
     );
   }
@@ -1066,7 +1066,7 @@ function GhDescription({ gh, stillMissing }: { gh: GhAccount | null; stillMissin
     return (
       <>
         <code className="text-foreground">{gh.tokenSource ?? "A credential"}</code> is set, and
-        GitHub turned it down — {gh.error}. That is the token itself rather than anything hz can
+        GitHub turned it down — {gh.error}. That is the token itself rather than anything Hyze Code can
         fix: replace it with <code className="text-foreground">gh auth login</code>, or with a token
         that carries the permissions below.
       </>
@@ -1162,7 +1162,7 @@ function BrowserRow() {
         error ? (
           <span className="text-destructive">{error}</span>
         ) : confirming ? (
-          "Chromium will be downloaded again the next time hz starts."
+          "Chromium will be downloaded again the next time Hyze Code starts."
         ) : (
           describeChromium(status)
         )
@@ -1254,7 +1254,7 @@ function IssueTrackerRow({
           label="Issue tracker"
           description={
             confirming
-              ? "hz will forget the key. Sessions keep the issues they are tagged with."
+              ? "Hyze Code will forget the key. Sessions keep the issues they are tagged with."
               : // The mark rather than the word, since the word is already the row's
                 // subject — and it is what makes this row findable at a glance in a
                 // dialog of sentences.

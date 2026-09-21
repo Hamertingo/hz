@@ -12,6 +12,6 @@
 <plist version="1.0">
   <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>hz transcribes what you say into the composer. Audio is processed on this Mac and never leaves it.</string>
+    <string>Hyze Code transcribes what you say into the composer. Audio is processed on this Mac and never leaves it.</string>
   </dict>
 </plist>

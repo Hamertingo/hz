@@ -183,7 +183,7 @@ async fn serve_pipe(path: &Path, app: AppHandle) -> Result<()> {
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&name)
-        .with_context(|| format!("could not create {name} — is another hz serving it?"))?;
+        .with_context(|| format!("could not create {name} — is another Hyze Code serving it?"))?;
 
     loop {
         if let Err(e) = server.connect().await {
@@ -245,7 +245,7 @@ fn mismatch(theirs: u32) -> String {
     let cure = if theirs < PROTOCOL_VERSION {
         "run `hz update`"
     } else {
-        "update the hz app"
+        "update the Hyze Code app"
     };
 
     format!("this hz CLI speaks protocol v{theirs}, the app speaks v{PROTOCOL_VERSION} — {cure}")
@@ -416,7 +416,7 @@ async fn browse(request: hz_proto::BrowserRequest) -> Result<Response> {
     #[cfg(not(all(feature = "cef", target_os = "macos")))]
     {
         let _ = request;
-        Ok(Response::error("this build of hz has no browser"))
+        Ok(Response::error("this build of Hyze Code has no browser"))
     }
 }
 
@@ -865,7 +865,7 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
 fn attribute(prompt: &str, from: Option<&MessageSender>) -> String {
     match from {
         Some(from) => format!(
-            "[message from the hz session \"{}\" ({})]\n\n{prompt}",
+            "[message from the Hyze Code session \"{}\" ({})]\n\n{prompt}",
             from.title, from.session_id
         ),
         None => prompt.to_string(),
@@ -1015,7 +1015,7 @@ mod tests {
         let prompt = attribute("review is done", Some(&from));
 
         assert!(prompt.starts_with(
-            "[message from the hz session \"Fix the login redirect\" (abc-123)]\n\n"
+            "[message from the Hyze Code session \"Fix the login redirect\" (abc-123)]\n\n"
         ));
         assert!(prompt.ends_with("review is done"));
     }
@@ -1039,7 +1039,7 @@ mod tests {
     #[test]
     fn the_mismatch_names_whichever_side_is_behind() {
         assert!(mismatch(PROTOCOL_VERSION - 1).contains("hz update"));
-        assert!(mismatch(PROTOCOL_VERSION + 1).contains("update the hz app"));
+        assert!(mismatch(PROTOCOL_VERSION + 1).contains("update the Hyze Code app"));
         assert!(!mismatch(PROTOCOL_VERSION + 1).contains("hz update"));
     }
 

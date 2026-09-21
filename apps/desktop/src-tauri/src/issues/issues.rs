@@ -363,11 +363,11 @@ impl std::fmt::Display for IssueUnavailable {
         match self {
             Self::NotConnected => write!(
                 f,
-                "hz is not connected to an issue tracker. Connect Linear in hz's settings."
+                "Hyze Code is not connected to an issue tracker. Connect Linear in Hyze Code's settings."
             ),
             Self::Unauthorized => write!(
                 f,
-                "Linear rejected the stored key. Reconnect it in hz's settings."
+                "Linear rejected the stored key. Reconnect it in Hyze Code's settings."
             ),
             Self::Offline(detail) => write!(f, "Could not reach Linear: {detail}"),
             Self::Other(detail) => write!(f, "{detail}"),
@@ -420,7 +420,7 @@ async fn credentials_path() -> Result<PathBuf, String> {
     get_home_app_dir()
         .await
         .map(|dir| dir.join(CREDENTIALS_FILE))
-        .map_err(|e| format!("could not open the hz directory: {e}"))
+        .map_err(|e| format!("could not open the Hyze Code directory: {e}"))
 }
 
 async fn read_credentials() -> HashMap<String, String> {

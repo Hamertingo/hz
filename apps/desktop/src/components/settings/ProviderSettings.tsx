@@ -300,7 +300,7 @@ export default function ProviderSettings({
           // picker with nothing in it, so the sentence says what this screen is
           // for before drawing the ways to use it.
           <p className="max-w-prose text-ui text-muted-foreground">
-            No provider is connected, so the agent has no models to run. Connect one below — hz
+            No provider is connected, so the agent has no models to run. Connect one below — Hyze Code
             asks it which models it serves, and the composer's own picker fills in by itself.
           </p>
         )}
@@ -741,7 +741,7 @@ function KeyForm({
             what the agent redacts.
           </>
         ) : (
-          "hz asks the gateway which models it serves and registers them."
+          "Hyze Code asks the gateway which models it serves and registers them."
         )}
       </p>
 

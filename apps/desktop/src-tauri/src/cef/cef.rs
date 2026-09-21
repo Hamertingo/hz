@@ -35,7 +35,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub mod automation;
 
 const FRAMEWORK: &str = "Chromium Embedded Framework.framework";
-const HELPER: &str = "hz Helper.app/Contents/MacOS/hz Helper";
+const HELPER: &str = "Hyze Code Helper.app/Contents/MacOS/Hyze Code Helper";
 /// Fixed for now; a per-app free port and a per-session proxy come later.
 const DEBUG_PORT: i32 = 9333;
 

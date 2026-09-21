@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "hz",
+  "productName": "Hyze Code",
   "version": "0.20.7",
   "identifier": "com.hamerti.hz",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "hz",
+        "title": "Hyze Code",
         "width": 1200,
         "height": 800,
         "minWidth": 720,

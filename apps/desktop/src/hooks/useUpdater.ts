@@ -46,7 +46,7 @@ export type ManualCheck =
 export function updateFailure(manual: ManualCheck): string | null {
   if (manual === "install_failed") return "Couldn't install the update.";
   if (manual === "relaunch_failed")
-    return "Update installed. Quit and open hz again.";
+    return "Update installed. Quit and open Hyze Code again.";
   return null;
 }
 

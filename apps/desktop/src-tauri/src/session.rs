@@ -1382,7 +1382,7 @@ impl SessionManager {
         }
         if !parent.harness.names_a_cli() {
             bail!(
-                "this session runs on {}, which this version of hz can't drive — update hz",
+                "this session runs on {}, which this version of Hyze Code can't drive — update Hyze Code",
                 parent.harness.label()
             );
         }
@@ -1909,7 +1909,7 @@ impl Session {
             // and picking one would run a different agent inside somebody else's
             // conversation.
             Harness::Other(name) => {
-                bail!("this session runs on {name}, which this version of hz can't drive — update hz")
+                bail!("this session runs on {name}, which this version of Hyze Code can't drive — update Hyze Code")
             }
         }
     }

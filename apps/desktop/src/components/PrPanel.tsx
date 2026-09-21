@@ -84,7 +84,7 @@ const UNAVAILABLE: Record<PrUnavailable["kind"], string> = {
   // Short here and spelled out in Settings: the panel has one line, the
   // section has the account, its scopes and the command that fixes them.
   missing_permission:
-    "GitHub refused this read — the signed-in token is missing a permission hz needs. See Settings → Source control.",
+    "GitHub refused this read — the signed-in token is missing a permission Hyze Code needs. See Settings → Source control.",
   no_remote: "This directory has no GitHub remote.",
   other: "",
 };
@@ -291,7 +291,7 @@ export function MissingCli({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6">
       <p className="max-w-64 text-balance text-center text-ui text-muted-foreground">
         {kind === "no_cli"
-          ? "This branch's pull requests belong here. hz reads them through GitHub's CLI."
+          ? "This branch's pull requests belong here. Hyze Code reads them through GitHub's CLI."
           : "GitHub's CLI is here but not logged in."}
       </p>
 
@@ -315,7 +315,7 @@ export function MissingCli({
 
       {stillMissing && (
         <p className="max-w-64 text-balance text-center text-ui text-muted-foreground">
-          Still no <code className="text-foreground">gh</code> — hz looks where your login shell
+          Still no <code className="text-foreground">gh</code> — Hyze Code looks where your login shell
           looks.
         </p>
       )}

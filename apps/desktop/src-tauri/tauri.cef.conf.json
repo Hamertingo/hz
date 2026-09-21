@@ -6,11 +6,11 @@
   "bundle": {
     "macOS": {
       "files": {
-        "Frameworks/hz Helper.app": "target/cef-helpers/hz Helper.app",
-        "Frameworks/hz Helper (GPU).app": "target/cef-helpers/hz Helper (GPU).app",
-        "Frameworks/hz Helper (Renderer).app": "target/cef-helpers/hz Helper (Renderer).app",
-        "Frameworks/hz Helper (Plugin).app": "target/cef-helpers/hz Helper (Plugin).app",
-        "Frameworks/hz Helper (Alerts).app": "target/cef-helpers/hz Helper (Alerts).app"
+        "Frameworks/Hyze Code Helper.app": "target/cef-helpers/Hyze Code Helper.app",
+        "Frameworks/Hyze Code Helper (GPU).app": "target/cef-helpers/Hyze Code Helper (GPU).app",
+        "Frameworks/Hyze Code Helper (Renderer).app": "target/cef-helpers/Hyze Code Helper (Renderer).app",
+        "Frameworks/Hyze Code Helper (Plugin).app": "target/cef-helpers/Hyze Code Helper (Plugin).app",
+        "Frameworks/Hyze Code Helper (Alerts).app": "target/cef-helpers/Hyze Code Helper (Alerts).app"
       }
     }
   }
