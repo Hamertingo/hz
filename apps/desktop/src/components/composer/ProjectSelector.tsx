@@ -55,14 +55,14 @@ export default function ProjectSelector({
               type="button"
               variant="ghost"
               size="sm"
-              className="max-w-40 gap-1.5 px-1.5 text-ui text-muted-foreground"
+              className="min-w-0 max-w-40 gap-1.5 px-1.5 text-ui text-muted-foreground"
             >
               {/* Same slot and same size as the branch picker's glyph beside it —
                   the row reads as one set of controls or as three unrelated ones.
                   Filled, since lucide draws a folder as an outline and at 14px the
                   open shape reads as a shard rather than a folder. */}
               <Folder className="size-3.5 shrink-0 fill-current" />
-              <span className="truncate">
+              <span className="min-w-0 truncate">
                 {value ? basename(value) : "Attach project"}
               </span>
             </Button>

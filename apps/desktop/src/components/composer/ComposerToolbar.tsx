@@ -242,7 +242,7 @@ export default function ComposerToolbar({
                   something the CLI doesn't honour. State the real base instead. */}
               {useWorktree ? (
                 branches?.defaultBase && (
-                  <span className="truncate px-1.5 text-ui text-muted-foreground/60">
+                  <span className="min-w-0 truncate px-1.5 text-ui text-muted-foreground/60">
                     from {branches.defaultBase}
                   </span>
                 )
