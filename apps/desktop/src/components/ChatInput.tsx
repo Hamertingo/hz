@@ -174,9 +174,6 @@ type ChatInputProps = {
 };
 
 const MAX_ROWS = 10;
-/// The floor the empty state opens at. Two lines of room to start writing in,
-/// rather than a single line that reads as a search field.
-const NEW_TASK_MIN_ROWS = 2;
 // The empty state has no transcript above it to crowd, so the box can take a lot
 // more of the window before it starts scrolling. Capped rather than unbounded
 // because this composer is centered: past the window's height it would overflow
@@ -482,13 +479,12 @@ export default function ChatInput({
     el.style.height = "0px";
     // scrollHeight includes padding, so the row cap has to as well.
     const rows = isNewTask ? NEW_TASK_MAX_ROWS : MAX_ROWS;
-    // **A floor as well as a ceiling.** An empty box is one line tall, which is
-    // the right size for a field that follows a sentence and the wrong one for
-    // the window's front door: the empty state gets room to be written in, and
-    // keeps it until the text outgrows it.
-    const least = isNewTask ? NEW_TASK_MIN_ROWS : 1;
+    // **The box is as tall as its text, and no taller**, which is also what keeps
+    // dictation and Send on the text's own line: they are `items-end` in that row,
+    // so a floor under the height would put them at the bottom of an empty box and
+    // read as controls that had fallen off the message they belong to.
     const height = Math.min(el.scrollHeight, lineHeight * rows + chrome);
-    el.style.height = `${Math.max(height, lineHeight * least + chrome)}px`;
+    el.style.height = `${height}px`;
     card.style.height = "";
   }, [message, resizeTick, isNewTask]);
 
