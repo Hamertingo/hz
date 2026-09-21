@@ -18,15 +18,15 @@
 #
 #   resources/agent/bin/hz-agent   a launcher, and the path `binpath::bundled_mcode`
 #                               resolves — that name is the contract
-#   resources/agent/app/        the built tree, dependencies pruned to production
+#   resources/agent/app/        the runtime — `dist/` plus the packages esbuild
+#                               could not bundle, which means the natives
 #   resources/agent/install.json  what revision this was built from
 #
-# **Node is found, not shipped.** The runtime is ~50MB per platform and the
-# agent's own launcher resolves a `node` the way `binpath` resolves `mcode`:
-# PATH, then the directories a version manager installs into, then a login shell.
-# A release built on a machine whose node no reader has is the failure that
-# pinning used to cause — the installer wrote an absolute Homebrew cellar path
-# into the launcher, which works on the builder and nowhere else.
+# **Node ships, and it has to.** `better-sqlite3` is a native module, and a
+# native module is built for exactly one Node ABI — so the node that built this
+# tree is the only node that can run it, and it is copied in beside the launcher.
+# See the note further down for the measurement that made this a bug rather than
+# a preference.
 #
 # usage: scripts/vendor-agent.sh [--force]
 #
@@ -67,43 +67,92 @@ echo "staging into $DEST"
 rm -rf "$DEST"
 mkdir -p "$DEST/bin" "$DEST/app"
 
-# The source, less everything already built. `pnpm install --prod` inside the
-# copy is what keeps the bundle from carrying TypeScript, Vitest and Esbuild —
-# the toolchain that built the agent is not the agent.
-(cd "$AGENT" && tar -cf - --exclude=node_modules --exclude=dist --exclude=.git .) |
-  (cd "$DEST/app" && tar -xf -)
-
-# **The node that installed the source tree installs the copy too.** A native
-# module is built for one Node ABI, and both installs have to agree on it or the
-# staged tree carries a `better_sqlite3.node` the staged runtime refuses — which
-# is exactly how this broke the first time. `pin-node.mjs` wrote down which node
-# that was; its directory goes on `PATH` so the tooling underneath agrees.
+# **The runtime needs `dist/` and a handful of packages, and this used to stage
+# the whole production closure instead.** `pnpm install --prod` inside the copy
+# resolved every dependency of every workspace package: 36,848 files and 554MB,
+# of which the shipped CLI reads almost none — it runs `dist/`, which already
+# carries every JavaScript dependency inlined. What a bundle cannot carry is a
+# **native** module, because its `.node` is a binary and not a module — so this
+# stages exactly the packages esbuild marked `external`, read off the build's own
+# metafile rather than from a list here that would age.
+#
+# Cost of the old shape was not disk but **the installer**: NSIS and its Windows
+# counterpart extract file by file, so 32,077 files is minutes of progress bar
+# (`Extract: agent\app\node_modules\@smithy\core\…`), where ~800 is seconds.
 INSTALL_NODE="$(cat "$AGENT/.node-runtime" 2>/dev/null || command -v node)"
 [ -x "$INSTALL_NODE" ] || { echo "no node to stage (looked at $INSTALL_NODE)" >&2; exit 1; }
 
-# `onlyBuiltDependencies` in the tree's own package.json is what lets the two
-# native modules build; nothing here needs to override it.
-(cd "$DEST/app" && PATH="$(dirname "$INSTALL_NODE"):$PATH" pnpm install --prod --frozen-lockfile)
-
-# The built JS is not a dependency, so it comes over after the install decides
-# what the production tree is.
+# The built JS is the tree. Its own `package.json` rides inside `dist/`, which is
+# what tells node the chunks are ESM.
 cp -R "$AGENT/dist" "$DEST/app/dist"
 
-# **The source was scaffolding and goes.** `pnpm install` needed the workspace
-# manifests to resolve the tree; the runtime needs `dist/`, which the build
-# bundled, and the packages npm still owns. Keeping the rest cost ~70MB of
-# TypeScript nobody in a bundle will ever read — and nothing points back at it:
-# the only symlinks under `node_modules` are the `.bin` shims, and the shipped
-# CLI never reaches for a workspace path.
-#
-# The licences stay, because what is redistributed still has to carry them.
-rm -rf \
-  "$DEST/app/packages" \
-  "$DEST/app/third_party" \
-  "$DEST/app/scripts" \
-  "$DEST/app/test" \
-  "$DEST/app/docs" \
-  "$DEST/app/examples"
+"$INSTALL_NODE" - "$AGENT" "$DEST/app" <<'STAGE_EXTERNALS'
+const fs = require('node:fs');
+const path = require('node:path');
+
+const [agent, app] = process.argv.slice(2);
+const meta = JSON.parse(fs.readFileSync(path.join(agent, 'dist/metafile.json'), 'utf8'));
+
+// esbuild lists node's own modules as external too; only npm packages can be
+// missing from a bundle, and only those need a directory beside it.
+const builtin = /^(node:)?(fs|path|os|util|crypto|stream|events|buffer|net|http|http2|https|tls|zlib|url|assert|child_process|worker_threads|perf_hooks|async_hooks|module|process|readline|string_decoder|tty|dns|dgram|vm|v8|inspector|constants|timers|querystring|punycode|sys|domain|repl|cluster|trace_events|diagnostics_channel|wasi|sea|sqlite|console)(\/.*)?$/;
+
+const roots = new Set();
+for (const output of Object.values(meta.outputs ?? {})) {
+  for (const imported of output.imports ?? []) {
+    if (imported.external && !builtin.test(imported.path)) {
+      // `@scope/name/sub` and `name/sub` both name the package.
+      const parts = imported.path.split('/');
+      roots.add(imported.path.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]);
+    }
+  }
+}
+
+// A package's own dependencies are not bundled either, and nothing in the
+// metafile says so — `bindings` is what resolves `better_sqlite3.node`, and it
+// arrives as a dependency of a package that was marked external. So the walk
+// follows each manifest, which is the only statement of who needs whom.
+//
+// **A package for another platform is skipped**, which is the statement its own
+// manifest makes: `clipboard` installs ten variants and a bundle needs the one
+// the runner is on. `os`/`cpu` are the two fields that carry it.
+const copied = new Set();
+const copy = (name) => {
+  if (copied.has(name)) return;
+  copied.add(name);
+  const from = path.join(agent, 'node_modules', name);
+  if (!fs.existsSync(from)) return; // an optional dependency this platform did not install
+  const manifest = path.join(from, 'package.json');
+  if (!fs.existsSync(manifest)) return;
+  const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  const oneOf = (field, value) => !pkg[field] || [].concat(pkg[field]).includes(value);
+  if (!oneOf('os', process.platform) || !oneOf('cpu', process.arch)) {
+    copied.delete(name); // not for this runner, and its dependents still are
+    return;
+  }
+
+  const to = path.join(app, 'node_modules', name);
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.cpSync(from, to, { recursive: true, dereference: true });
+
+  for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) copy(dep);
+};
+
+for (const name of roots) copy(name);
+
+// The platform halves of a package installed as one-of-many — `clipboard` ships
+// a `-darwin-arm64` beside it — are chosen by the install, so whatever is on
+// disk here is what belongs on disk there.
+for (const entry of fs.readdirSync(path.join(agent, 'node_modules')).filter((n) => n.startsWith('@'))) {
+  for (const sub of fs.readdirSync(path.join(agent, 'node_modules', entry))) {
+    if (roots.has(`${entry}/${sub}`)) continue;
+    if (![...roots].some((r) => `${entry}/${sub}`.startsWith(`${r}-`))) continue;
+    copy(`${entry}/${sub}`);
+  }
+}
+
+console.log(`staged ${copied.size} package(s): ${[...copied].sort().join(', ')}`);
+STAGE_EXTERNALS
 
 # **The runtime ships with the agent, and it has to.** Two reasons, and the
 # second is what made this a bug rather than a preference:
@@ -119,8 +168,47 @@ rm -rf \
 #
 # So the node that ran `pnpm install` is copied in beside the launcher, and that
 # is the node the bundle uses. `pin-node.mjs` is what records which one that was.
+#
+# **And it has to be a node that travels.** `cp` of one file is only enough for a
+# node built to stand alone — the tarball from nodejs.org, which is what
+# `actions/setup-node` installs. A Homebrew node is not that: measured here, its
+# `bin/node` is 50KB and links `libnode.137.dylib` plus libuv, simdjson, brotli
+# and c-ares **by absolute `/opt/homebrew/opt/…` path**, so the copy resolves to
+# nothing on any other machine — and the failure surfaces as an installer that
+# finished, an app that opens, and an agent that never answers. So the copy is
+# run once, here, where the cure is still cheap to apply.
 cp "$INSTALL_NODE" "$DEST/bin/node"
 chmod +x "$DEST/bin/node"
+if ! "$DEST/bin/node" -e 'process.exit(0)' >/dev/null 2>&1; then
+  cat >&2 <<EOF
+the node at $INSTALL_NODE cannot be shipped: it does not run from the copy.
+
+It is almost certainly a Homebrew node, which is a thin binary plus dylibs at
+absolute paths. Stage a self-contained one instead — the build from nodejs.org,
+or whatever \`actions/setup-node\` installs — by putting it first on PATH and
+re-running this script.
+EOF
+  exit 1
+fi
+
+# **And the native module has to load under it.** A node that runs is not the
+# same as a node that can load what was built beside it: `better-sqlite3` is
+# compiled for one ABI, and `pnpm install` does not rebuild a module that is
+# already there — so a tree installed under one node and staged under another
+# carries a `.node` the runtime refuses, as `NODE_MODULE_VERSION 147 … requires
+# 137`. That is the same trap as the one above, one step further along, and it
+# surfaces identically: an installer that finished, an app that opens, an agent
+# that never answers.
+#
+# The check opens a database and not merely the module: `better-sqlite3` binds
+# its addon on the first instance, so `require` alone succeeds against a binary
+# the agent will refuse a moment later.
+if ! (cd "$DEST/app" && "$DEST/bin/node" -e "new (require('better-sqlite3'))(':memory:')" >/dev/null 2>&1); then
+  echo "the native SQLite module in $DEST does not load under the node beside it" >&2
+  echo "rebuild it with that node: (cd '$AGENT' && rm -rf node_modules/better-sqlite3/build && \\" >&2
+  echo "  PATH=\"$(dirname "$INSTALL_NODE"):\$PATH\" pnpm rebuild better-sqlite3)" >&2
+  exit 1
+fi
 
 cat > "$DEST/bin/hz-agent" <<'LAUNCHER'
 #!/bin/sh

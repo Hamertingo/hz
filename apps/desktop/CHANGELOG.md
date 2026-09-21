@@ -5,6 +5,40 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.9
+
+### Changed
+
+- **The bundle carries the agent, not its build tree.** Staging ran
+  `pnpm install --prod` inside the copy, which resolved every dependency of
+  every workspace package: 32,077 files and 524MB, where the shipped CLI runs
+  `dist/` — 771 files that already have every JavaScript dependency inlined. What
+  a bundle cannot carry is a native module, so the stage now copies exactly the
+  packages esbuild marked `external`, read off the build's own metafile. The tree
+  is **1,289 files and 205MB**, and that number is not about disk: NSIS extracts
+  file by file, so installing was minutes of `Extract:
+  agent\app\node_modules\@smithy\core\…` and is now seconds. Verified by
+  running the staged agent, not by trusting the copy — `initialize` and
+  `session/new` both answered from the trimmed tree.
+
+### Fixed
+
+- **The installer carries the app's icon.** `bundle.windows` was empty, so NSIS
+  drew its own defaults while installing — the title bar, the Add/Remove Programs
+  entry and the uninstaller showed Tauri's mark rather than this app's.
+  `bundle.icon` had always covered the installed app; nothing covered the
+  installer.
+- **The Windows updater entry is written.** The `jq` that builds it used
+  `windows-x86_64` as a bare object key, which jq cannot parse — the step failed
+  with a compiler error and the release published macOS alone. It never ran
+  before: the artifact guard above it failed first, every time.
+- **Staging refuses a runtime it cannot ship.** The node copied beside the
+  launcher was copied without being run, and `better-sqlite3` is compiled for one
+  ABI — so a Homebrew node (a thin binary plus dylibs at absolute paths) or a
+  module built under a different major produced a bundle whose agent never
+  answers. Both are checked now, with the cure in the message, because the
+  failure they prevent is an app that opens and a session that does nothing.
+
 ## 0.20.8
 
 ### Fixed
