@@ -551,12 +551,14 @@ async fn start_session(
     let client = RpcClient::new(stdin);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let pending: PendingPermissions = Default::default();
+    let stderr_tail: StderrTail = Default::default();
 
     let reader = ReaderHandles {
         client: client.clone(),
         session_id: session_id.to_string(),
         session_cwd: session_cwd.to_string(),
         pending: pending.clone(),
+        stderr_tail: stderr_tail.clone(),
         app: app.clone(),
     };
 
@@ -583,7 +585,7 @@ async fn start_session(
     });
 
     tokio::spawn(async move {
-        if let Err(error) = read_stderr(Mcode, stderr).await {
+        if let Err(error) = read_mcode_stderr(stderr, stderr_tail).await {
             eprintln!("Failed to read mcode stderr: {error}");
         }
     });
@@ -1174,7 +1176,68 @@ struct ReaderHandles {
     session_id: String,
     session_cwd: String,
     pending: PendingPermissions,
+    /// The child's most recent stderr, for the turn it dies in. See
+    /// [`stderr_tail_note`].
+    stderr_tail: StderrTail,
     app: AppHandle,
+}
+
+/// How many of the child's last stderr lines are kept for a turn that fails.
+///
+/// A dying Node process prints its stack and nothing else, and that stack is the
+/// only account of *why* it died. Twelve lines is one Node crash with its
+/// message — enough to name the file and the reason, short enough that a loop
+/// printing every frame cannot push the reason out.
+const STDERR_TAIL_LINES: usize = 12;
+
+/// The child's recent stderr, shared between the task that drains it and the
+/// read loop that reports the turn it died in.
+type StderrTail = Arc<Mutex<std::collections::VecDeque<String>>>;
+
+/// The child's last words, as something a transcript row can carry.
+///
+/// **A bundle has no terminal.** The stderr drain prints to one for a dev run,
+/// where the stack is right there to scroll to — but a reader running the built
+/// app was told only that the agent exited, with the reason unreachable on their
+/// machine. This puts it where the failure is.
+fn stderr_tail_note(tail: &StderrTail) -> Option<String> {
+    let held = tail.lock().expect("stderr tail mutex poisoned");
+    if held.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Its last output:\n\n```\n{}\n```",
+        held.iter().cloned().collect::<Vec<_>>().join("\n")
+    ))
+}
+
+/// Drains the child's stderr, keeping the tail of it for a turn that dies.
+///
+/// The printing is [`read_stderr`](crate::harness::read_stderr)'s, unchanged —
+/// and the buffer is the half a *bundle* needs, where the printed line goes
+/// nowhere anybody can read.
+async fn read_mcode_stderr(
+    stderr: tokio::process::ChildStderr,
+    tail: StderrTail,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut lines = tokio::io::BufReader::new(stderr).lines();
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        eprintln!("[{} stderr] {line}", Mcode.wire_name());
+
+        let mut held = tail.lock().expect("stderr tail mutex poisoned");
+        if held.len() == STDERR_TAIL_LINES {
+            held.pop_front();
+        }
+        held.push_back(line);
+    }
+
+    Ok(())
 }
 
 /// How long a held text delta waits for company before it goes out.
@@ -1600,11 +1663,18 @@ async fn read_stdout(
                 &handles.session_id, Mcode, &queued, &seq, &events, &handles.app,
             )
             .await;
+            // The reason, carried where the failure is. A bundled app has no
+            // terminal to read the child's stack from, so without this the row
+            // says only that the agent exited — see [`stderr_tail_note`].
+            let detail = stderr_tail_note(&handles.stderr_tail);
             let closed = mapper.synthesize(AgentEventPayload::TurnCompleted {
                 status: crate::events::TurnStatus::Error,
                 stop_reason: Some("mcode exited".to_string()),
                 auth_failed: false,
-                final_text: Some("mcode exited before the turn finished.".to_string()),
+                final_text: Some(match detail {
+                    Some(detail) => format!("mcode exited before the turn finished.\n\n{detail}"),
+                    None => "mcode exited before the turn finished.".to_string(),
+                }),
                 usage: None,
                 duration_ms: None,
                 head: None,
