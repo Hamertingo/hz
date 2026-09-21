@@ -72,14 +72,31 @@ jobs:
           toolchain: 1.98.1
           components: clippy
 
-      - uses: actions/cache@v4
+      # **Restore and save are separate steps, and the save runs on failure.**
+      # That is the whole reason this job is not unbearably slow. `actions/cache`
+      # writes its entry from a post-step that is skipped when the job fails — so
+      # while every Windows run failed, no `windows-cargo` entry was ever
+      # created, and every run compiled the whole dependency tree from scratch.
+      # Measured: four runs, twenty minutes each, none of them warm.
+      #
+      # The expensive thing here is the tree, and a run that died on a `cfg` typo
+      # has still built all of it. `warm-cache.yml` makes the same bargain on
+      # macOS, for the same reason.
+      - id: paths
+        shell: bash
+        run: |
+          {
+            echo 'paths<<EOF'
+            printf '%s\n' '~/.cargo/registry/index' '~/.cargo/registry/cache' \
+              '~/.cargo/registry/src' '~/.cargo/git/db' \
+              'apps/desktop/src-tauri/target'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - id: cache
+        uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/registry/src
-            ~/.cargo/git/db
-            apps/desktop/src-tauri/target
+          path: ${{ steps.paths.outputs.paths }}
           key: windows-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
           restore-keys: windows-cargo-
 
@@ -151,3 +168,11 @@ jobs:
             echo "::error::no *-setup.exe under $APP"
             exit 1
           }
+
+      # Last, and `always()`, which is the point: a red run is still a run that
+      # compiled the dependency tree, and that tree is the twenty minutes.
+      - if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.paths.outputs.paths }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
