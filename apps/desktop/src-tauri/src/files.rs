@@ -38,7 +38,7 @@ use ts_rs::TS;
 use crate::attachments::{image_mime, MAX_IMAGE_BYTES};
 use crate::docs::{read_capped, TOO_LARGE};
 use crate::Fail;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// One row in the picker. `path` is relative to the indexed directory, which is
 /// also what gets typed into the prompt — the CLI resolves `@path` against the

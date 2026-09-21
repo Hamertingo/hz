@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::{fs, sync::Notify};
 use ts_rs::TS;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// The CEF version the `cef` crate in Cargo.toml binds. Framework and
 /// bindings have to agree, so bumping the crate means re-pinning [`ARM64`]

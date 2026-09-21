@@ -19,7 +19,7 @@ use rubato::{
 };
 use serde::Serialize;
 use ts_rs::TS;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// What the models take. Not negotiable — a model fed 48kHz transcribes it as
 /// speech at three times the speed and answers with nonsense rather than an

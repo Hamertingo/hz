@@ -14,7 +14,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use ts_rs::TS;
 
 use crate::analytics;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 const STABLE_MANIFEST: &str = "https://hamertingo.github.io/hz/stable.json";
 const BETA_MANIFEST: &str = "https://hamertingo.github.io/hz/beta.json";

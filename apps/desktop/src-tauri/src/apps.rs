@@ -16,7 +16,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::harness::Harness;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// Which run of the menu an app belongs to. Not cosmetic: "open in Cursor" and
 /// "open in Ghostty" are different asks, and a flat list of both reads as one.

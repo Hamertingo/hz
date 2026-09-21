@@ -16,7 +16,7 @@ use ts_rs::TS;
 
 use crate::binpath;
 use crate::git;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// Where a check ended up, flattened from the two different shapes GitHub
 /// reports one in. Callers branch on this and never on the wire's own strings.

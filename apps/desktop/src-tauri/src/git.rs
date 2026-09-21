@@ -12,7 +12,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::Fail;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// What the composer's branch picker needs to render and guard itself.
 #[derive(Debug, Clone, Default, Serialize, TS)]

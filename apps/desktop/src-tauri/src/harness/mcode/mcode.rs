@@ -64,7 +64,7 @@ use tokio::{
 };
 
 use rpc::{Incoming, RpcClient};
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// ACP protocol version. mcode answers `1` to `initialize`, measured.
 const PROTOCOL_VERSION: u64 = 1;
