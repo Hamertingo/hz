@@ -298,27 +298,43 @@ pub async fn list_open_apps() -> Vec<ExternalApp> {
 /// parses as a flag, which `--` ends.
 #[tauri::command]
 pub async fn open_in_app(app_path: String, path: String) -> Result<(), String> {
-    let out = tokio::process::Command::new("open")
-        .arg("-a")
-        .arg(&app_path)
-        .arg("--")
-        .arg(&path)
-        .output()
-        .await
-        .map_err(|err| format!("could not run open: {err}"))?;
-
-    if out.status.success() {
-        return Ok(());
+    // Guarded at runtime like its two neighbours rather than left to the list
+    // being empty, because that is a fact about today's [detect] and not a fact
+    // about this function: unguarded, the one path to here on Windows would
+    // spawn a binary called `open` that does not exist, and report whatever
+    // CreateProcess says about it. `open -a` names a bundle outright and has no
+    // counterpart that does the same, which is why the list is macOS-only in the
+    // first place.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app_path, path);
+        Err("Opening in another app is macOS only. Copy the path instead.".to_string())
     }
 
-    // `open`'s own sentence names the cure — a moved bundle, a directory that
-    // is gone — where the exit code names nothing.
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    Err(if stderr.is_empty() {
-        format!("could not open {path}")
-    } else {
-        stderr
-    })
+    #[cfg(target_os = "macos")]
+    {
+        let out = tokio::process::Command::new("open")
+            .arg("-a")
+            .arg(&app_path)
+            .arg("--")
+            .arg(&path)
+            .output()
+            .await
+            .map_err(|err| format!("could not run open: {err}"))?;
+
+        if out.status.success() {
+            return Ok(());
+        }
+
+        // `open`'s own sentence names the cure — a moved bundle, a directory that
+        // is gone — where the exit code names nothing.
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("could not open {path}")
+        } else {
+            stderr
+        })
+    }
 }
 
 /// Terminal.app, and never the terminal the reader picked in the panel beside
