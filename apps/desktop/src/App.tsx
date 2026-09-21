@@ -95,6 +95,9 @@ import {
 } from "@/lib/groups";
 import ComposerToolbar from "@/components/composer/ComposerToolbar";
 import ContextMeter from "@/components/composer/ContextMeter";
+import PermissionSelector, {
+  offersPermissionModes,
+} from "@/components/composer/PermissionSelector";
 import DictateControl from "@/components/composer/DictateControl";
 import AppShell from "@/components/layout/AppShell";
 import SessionHeader from "@/components/layout/SessionHeader";
@@ -2979,6 +2982,15 @@ function App() {
               />
             ) : null
           }
+          permission={
+            offersPermissionModes(harness) ? (
+              <PermissionSelector
+                harness={harness}
+                value={permissionMode}
+                onChange={setPermissionMode}
+              />
+            ) : null
+          }
           // **Placed by the composer, not the toolbar.** The reading belongs on the
           // row under the text, and which row that is changes with the state: the
           // toolbar is above the input before a session exists and under it after.
@@ -3007,8 +3019,6 @@ function App() {
               onRefreshModels={refreshModels}
               onOpenProviderSettings={openProviderSettings}
               loadingModels={loadingModels}
-              permissionMode={permissionMode}
-              onPermissionModeChange={setPermissionMode}
               projects={spaceProjects}
               projectPath={projectPath}
               onSelectProject={handleSelectProject}

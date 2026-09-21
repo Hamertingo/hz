@@ -81,6 +81,10 @@ type ChatInputProps = {
   /// How many prompts are waiting. Only decides whether Esc is bound — the rows
   /// themselves are drawn by the transcript, above this component.
   queuedCount?: number;
+  /// How much rope the agent gets. Placed with the reading rather than among the
+  /// pickers: both are about *how this runs* rather than what it is, and the row
+  /// under the text is where the composer's least-touched answers go.
+  permission?: ReactNode;
   /// What the session has spent of its window, drawn on the row under the text —
   /// where a reading about this turn belongs, and the one place in both states that
   /// is always below the input. The empty composer puts it on the send hint's own
@@ -223,6 +227,7 @@ export default function ChatInput({
   onCancelRecording,
   queuedCount = 0,
   meter,
+  permission,
   toolbar,
   dictation,
   dictating = false,
@@ -1256,7 +1261,10 @@ export default function ChatInput({
             </div>
           )}
 
-          {meter && <span className="ml-auto shrink-0">{meter}</span>}
+          {/* Both at the far end, in the order they are read: what the agent may
+              do, then what it has spent doing it. */}
+          {permission && <span className="ml-auto shrink-0">{permission}</span>}
+          {meter && <span className={cn("shrink-0", !permission && "ml-auto")}>{meter}</span>}
         </div>
 
         {runnerLive && (

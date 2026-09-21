@@ -3,9 +3,6 @@ import { Plus } from "lucide-react";
 import BranchSelector from "@/components/composer/BranchSelector";
 import BranchSwitchDialog from "@/components/composer/BranchSwitchDialog";
 import ModelSelector from "@/components/composer/ModelSelector";
-import PermissionSelector, {
-  offersPermissionModes,
-} from "@/components/composer/PermissionSelector";
 import ProjectSelector from "@/components/composer/ProjectSelector";
 import RepoSelector from "@/components/composer/RepoSelector";
 import AgentPicker from "@/components/composer/AgentPicker";
@@ -15,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
-  ApprovalPolicy,
   BranchList,
   Effort,
   Harness,
@@ -44,8 +40,6 @@ type ComposerToolbarProps = {
   onOpenProviderSettings?: () => void;
   loadingModels: boolean;
 
-  permissionMode: ApprovalPolicy;
-  onPermissionModeChange: (mode: ApprovalPolicy) => void;
 
   projects: Project[];
   projectPath: string | null;
@@ -114,8 +108,6 @@ export default function ComposerToolbar({
   onRefreshModels,
   onOpenProviderSettings,
   loadingModels,
-  permissionMode,
-  onPermissionModeChange,
   projects,
   projectPath,
   onSelectProject,
@@ -255,16 +247,6 @@ export default function ComposerToolbar({
             </>
           )}
         </>
-      )}
-
-      {/* Last of the pickers: it is the one control here most sessions set once
-          and never touch, so it sits furthest from where the eye lands. */}
-      {offersPermissionModes(harness) && (
-        <PermissionSelector
-          harness={harness}
-          value={permissionMode}
-          onChange={onPermissionModeChange}
-        />
       )}
 
     </div>
