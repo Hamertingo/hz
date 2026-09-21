@@ -208,7 +208,6 @@ function ModelSwitchRow({
   const efforts = stated?.efforts ?? [];
   const effortDefault = stated?.defaultEffort ?? null;
   const variants = row.variants.flatMap((variant) => (variant.variant ? [variant.variant] : []));
-  const { acceptsImages, secondary } = model;
 
   return (
     <div className="flex flex-col">
@@ -318,14 +317,19 @@ function ModelSwitchRow({
             </Detail>
           )}
 
+          {/* **No image row, and that is not an omission.** `accepts_images` is
+              the agent's own answer rather than the model's — mcode declares
+              `promptCapabilities.image: false` and its ACP adapter *throws* on an
+              image content block — so it is `false` on every row here, and a line
+              saying so would read as a claim about the model. A vision model is
+              still reached the long way: an attached image goes in as a path and
+              the agent reads the file. */}
+
           {/* The wire lists a variant as a choice of its own — `minimax-m3` and
               `minimax-m3 · thinking` — so which ones a row carries is the
               answer to why the picker shows two entries for one model. */}
           {variants.length > 0 && <Detail label="Variants">{variants.join(" · ")}</Detail>}
 
-          <Detail label="Images">{acceptsImages ? "Yes" : "No"}</Detail>
-
-          {secondary && <Detail label="In picker">Under More models</Detail>}
         </dl>
       )}
     </div>
