@@ -5,6 +5,18 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.8
+
+### Fixed
+
+- **The Windows release publishes.** 0.20.7 came out for macOS alone: the job
+  that uploads the installer expected a `*.nsis.zip` beside the setup.exe, which
+  is the layout Tauri **v1** produced — this bundle is v2, where the setup.exe
+  *is* the updater artifact and carries its own signature. The guard failed a
+  bundle that was complete, and the manifest job never ran. Nothing about the
+  app changed here; the tag exists so the release could be cut again without
+  moving one that had already been pushed.
+
 ## 0.20.7
 
 ### Added
