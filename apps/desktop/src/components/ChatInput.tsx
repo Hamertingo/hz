@@ -859,20 +859,6 @@ export default function ChatInput({
         {/* Pulled left by the toolbar's own `px-1` plus the ghost button's 6px
             icon inset, so the `+` glyph — not the button box — lands on the
             same edge as the text below it. */}
-        {/* **The row has its own scroll, and that is not decoration.** A window
-            narrower than the toolbar's own content — ~860px with every control
-            showing — used to widen the form it sits in, and the form widened the
-            column the empty state is centred in. That column carries
-            `overflow-y-auto`, whose computed `overflow-x` is `auto` too, so the
-            overflow surfaced as a horizontal scrollbar along the *bottom of the
-            column* rather than beside the row that caused it. Containing it here
-            costs the row a scroll and stops it at its own edge. The bar is not
-            drawn: a toolbar is read by its controls, and a scrollbar under them
-            is chrome for a gesture the trackpad already does. */}
-        {isNewTask && (
-          <div className="-ml-2.5 scrollbar-none overflow-x-auto pb-1.5">{toolbar}</div>
-        )}
-
         {/* Directly above the card and with no gap: the row runs on past its own
             reserve and behind the card, which is the opaque thing that hides it.
             Withheld entirely while the live-work strip is up — the two want the
@@ -945,16 +931,22 @@ export default function ChatInput({
           <div
             ref={cardRef}
             className={cn(
-              "relative rounded-2xl transition-colors",
-              // `--edge-surface` and `--shadow-surface` are one pair, and exactly
-              // one of them is drawn per mode. Light gets the shadow and a
-              // transparent edge — under a shadow tuned this crisp, a border is a
-              // second line saying the same thing. Dark gets the edge and no
+              "relative rounded-2xl border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl transition-colors",
+              // **`--edge-surface` and `--shadow-surface` are one pair, and
+              // exactly one of them is drawn per mode.** Light gets the shadow
+              // and a transparent edge — under a shadow tuned this crisp, a border
+              // is a second line saying the same thing. Dark gets the edge and no
               // shadow: a shadow under a dark card falls on something already
               // darker than itself, and the card is glass there, so being lighter
               // than the page does not draw the box on its own.
-              !isNewTask &&
-                "border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl",
+              //
+              // **The box is drawn before a session exists too**, which is where
+              // this differs from what it started as: the centred composer used to
+              // be no card at all, with its controls stacked above the input, and
+              // it read as a column of loose controls that happened to have a text
+              // field under them. What the reader is looking at — what is pinned,
+              // the text, the controls that decide where it goes — is one thing, so
+              // it is one rectangle.
             )}
           >
             {/* Covers the card rather than replacing anything, so the text and
@@ -979,7 +971,7 @@ export default function ChatInput({
                 when an image is actually attached rather than standing under every
                 prompt this model is asked. */}
             {attachments.length > 0 && (
-              <div className={cn("pt-3", isNewTask ? "px-0" : "px-3")}>
+              <div className="px-3 pt-2.5">
                 <AttachmentTray
                   attachments={attachments}
                   onRemove={(path) => removeAttachment(sessionId, path)}
@@ -988,14 +980,16 @@ export default function ChatInput({
               </div>
             )}
 
-            {/* Controls ride the text's own row, always. Measuring the box and
-                dropping them to a second row once the text wrapped was tried
-                and reverted: the measurement lands a frame after the keystroke,
-                so the row appeared and vanished as the text crossed a line
-                boundary, and every wrap flickered. `items-end` is what makes
-                one row read correctly at both heights — at one line the buttons
-                sit beside the text, and past it they stay at the bottom. */}
-            <div className={cn("flex items-end gap-1 py-3", isNewTask ? "px-0" : "px-3")}>
+            {/* The text's own row, and only the text's: dictation and the send
+                button are what belong beside a draft. Every other control is on
+                the row under this one — measuring the box and moving them there
+                once the text wrapped was tried and reverted, because the
+                measurement lands a frame after the keystroke and every wrap
+                flickered; a row that is fixed needs no measurement. `items-end`
+                is what makes one row read correctly at both heights: at one line
+                the buttons sit beside the text, and past it they stay at the
+                bottom. */}
+            <div className="flex items-end gap-1 px-3 pt-3 pb-1.5">
               <div className="relative min-w-0 flex-1">
                 <textarea
                   // Registered as well as held, so dictation can hand focus
@@ -1206,10 +1200,23 @@ export default function ChatInput({
 
               {controls}
             </div>
-          </div>
+
+        {/* **One row per kind of thing, inside the box.** The controls used to
+            ride the text's own row, which made the textarea and the toolbar
+            compete for one width — a long model name shortened the field the
+            reader was typing in. The text has the card's full width now, the
+            controls have the full width under it, and neither can take the
+            other's. Measured-and-reflow was the rejected alternative here and
+            still is: the row is fixed, so nothing flips a frame late.
+
+            It wraps rather than scrolls, so no control is ever hidden behind a
+            gesture — `ModelSelector`'s label is the one item whose length nobody
+            chooses, and it truncates. */}
+        <div className="scrollbar-none flex flex-wrap items-center gap-0.5 px-3 pb-2">
+          {toolbar}
         </div>
 
-        {isNewTask ? (
+        {isNewTask && !menuOpen && (
           // Gone while a picker is open, and the list sitting over this row is
           // the smaller half of why: Enter completes the highlighted row there
           // rather than sending, and the picker draws its own ↵ hint saying so.
@@ -1221,19 +1228,16 @@ export default function ChatInput({
           // to the list and there is nothing in the list to send. Omitting a
           // hint costs less than drawing one that looks like it means the row
           // above it.
-          !menuOpen && (
-            <div className="flex items-center gap-1 pt-2 text-ui text-muted-foreground/60">
-              Press <CornerDownLeft className="size-3" strokeWidth={2} /> to send
-              {/* Named here because it is the one place the press's *outcome*
-                  changes: one prompt, several sessions, each in its own
-                  worktree. The trigger beside it already says how many. */}
-              {canFanOut(fanOut) && <> to {fanOut.length} models</>}
-            </div>
-          )
-        ) : (
-          // Its own scroll, for the reason the new-task row above states.
-          <div className="scrollbar-none overflow-x-auto pt-1.5">{toolbar}</div>
+          <div className="flex items-center gap-1 px-3 pb-2 text-ui text-muted-foreground/60">
+            Press <CornerDownLeft className="size-3" strokeWidth={2} /> to send
+            {/* Named here because it is the one place the press's *outcome*
+                changes: one prompt, several sessions, each in its own worktree.
+                The trigger beside it already says how many. */}
+            {canFanOut(fanOut) && <> to {fanOut.length} models</>}
+          </div>
         )}
+          </div>
+        </div>
 
         {runnerLive && (
           <ComposerMascot

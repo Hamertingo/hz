@@ -7,27 +7,30 @@ import type { Attachment } from "@/types/events";
 
 /// What is pinned to the composer, drawn above the text it will be sent with.
 ///
-/// **Two presentations for two things that travel differently.** An image is
-/// shown as pixels, because a thumbnail is the only label a screenshot has; a
-/// file is handed to the model as a path, so it gets the row a path deserves —
-/// the type glyph and the name. Neither is a "file preview": a tile says *this is
+/// **Two shapes for two things that travel differently.** An image is shown as
+/// pixels, because a thumbnail is the only label a screenshot has; a file is
+/// handed to the model as a path, so it gets a chip a path deserves — the type
+/// glyph and the name. Neither is a "file preview": a tile says *this is
 /// attached*, and opening it is the job of the editor the reader already has.
 ///
-/// **The tray is the whole of the attachment's presence, and that is a reversal.**
+/// **The two are sized apart on purpose, and the trade is deliberate.** A
+/// thumbnail is 36px, not the 56px a gallery would give it: this row is part of
+/// the composer, and a picture big enough to *read* here would push the text it
+/// belongs to down the window. A file's chip is one line tall, because a name has
+/// nothing to show and a box around it was only pretending otherwise.
+///
+/// **The tray is the whole of an attachment's presence, and that is a reversal.**
 /// An attachment used to be a token *inside* the draft — `📎 name size`, painted
 /// as a pill by the mirror under the text, deleted with backspace — on the
-/// argument that a chip in the message beats a list beside it. It reads worse
-/// than it argues: the token is part of the prompt the model is given, so a photo
-/// came back from the transcript as a colour emoji in the middle of a sentence,
-/// and the size rode in the text where nobody could edit it. The reader asked for
-/// the picture instead, so the picture is what is drawn.
+/// argument that a chip in the message beats a list beside it. It reads worse than
+/// it argues: the token is part of the prompt the model is given, so a photo came
+/// back from the transcript as a colour emoji in the middle of a sentence, and the
+/// size rode in the text where nobody could edit it.
 ///
-/// Deleting is the `×`, and it is one gesture in the one place the reader is
-/// looking. Hover reveals it — a full tray would otherwise be a row of crosses —
-/// and it stays reachable by keyboard, which `opacity` preserves and `hidden` does
-/// not.
-///
-/// Both tiles are the same height so a mixed tray still reads as one row.
+/// Deleting is the `×`, in the one place the reader is looking: on the picture's
+/// own corner for an image, inline for a name, and only for the tile under the
+/// cursor. It stays reachable by keyboard, which `group-hover` plus
+/// `focus-visible` gives and `hidden` would not.
 export default function AttachmentTray({
   attachments,
   onRemove,
@@ -47,52 +50,59 @@ export default function AttachmentTray({
   const warn = !modelTakesImages && attachments.some((attachment) => attachment.isImage);
 
   return (
-    // Spacing from the composer is the caller's, which is the only side that
-    // knows what sits below it.
-    <ul className="flex flex-wrap gap-2">
-      {attachments.map((attachment) => (
-        <li
-          key={attachment.path}
-          // `group` so one hover lights the remove button on this tile alone.
-          // Deliberately no `title`: the path is the one thing the reader already
-          // knows — they picked the file a second ago — so a tooltip would be the
-          // system reporting back what they just did.
-          className="group relative"
-        >
-          {attachment.isImage && attachment.preview ? (
-            <img
-              src={attachment.preview}
-              alt={attachment.name}
-              className="size-14 rounded-lg border border-hairline-strong bg-card object-cover"
-            />
-          ) : (
-            <div className="flex h-14 max-w-56 items-center gap-2 rounded-lg border border-hairline-strong bg-card px-2.5">
-              <FileIcon path={attachment.path} className="size-5 shrink-0" />
+    <ul className="flex flex-wrap items-center gap-1.5">
+      {attachments.map((attachment) => {
+        const image = attachment.isImage && attachment.preview;
 
-              {/* `min-w-0` so the name truncates instead of setting the tile's
-                  floor and pushing the rest of the tray out of the box. */}
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate text-ui">{attachment.name}</span>
-                <span className="text-ui text-muted-foreground/70">
+        return (
+          <li
+            key={attachment.path}
+            // `group` so one hover lights the remove button on this tile alone,
+            // and the path on hover because a name is not always enough to tell
+            // two of them apart — the reader picked it a second ago, but a tray
+            // of three screenshots is where that stops being true.
+            title={attachment.path}
+            className="group relative flex min-w-0 items-center"
+          >
+            {image ? (
+              <img
+                src={image}
+                alt={attachment.name}
+                draggable={false}
+                className="size-9 rounded-lg object-cover"
+              />
+            ) : (
+              <span className="flex h-9 min-w-0 items-center gap-1.5 rounded-lg bg-muted/50 pr-1 pl-1.5">
+                <FileIcon path={attachment.path} className="size-4 shrink-0" />
+                <span className="min-w-0 max-w-40 truncate text-ui">{attachment.name}</span>
+                <span className="shrink-0 text-ui text-muted-foreground/60">
                   {formatBytes(attachment.size)}
                 </span>
-              </div>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => onRemove(attachment.path)}
-            aria-label={`Remove ${attachment.name}`}
-            className={cn(
-              "absolute -top-1.5 -right-1.5 cursor-pointer rounded-full border border-border bg-secondary p-0.5 text-secondary-foreground opacity-0 transition-opacity",
-              "group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none",
+              </span>
             )}
-          >
-            <X className="size-3" strokeWidth={2.5} />
-          </button>
-        </li>
-      ))}
+
+            <button
+              type="button"
+              onClick={() => onRemove(attachment.path)}
+              aria-label={`Remove ${attachment.name}`}
+              className={cn(
+                "grid shrink-0 cursor-pointer place-items-center rounded-full transition-opacity",
+                image
+                  ? // On the picture's corner, always drawn: a thumbnail has no
+                    // room to explain itself, and the cross is the only control
+                    // it has.
+                    "absolute -top-1 -right-1 size-5 border border-border bg-secondary text-secondary-foreground"
+                  : // Beside the name, and only while the tile is hovered or the
+                    // button is focused — a row of crosses is louder than the
+                    // files it holds.
+                    "size-4 text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100",
+              )}
+            >
+              <X className="size-3" strokeWidth={2.5} />
+            </button>
+          </li>
+        );
+      })}
 
       {warn && (
         // Inside the list so it wraps with the tiles it is about, and full width
