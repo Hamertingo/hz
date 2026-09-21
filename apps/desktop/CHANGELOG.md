@@ -5,6 +5,24 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.10
+
+### Changed
+
+- **Windows draws its own window.** The system title bar is gone
+  (`decorations: false`, in a `tauri.windows.conf.json` overlay so nothing else
+  moves), the corners are rounded by CSS from the app's own radius, and the three
+  window controls are the app's — which is not decoration: with no system chrome
+  they are the only way to minimise, maximise or close. Every drag region
+  reserves their width, or the far end of a titlebar row sits under them. The
+  default menu bar Tauri draws in-window goes with it; every chord lives in
+  `useHotkey` already, and the close button raises the same quit dialog the
+  system's used to.
+
+  Cost, stated plainly: this is the one change here that cannot be looked at from
+  macOS. `decorations: false` is one line to take back out, and the overlay file
+  means a Windows-only mistake cannot reach the Mac build.
+
 ## 0.20.9
 
 ### Changed
