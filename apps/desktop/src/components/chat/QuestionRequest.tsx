@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { QuestionnaireItemStatus } from "@shadcn/react/questionnaire";
+import { CheckIcon, CircleDotIcon, CircleIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
+import { Button } from "@/components/ui/button";
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -15,6 +18,15 @@ import {
   QuestionnaireSubmit,
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
+import {
+  buildAnswers,
+  type ChipState,
+  chipState,
+  progressLabel,
+  questionLabel,
+  type QuestionAnswer,
+} from "@/lib/questionnaire";
+import { cn } from "@/lib/utils";
 import type { Question } from "@/types/events";
 
 /// The agent asking the reader something, rather than asking to run something.
@@ -23,16 +35,24 @@ import type { Question } from "@/types/events";
 /// blocked on it either way — but it carries no allow or deny. The call is never
 /// in question; the filled-in form *is* the answer, and submitting an empty one
 /// tells the agent it was ignored.
+///
+/// **One question at a time.** The steps are a wizard the primitive already
+/// drives: it keeps the count, hides the inactive items, marks each one answered
+/// or skipped, and advances on Enter. What this card adds is the model — the
+/// questions as the agent asked them, in its order, with `required` honoured and
+/// an answer keyed by the step's own id rather than by its text.
 export default function QuestionRequest({
   questions,
   onAnswer,
+  onCancel,
   autoFocus = true,
 }: {
   questions: Question[];
-  /// Keyed by each question's verbatim text, because that is the key the
-  /// harness matches on. A question the user skipped is absent rather than
-  /// empty.
-  onAnswer: (answers: Record<string, string>) => void;
+  /// The filled-in form, keyed by step id. A step the reader left alone is
+  /// absent from the list rather than present and empty.
+  onAnswer: (answers: QuestionAnswer[]) => void;
+  /// The reader taking the question back, which the agent reads as a decline.
+  onCancel: () => void;
   /// Whether the card takes focus on mount. False for a split pane that is
   /// not the focused one — see the effect below.
   autoFocus?: boolean;
@@ -40,101 +60,193 @@ export default function QuestionRequest({
   // One-shot, like the permission card: the reply can only be consumed once, so
   // a second submit during the round trip has nothing to answer.
   const [sent, setSent] = useState(false);
+  // `Esc` asks first, because the card sits over a transcript the reader is
+  // reading and the key is one they reach for constantly.
+  const [confirming, setConfirming] = useState(false);
+  // Which step is on screen, told by the primitive. The strip needs it and
+  // nothing else does — the count is drawn off the primitive's own.
+  const [currentId, setCurrentId] = useState(questions[0]?.id ?? "");
+  // Each question's own status, for the same strip. The primitive reports it
+  // because it is the only thing that knows: a choice is answered by being
+  // checked, a text box by holding something.
+  const [status, setStatus] = useState<Record<string, QuestionnaireItemStatus>>({});
   const formRef = useRef<HTMLFormElement>(null);
 
-  // Nothing is required. Skipping is a real answer here — the harness honours a
-  // partial set and only reports "did not answer" for an empty one — and
-  // `Skip` renders at all only for an optional question.
+  // `items` is what the primitive drives everything from: the count of steps,
+  // which of them refuses a skip, the order the shortcut numbers are handed out
+  // in, and the collection the form's own values are checked against. A question
+  // missing from here is a question the reader cannot navigate past.
   //
-  // `choices` is what the shortcut numbers are assigned from, in this order, so
-  // it has to be here and not only in the markup below.
+  // `name` is the step id — the key the answer goes back under — and `value` is
+  // the option's own `const`, which is what the agent matches on. Neither is the
+  // text the reader sees.
   const items = useMemo(
     () =>
       questions.map((question) => ({
-        name: question.question,
-        required: false,
-        choices: question.options.map((option) => ({ value: option.label })),
+        name: question.id,
+        required: question.required,
+        choices: question.options.map((option) => ({ value: option.value })),
       })),
     [questions],
   );
 
+  const currentIndex = Math.max(
+    0,
+    questions.findIndex((question) => question.id === currentId),
+  );
+  const label = progressLabel(
+    questions.length,
+    questions.filter((question) => status[question.id] === "answered").length,
+  );
+
   // The questionnaire listens on its own form rather than on the window, so
-  // nothing is typeable until focus is inside it. Landing on the first choice
-  // rather than the form arms every key at once: a number picks, arrows move,
-  // and Enter confirms — that last one only fires when the event target is a
-  // choice, so focusing the form itself would leave Enter dead.
+  // nothing is typeable until focus is inside it. Landing on the step's first
+  // choice rather than on the form arms every key at once: a number picks,
+  // arrows move, and Enter confirms — that last one only fires when the event
+  // target is a control the form registered, so focusing the form itself would
+  // leave Enter dead.
   //
+  // The free-text box is the fallback, and it is not a nicety: a step that is
+  // nothing but a box carries no choice at all, so a choice-only query found
+  // nothing and left focus in the composer. Typing then edited a prompt while
+  // the agent sat blocked behind the card, and Enter sent it.
+  //
+  // Only the active step is queried: the primitive hides the others, and the
+  // step the reader is on is the only one they can answer.
+  const focusCard = useCallback(() => {
+    const form = formRef.current;
+    const target =
+      form?.querySelector<HTMLInputElement>(
+        "[data-slot=questionnaire-item]:not([hidden]) [data-slot=questionnaire-choice] input",
+      ) ??
+      form?.querySelector<HTMLElement>(
+        "[data-slot=questionnaire-item]:not([hidden]) [data-slot=questionnaire-input]",
+      );
+
+    target?.focus();
+  }, []);
+
   // Taking focus is defensible here and nowhere else in the app: the agent is
   // blocked until this is answered, so it is the one thing on screen the reader
   // has to deal with. Once per mount — a re-render must not yank the caret back
   // out of the free-text box.
   //
-  // The free-text box is the fallback, and it is not a nicety: pi's `input` and
-  // `editor` dialogs carry no choices at all, so a choice-only query found
-  // nothing and left focus in the composer. Typing then edited a prompt while
-  // the agent sat blocked behind the card, and Enter sent it.
-  //
   // Only for the transcript that has the focus: in a split view every pane
   // draws its own cards, and one in a pane the composer is not serving would
   // pull the caret out of the reader's typing.
-  // Once, on the first render where it may: a card mounted in an unfocused
-  // pane takes the caret when that pane is focused, and never again after.
   const tookFocus = useRef(false);
   useEffect(() => {
     if (!autoFocus || tookFocus.current) return;
     tookFocus.current = true;
-    const form = formRef.current;
-    const target =
-      form?.querySelector<HTMLInputElement>(
-        "[data-slot=questionnaire-choice] input"
-      ) ?? form?.querySelector<HTMLTextAreaElement>("[data-slot=questionnaire-input]");
+    focusCard();
+  }, [autoFocus, focusCard]);
 
-    target?.focus();
-  }, [autoFocus]);
+  const cancel = () => {
+    if (sent) return;
+    setSent(true);
+    onCancel();
+  };
+
+  // Escape is the reader's way out and Enter is the way through the question
+  // they were asked about it. Both are stopped before the primitive sees them:
+  // it advances on Enter, and a card the reader is still deciding about must not
+  // move under them.
+  const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setConfirming((open) => !open);
+      if (confirming) focusCard();
+      return;
+    }
+    if (confirming && event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
+    }
+  };
 
   return (
-    // Narrower than the transcript it sits in. Options are a few words each, so
-    // a full-width row leaves most of itself empty and puts the click target a
-    // long way from the text naming it. No card chrome: the choices carry their
-    // own borders, and a box around boxes reads as a third surface.
-    <div className="max-w-md">
+    // **The card is a surface, not a stretch of text.** It floats over the
+    // transcript the way the follow-up strip does, from the same slot and at the
+    // same moment — so it takes the same treatment: `bg-composer` and the blur,
+    // because a flat veil would let the words behind it read through the rows;
+    // `rounded-xl`, the card rung of this app's one radius scale; and the crisp
+    // shadow for a surface at the window's edge.
+    //
+    // **The composer's own width, end to end.** A question is the same kind of
+    // thing the composer is — the reader's turn to say something — so a card
+    // that stopped short of it read as a scrap left in the corner of the slot
+    // rather than as the thing being asked. The form above is `max-w-3xl`, which
+    // is the width this inherits.
+    <div className="rounded-xl border border-edge-surface bg-composer px-1.5 py-1.5 shadow-(--shadow-surface) backdrop-blur-xl">
       <Questionnaire
         ref={formRef}
-        className="gap-3"
         // Numbers rather than letters: an option's label is a word, so a letter
         // badge invites reading it as that word's initial when it isn't.
         shortcuts="numbers"
         items={items}
+        onItemChange={setCurrentId}
+        onKeyDown={onKeyDown}
         onSubmit={(event) => {
           event.preventDefault();
           if (sent) return;
           setSent(true);
-          onAnswer(collectAnswers(new FormData(event.currentTarget), questions));
+          onAnswer(answersOf(event.currentTarget, questions));
         }}
       >
-        {/* One question needs no "1 of 1". */}
-        {questions.length > 1 && <QuestionnaireProgress />}
+        {/* The count and the strip, in one row above the question. The count is
+            the primitive's own live region, which is why the label is drawn
+            *inside* it rather than beside it. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2">
+          <QuestionnaireProgress aria-valuetext={label}>{label}</QuestionnaireProgress>
+          {questions.length > 1 && (
+            <div className="ms-auto flex flex-wrap items-center gap-1">
+              {questions.map((question, index) => {
+                const state = chipState(
+                  index,
+                  currentIndex,
+                  status[question.id] === "answered",
+                );
+                return (
+                  <span
+                    key={question.id}
+                    // The chip's own step is the one being read from, and saying
+                    // so is what the two colours can only say visually.
+                    aria-current={state === "current" ? "step" : undefined}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs whitespace-nowrap",
+                      CHIP[state],
+                    )}
+                  >
+                    <ChipMark state={state} />
+                    {questionLabel(question, index)}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {questions.map((question) => (
           <QuestionnaireItem
-            // The harness guarantees question texts are unique within a call,
-            // which is what lets the text serve as the form field name — and
-            // keying the answer map by it needs no second mapping to drift.
-            key={question.question}
-            name={question.question}
+            key={question.id}
+            name={question.id}
+            // Both, and they must agree: the primitive reads `required` off
+            // `items` to decide whether `Skip` exists at all, and warns when the
+            // rendered item disagrees.
+            required={question.required}
             multiple={question.multiSelect}
+            onStatusChange={(next) =>
+              setStatus((known) =>
+                known[question.id] === next ? known : { ...known, [question.id]: next },
+              )
+            }
             className="gap-2"
           >
-            {/* `header` is deliberately unrendered. It is a chip-sized label the
-                model writes alongside the question — "Indentation" over "Tabs or
-                spaces?" — which reads as a heading for a section that isn't
-                there, and says nothing the question doesn't. Anything a reader
-                must see belongs in the question text; `pi/dialog.rs` puts a
-                dialog's title there for exactly that reason.
-
-                `whitespace-pre-line` because that text can be two sentences: a
-                pi `confirm` carries a short question and the detail under it,
-                and run together on one line the detail reads as part of the
+            {/* `whitespace-pre-line` because that text can be two sentences: a
+                `confirm` carries a short question and the detail under it, and
+                run together on one line the detail reads as part of the
                 question. */}
             <QuestionnaireTitle className="text-chat font-medium whitespace-pre-line">
               {question.question}
@@ -142,16 +254,7 @@ export default function QuestionRequest({
 
             <QuestionnaireChoices>
               {question.options.map((option) => (
-                // The label is the value: the harness has no option ids, and
-                // the answer it matches is the label string itself.
-                // `min-h-0` drops the component's 44px touch target: this is a
-                // desktop app, and an 11-unit floor on a one-word option is most
-                // of the row's height doing nothing.
-                <QuestionnaireChoice
-                  key={option.label}
-                  value={option.label}
-                  className="min-h-0 py-2"
-                >
+                <QuestionnaireChoice key={option.value} value={option.value}>
                   <span className="font-medium">{option.label}</span>
                   {option.description && (
                     <QuestionnaireChoiceDescription>
@@ -166,17 +269,15 @@ export default function QuestionRequest({
                 </QuestionnaireChoice>
               ))}
 
-              {/* Offered wherever the asker can take an answer that isn't on
-                  the list, which is every `AskUserQuestion`: the harness
-                  promises the user a box and tells the model not to add an
-                  "Other" option because of it, so dropping it there removes an
-                  answer the question was written to allow.
+              {/* Offered wherever the asker can take an answer that isn't on the
+                  list, which is a step it allocated a box to — and a step that
+                  is nothing but a box. It is the question's own last row, not a
+                  step of its own: the agent files the text under the step it
+                  belongs to, and a second card for it would file an answer to a
+                  question nobody asked.
 
-                  pi's extension dialogs are the exception and the flag is
-                  theirs. A `select` resolves to one of the extension's own
-                  labels and a `confirm` to a boolean, so a typed sentence is
-                  not an answer either can be given — the extension would be
-                  handed a string it has no branch for. */}
+                  `freeText` is the flag, and it comes from the agent either way,
+                  so a closed list draws no box. */}
               {question.freeText && (
                 <QuestionnaireInput
                   // A typed answer is prose and can run to a sentence or two, so
@@ -187,11 +288,10 @@ export default function QuestionRequest({
                   // off the bottom of the transcript.
                   render={<textarea rows={1} />}
                   aria-label="Another answer"
-                  placeholder="Something else…"
-                  // `sm:min-h-10` as well as `min-h-10`: the component's own
-                  // base drops its touch-target floor to zero above `sm`, which
-                  // is every window this app runs in.
-                  className="field-sizing-content h-auto max-h-40 min-h-10 resize-none py-2 sm:min-h-10"
+                  // The agent's own words for the box where it wrote any, which
+                  // is the sentence it wrote for this step's other answer.
+                  placeholder={question.otherPlaceholder ?? "Something else…"}
+                  className="field-sizing-content h-auto max-h-40 resize-none"
                   onKeyDown={(event) => {
                     // Enter answers the card — the questionnaire's own handler
                     // sits on the form above and takes it whatever the target —
@@ -205,48 +305,68 @@ export default function QuestionRequest({
           </QuestionnaireItem>
         ))}
 
-        {/* A flex row rather than the component's three-column grid. Only ever
-            two of these four are visible — Previous and Next hide for a single
-            question, Next and Send are mutually exclusive — so the grid is a
-            fixed set of tracks holding mostly hidden, `inert` cells, and its
-            height comes from the tracks rather than from the buttons in it.
-            A row is sized by what is actually in it, which is the property that
-            matters here.
-
-            `min-h-0` throughout drops the component's 44px touch targets: those
-            are a mobile floor, and on a one-word option or a "Skip" they are
-            most of the height doing nothing. */}
-        <QuestionnaireActions className="flex min-h-0 items-center justify-end gap-2 sm:min-h-0">
-          {/* Pushes the rest right; with it hidden `justify-end` already has. */}
-          <QuestionnairePrevious size="sm" disabled={sent} className="mr-auto min-h-0" />
-          <QuestionnaireSkip size="sm" disabled={sent} className="min-h-0" />
-          <QuestionnaireNext size="sm" disabled={sent} className="min-h-0" />
-          <QuestionnaireSubmit size="sm" disabled={sent} className="min-h-0">
-            Send
-          </QuestionnaireSubmit>
-        </QuestionnaireActions>
+        {confirming ? (
+          <div className="flex flex-wrap items-center gap-1.5 px-2">
+            <span className="me-auto text-ui text-muted-foreground">
+              The request and its unsent answers are discarded.
+            </span>
+            {/* Takes the caret so the chord that got here keeps working — the
+                handler above is on the form, and the form only hears keys while
+                focus is inside it. */}
+            <Button autoFocus type="button" size="sm" variant="destructive" onClick={cancel}>
+              Cancel question
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+              Keep answering
+            </Button>
+          </div>
+        ) : (
+          // Only ever two of these four are up at once — Back and Previous hide
+          // for a single question, Next and Send are mutually exclusive — so the
+          // row is sized by what is in it rather than by a grid's fixed tracks.
+          <QuestionnaireActions className="mt-0.5">
+            <QuestionnairePrevious disabled={sent} />
+            <QuestionnaireSkip disabled={sent} />
+            <QuestionnaireNext disabled={sent} />
+            <QuestionnaireSubmit disabled={sent}>Send</QuestionnaireSubmit>
+          </QuestionnaireActions>
+        )}
       </Questionnaire>
     </div>
   );
 }
 
-/// Reads the form back in the questions' own order.
+/// The three marks the strip draws: the step being read, one already answered,
+/// one still to come.
 ///
-/// `getAll` because a multi-select item puts one entry per checked box on the
-/// form, while the harness wants a single comma-separated string — the same
-/// shape its own dialog sends. A question with nothing checked and nothing typed
-/// is left out entirely, which is what "skipped" means on the wire.
-function collectAnswers(data: FormData, questions: Question[]): Record<string, string> {
-  const answers: Record<string, string> = {};
+/// Glyphs rather than words, because they sit in a row of chips whose text is
+/// the question's own name.
+function ChipMark({ state }: { state: ChipState }) {
+  if (state === "current") return <CircleDotIcon aria-hidden="true" className="size-3" />;
+  if (state === "answered") return <CheckIcon aria-hidden="true" className="size-3" />;
+  return <CircleIcon aria-hidden="true" className="size-3" />;
+}
+
+/// A skipped step is not an answered one: the reader said nothing about it, and
+/// the reply carries no answer to show.
+const CHIP: Record<ChipState, string> = {
+  current: "bg-surface-selected font-medium text-foreground",
+  answered: "text-muted-foreground",
+  pending: "text-muted-foreground/60",
+};
+
+/// Reads the whole form back into the answers the harness takes.
+///
+/// Every control of a step is named after that step — the primitive does the
+/// naming — so one `getAll` per step is the step's whole answer, whatever shape
+/// it took. `buildAnswers` is what tells a checked box from a typed sentence.
+function answersOf(form: HTMLFormElement, questions: Question[]): QuestionAnswer[] {
+  const data = new FormData(form);
+  const values: Record<string, string[]> = {};
 
   for (const question of questions) {
-    const picked = data
-      .getAll(question.question)
-      .map(String)
-      .filter((value) => value.trim().length > 0);
-
-    if (picked.length > 0) answers[question.question] = picked.join(", ");
+    values[question.id] = data.getAll(question.id).map(String);
   }
 
-  return answers;
+  return buildAnswers(questions, values);
 }

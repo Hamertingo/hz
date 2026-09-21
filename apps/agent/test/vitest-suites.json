@@ -143,6 +143,7 @@
       "packages/agent-modules/context-manager/test/compaction-usage.test.ts",
       "packages/local-runtime/test/unit/session-diff-fallback.test.ts",
       "packages/local-runtime-v2/test/unit/agent/builtin/prompt-base-all.test.ts",
+      "packages/local-runtime-v2/src/application/session/questionnaire-turn-stream.test.ts",
       "packages/local-runtime-v2/src/service/turn-system/agent-host/assembly/local-turn-tool-catalog.test.ts",
       "packages/local-runtime-v2/src/service/turn-system/agent-host/preparation/config/runtime-prompt-rules.test.ts"
     ],

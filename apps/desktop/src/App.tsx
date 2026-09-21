@@ -240,6 +240,7 @@ function App() {
     handleCancelQueued,
     handleRespondPermission,
     handleAnswerQuestions,
+    handleCancelQuestion,
     handleSelectSessionIndexItem,
     handleNewSession,
     setSessionFlags,
@@ -2721,6 +2722,7 @@ function App() {
                 sessionId={selectedSessionId}
                 onRespond={handleRespondPermission}
                 onAnswer={handleAnswerQuestions}
+                onCancelQuestion={handleCancelQuestion}
                 autoFocus
               />
             ) : undefined
@@ -2918,6 +2920,7 @@ function App() {
             onOpenSubagentPanel: openSubagentPanel,
             onRespondPermission: handleRespondPermission,
             onAnswerQuestions: handleAnswerQuestions,
+            onCancelQuestion: handleCancelQuestion,
           }}
         />
       ) : (
@@ -2937,6 +2940,7 @@ function App() {
         onOpenSubagentPanel={openSubagentPanel}
         onRespondPermission={handleRespondPermission}
         onAnswerQuestions={handleAnswerQuestions}
+        onCancelQuestion={handleCancelQuestion}
         busy={busy}
         backgroundTaskCount={backgroundTasks.length}
         liveTaskIds={liveTaskIds}

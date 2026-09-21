@@ -543,42 +543,50 @@ pub enum PermissionBehavior {
 
 /// One question from a [`QuestionsAsked`](AgentEventPayload::QuestionsAsked).
 ///
-/// [`question`](Self::question) is both the prompt and the key its answer is
-/// filed under, so the text has to survive the round trip unchanged — the
-/// harness matches on it verbatim.
+/// [`id`](Self::id) is the step the agent matches the answer on, and what the
+/// reply is keyed by. [`question`](Self::question) is only the text the reader
+/// reads — two steps that happen to word it the same are still two steps.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct Question {
+    /// The agent's own step id. Opaque here, and the key the answer goes back
+    /// under.
+    pub id: String,
     pub question: String,
     /// A short chip label for the question — "Indentation", "Auth method".
+    ///
+    /// No ACP elicitation carries one, so the chip falls back to the step's
+    /// ordinal; a harness that ships one gets it drawn.
     pub header: Option<String>,
-    /// Whether several options may be picked, in which case the answer is one
-    /// comma-separated string rather than a list.
+    /// Whether the agent refuses a reply that leaves this step out, which is
+    /// what hides the card's `Skip`.
+    pub required: bool,
+    /// Whether several options may be picked, in which case the answer carries
+    /// a value per option rather than one.
     pub multi_select: bool,
     /// Two to four, per the tool's own schema. Never exhaustive: the harness
     /// promises the user a free-text box alongside them, and instructs the model
     /// not to offer an "Other" option because of it — so a renderer that shows
     /// only these takes an answer away.
     pub options: Vec<QuestionOption>,
-    /// Whether an answer outside [`options`](Self::options) is one the asker can
-    /// take.
-    ///
-    /// True for `AskUserQuestion`, where the CLI promises the user a box and
-    /// tells the model not to offer an "Other" option because of it. False for
-    /// pi's `select` and `confirm`, which are a closed list and a boolean: the
-    /// extension that asked will be handed whatever comes back, and a typed
-    /// sentence where it expected one of its own labels is an answer it cannot
-    /// use.
+    /// Whether a typed answer beside [`options`](Self::options) is one the asker
+    /// can take. True for a step the agent allocated an other-field to, and for
+    /// a step that is nothing but a box.
     pub free_text: bool,
+    /// The agent's own wording for the typed answer's box, off the other-field
+    /// it allocated. `None` means the card picks its own.
+    pub other_placeholder: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct QuestionOption {
-    /// What the user picks, and what travels back as the answer — the harness
-    /// has no option ids, so the label is the value.
+    /// What travels back as the answer, and what the agent matches the option
+    /// on.
+    pub value: String,
+    /// What the user reads and picks.
     pub label: String,
     pub description: Option<String>,
     /// Markdown the harness expects shown in a monospace box. Single-select

@@ -99,7 +99,7 @@ Black card was tried first, on reasoning that white veil over light page is invi
 
 ## Transcript, cards and the right pane
 
-`header` deliberately unrendered — chip-sized label model write alongside each question ("Indentation" over "Tabs or spaces?"), which read as heading for section that isn't there. Card carry no border or fill either: choices have own.
+`header` never drawn as a heading — chip-sized label model write alongside each question ("Indentation" over "Tabs or spaces?"), which read as heading for section that isn't there. It name the question's chip in the strip instead, where a label that short belong; no ACP elicitation carry one, so the strip read `Question 1`, `Question 2`. Card carry no border or fill either: choices have own.
 
 **Settled `AskUserQuestion` row show only answer.** Its arguments = questions and options reader just answered on card, so `ToolCall` drop input body for it entirely. Its result keep no code box and lose mono font other results carry — it one tool result harness write as sentence not program output.
 

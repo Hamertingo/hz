@@ -36,6 +36,7 @@ type SplitViewProps = {
     | "onOpenSubagentPanel"
     | "onRespondPermission"
     | "onAnswerQuestions"
+    | "onCancelQuestion"
     // Interrupts the selected session, which is the focused pane — `Chat` gates
     // it on `active`, so only that pane draws the control and binds its chord.
     | "onSendNow"

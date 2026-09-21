@@ -1,11 +1,11 @@
 use crate::{
     attachments::Attachment,
     events::ApprovalPolicy,
+    harness::mcode::elicitation::QuestionAnswer,
     models::{Effort, Model, ModelId},
     session::{Harness, QueuedMessage, SendOutcome, SessionManager},
     store::{SessionIndexItem, SessionSnapshot, SessionStatus},
 };
-use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 /// `anyhow::bail!` for a function returning [`Fail`]: `bail!` returns the bare
@@ -936,20 +936,34 @@ async fn respond_permission(
         .map_err(|e| e.to_string())
 }
 
-/// Answers the questions on a `questions_asked` event. `answers` is keyed by
-/// each question's verbatim text — the CLI matches on the string — and a
-/// question left out of it is one the user skipped, which is a real answer
-/// rather than a refusal.
+/// Answers the questions on a `questions_asked` event. Each answer carries the
+/// step id it belongs to, and a step left out is one the user skipped — a real
+/// answer rather than a refusal. Refusing is [`cancel_question`].
 #[tauri::command]
 async fn answer_questions(
     session_id: &str,
     request_id: &str,
-    answers: HashMap<String, String>,
+    answers: Vec<QuestionAnswer>,
     manager: State<'_, SessionManager>,
     app: AppHandle,
 ) -> Result<(), String> {
     manager
         .answer_questions(session_id, request_id, answers, &app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Takes back a question card the user dismissed, replying with the wire's own
+/// `decline` rather than an empty form — the agent reads the two differently.
+#[tauri::command]
+async fn cancel_question(
+    session_id: &str,
+    request_id: &str,
+    manager: State<'_, SessionManager>,
+    app: AppHandle,
+) -> Result<(), String> {
+    manager
+        .cancel_question(session_id, request_id, &app)
         .await
         .map_err(|e| e.to_string())
 }
@@ -1165,6 +1179,7 @@ pub fn run() {
             steer_queued,
             respond_permission,
             answer_questions,
+            cancel_question,
             notifications::notify_session,
             updater::check_update,
             updater::install_update,

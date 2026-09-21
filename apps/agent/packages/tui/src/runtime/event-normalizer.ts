@@ -215,9 +215,21 @@ export function normalizeTuiRuntimeEvent(event: RawTuiRuntimeEvent): TuiRuntimeE
       });
     }
   }
-  if (event.type === 'questionnaire.dismiss' || event.type === 'questionnaire.superseded') {
+  if (event.type === 'questionnaire.dismiss') {
     const requestId = readString(payload, ['requestId', 'request_id']);
-    if (requestId) return { ...base, type: event.type, requestId };
+    if (requestId) {
+      const status = readString(payload, ['status']);
+      return {
+        ...base,
+        type: 'questionnaire.dismiss',
+        requestId,
+        ...(status === 'answered' || status === 'dismissed' ? { status } : {}),
+      };
+    }
+  }
+  if (event.type === 'questionnaire.superseded') {
+    const requestId = readString(payload, ['requestId', 'request_id']);
+    if (requestId) return { ...base, type: 'questionnaire.superseded', requestId };
   }
   if (event.type === 'permission.ask') {
     const request = readPermission(payload);

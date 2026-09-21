@@ -7,6 +7,7 @@
 pub mod mcode;
 
 pub mod permissions;
+pub mod questions;
 
 pub mod rpc;
 

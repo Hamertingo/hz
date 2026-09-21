@@ -25,6 +25,7 @@ import { addCitation } from "@/hooks/useCitations";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import type { ApiRetryState, QueuedPrompt, StreamingBlock, Working } from "@/hooks/useSessions";
+import type { QuestionAnswer } from "@/lib/questionnaire";
 import { toolArgument } from "@/lib/tools";
 import { buildTranscript } from "@/lib/transcript";
 import { firstMount, grow, mountedTurns } from "@/lib/turnWindow";
@@ -46,12 +47,10 @@ type ChatProps = {
   /// degrading a view.
   onRespondPermission: (sessionId: string, requestId: string, optionId: string) => void;
   /// Answers an `AskUserQuestion`. Blocks the agent the same way, and an empty
-  /// map is a real answer — the reader skipped every question.
-  onAnswerQuestions: (
-    sessionId: string,
-    requestId: string,
-    answers: Record<string, string>,
-  ) => void;
+  /// list is a real answer — the reader skipped every question.
+  onAnswerQuestions: (sessionId: string, requestId: string, answers: QuestionAnswer[]) => void;
+  /// Takes an `AskUserQuestion` back, which the agent reads as a decline.
+  onCancelQuestion: (sessionId: string, requestId: string) => void;
   /// Whether this session has a turn in flight, so the transcript can show the
   /// agent is still working.
   busy?: boolean;
@@ -137,6 +136,7 @@ export default function Chat({
   onOpenSubagentPanel,
   onRespondPermission,
   onAnswerQuestions,
+  onCancelQuestion,
   onSendNow,
   busy = false,
   working = null,
@@ -631,6 +631,7 @@ export default function Chat({
                     onAnswer={(answers) =>
                       onAnswerQuestions(session.sessionId, ask.requestId, answers)
                     }
+                    onCancel={() => onCancelQuestion(session.sessionId, ask.requestId)}
                     autoFocus={false}
                   />
                 ) : (

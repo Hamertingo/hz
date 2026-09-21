@@ -1,5 +1,6 @@
 import PermissionRequest from "@/components/chat/PermissionRequest";
 import QuestionRequest from "@/components/chat/QuestionRequest";
+import type { QuestionAnswer } from "@/lib/questionnaire";
 import { toolArgument } from "@/lib/tools";
 import type { PendingAsk } from "@/lib/transcript";
 
@@ -25,12 +26,15 @@ export default function PendingAskPanel({
   sessionId,
   onRespond,
   onAnswer,
+  onCancelQuestion,
   autoFocus,
 }: {
   asks: PendingAsk[];
   sessionId: string;
   onRespond: (sessionId: string, requestId: string, optionId: string) => void;
-  onAnswer: (sessionId: string, requestId: string, answers: Record<string, string>) => void;
+  onAnswer: (sessionId: string, requestId: string, answers: QuestionAnswer[]) => void;
+  /// The reader taking a question back, which the agent reads as a decline.
+  onCancelQuestion: (sessionId: string, requestId: string) => void;
   /// The composer's own pane, which is the one whose card may take the caret.
   autoFocus: boolean;
 }) {
@@ -46,6 +50,7 @@ export default function PendingAskPanel({
             key={ask.requestId}
             questions={ask.questions}
             onAnswer={(answers) => onAnswer(sessionId, ask.requestId, answers)}
+            onCancel={() => onCancelQuestion(sessionId, ask.requestId)}
             autoFocus={autoFocus}
           />
         ) : (

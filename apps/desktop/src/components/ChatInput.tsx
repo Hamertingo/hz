@@ -833,6 +833,13 @@ export default function ChatInput({
 
   return (
     <div className="px-4 pb-4">
+      {/* **An ask card is not part of the prompt being composed.** It answers
+          the agent, not the composer, and the card is a `form` of its own — put
+          inside this one it is nested markup, and a submit in it bubbles to the
+          form below, which reads as the reader pressing send. Drawn above the
+          form at the form's own measure, so the two still line up. */}
+      {ask && <div className="mx-auto max-w-3xl">{ask}</div>}
+
       <form
         className="mx-auto max-w-3xl"
         onSubmit={(e) => {
@@ -851,8 +858,6 @@ export default function ChatInput({
             className="mb-4 h-10 w-full max-w-30 bg-current text-foreground/10"
           />
         )}
-
-        {ask}
 
         {notice}
 

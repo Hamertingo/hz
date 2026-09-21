@@ -2844,6 +2844,18 @@ describe('Hz Agent ACP agent', () => {
       })(),
     );
     vi.mocked(runtime.replyQuestionnaire).mockImplementation(async () => {
+      // The Runtime ends its own record of an answered ask while the reply that
+      // carries the answers is still in flight, so the dismissal and the
+      // accepted answer race — and this dismissal is the one that used to end
+      // the prompt before the continuation could be read.
+      emitRuntimeEvent({
+        type: 'questionnaire.dismiss',
+        timestampMs: 2,
+        source: 'runtime',
+        sessionId: 'session-1',
+        requestId: 'questionnaire-continuation',
+        status: 'answered',
+      });
       emitRuntimeEvent({
         type: 'session.start',
         timestampMs: 3,

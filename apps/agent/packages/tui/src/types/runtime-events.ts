@@ -47,8 +47,18 @@ export type TuiQuestionnaireEvent =
       agentName?: string;
     })
   | (TuiRuntimeEventBase & {
-      type: 'questionnaire.dismiss' | 'questionnaire.superseded';
+      type: 'questionnaire.superseded';
       requestId: string;
+    })
+  | (TuiRuntimeEventBase & {
+      type: 'questionnaire.dismiss';
+      requestId: string;
+      /**
+       * The Runtime settles an ask the client answered with a dismiss too, so
+       * `answered` means the continuation Turn is on its way and only a
+       * `dismissed` status means the ask ended without an answer.
+       */
+      status?: 'answered' | 'dismissed';
     });
 
 export type TuiPermissionEvent =

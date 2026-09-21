@@ -29,6 +29,7 @@ pub mod agents;
 pub mod commands;
 pub mod context;
 pub mod delegation;
+pub mod elicitation;
 pub mod mapper;
 pub mod mcp;
 pub mod models;
@@ -40,6 +41,7 @@ pub mod skills;
 
 use crate::events::{AgentEvent, AgentEventPayload, ApprovalPolicy, BlockRef, DeltaEvent};
 use crate::harness::permissions::PendingPermissions;
+use crate::harness::questions::PendingQuestions;
 use crate::harness::{read_stderr, record_failure, Harness::Mcode};
 use crate::models::{Effort, Model, ModelId};
 use crate::session::{QueuedMessages, Session, StatusTracker, Transport};
@@ -551,6 +553,9 @@ async fn start_session(
     let client = RpcClient::new(stdin);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let pending: PendingPermissions = Default::default();
+    // The question side of the same arrangement: the read loop registers from
+    // its own task, the session answers from the caller's.
+    let pending_questions: PendingQuestions = Default::default();
     let stderr_tail: StderrTail = Default::default();
 
     let reader = ReaderHandles {
@@ -558,6 +563,7 @@ async fn start_session(
         session_id: session_id.to_string(),
         session_cwd: session_cwd.to_string(),
         pending: pending.clone(),
+        pending_questions: pending_questions.clone(),
         stderr_tail: stderr_tail.clone(),
         app: app.clone(),
     };
@@ -699,6 +705,7 @@ async fn start_session(
         seq,
         status,
         pending_permissions: pending,
+        pending_questions,
         queued,
     })
 }
@@ -727,6 +734,14 @@ async fn open_session(
                 "clientCapabilities": {
                     "fs": {"readTextFile": false, "writeTextFile": false},
                     "terminal": false,
+                    // **Form elicitation, which is how the agent asks a
+                    // question.** Without it the agent degrades `ask_user` into a
+                    // permission card — `handleQuestionnaire`'s own fallback —
+                    // which draws a question's options as allow/deny buttons.
+                    // `{}` is the value that means yes: the field is
+                    // `form?: … | null`, and only absent or `null` reads as
+                    // unsupported.
+                    "elicitation": {"form": {}},
                     // **What turns the agent's own extension notifications on.**
                     // It gates pushes, not requests: `mcode/session/delegation/get`
                     // and its siblings answer whether or not this is here, but
@@ -1176,6 +1191,10 @@ struct ReaderHandles {
     session_id: String,
     session_cwd: String,
     pending: PendingPermissions,
+    /// Questions the agent is waiting on an answer to. Cloned from the session
+    /// like `pending` above, for the same reason: only the reader sees the
+    /// request, and only the session can be told to answer it.
+    pending_questions: PendingQuestions,
     /// The child's most recent stderr, for the turn it dies in. See
     /// [`stderr_tail_note`].
     stderr_tail: StderrTail,
@@ -1561,6 +1580,21 @@ async fn read_stdout(
                                 .client
                                 .respond(id, json!({"outcome": {"outcome": "cancelled"}}));
                         }
+                    } else if method == "elicitation/create" {
+                        if let Err(err) = raise_question(&handles, &mut mapper, id, &line).await {
+                            record_failure(
+                                Mcode,
+                                &handles.session_id,
+                                "unsupported_request",
+                                &err.to_string(),
+                                &line,
+                            )
+                            .await;
+                            // Declined rather than left hanging: the agent reads
+                            // that as "no answer", where silence blocks the turn
+                            // exactly as an unanswered permission does.
+                            let _ = handles.client.respond(id, json!({"action": "decline"}));
+                        }
                     } else {
                         // `fs/*` and `terminal/*` were declined at the
                         // handshake, so one arriving is mcode asking past the
@@ -1787,6 +1821,57 @@ async fn raise_permission(
         // child's would be the one thing worse than saying nothing.
         agent_id: None,
         options,
+    });
+
+    handles.app.emit("agent_event", &event)?;
+    Ok(())
+}
+
+/// Turns `elicitation/create` into the question card, holding the request until
+/// the reader answers it.
+///
+/// The sibling of [`raise_permission`], and the same bargain: the form is kept
+/// whole in Rust so the reply is composed from what the agent asked rather than
+/// from anything the frontend invented. What goes back is the reader's own text,
+/// filed under the field the question came from — see
+/// [`elicitation::accepted`].
+///
+/// Read from the raw line rather than the `params` the demux made, because a
+/// form's steps are only in order in the bytes — see
+/// [`parser::ElicitationEnvelope`].
+async fn raise_question(
+    handles: &ReaderHandles,
+    mapper: &mut mapper::Mapper,
+    rpc_id: i64,
+    line: &str,
+) -> Result<()> {
+    let request: parser::ElicitationRequest =
+        serde_json::from_str::<parser::ElicitationEnvelope>(line)
+            .context("unreadable question request")?
+            .params;
+    let (pending, questions) = elicitation::pending_for(&request, rpc_id);
+
+    // A form whose properties all failed to name themselves has nothing the
+    // reader could answer, and a card of no questions would block the turn on a
+    // click that cannot exist.
+    if questions.is_empty() {
+        bail!("a question form with nothing to answer");
+    }
+
+    let request_id = rpc_id.to_string();
+    handles
+        .pending_questions
+        .lock()
+        .expect("pending questions mutex poisoned")
+        .insert(request_id.clone(), pending);
+
+    let event = mapper.synthesize(AgentEventPayload::QuestionsAsked {
+        request_id,
+        // No tool call behind it: mcode asks through its own extension rather
+        // than through a tool the transcript drew, so there is no row for the
+        // answers to be filed beside.
+        tool_use_id: String::new(),
+        questions,
     });
 
     handles.app.emit("agent_event", &event)?;
