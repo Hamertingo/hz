@@ -359,7 +359,7 @@ jobs:
             --arg version "$V" \
             --arg signature "$(cat "$SIG")" \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$SETUP")" \
-            '{version: $version, platforms: {windows-x86_64: {signature: $signature, url: $url}}}' \
+            '{version: $version, platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
             > latest-windows.json
 
           cat latest-windows.json
