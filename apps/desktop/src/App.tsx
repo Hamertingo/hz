@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -2346,6 +2354,51 @@ function App() {
     </div>
   );
 
+  // One object, two rows: the toolbar answers for both, and the composer decides
+  // which side of the text each goes on. Typed off the component, so a lambda
+  // written here is checked against the prop it fills.
+  const composerToolbarProps: ComponentProps<typeof ComposerToolbar> = {
+    harness,
+    models,
+    modelId,
+    effort,
+    fast,
+    onFastChange: setFast,
+    fastNote,
+    onModelChange: handleModelChange,
+    onRefreshModels: refreshModels,
+    onOpenProviderSettings: openProviderSettings,
+    loadingModels,
+    permissionMode,
+    onPermissionModeChange: setPermissionMode,
+    projects: spaceProjects,
+    projectPath,
+    onSelectProject: handleSelectProject,
+    onAttachProject: handleAttachProject,
+    repos,
+    repoPath,
+    onSelectRepo: setRepoPath,
+    atWorkspaceRoot,
+    branches,
+    branch,
+    onSelectBranch: handleSelectBranch,
+    pendingBranch,
+    onConfirmBranchSwitch: (stash) => pendingBranch && runCheckout(pendingBranch, stash),
+    onCancelBranchSwitch: () => setPendingBranch(null),
+    agentName,
+    onAgentChange: setAgentName,
+    useWorktree,
+    onToggleWorktree: () => setUseWorktree((v) => !v),
+    onAttach: () => void pickAttachments(selectedSessionId),
+    contextUsage,
+    // Off the session's own index entry, so a session reopened with no agent
+    // running still draws the last reading the agent gave it.
+    contextReading: selectedSession?.contextReading ?? null,
+    events: selectedSession?.events ?? EMPTY_EVENTS,
+    sessionId: selectedSessionId,
+    isNewSession: !selectedSessionId,
+  };
+
   return (
     <TooltipProvider>
     <DiffWorkerPool pair={codeThemePair}>
@@ -2978,51 +3031,8 @@ function App() {
               />
             ) : null
           }
-          toolbar={
-            <ComposerToolbar
-              harness={harness}
-              models={models}
-              modelId={modelId}
-              effort={effort}
-              fast={fast}
-              onFastChange={setFast}
-              fastNote={fastNote}
-              onModelChange={handleModelChange}
-              onRefreshModels={refreshModels}
-              onOpenProviderSettings={openProviderSettings}
-              loadingModels={loadingModels}
-              permissionMode={permissionMode}
-              onPermissionModeChange={setPermissionMode}
-              projects={spaceProjects}
-              projectPath={projectPath}
-              onSelectProject={handleSelectProject}
-              onAttachProject={handleAttachProject}
-              repos={repos}
-              repoPath={repoPath}
-              onSelectRepo={setRepoPath}
-              atWorkspaceRoot={atWorkspaceRoot}
-              branches={branches}
-              branch={branch}
-              onSelectBranch={handleSelectBranch}
-              pendingBranch={pendingBranch}
-              onConfirmBranchSwitch={(stash) =>
-                pendingBranch && runCheckout(pendingBranch, stash)
-              }
-              onCancelBranchSwitch={() => setPendingBranch(null)}
-              agentName={agentName}
-              onAgentChange={setAgentName}
-              useWorktree={useWorktree}
-              onToggleWorktree={() => setUseWorktree((v) => !v)}
-              onAttach={() => void pickAttachments(selectedSessionId)}
-              contextUsage={contextUsage}
-              events={selectedSession?.events ?? EMPTY_EVENTS}
-              // Off the session's own index entry, so a session reopened with no
-              // agent running still draws the last reading the agent gave it.
-              contextReading={selectedSession?.contextReading ?? null}
-              sessionId={selectedSessionId}
-              isNewSession={!selectedSessionId}
-            />
-          }
+          toolbarTop={<ComposerToolbar {...composerToolbarProps} row="placement" />}
+          toolbar={<ComposerToolbar {...composerToolbarProps} />}
         />
         )
       }

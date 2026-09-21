@@ -110,6 +110,10 @@ type ComposerToolbarProps = {
   /// Where the session runs is fixed at creation, so the last three controls
   /// only exist before one starts.
   isNewSession: boolean;
+
+  /// Which of the two rows to draw. A fragment rather than a wrapper: the composer
+  /// places it, because only the composer knows where the text sits between them.
+  row?: "placement" | "tools";
 };
 
 /// The composer's control row. Model and permission change a running session in
@@ -155,15 +159,16 @@ export default function ComposerToolbar({
   contextReading,
   sessionId,
   isNewSession,
+  row = "tools",
 }: ComposerToolbarProps) {
-  return (
-    // **`flex-wrap` is the guard, and the model's name is what needed it.** Every
-    // control here is content-sized, so a provider's long label — `DeepSeek V4
-    // Flash Vision Exp` is eleven words of nothing — asked for more width than the
-    // row had and took it out of the others, which is a toolbar whose items overlap
-    // instead of a row that reflows. Controls that cannot be squeezed wrap; the one
-    // that can be (`ModelSelector`'s own label) truncates. See its own note.
-    <div className="flex min-w-0 flex-wrap items-center gap-0.5 px-1">
+  // **Two rows, because they answer two different questions.** *Where does this
+  // run* is decided once, before a session exists — the project, the agent, the
+  // worktree, the branch — and *what runs, and what rides with it* is live for a
+  // session's whole life: the model, the mode, an attachment, the context. One row
+  // of eight controls said neither, and dropped the four a session cannot change
+  // into the middle of the four it can.
+  const lead = (
+    <>
       {/* No radius override: `icon-sm` already carries the app's rounded-square,
           and a circle here would be the one round control in a row of them. */}
       <Tooltip>
@@ -204,7 +209,11 @@ export default function ComposerToolbar({
         onOpenProviderSettings={onOpenProviderSettings}
         loadingModels={loadingModels}
       />
+    </>
+  );
 
+  const placement = (
+    <>
       {isNewSession && (
         <>
           <ProjectSelector
@@ -274,7 +283,11 @@ export default function ComposerToolbar({
           )}
         </>
       )}
+    </>
+  );
 
+  const tail = (
+    <>
       {/* Last of the pickers: it is the one control here most sessions set once
           and never touch, so it sits furthest from where the eye lands. */}
       {offersPermissionModes(harness) && (
@@ -308,6 +321,24 @@ export default function ComposerToolbar({
           stored={contextReading}
         />
       </div>
+    </>
+  );
+
+  return (
+    // **`flex-wrap` is the guard, and the model's name is what needed it.** Every
+    // control here is content-sized, so a provider's long label — `DeepSeek V4
+    // Flash Vision Exp` is eleven words of nothing — asked for more width than the
+    // row had and took it out of the others, which is a toolbar whose items overlap
+    // instead of a row that reflows. Controls that cannot be squeezed wrap; the one
+    // that can be (`ModelSelector`'s own label) truncates. See its own note.
+    <div className="flex min-w-0 flex-wrap items-center gap-0.5 px-1">
+      {row === "placement" ? placement : null}
+      {row === "tools" && (
+        <>
+          {lead}
+          {tail}
+        </>
+      )}
     </div>
   );
 }

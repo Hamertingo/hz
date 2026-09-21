@@ -81,9 +81,16 @@ type ChatInputProps = {
   /// How many prompts are waiting. Only decides whether Esc is bound — the rows
   /// themselves are drawn by the transcript, above this component.
   queuedCount?: number;
-  /// Rendered outside the card — below it normally, above it on a new task. A
-  /// node rather than the controls' own props, so this component keeps owning
-  /// layout and measurement and nothing else.
+  /// The controls that decide *where this runs* — project, agent, worktree,
+  /// branch. Drawn above the text, and empty once a session exists, because all
+  /// four are fixed at creation.
+  toolbarTop?: ReactNode;
+  /// The controls that decide *what runs and what rides with it* — the model, the
+  /// mode, an attachment, the context. Drawn under the text, where a session's
+  /// whole life keeps them live.
+  ///
+  /// Two nodes rather than the controls' own props, so this component keeps
+  /// owning layout and measurement and nothing else.
   toolbar?: ReactNode;
   /// The dictate button and, while recording, the level and its two buttons.
   ///
@@ -126,10 +133,9 @@ type ChatInputProps = {
   /// when the user switches. `null` is the new task's own draft, not the
   /// absence of one.
   sessionId?: string | null;
-  /// No session yet, so the composer stands alone mid-window. Nothing sits
-  /// behind it to separate it from: the card drops its fill, border, and
-  /// padding, the toolbar moves above — reading order runs settings first, then
-  /// the box they apply to — and the send button gives way to a keyboard hint.
+  /// No session yet, so the composer stands alone mid-window: the same card, the
+  /// same rows in the same order, a different placeholder, and the send button
+  /// giving way to a keyboard hint.
   isNewTask?: boolean;
   /// The title of the session this box sends into, named in the placeholder.
   /// Only while a split view is up: one composer under several transcripts is
@@ -214,6 +220,7 @@ export default function ChatInput({
   onCancelQueued,
   onCancelRecording,
   queuedCount = 0,
+  toolbarTop,
   toolbar,
   dictation,
   dictating = false,
@@ -957,6 +964,15 @@ export default function ChatInput({
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-2xl border-2 border-muted-foreground/25 bg-background/70 text-ui text-muted-foreground">
                 <Paperclip className="size-3.5" strokeWidth={2} />
                 Drop to attach
+              </div>
+            )}
+
+            {/* Where this runs, first: a project, an agent, a worktree and a branch
+                are read before what runs in them. Empty for a session, where all
+                four are settled. */}
+            {toolbarTop && (
+              <div className="scrollbar-none flex flex-wrap items-center gap-0.5 px-3 pt-2">
+                {toolbarTop}
               </div>
             )}
 
