@@ -6,6 +6,7 @@ import {
   planMinimaxApiResolution,
   readStringRecord,
 } from './model-resolver-byok.js';
+import { lookupLocalModelLimits } from './model-catalog.js';
 
 const FALLBACK_CATALOG = {
   contextWindow: 1,
@@ -95,6 +96,62 @@ describe('MiniMax API BYOK planning', () => {
 });
 
 describe('custom BYOK planning', () => {
+  it('falls back to the bundled catalog for a window the gateway never stated', () => {
+    // The entry is not the only source. A gateway that publishes no window of its
+    // own (`opencode-go` publishes none) left every model it serves at the 200k
+    // fallback however well the catalog knew it, and the turn compacted there.
+    const catalog = lookupLocalModelLimits('opencode-go', 'minimax-m3');
+    expect(catalog.fromCatalog).toBe(true);
+    const plan = planCustomProviderResolution({
+      provider: 'custom_provider:opencode-go',
+      providerKey: 'opencode-go',
+      modelId: 'minimax-m3',
+      byok: {
+        custom_provider: {
+          'opencode-go': {
+            options: { apiKey: 'key', baseURL: 'https://opencode.example' },
+            models: { 'minimax-m3': {} },
+          },
+        },
+      },
+    });
+    expect(plan?.contextWindow).toBe(catalog.contextWindow);
+    expect(plan?.contextWindow).not.toBe(200_000);
+  });
+
+  it('keeps a recorded limit ahead of the catalog, and the fallback for an unknown model', () => {
+    const recorded = planCustomProviderResolution({
+      provider: 'custom_provider:opencode-go',
+      providerKey: 'opencode-go',
+      modelId: 'minimax-m3',
+      byok: {
+        custom_provider: {
+          'opencode-go': {
+            options: { apiKey: 'key', baseURL: 'https://opencode.example' },
+            models: { 'minimax-m3': { limit: { context: 300_000 } } },
+          },
+        },
+      },
+    });
+    expect(recorded?.contextWindow).toBe(300_000);
+
+    expect(
+      planCustomProviderResolution({
+        provider: 'custom_provider:work',
+        providerKey: 'work',
+        modelId: 'not-in-any-catalog',
+        byok: {
+          custom_provider: {
+            work: {
+              options: { apiKey: 'key', baseURL: 'https://custom.example' },
+              models: { 'not-in-any-catalog': {} },
+            },
+          },
+        },
+      })?.contextWindow,
+    ).toBe(200_000);
+  });
+
   it('returns absent for missing, disabled, and unknown model configurations', () => {
     const base = { provider: 'custom_provider:work', providerKey: 'work', modelId: 'model' };
     expect(planCustomProviderResolution({ ...base, byok: undefined })).toBeUndefined();

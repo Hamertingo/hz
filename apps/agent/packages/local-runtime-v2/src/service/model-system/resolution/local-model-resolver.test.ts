@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { streamSimple } from '@earendil-works/pi-ai';
 
-import { LocalModelResolver, lookupLocalModelLimits } from './local-model-resolver.js';
+import { LocalModelResolver } from './local-model-resolver.js';
+import { lookupLocalModelLimits } from './model-catalog.js';
 import { OPENPLATFORM_THINKING_VARIANTS_CAPABILITY } from './openplatform-thinking.js';
 import { capabilitiesFromModelConfig, modelRefForModel } from './model-ref.js';
 import type { LocalModelConfig, LocalRuntimeAuthContext } from '../contracts.js';

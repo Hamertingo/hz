@@ -27,6 +27,7 @@ import {
   minimaxApiModels,
 } from './minimax-api.js';
 import { normalizeModelThinkingEffortOptions } from '../resolution/model-ref.js';
+import { lookupLocalModelLimits } from '../resolution/model-catalog.js';
 
 export {
   MINIMAX_API_DEFAULT_BASE_URL,
@@ -210,7 +211,11 @@ export function buildModelEntry(input: BuildModelEntryInput): ModelProviderModel
     providerKind: input.providerKind,
     providerName: input.providerName,
     ...(input.apiFormat ? { apiFormat: input.apiFormat } : {}),
-    ...modelLimitFields(model),
+    ...modelLimitFields(
+      model,
+      parseProviderId(input.providerId)?.providerKey ?? input.providerId,
+      input.modelId,
+    ),
     ...modelContextWindowOptionHintFields(input),
     ...modelCapabilityFields(model, input.providerKind === 'minimax-managed'),
     ...modelThinkingFields(input),
@@ -250,9 +255,23 @@ function modelDisplayName(model: LocalModelConfig, modelId: string): string {
   return typeof model.name === 'string' ? model.name : modelId;
 }
 
-function modelLimitFields(model: LocalModelConfig): Partial<ModelProviderModelEntry> {
+/// What a model will run at: the limit recorded for it, or the one the bundled
+/// catalog states.
+///
+/// **The entry is not the only source, and drawing only it is what made a
+/// correct model look wrong.** A BYOK model with no `limit.context` of its own is
+/// not "no window": it resolves against the catalog where the catalog knows the
+/// gateway, and against the 200k fallback where it does not. So the fallback here
+/// is the same resolution the turn takes — one reading, so the number on the row
+/// is the number the agent will compact at.
+function modelLimitFields(
+  model: LocalModelConfig,
+  providerKey: string,
+  modelId: string,
+): Partial<ModelProviderModelEntry> {
   const fields: Partial<ModelProviderModelEntry> = {};
-  const contextLimit = model.limit?.context;
+  const catalog = lookupLocalModelLimits(providerKey, modelId);
+  const contextLimit = model.limit?.context ?? (catalog.fromCatalog ? catalog.contextWindow : undefined);
   if (typeof contextLimit === 'number' && Number.isFinite(contextLimit) && contextLimit > 0) {
     fields.contextLimit = contextLimit;
     fields.defaultContextLimit = contextLimit;
