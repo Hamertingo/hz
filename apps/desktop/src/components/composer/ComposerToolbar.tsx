@@ -157,7 +157,13 @@ export default function ComposerToolbar({
   isNewSession,
 }: ComposerToolbarProps) {
   return (
-    <div className="flex min-w-0 items-center gap-0.5 px-1">
+    // **`flex-wrap` is the guard, and the model's name is what needed it.** Every
+    // control here is content-sized, so a provider's long label — `DeepSeek V4
+    // Flash Vision Exp` is eleven words of nothing — asked for more width than the
+    // row had and took it out of the others, which is a toolbar whose items overlap
+    // instead of a row that reflows. Controls that cannot be squeezed wrap; the one
+    // that can be (`ModelSelector`'s own label) truncates. See its own note.
+    <div className="flex min-w-0 flex-wrap items-center gap-0.5 px-1">
       {/* No radius override: `icon-sm` already carries the app's rounded-square,
           and a circle here would be the one round control in a row of them. */}
       <Tooltip>
