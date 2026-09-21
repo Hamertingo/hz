@@ -40,3 +40,10 @@ out
 # Release runbook. Local only — it names hosts and checks that are
 # operator business, not the public repo's.
 apps/desktop/RELEASING.md
+
+# Where a session's worktree lands — see CLAUDE.md. It is a checkout of this
+# repo inside this repo, so tracking it would nest the tree in itself.
+.claude/worktrees/
+
+# Transcript dumps a coding agent drops in the working directory.
+command-code-session-*.html
