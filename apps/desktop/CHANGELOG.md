@@ -32,12 +32,22 @@ second description of it. GitHub's generated commit list is appended below it.
   `windows-x86_64` as a bare object key, which jq cannot parse — the step failed
   with a compiler error and the release published macOS alone. It never ran
   before: the artifact guard above it failed first, every time.
+- **No more console windows flashing on Windows.** A console program started by
+  an app that has no console of its own — which every GUI app hasn't — gets a
+  **new console allocated**, and that console is a window for as long as the child
+  runs. `git`, `gh` and the agent are all console programs, so attaching a project
+  flashed a screenful of windows titled `hz-agent`. Every spawn in the app now asks
+  for `CREATE_NO_WINDOW`, through one trait in `proc.rs`; a new `Command::new` that
+  forgets it is a black window on somebody's screen. Nothing to do elsewhere — a
+  unix child has no console to be given.
 - **Staging refuses a runtime it cannot ship.** The node copied beside the
   launcher was copied without being run, and `better-sqlite3` is compiled for one
   ABI — so a Homebrew node (a thin binary plus dylibs at absolute paths) or a
   module built under a different major produced a bundle whose agent never
   answers. Both are checked now, with the cure in the message, because the
   failure they prevent is an app that opens and a session that does nothing.
+
+### Fixed
 
 ## 0.20.8
 

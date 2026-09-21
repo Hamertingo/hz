@@ -23,6 +23,7 @@ use tokio::{
 use ts_rs::TS;
 
 use crate::{
+    proc::HideConsole,
     store::{self, SessionIndexItem},
     Fail,
 };
@@ -294,7 +295,7 @@ pub async fn search_content(cwd: String, query: String) -> Result<ContentMatches
         return Ok(ContentMatches::default());
     }
 
-    let Ok(out) = Command::new("git")
+    let Ok(out) = Command::new("git").hide_console()
         .args([
             "grep",
             "-z",
@@ -401,7 +402,7 @@ mod tests {
     async fn repo(files: &[(&str, &str)]) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("hz-search-{}", Uuid::now_v7()));
         tokio::fs::create_dir_all(&dir).await.expect("temp dir");
-        let ok = std::process::Command::new("git")
+        let ok = std::process::Command::new("git").hide_console()
             .args(["init", "-q"])
             .current_dir(&dir)
             .status()

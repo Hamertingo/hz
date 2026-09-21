@@ -16,6 +16,7 @@ use ts_rs::TS;
 
 use crate::binpath;
 use crate::git;
+use crate::proc::HideConsole;
 
 /// Where a check ended up, flattened from the two different shapes GitHub
 /// reports one in. Callers branch on this and never on the wire's own strings.
@@ -1039,7 +1040,7 @@ async fn gh_with_stdin(cwd: &str, args: &[&str], input: Option<&str>) -> Result<
         return Err(format!("{cwd} no longer exists."));
     }
 
-    let mut command = Command::new(bin);
+    let mut command = Command::new(bin).hide_console();
     command
         .args(args)
         .current_dir(cwd)
@@ -1197,7 +1198,7 @@ pub async fn source_control_state() -> SourceControlState {
 /// `git --version`, or `None` where there is no git to run. Not an error: a
 /// machine without git is a machine hz cannot do much on, and the row says so.
 async fn git_version() -> Option<String> {
-    let out = Command::new("git").arg("--version").output().await.ok()?;
+    let out = Command::new("git").hide_console().arg("--version").output().await.ok()?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     out.status.success().then_some(text).filter(|t| !t.is_empty())
 }
@@ -1205,7 +1206,7 @@ async fn git_version() -> Option<String> {
 /// Who `gh` is signed in as, or `None` where the CLI is not installed.
 async fn gh_account() -> Option<GhAccount> {
     let bin = binpath::gh().await?;
-    let out = Command::new(bin)
+    let out = Command::new(bin).hide_console()
         .args(["auth", "status", "--json", "hosts"])
         // The same pair every other `gh` call here sets, for the same reason: a
         // prompt written to a pipe nobody reads is a command that never returns,

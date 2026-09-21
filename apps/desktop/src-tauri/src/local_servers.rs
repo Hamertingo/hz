@@ -16,6 +16,7 @@ use tauri::State;
 
 use crate::session::SessionManager;
 use crate::store::get_session_index_item;
+use crate::proc::HideConsole;
 
 #[derive(Clone, Serialize, PartialEq, Eq, Hash, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -72,7 +73,7 @@ fn discover(root: Option<u32>, tree: Option<&Path>) -> Vec<LocalServer> {
 
 /// Every pid under `root`, `root` included.
 fn descendants(root: u32) -> HashSet<u32> {
-    let Ok(out) = Command::new("ps").args(["-axo", "pid=,ppid="]).output() else {
+    let Ok(out) = Command::new("ps").hide_console().args(["-axo", "pid=,ppid="]).output() else {
         return HashSet::new();
     };
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
@@ -99,7 +100,7 @@ fn descendants(root: u32) -> HashSet<u32> {
 /// `(pid, process name, port)` for every TCP listener, via lsof's machine
 /// format: one field per line, `p` opening a process and `n` naming a socket.
 fn listening() -> Vec<(u32, String, u16)> {
-    let Ok(out) = Command::new("lsof")
+    let Ok(out) = Command::new("lsof").hide_console()
         .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"])
         .output()
     else {
@@ -115,7 +116,7 @@ fn cwd_of(pids: Vec<u32>) -> HashMap<u32, PathBuf> {
         return HashMap::new();
     }
     let list = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-    let Ok(out) = Command::new("lsof").args(["-a", "-p", &list, "-d", "cwd", "-Fpn"]).output() else {
+    let Ok(out) = Command::new("lsof").hide_console().args(["-a", "-p", &list, "-d", "cwd", "-Fpn"]).output() else {
         return HashMap::new();
     };
     parse_cwds(&String::from_utf8_lossy(&out.stdout))

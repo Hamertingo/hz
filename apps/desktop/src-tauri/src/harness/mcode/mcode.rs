@@ -64,6 +64,7 @@ use tokio::{
 };
 
 use rpc::{Incoming, RpcClient};
+use crate::proc::HideConsole;
 
 /// ACP protocol version. mcode answers `1` to `initialize`, measured.
 const PROTOCOL_VERSION: u64 = 1;
@@ -393,7 +394,7 @@ async fn spawn_child(session_id: &str, cwd: &str) -> Result<Child> {
 /// which is the kind of difference nobody would find until it mattered.
 async fn child_command(session_id: &str, cwd: &str) -> Command {
     let bin = crate::binpath::mcode().await;
-    let mut command = Command::new(&bin);
+    let mut command = Command::new(&bin).hide_console();
 
     if let Some(endpoint) = crate::orchestration::child_endpoint() {
         command.env("HZ_ENDPOINT", endpoint);

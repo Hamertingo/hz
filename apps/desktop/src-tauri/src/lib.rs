@@ -53,6 +53,7 @@ pub mod models;
 pub mod notifications;
 pub mod orchestration;
 pub mod plugins;
+pub mod proc;
 pub mod projects;
 pub mod quit;
 pub mod session;

@@ -14,6 +14,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use ts_rs::TS;
 
 use crate::analytics;
+use crate::proc::HideConsole;
 
 const STABLE_MANIFEST: &str = "https://hamertingo.github.io/hz/stable.json";
 const BETA_MANIFEST: &str = "https://hamertingo.github.io/hz/beta.json";
@@ -265,7 +266,7 @@ fn relaunch(app: &AppHandle) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     if let Some(bundle) = bundle_of(&exe) {
-        let out = std::process::Command::new("open")
+        let out = std::process::Command::new("open").hide_console()
             .arg("-n")
             .arg(bundle)
             .output()
@@ -283,7 +284,7 @@ fn relaunch(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    std::process::Command::new(&exe)
+    std::process::Command::new(&exe).hide_console()
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("could not launch {}: {e}", exe.display()))

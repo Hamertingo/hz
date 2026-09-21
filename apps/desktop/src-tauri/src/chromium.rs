@@ -18,6 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::{fs, sync::Notify};
 use ts_rs::TS;
+use crate::proc::HideConsole;
 
 /// The CEF version the `cef` crate in Cargo.toml binds. Framework and
 /// bindings have to agree, so bumping the crate means re-pinning [`ARM64`]
@@ -217,7 +218,7 @@ async fn download(app: &AppHandle) -> Result<()> {
     fs::create_dir_all(&stage).await?;
     // bsdtar, which every Mac has, reads bzip2 itself. Only the framework is
     // taken: the rest of the archive is the SDK the build already used.
-    let out = tokio::process::Command::new("/usr/bin/tar")
+    let out = tokio::process::Command::new("/usr/bin/tar").hide_console()
         .arg("-xjf")
         .arg(&part)
         .arg("-C")

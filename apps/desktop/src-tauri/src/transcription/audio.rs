@@ -19,6 +19,7 @@ use rubato::{
 };
 use serde::Serialize;
 use ts_rs::TS;
+use crate::proc::HideConsole;
 
 /// What the models take. Not negotiable — a model fed 48kHz transcribes it as
 /// speech at three times the speed and answers with nonsense rather than an
@@ -171,7 +172,7 @@ fn parse_muted(answer: &str) -> Option<bool> {
 /// a property write per channel for the same answer.
 #[cfg(target_os = "macos")]
 fn osascript(lines: &[&str]) -> Result<String> {
-    let mut command = std::process::Command::new("/usr/bin/osascript");
+    let mut command = std::process::Command::new("/usr/bin/osascript").hide_console();
     for line in lines {
         command.arg("-e").arg(line);
     }
