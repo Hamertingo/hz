@@ -44,7 +44,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::harness::mcode::models;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// One row of `provider list --json`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

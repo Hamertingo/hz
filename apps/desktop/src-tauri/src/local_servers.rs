@@ -16,7 +16,7 @@ use tauri::State;
 
 use crate::session::SessionManager;
 use crate::store::get_session_index_item;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 #[derive(Clone, Serialize, PartialEq, Eq, Hash, Debug)]
 #[serde(rename_all = "camelCase")]

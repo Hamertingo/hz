@@ -34,7 +34,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use ts_rs::TS;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// Emitted as `session_title` once a generated title lands, so the sidebar row
 /// updates without a refetch. Not an `AgentEvent`: nothing here came from the

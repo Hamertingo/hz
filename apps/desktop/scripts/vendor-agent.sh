@@ -179,6 +179,16 @@ STAGE_EXTERNALS
 # run once, here, where the cure is still cheap to apply.
 cp "$INSTALL_NODE" "$DEST/bin/node"
 chmod +x "$DEST/bin/node"
+
+# **And it has to be readable by the build, which a `com.apple.provenance`
+# xattr stops it from being.** A node copied out of a downloaded tarball carries
+# that attribute, and `tauri-build` reads every file under `resources/` to decide
+# what to rebuild — so it died with a bare `Permission denied (os error 13)` and
+# no file named, on every local `cargo` command, while CI (which never had the
+# xattr) built the very same tree. Stripped here rather than explained there.
+if command -v xattr >/dev/null 2>&1; then
+  xattr -c "$DEST/bin/node" 2>/dev/null || true
+fi
 if ! "$DEST/bin/node" -e 'process.exit(0)' >/dev/null 2>&1; then
   cat >&2 <<EOF
 the node at $INSTALL_NODE cannot be shipped: it does not run from the copy.

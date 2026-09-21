@@ -24,7 +24,7 @@ use std::sync::{OnceLock, RwLock};
 use tokio::process::Command;
 
 use crate::harness::Harness;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// The one CLI this app spawns. Resolved once and reused, like every other
 /// answer here.

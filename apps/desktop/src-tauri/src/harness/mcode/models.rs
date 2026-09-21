@@ -47,7 +47,7 @@ use crate::models::{Effort, Model, ModelId};
 
 use super::parser::{ConfigOptions, ModelRef, NewSessionResult};
 use super::rpc::RpcClient;
-use crate::proc::HideConsole;
+use crate::proc::HideConsole as _;
 
 /// How long a reading is trusted. Long, because a model list changes when the
 /// reader installs something or picks a different provider in the TUI, and the
