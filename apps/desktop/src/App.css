@@ -1414,3 +1414,78 @@ body.session-drag,
 body.session-drag * {
   cursor: grabbing !important;
 }
+
+/* The composer's pixel cat: two frames swapped on a loop with a one-pixel hop,
+   arcade style, plus the coins it jumps for. Ported from MonoCode's runner.
+   Reduced motion freezes on the resting frame — the patrol is decoration, and
+   the working indicator already says the turn is running. */
+.composer-mascot-active {
+  animation: composer-mascot-hop var(--mascot-beat, 460ms) infinite;
+}
+
+.composer-mascot-rest {
+  animation: composer-mascot-swap-off var(--mascot-beat, 460ms) infinite;
+}
+
+.composer-mascot-talk {
+  animation: composer-mascot-swap-on var(--mascot-beat, 460ms) infinite;
+}
+
+.composer-coin-face {
+  animation: composer-mascot-swap-off 320ms infinite;
+}
+
+.composer-coin-edge {
+  animation: composer-mascot-swap-on 320ms infinite;
+}
+
+@keyframes composer-mascot-hop {
+  0%,
+  49.99% {
+    transform: translateY(0);
+  }
+  50%,
+  100% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes composer-mascot-swap-off {
+  0%,
+  49.99% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes composer-mascot-swap-on {
+  0%,
+  49.99% {
+    opacity: 0;
+  }
+  50%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-mascot-active,
+  .composer-mascot-rest,
+  .composer-mascot-talk,
+  .composer-coin-face,
+  .composer-coin-edge {
+    animation: none;
+  }
+
+  .composer-mascot-rest {
+    opacity: 1;
+  }
+
+  .composer-mascot-talk {
+    opacity: 0;
+  }
+}

@@ -3,6 +3,7 @@ import { getCurrentWebview, type Webview } from "@tauri-apps/api/webview";
 import { ArrowUp, CornerDownLeft, Paperclip, Square, X } from "lucide-react";
 
 import { fileIconUrl } from "@/components/FileIcon";
+import { ComposerMascot } from "@/components/composer/ComposerMascot";
 import FileMentionMenu from "@/components/composer/FileMentionMenu";
 import IssueMentionMenu from "@/components/composer/IssueMentionMenu";
 import SlashCommandMenu from "@/components/composer/SlashCommandMenu";
@@ -245,6 +246,12 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
+  // The runner is mounted only while a turn is live, and stays mounted through
+  // the sprite's exit hop — it calls back once it has hopped off the rim.
+  const [runnerLive, setRunnerLive] = useState(false);
+  useEffect(() => {
+    if (busy) setRunnerLive(true);
+  }, [busy]);
 
   // Where the caret is, tracked so the picker can tell a command being typed
   // from a slash that has already been left behind.
@@ -1318,6 +1325,14 @@ export default function ChatInput({
         ) : (
           // Its own scroll, for the reason the new-task row above states.
           <div className="scrollbar-none overflow-x-auto pt-1.5">{toolbar}</div>
+        )}
+
+        {runnerLive && (
+          <ComposerMascot
+            boxRef={cardRef}
+            busy={busy}
+            onExited={() => setRunnerLive(false)}
+          />
         )}
       </form>
     </div>
