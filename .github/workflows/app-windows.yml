@@ -104,15 +104,21 @@ jobs:
       - name: Lint the frontend
         run: pnpm --filter hz run lint
 
+      # **Lint before test, which is the opposite of app.yml's order.** Both
+      # compile the same tree, so the total is the same either way; what changes
+      # is which verdict a red run reports first. Microsoft's runner is the
+      # slowest this repository uses and the class of failure that only shows up
+      # here is exactly `-D warnings` — dead code behind a `cfg`, an import only
+      # one platform's branch names. Learning that nineteen minutes in, with the
+      # test result buried under it, is the price of the usual order.
+      - name: Lint the Rust
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
       # Bare, never filtered — see the header.
       - name: Run the Rust tests
         working-directory: apps/desktop/src-tauri
         run: cargo test
-
-      # `-D warnings`, so this is a gate rather than a wall nobody reads.
-      - name: Lint the Rust
-        working-directory: apps/desktop/src-tauri
-        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test and lint the wire crate, the CLI and the agent launcher
         run: |

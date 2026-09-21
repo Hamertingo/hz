@@ -15,9 +15,16 @@
 use std::sync::Mutex;
 
 use tauri::{
-    menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu},
+    menu::Menu,
     AppHandle, Emitter, Manager, Runtime,
 };
+
+// The macOS menu's own items. `Menu` stays above because the other platform's
+// arm still returns `Menu::default()`; these four are named by the macOS branch
+// alone, so leaving them unconditional is dead code on Windows — which
+// `-D warnings` refuses.
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem, Submenu};
 
 pub const QUIT_ID: &str = "quit";
 

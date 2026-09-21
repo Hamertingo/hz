@@ -151,6 +151,11 @@ fn set_muted(muted: bool) -> bool {
 /// Split from the spawn so it is testable, since the failure it guards is
 /// silent: a machine with no output device answers `missing value`, and taking
 /// that as "not muted" would leave the sound off on the way back out.
+/// Gated with [`read_muted`], its only caller: it parses AppleScript's answer,
+/// and on every other target there is no AppleScript to ask and `read_muted`
+/// answers `None` without looking. Bare, it is dead code off macOS, which
+/// `-D warnings` refuses.
+#[cfg(target_os = "macos")]
 fn parse_muted(answer: &str) -> Option<bool> {
     match answer.trim() {
         "true" => Some(true),
@@ -422,6 +427,7 @@ fn resample(samples: Vec<f32>, from_rate: u32) -> Vec<f32> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn mute_state_parses() {
         assert_eq!(parse_muted("true"), Some(true));
@@ -430,6 +436,7 @@ mod tests {
 
     /// What a machine with no output device answers. Reading it as `false` is
     /// what would leave the sound off after the recording ended.
+    #[cfg(target_os = "macos")]
     #[test]
     fn an_unreadable_output_reads_as_nothing() {
         assert_eq!(parse_muted("missing value"), None);
