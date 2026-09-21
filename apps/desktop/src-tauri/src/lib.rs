@@ -25,9 +25,14 @@ pub mod binpath;
 #[cfg(all(feature = "cef", target_os = "macos"))]
 #[path = "cef/cef.rs"]
 pub mod cef;
-// Compiled without the feature too: it needs nothing of CEF's, and that is
-// what keeps its types in `events.ts` and its tests in a bare `cargo test`.
-#[cfg(target_os = "macos")]
+// Compiled on **every** platform, not only where the browser is. The module
+// needs nothing platform-specific — it fetches a tarball and remembers where
+// it landed — and the `target_os` gate it used to carry cost its type from
+// `events.ts`: a Windows `cargo test` regenerated the file without
+// `ChromiumStatus`, and the frontend build then failed on three files that
+// import it. `cef` above is genuinely feature-shaped; this was not.
+//
+// What stays macOS-only is the *commands*, registered below.
 pub mod chromium;
 pub mod context;
 mod local_servers;
