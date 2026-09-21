@@ -2,7 +2,6 @@ import { Plus } from "lucide-react";
 
 import BranchSelector from "@/components/composer/BranchSelector";
 import BranchSwitchDialog from "@/components/composer/BranchSwitchDialog";
-import ContextMeter from "@/components/composer/ContextMeter";
 import ModelSelector from "@/components/composer/ModelSelector";
 import PermissionSelector, {
   offersPermissionModes,
@@ -16,10 +15,8 @@ import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
-  AgentEvent,
   ApprovalPolicy,
   BranchList,
-  ContextReading,
   Effort,
   Harness,
   Model,
@@ -92,28 +89,12 @@ type ComposerToolbarProps = {
   /// handed to `ChatInput` as an opaque node, so the two cannot share props.
   onAttach: () => void;
 
-  /// How full the model's context is, or `null` before any turn has reported
-  /// it. Sits at the far end of the row rather than among the pickers: it
-  /// reports rather than sets, and nothing here changes it.
-  contextUsage: { used: number; max: number; costUsd: number | null } | null;
-
-  /// The session's events, for the panel's own accounting. Read only while that
-  /// panel is open — see `ContextMeter`.
-  events: readonly AgentEvent[];
-
-  /// The last context reading this session's agent gave, off its index entry.
-  contextReading: ContextReading | null;
-
   /// The session whose agent is asked for a reading, or `null` before one exists.
   sessionId: string | null;
 
   /// Where the session runs is fixed at creation, so the last three controls
   /// only exist before one starts.
   isNewSession: boolean;
-
-  /// Which of the two rows to draw. A fragment rather than a wrapper: the composer
-  /// places it, because only the composer knows where the text sits between them.
-  row?: "placement" | "tools";
 };
 
 /// The composer's control row. Model and permission change a running session in
@@ -154,21 +135,17 @@ export default function ComposerToolbar({
   useWorktree,
   onToggleWorktree,
   onAttach,
-  contextUsage,
-  events,
-  contextReading,
   sessionId,
   isNewSession,
-  row = "tools",
 }: ComposerToolbarProps) {
-  // **Two rows, because they answer two different questions.** *Where does this
-  // run* is decided once, before a session exists — the project, the agent, the
-  // worktree, the branch — and *what runs, and what rides with it* is live for a
-  // session's whole life: the model, the mode, an attachment, the context. One row
-  // of eight controls said neither, and dropped the four a session cannot change
-  // into the middle of the four it can.
-  const lead = (
-    <>
+  return (
+    // **`flex-wrap` is the guard, and the model's name is what needed it.** Every
+    // control here is content-sized, so a provider's long label — `DeepSeek V4
+    // Flash Vision Exp` is eleven words of nothing — asked for more width than the
+    // row had and took it out of the others, which is a toolbar whose items overlap
+    // instead of a row that reflows. Controls that cannot be squeezed wrap; the one
+    // that can be (`ModelSelector`'s own label) truncates. See its own note.
+    <div className="flex min-w-0 flex-wrap items-center gap-0.5 px-1">
       {/* No radius override: `icon-sm` already carries the app's rounded-square,
           and a circle here would be the one round control in a row of them. */}
       <Tooltip>
@@ -209,11 +186,7 @@ export default function ComposerToolbar({
         onOpenProviderSettings={onOpenProviderSettings}
         loadingModels={loadingModels}
       />
-    </>
-  );
 
-  const placement = (
-    <>
       {isNewSession && (
         <>
           <ProjectSelector
@@ -283,11 +256,7 @@ export default function ComposerToolbar({
           )}
         </>
       )}
-    </>
-  );
 
-  const tail = (
-    <>
       {/* Last of the pickers: it is the one control here most sessions set once
           and never touch, so it sits furthest from where the eye lands. */}
       {offersPermissionModes(harness) && (
@@ -298,47 +267,6 @@ export default function ComposerToolbar({
         />
       )}
 
-      {/* `ml-auto` rather than a spacer, so a long branch name still gets the
-          whole middle of the row and this stays pinned to the right edge.
-          //
-          **Drawn whether or not there is a number yet.** It used to wait for the
-          first turn's occupancy, so a fresh composer had no meter at all and one
-          appeared from nowhere mid-conversation — a control the reader has to
-          notice rather than one that was always there. Nothing counted yet is a
-          state it draws, and the first `usage_update` fills it in. */}
-      <div className="ml-auto">
-        {/* **Keyed by session, because a reading belongs to one.** The panel
-            holds what its own ask fetched, and this row survives a session
-            switch — unkeyed, the reading of the session the reader just left
-            would be drawn as current under the one they just arrived at. */}
-        <ContextMeter
-          key={sessionId ?? "new"}
-          sessionId={sessionId}
-          used={contextUsage?.used ?? 0}
-          max={contextUsage?.max ?? 0}
-          costUsd={contextUsage?.costUsd ?? null}
-          events={events}
-          stored={contextReading}
-        />
-      </div>
-    </>
-  );
-
-  return (
-    // **`flex-wrap` is the guard, and the model's name is what needed it.** Every
-    // control here is content-sized, so a provider's long label — `DeepSeek V4
-    // Flash Vision Exp` is eleven words of nothing — asked for more width than the
-    // row had and took it out of the others, which is a toolbar whose items overlap
-    // instead of a row that reflows. Controls that cannot be squeezed wrap; the one
-    // that can be (`ModelSelector`'s own label) truncates. See its own note.
-    <div className="flex min-w-0 flex-wrap items-center gap-0.5 px-1">
-      {row === "placement" ? placement : null}
-      {row === "tools" && (
-        <>
-          {lead}
-          {tail}
-        </>
-      )}
     </div>
   );
 }

@@ -81,16 +81,14 @@ type ChatInputProps = {
   /// How many prompts are waiting. Only decides whether Esc is bound — the rows
   /// themselves are drawn by the transcript, above this component.
   queuedCount?: number;
-  /// The controls that decide *where this runs* — project, agent, worktree,
-  /// branch. Drawn above the text, and empty once a session exists, because all
-  /// four are fixed at creation.
-  toolbarTop?: ReactNode;
-  /// The controls that decide *what runs and what rides with it* — the model, the
-  /// mode, an attachment, the context. Drawn under the text, where a session's
-  /// whole life keeps them live.
-  ///
-  /// Two nodes rather than the controls' own props, so this component keeps
-  /// owning layout and measurement and nothing else.
+  /// What the session has spent of its window, drawn on the row under the text —
+  /// where a reading about this turn belongs, and the one place in both states that
+  /// is always below the input. The empty composer puts it on the send hint's own
+  /// line, which is otherwise most of a row of nothing.
+  meter?: ReactNode;
+  /// Rendered outside the card — below it normally, above it on a new task. A
+  /// node rather than the controls' own props, so this component keeps owning
+  /// layout and measurement and nothing else.
   toolbar?: ReactNode;
   /// The dictate button and, while recording, the level and its two buttons.
   ///
@@ -119,7 +117,7 @@ type ChatInputProps = {
   modelTakesImages?: boolean;
   /// The "hand it back" actions, clipped to a sliver above the card and opening
   /// on hover. A node for the toolbar's reason, and placed here rather than by
-  /// the shell so it sits inside the same `max-w-3xl` column and against the
+  /// the shell so it sits inside the same column the composer uses and against the
   /// card's own top edge — it clips itself to that edge, so nothing can come
   /// between them. Absent on a new task: there is no session to send into.
   handoff?: ReactNode;
@@ -133,9 +131,10 @@ type ChatInputProps = {
   /// when the user switches. `null` is the new task's own draft, not the
   /// absence of one.
   sessionId?: string | null;
-  /// No session yet, so the composer stands alone mid-window: the same card, the
-  /// same rows in the same order, a different placeholder, and the send button
-  /// giving way to a keyboard hint.
+  /// No session yet, so the composer stands alone mid-window. Nothing sits
+  /// behind it to separate it from: the card drops its fill, border, and
+  /// padding, the toolbar moves above — reading order runs settings first, then
+  /// the box they apply to — and the send button gives way to a keyboard hint.
   isNewTask?: boolean;
   /// The title of the session this box sends into, named in the placeholder.
   /// Only while a split view is up: one composer under several transcripts is
@@ -149,7 +148,7 @@ type ChatInputProps = {
   /// the shell, and this component has no session events of its own.
   history?: string[];
   /// A backend failure, shown above the composer. Lives here rather than in the
-  /// shell so it inherits the form's `max-w-3xl` column and lines up with the
+  /// shell so it inherits the form's own column and lines up with the
   /// input; the transcript is the wrong home for it, since most of these fail
   /// before any session exists to have a transcript.
   error?: string | null;
@@ -171,6 +170,9 @@ type ChatInputProps = {
 };
 
 const MAX_ROWS = 10;
+/// The floor the empty state opens at. Two lines of room to start writing in,
+/// rather than a single line that reads as a search field.
+const NEW_TASK_MIN_ROWS = 2;
 // The empty state has no transcript above it to crowd, so the box can take a lot
 // more of the window before it starts scrolling. Capped rather than unbounded
 // because this composer is centered: past the window's height it would overflow
@@ -220,7 +222,7 @@ export default function ChatInput({
   onCancelQueued,
   onCancelRecording,
   queuedCount = 0,
-  toolbarTop,
+  meter,
   toolbar,
   dictation,
   dictating = false,
@@ -475,7 +477,13 @@ export default function ChatInput({
     el.style.height = "0px";
     // scrollHeight includes padding, so the row cap has to as well.
     const rows = isNewTask ? NEW_TASK_MAX_ROWS : MAX_ROWS;
-    el.style.height = `${Math.min(el.scrollHeight, lineHeight * rows + chrome)}px`;
+    // **A floor as well as a ceiling.** An empty box is one line tall, which is
+    // the right size for a field that follows a sentence and the wrong one for
+    // the window's front door: the empty state gets room to be written in, and
+    // keeps it until the text outgrows it.
+    const least = isNewTask ? NEW_TASK_MIN_ROWS : 1;
+    const height = Math.min(el.scrollHeight, lineHeight * rows + chrome);
+    el.style.height = `${Math.max(height, lineHeight * least + chrome)}px`;
     card.style.height = "";
   }, [message, resizeTick, isNewTask]);
 
@@ -803,7 +811,7 @@ export default function ChatInput({
       {ask && <div className="mx-auto max-w-3xl">{ask}</div>}
 
       <form
-        className="mx-auto max-w-3xl"
+        className="mx-auto w-full max-w-3xl"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -866,6 +874,20 @@ export default function ChatInput({
         {/* Pulled left by the toolbar's own `px-1` plus the ghost button's 6px
             icon inset, so the `+` glyph — not the button box — lands on the
             same edge as the text below it. */}
+        {/* **The row has its own scroll, and that is not decoration.** A window
+            narrower than the toolbar's own content — ~860px with every control
+            showing — used to widen the form it sits in, and the form widened the
+            column the empty state is centred in. That column carries
+            `overflow-y-auto`, whose computed `overflow-x` is `auto` too, so the
+            overflow surfaced as a horizontal scrollbar along the *bottom of the
+            column* rather than beside the row that caused it. Containing it here
+            costs the row a scroll and stops it at its own edge. The bar is not
+            drawn: a toolbar is read by its controls, and a scrollbar under them
+            is chrome for a gesture the trackpad already does. */}
+        {isNewTask && (
+          <div className="-ml-2.5 scrollbar-none overflow-x-auto pb-1.5">{toolbar}</div>
+        )}
+
         {/* Directly above the card and with no gap: the row runs on past its own
             reserve and behind the card, which is the opaque thing that hides it.
             Withheld entirely while the live-work strip is up — the two want the
@@ -938,22 +960,16 @@ export default function ChatInput({
           <div
             ref={cardRef}
             className={cn(
-              "relative rounded-2xl border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl transition-colors",
-              // **`--edge-surface` and `--shadow-surface` are one pair, and
-              // exactly one of them is drawn per mode.** Light gets the shadow
-              // and a transparent edge — under a shadow tuned this crisp, a border
-              // is a second line saying the same thing. Dark gets the edge and no
+              "relative rounded-2xl transition-colors",
+              // `--edge-surface` and `--shadow-surface` are one pair, and exactly
+              // one of them is drawn per mode. Light gets the shadow and a
+              // transparent edge — under a shadow tuned this crisp, a border is a
+              // second line saying the same thing. Dark gets the edge and no
               // shadow: a shadow under a dark card falls on something already
               // darker than itself, and the card is glass there, so being lighter
               // than the page does not draw the box on its own.
-              //
-              // **The box is drawn before a session exists too**, which is where
-              // this differs from what it started as: the centred composer used to
-              // be no card at all, with its controls stacked above the input, and
-              // it read as a column of loose controls that happened to have a text
-              // field under them. What the reader is looking at — what is pinned,
-              // the text, the controls that decide where it goes — is one thing, so
-              // it is one rectangle.
+              !isNewTask &&
+                "border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl",
             )}
           >
             {/* Covers the card rather than replacing anything, so the text and
@@ -964,15 +980,6 @@ export default function ChatInput({
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-2xl border-2 border-muted-foreground/25 bg-background/70 text-ui text-muted-foreground">
                 <Paperclip className="size-3.5" strokeWidth={2} />
                 Drop to attach
-              </div>
-            )}
-
-            {/* Where this runs, first: a project, an agent, a worktree and a branch
-                are read before what runs in them. Empty for a session, where all
-                four are settled. */}
-            {toolbarTop && (
-              <div className="scrollbar-none flex flex-wrap items-center gap-0.5 px-3 pt-2">
-                {toolbarTop}
               </div>
             )}
 
@@ -987,7 +994,7 @@ export default function ChatInput({
                 when an image is actually attached rather than standing under every
                 prompt this model is asked. */}
             {attachments.length > 0 && (
-              <div className="px-3 pt-2.5">
+              <div className={cn("pt-3", isNewTask ? "px-0" : "px-3")}>
                 <AttachmentTray
                   attachments={attachments}
                   onRemove={(path) => removeAttachment(sessionId, path)}
@@ -996,16 +1003,14 @@ export default function ChatInput({
               </div>
             )}
 
-            {/* The text's own row, and only the text's: dictation and the send
-                button are what belong beside a draft. Every other control is on
-                the row under this one — measuring the box and moving them there
-                once the text wrapped was tried and reverted, because the
-                measurement lands a frame after the keystroke and every wrap
-                flickered; a row that is fixed needs no measurement. `items-end`
-                is what makes one row read correctly at both heights: at one line
-                the buttons sit beside the text, and past it they stay at the
-                bottom. */}
-            <div className="flex items-end gap-1 px-3 pt-3 pb-1.5">
+            {/* Controls ride the text's own row, always. Measuring the box and
+                dropping them to a second row once the text wrapped was tried
+                and reverted: the measurement lands a frame after the keystroke,
+                so the row appeared and vanished as the text crossed a line
+                boundary, and every wrap flickered. `items-end` is what makes
+                one row read correctly at both heights — at one line the buttons
+                sit beside the text, and past it they stay at the bottom. */}
+            <div className={cn("flex items-end gap-1 py-3", isNewTask ? "px-0" : "px-3")}>
               <div className="relative min-w-0 flex-1">
                 <textarea
                   // Registered as well as held, so dictation can hand focus
@@ -1216,43 +1221,42 @@ export default function ChatInput({
 
               {controls}
             </div>
-
-        {/* **One row per kind of thing, inside the box.** The controls used to
-            ride the text's own row, which made the textarea and the toolbar
-            compete for one width — a long model name shortened the field the
-            reader was typing in. The text has the card's full width now, the
-            controls have the full width under it, and neither can take the
-            other's. Measured-and-reflow was the rejected alternative here and
-            still is: the row is fixed, so nothing flips a frame late.
-
-            It wraps rather than scrolls, so no control is ever hidden behind a
-            gesture — `ModelSelector`'s label is the one item whose length nobody
-            chooses, and it truncates. */}
-        <div className="scrollbar-none flex flex-wrap items-center gap-0.5 px-3 pb-2">
-          {toolbar}
+          </div>
         </div>
 
-        {isNewTask && !menuOpen && (
-          // Gone while a picker is open, and the list sitting over this row is
-          // the smaller half of why: Enter completes the highlighted row there
-          // rather than sending, and the picker draws its own ↵ hint saying so.
-          // Two Enter legends at once, one of them untrue.
-          //
-          // The menu, not its rows — including while it is still placeholders.
-          // Enter does send there, so the legend would be *true*; it is dropped
-          // anyway, because a send hint under an open picker reads as belonging
-          // to the list and there is nothing in the list to send. Omitting a
-          // hint costs less than drawing one that looks like it means the row
-          // above it.
-          <div className="flex items-center gap-1 px-3 pb-2 text-ui text-muted-foreground/60">
-            Press <CornerDownLeft className="size-3" strokeWidth={2} /> to send
-            {/* Named here because it is the one place the press's *outcome*
-                changes: one prompt, several sessions, each in its own worktree.
-                The trigger beside it already says how many. */}
-            {canFanOut(fanOut) && <> to {fanOut.length} models</>}
-          </div>
-        )}
-          </div>
+        {/* **The row under the text, and what the space in it is for.** It held the
+            send hint and nothing else, most of it empty on the widest window the app
+            runs in — so the session's context reading rides here, at the far end, in
+            both states, because this is the one row that is always below the input:
+            the toolbar itself is above it before a session exists.
+
+            `ml-auto` rather than a spacer, so the legend keeps the middle of the row
+            and the reading stays pinned right.
+
+            The hint is dropped while a picker is open: Enter completes the
+            highlighted row there rather than sending, and the list draws its own ↵
+            legend saying so. Two Enter legends at once, one of them untrue — and
+            the menu, not its rows, because a send hint under an open picker reads
+            as belonging to the list. */}
+        <div className="flex items-center gap-1 pt-1.5">
+          {isNewTask && !menuOpen && (
+            <span className="flex items-center gap-1 text-ui text-muted-foreground/60">
+              Press <CornerDownLeft className="size-3" strokeWidth={2} /> to send
+              {/* Named here because it is the one place the press's *outcome*
+                  changes: one prompt, several sessions, each in its own worktree.
+                  The trigger beside it already says how many. */}
+              {canFanOut(fanOut) && <> to {fanOut.length} models</>}
+            </span>
+          )}
+
+          {/* The toolbar's own scroll, for the reason its row states. */}
+          {!isNewTask && (
+            <div className="scrollbar-none flex min-w-0 items-center gap-1 overflow-x-auto">
+              {toolbar}
+            </div>
+          )}
+
+          {meter && <span className="ml-auto shrink-0">{meter}</span>}
         </div>
 
         {runnerLive && (
