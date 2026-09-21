@@ -139,7 +139,7 @@ async fn resolve_mcode() -> PathBuf {
 /// candidates, cheapest first:
 ///
 /// - **A release bundle**: `<Name>.app/Contents/Resources/agent/bin/hz-agent`,
-///   which `scripts/vendor-mcode.sh` wrote and Tauri copied in. Read off the
+///   which `scripts/vendor-agent.sh` wrote and Tauri copied in. Read off the
 ///   running executable, two directories up, because Tauri's own `resource_dir`
 ///   needs an `AppHandle` this module has no business holding.
 /// - **The source tree this repository owns**: `apps/agent/bin/hz-agent`, the

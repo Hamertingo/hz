@@ -807,7 +807,7 @@ impl Harness {
     pub fn install_command(self) -> &'static str {
         match self {
             // **Empty, and that is the product.** The CLI is staged into the
-            // bundle by `scripts/vendor-mcode.sh`, so hz is one download and
+            // bundle by `scripts/vendor-agent.sh`, so hz is one download and
             // there is no command a reader could be given. A copyable installer
             // here would send them to fetch a second copy of what they already
             // have — and the notice is built to draw the sentence alone where

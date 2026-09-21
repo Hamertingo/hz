@@ -306,7 +306,7 @@ pub async fn probe() -> Result<Vec<Model>> {
 ///
 /// Ignored by default: it spawns a child against the machine's real provider
 /// configuration and takes a second or two. It is what to run after touching
-/// `binpath` or `scripts/vendor-mcode.sh`, because it is the only test that
+/// `binpath` or `scripts/vendor-agent.sh`, because it is the only test that
 /// exercises resolution and the wire together.
 #[tokio::test]
 #[ignore = "spawns the shipped agent"]
