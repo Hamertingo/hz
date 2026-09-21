@@ -14,6 +14,14 @@
 /// strength of this.
 export const BYOK_FALLBACK_CONTEXT = 200_000;
 
+/// The reply budget a BYOK model runs on when its entry records none — the
+/// `maxTokens` half of the same fallback, and drawn the same way.
+///
+/// Kept beside the context number because a row that says one and not the other
+/// describes half a model, and `16k` beside a `1M` window is exactly the pair a
+/// reader wants to see before trusting either.
+export const BYOK_FALLBACK_OUTPUT = 16_384;
+
 /// A token count as the rows draw it: `1M`, `200k`, `16k`.
 ///
 /// Truncating rather than rounding to a decimal, because every number this
