@@ -34,6 +34,13 @@ on:
 permissions:
   contents: read
 
+# Superseded runs are cancelled — see app-windows.yml for why this one is allowed
+# to and warm-cache.yml deliberately is not. A gate answers a question about one
+# commit, and a push makes the previous answer worthless.
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: macos-latest

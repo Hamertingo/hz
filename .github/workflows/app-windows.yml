@@ -34,6 +34,17 @@ on:
 permissions:
   contents: read
 
+# **Superseded runs are cancelled**, which is the opposite of what warm-cache.yml
+# does and for the opposite reason. Four pushes to one branch left four of these
+# building the same tree at once, three of them answering a question about a
+# commit nobody was looking at any more — on the most expensive runner this
+# repository uses. warm-cache cannot do this because its *build* is the signal
+# (nothing else compiles `cef`), where a gate's verdict is only ever interesting
+# for the newest commit on a ref. That is exactly what a concurrency group says.
+concurrency:
+  group: app-windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: windows-latest
