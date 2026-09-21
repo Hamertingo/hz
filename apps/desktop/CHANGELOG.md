@@ -21,8 +21,6 @@ second description of it. GitHub's generated commit list is appended below it.
   running the staged agent, not by trusting the copy — `initialize` and
   `session/new` both answered from the trimmed tree.
 
-### Fixed
-
 - **The installer carries the app's icon.** `bundle.windows` was empty, so NSIS
   drew its own defaults while installing — the title bar, the Add/Remove Programs
   entry and the uninstaller showed Tauri's mark rather than this app's.
@@ -38,6 +36,17 @@ second description of it. GitHub's generated commit list is appended below it.
   module built under a different major produced a bundle whose agent never
   answers. Both are checked now, with the cure in the message, because the
   failure they prevent is an app that opens and a session that does nothing.
+
+### Fixed
+
+- **No more console windows flashing on Windows.** A console program started by
+  an app that has no console of its own — which every GUI app hasn't — gets a
+  **new console allocated**, and that console is a window for as long as the child
+  runs. `git`, `gh` and the agent are all console programs, so attaching a project
+  flashed a screenful of windows titled `hz-agent`. Every spawn in the app now asks
+  for `CREATE_NO_WINDOW`, through one trait in `proc.rs`; a new `Command::new` that
+  forgets it is a black window on somebody's screen. Nothing to do elsewhere — a
+  unix child has no console to be given.
 
 ## 0.20.8
 

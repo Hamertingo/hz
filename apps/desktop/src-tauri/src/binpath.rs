@@ -24,6 +24,7 @@ use std::sync::{OnceLock, RwLock};
 use tokio::process::Command;
 
 use crate::harness::Harness;
+use crate::proc::HideConsole;
 
 /// The one CLI this app spawns. Resolved once and reused, like every other
 /// answer here.
@@ -507,7 +508,7 @@ fn find_versioned(root: &Path, depth: usize, layouts: &[&str], bin: &str) -> Opt
 async fn login_shell_which(bin: &str) -> Option<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    let output = Command::new(shell)
+    let output = Command::new(shell).hide_console()
         .args(["-l", "-c", &format!("command -v {bin}")])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -535,7 +536,7 @@ async fn login_shell_which(bin: &str) -> Option<PathBuf> {
 /// line is taken, since it is the one typing the name would have run.
 #[cfg(windows)]
 async fn login_shell_which(bin: &str) -> Option<PathBuf> {
-    let output = Command::new("where")
+    let output = Command::new("where").hide_console()
         .arg(bin)
         .stdin(Stdio::null())
         .stderr(Stdio::null())

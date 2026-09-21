@@ -47,6 +47,7 @@ use crate::models::{Effort, Model, ModelId};
 
 use super::parser::{ConfigOptions, ModelRef, NewSessionResult};
 use super::rpc::RpcClient;
+use crate::proc::HideConsole;
 
 /// How long a reading is trusted. Long, because a model list changes when the
 /// reader installs something or picks a different provider in the TUI, and the
@@ -227,7 +228,7 @@ pub async fn probe() -> Result<Vec<Model>> {
     let scratch = std::env::temp_dir().join("hz-mcode-probe");
     let _ = std::fs::create_dir_all(&scratch);
 
-    let mut command = tokio::process::Command::new(&bin);
+    let mut command = tokio::process::Command::new(&bin).hide_console();
     crate::harness::agent_env(&mut command, &bin).await;
     let mut child = command
         .arg("acp")

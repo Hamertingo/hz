@@ -44,6 +44,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::harness::mcode::models;
+use crate::proc::HideConsole;
 
 /// One row of `provider list --json`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -994,7 +995,7 @@ pub async fn test(provider_id: &str, model: Option<&str>) -> Result<String> {
     }
 
     let bin = crate::binpath::mcode().await;
-    let mut command = Command::new(&bin);
+    let mut command = Command::new(&bin).hide_console();
     command.args(&args);
     crate::harness::agent_env(&mut command, &bin).await;
     let output = command
@@ -1029,7 +1030,7 @@ const KEY_VAR: &str = "HZ_PROVIDER_API_KEY";
 /// instead of a child that never returns.
 async fn run(args: &[&str], api_key: Option<&str>) -> Result<String> {
     let bin = crate::binpath::mcode().await;
-    let mut command = Command::new(&bin);
+    let mut command = Command::new(&bin).hide_console();
     command.args(args);
     crate::harness::agent_env(&mut command, &bin).await;
     command

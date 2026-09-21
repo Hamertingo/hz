@@ -16,6 +16,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::harness::Harness;
+use crate::proc::HideConsole;
 
 /// Which run of the menu an app belongs to. Not cosmetic: "open in Cursor" and
 /// "open in Ghostty" are different asks, and a flat list of both reads as one.
@@ -170,7 +171,7 @@ static ICONS: LazyLock<Mutex<HashMap<PathBuf, Option<String>>>> =
 fn icns_path(bundle: &Path) -> Option<PathBuf> {
     let resources = bundle.join("Contents/Resources");
 
-    let named = Command::new("plutil")
+    let named = Command::new("plutil").hide_console()
         .args(["-extract", "CFBundleIconFile", "raw", "-o", "-"])
         .arg(bundle.join("Contents/Info.plist"))
         .output()
@@ -206,7 +207,7 @@ fn read_icon(bundle: &Path) -> Option<String> {
         // A temp file rather than stdout: `sips` writes the paths it worked on
         // to stdout and only ever writes the image to a path.
         let out = std::env::temp_dir().join(format!("hz-appicon-{}.png", uuid::Uuid::now_v7()));
-        let ok = Command::new("sips")
+        let ok = Command::new("sips").hide_console()
             .args(["-s", "format", "png", "-Z", "64"])
             .arg(&icns)
             .arg("--out")
@@ -313,7 +314,7 @@ pub async fn open_in_app(app_path: String, path: String) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        let out = tokio::process::Command::new("open")
+        let out = tokio::process::Command::new("open").hide_console()
             .arg("-a")
             .arg(&app_path)
             .arg("--")
@@ -390,7 +391,7 @@ pub async fn open_login_terminal(harness: Harness, cwd: String) -> Result<(), St
     write_script(&path, &script)
         .map_err(|err| format!("could not write the login script: {err}"))?;
 
-    let out = tokio::process::Command::new("open")
+    let out = tokio::process::Command::new("open").hide_console()
         .arg("-a")
         .arg(TERMINAL)
         .arg("--")

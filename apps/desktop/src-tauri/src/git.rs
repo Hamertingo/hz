@@ -12,6 +12,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::Fail;
+use crate::proc::HideConsole;
 
 /// What the composer's branch picker needs to render and guard itself.
 #[derive(Debug, Clone, Default, Serialize, TS)]
@@ -340,7 +341,7 @@ async fn run(cwd: &str, args: &[&str]) -> Result<()> {
 /// One git invocation: stdout on success, git's own stderr as the error.
 /// Every spawn but `cat-file`'s streamed one goes through here.
 async fn exec(cwd: &str, envs: &[(&str, &str)], args: &[&str]) -> Result<String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = Command::new("git").hide_console();
     cmd.args(args).current_dir(cwd);
     for (key, value) in envs {
         cmd.env(key, value);
@@ -1063,7 +1064,7 @@ async fn read_batch(cwd: &str, revs: &[String]) -> Vec<Side> {
 
 /// Feeds NUL-delimited revs to one `git cat-file` and returns its raw stdout.
 async fn batch(cwd: &str, mode: &str, revs: &[String]) -> Option<Vec<u8>> {
-    let mut child = Command::new("git")
+    let mut child = Command::new("git").hide_console()
         .args(["cat-file", mode, "-z"])
         .current_dir(cwd)
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -2065,7 +2066,7 @@ mod tests {
     /// wrong reason.
     fn init_repo(dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();
-        let ok = std::process::Command::new("git")
+        let ok = std::process::Command::new("git").hide_console()
             .args(["init", "-q"])
             .current_dir(dir)
             .status()

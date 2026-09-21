@@ -38,6 +38,7 @@ use ts_rs::TS;
 use crate::attachments::{image_mime, MAX_IMAGE_BYTES};
 use crate::docs::{read_capped, TOO_LARGE};
 use crate::Fail;
+use crate::proc::HideConsole;
 
 /// One row in the picker. `path` is relative to the indexed directory, which is
 /// also what gets typed into the prompt — the CLI resolves `@path` against the
@@ -322,7 +323,7 @@ async fn mark_ignored(cwd: &str, entries: &mut [DirEntry]) {
         input.push('\0');
     }
 
-    let Ok(mut child) = Command::new("git")
+    let Ok(mut child) = Command::new("git").hide_console()
         .args(["check-ignore", "--stdin", "-z"])
         .current_dir(cwd)
         // A listing shouldn't contend with a background index refresh.

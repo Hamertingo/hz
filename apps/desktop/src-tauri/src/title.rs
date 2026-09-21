@@ -34,6 +34,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use ts_rs::TS;
+use crate::proc::HideConsole;
 
 /// Emitted as `session_title` once a generated title lands, so the sidebar row
 /// updates without a refetch. Not an `AgentEvent`: nothing here came from the
@@ -179,7 +180,7 @@ async fn title_command(harness: Harness, prompt: &str, _cwd: &str) -> Result<Com
         // scratch directory below, for [`SCRATCH_DIR`]'s reason.
         Harness::Mcode => {
             let bin = crate::binpath::mcode().await;
-            let mut cmd = Command::new(&bin);
+            let mut cmd = Command::new(&bin).hide_console();
             crate::harness::agent_env(&mut cmd, &bin).await;
             cmd.args([
                 // Raw text, not the TUI's transcript: what comes back is the
@@ -719,7 +720,7 @@ mod command_tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn timing_out_kills_the_child_rather_than_abandoning_it() {
-        let child = Command::new("/bin/sleep")
+        let child = Command::new("/bin/sleep").hide_console()
             .arg("30")
             .kill_on_drop(true)
             .stdout(Stdio::piped())
@@ -737,7 +738,7 @@ mod command_tests {
         // The kill and reap are asynchronous, so give the runtime a moment
         // before asking whether the process is gone.
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let alive = std::process::Command::new("/bin/kill")
+        let alive = std::process::Command::new("/bin/kill").hide_console()
             .args(["-0", &pid.to_string()])
             .status()
             .unwrap()
