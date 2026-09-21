@@ -2430,7 +2430,11 @@ async fn deliver_prompt(
     // a non-image attachment becomes an `@path` mention on the prompt, and
     // the transcript has to show what the model was actually given.
     let prepared = attachments::prepare(session_id, prompt, attachment_paths, harness).await?;
-    let text = prepared.text;
+    // The event records what the reader wrote, the wire carries what the model
+    // needs. They differ for an image: its path is the model's only way to the
+    // file, and the transcript already draws the picture it names.
+    let text = prepared.display;
+    let prompt_for_model = prepared.text;
 
     let payload = AgentEventPayload::UserMessage {
         text: text.clone(),
@@ -2490,9 +2494,9 @@ async fn deliver_prompt(
     // a stray. Everything queued during a turn is flushed at the boundary,
     // joined into one.
     let Transport::Acp(session) = transport;
-    mcode::start_turn(session, &text).await?;
+    mcode::start_turn(session, &prompt_for_model).await?;
 
-    Ok(text)
+    Ok(prompt_for_model)
 }
 
 /// The handles a read loop needs once its harness has stopped being relevant.
@@ -3041,7 +3045,7 @@ pub async fn strand_queue_on_exit(
                 .await
             {
                 Ok(prepared) => (
-                    prepared.text,
+                    prepared.display,
                     prepared
                         .images
                         .iter()

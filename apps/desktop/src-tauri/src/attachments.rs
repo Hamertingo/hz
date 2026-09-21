@@ -69,10 +69,21 @@ pub struct PreparedImage {
 /// The prompt as the CLI should see it, with everything attached folded in.
 #[derive(Default)]
 pub struct Prepared {
-    /// The user's text with a line appended per attachment — an `@path` mention
-    /// or prose naming it. This is what gets persisted as the user's own
-    /// message, so the transcript shows the same names the model was given.
+    /// What the model is given: the user's text, then a line per attachment — an
+    /// `@path` mention or prose naming it. Every attachment is named, images
+    /// included, because an image's bytes cannot travel on this wire and a name
+    /// with no directory is not something a model can open.
     pub text: String,
+    /// What the transcript records: the user's own words, then a line per **file**
+    /// attachment.
+    ///
+    /// **An image is left out of this half, and the picture is why.** Its tile in
+    /// the composer's tray is what the reader pinned, and the transcript draws the
+    /// same image above the bubble — so a second line naming the path would be the
+    /// same attachment stated twice, in a sentence that is not the reader's. A file
+    /// has no such drawing, so its mention stays: it is both the record that
+    /// something was attached and the link to it.
+    pub display: String,
     pub images: Vec<PreparedImage>,
 }
 
@@ -408,25 +419,31 @@ pub async fn prepare(
     if paths.is_empty() {
         return Ok(Prepared {
             text: prompt.to_string(),
+            display: prompt.to_string(),
             images: Vec::new(),
         });
     }
 
     let mut images = Vec::new();
     let mut mentions = Vec::new();
+    let mut shown = Vec::new();
 
     for path in paths {
         let Ok(attachment) = describe(path).await else {
             continue;
         };
 
-        mentions.push(if harness.caps().expands_at_mentions {
+        let named = if harness.caps().expands_at_mentions {
             format!("@{path}")
         } else if attachment.is_image {
             format!("Attached image: {path}")
         } else {
             format!("Attached file: {path}")
-        });
+        };
+        if !attachment.is_image {
+            shown.push(named.clone());
+        }
+        mentions.push(named);
 
         if !attachment.is_image {
             continue;
@@ -469,7 +486,17 @@ pub async fn prepare(
         (false, false) => format!("{prompt}\n{joined}"),
     };
 
-    Ok(Prepared { text, images })
+    let display = match (prompt.trim().is_empty(), shown.is_empty()) {
+        (_, true) => prompt.to_string(),
+        (true, false) => shown.join("\n"),
+        (false, false) => format!("{prompt}\n{}", shown.join("\n")),
+    };
+
+    Ok(Prepared {
+        text,
+        display,
+        images,
+    })
 }
 
 #[cfg(test)]
@@ -506,6 +533,9 @@ mod tests {
             format!("look at this\nAttached file: {path}"),
             "mcode expands no mention, so punctuation says nothing"
         );
+        // A file has nothing drawn for it, so its record is the same sentence the
+        // model was given — and the mention is the link to the file.
+        assert_eq!(prepared.display, prepared.text);
 
         let _ = fs::remove_dir_all(&dir).await;
     }
@@ -530,6 +560,9 @@ mod tests {
             .await
             .expect("prepared");
         assert_eq!(prepared.text, format!("look at this\nAttached image: {path}"));
+        // The transcript's half leaves the image out: the picture above the bubble
+        // is what names it, and the path is the model's business.
+        assert_eq!(prepared.display, "look at this");
         // Still archived, because the transcript draws this and not the original:
         // a screenshot deleted an hour later still has to render.
         assert_eq!(prepared.images.len(), 1);
