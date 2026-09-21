@@ -69,9 +69,9 @@ pub struct PreparedImage {
 /// The prompt as the CLI should see it, with everything attached folded in.
 #[derive(Default)]
 pub struct Prepared {
-    /// The user's text with an `@path` mention appended per non-image
-    /// attachment. This is what gets persisted as the user's own message, so
-    /// the transcript shows the same mentions the model was given.
+    /// The user's text with a line appended per attachment — an `@path` mention
+    /// or prose naming it. This is what gets persisted as the user's own
+    /// message, so the transcript shows the same names the model was given.
     pub text: String,
     pub images: Vec<PreparedImage>,
 }
@@ -369,8 +369,8 @@ fn parse_data_url(url: &str) -> Option<(&str, &str)> {
     Some((mime.strip_suffix(";base64")?, payload))
 }
 
-/// Folds the attached paths into the prompt: images encoded and archived, files
-/// appended as mentions.
+/// Folds the attached paths into the prompt: **every one of them named**, and an
+/// image archived beside it.
 ///
 /// An image is **copied** into the app's own directory before its path is
 /// recorded. The transcript renders that copy, so a screenshot attached from
@@ -378,15 +378,27 @@ fn parse_data_url(url: &str) -> Option<(&str, &str)> {
 /// persisting the base64 on the event, would put megabytes into an append-only
 /// log that is read whole every time the session is opened.
 ///
-/// A file is *not* copied: its mention has to resolve for the model, and the
-/// point of the path is that it names the real file in the real tree.
-/// `harness` decides how a non-image attachment is named, and the difference is
-/// whether the CLI has a parser for it. Claude Code expands `@/abs/path` into
-/// the file's contents before the model turn, with no tool call on the wire —
-/// which is what makes a 40MB CSV cost a path rather than a context window.
-/// Neither other harness has such a parser, so the same string arrives as
-/// literal punctuation the model has to guess the meaning of. Named in prose
-/// there instead, which any model can read and act on with its own tools.
+/// **Both kinds are named in the prompt, and an image is the case that made that
+/// necessary.** mcode's ACP adapter refuses an image content block outright
+/// (`promptToText` throws on one), so an image's bytes never reach the model —
+/// they are archived for the transcript and nothing more. A prompt that carried
+/// only the composer's `📎 name` chip therefore handed the model a filename with
+/// no directory: a photograph sent from the home directory is not in the
+/// session's repository, so the model searched for it and found nothing, which is
+/// exactly what a reader saw. **The path is the one thing that resolves**, so it
+/// is written for images and files alike.
+///
+/// An image is *not* copied for the model's benefit — the mention names the file
+/// the reader picked, in the tree they picked it from, which is the same rule a
+/// file has always been given.
+///
+/// `harness` decides the *spelling*, and the difference is whether the CLI has a
+/// parser for it. Claude Code expands `@/abs/path` into the file's contents
+/// before the model turn, with no tool call on the wire — which is what makes a
+/// 40MB CSV cost a path rather than a context window. Neither other harness has
+/// such a parser, so the same string arrives as literal punctuation the model has
+/// to guess the meaning of. Named in prose there instead, which any model can
+/// read and act on with its own tools.
 pub async fn prepare(
     session_id: &str,
     prompt: &str,
@@ -408,12 +420,15 @@ pub async fn prepare(
             continue;
         };
 
+        mentions.push(if harness.caps().expands_at_mentions {
+            format!("@{path}")
+        } else if attachment.is_image {
+            format!("Attached image: {path}")
+        } else {
+            format!("Attached file: {path}")
+        });
+
         if !attachment.is_image {
-            mentions.push(if harness.caps().expands_at_mentions {
-                format!("@{path}")
-            } else {
-                format!("Attached file: {path}")
-            });
             continue;
         }
 
@@ -491,6 +506,34 @@ mod tests {
             format!("look at this\nAttached file: {path}"),
             "mcode expands no mention, so punctuation says nothing"
         );
+
+        let _ = fs::remove_dir_all(&dir).await;
+    }
+
+    /// An image is named too, and by the path it was picked from.
+    ///
+    /// Its bytes are archived for the transcript and never travel — mcode's ACP
+    /// adapter throws on an image content block — so the mention is the only
+    /// thing the model is given. A prompt that carried the composer's chip and
+    /// nothing else left the model a bare filename to search a repository for,
+    /// and `clouds-hero.jpg` in a home directory is not in the repository at all:
+    /// measured as `Glob **/clouds-hero.jpg` → "No files matched".
+    #[tokio::test]
+    async fn an_image_is_named_by_the_path_it_was_picked_from() {
+        let dir = std::env::temp_dir().join(format!("hz-img-{}", Uuid::now_v7()));
+        fs::create_dir_all(&dir).await.expect("temp dir");
+        let file = dir.join("clouds-hero.jpg");
+        fs::write(&file, b"\xff\xd8\xff\xe0not-a-real-jpeg").await.expect("temp file");
+        let path = file.to_string_lossy().into_owned();
+
+        let prepared = prepare("s", "look at this", std::slice::from_ref(&path), Harness::Mcode)
+            .await
+            .expect("prepared");
+        assert_eq!(prepared.text, format!("look at this\nAttached image: {path}"));
+        // Still archived, because the transcript draws this and not the original:
+        // a screenshot deleted an hour later still has to render.
+        assert_eq!(prepared.images.len(), 1);
+        assert_ne!(prepared.images[0].stored_path, path);
 
         let _ = fs::remove_dir_all(&dir).await;
     }
