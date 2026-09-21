@@ -307,9 +307,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: pnpm tauri build --bundles nsis
 
-      # The installer *and* the archive the updater downloads. NSIS produces
-      # both; the `.zip` is the one the manifest points at, because it is what
-      # the plugin can unpack over an installed copy.
+      # **The installer *is* the updater artifact, and that is a v2 change.**
+      # The guard here used to want a `*.nsis.zip` beside the setup.exe, which
+      # is the Tauri **v1** layout — the one `createUpdaterArtifacts:
+      # "v1Compatible"` still produces for a migrating app. This bundle is v2
+      # (`true`), and there Tauri says of the setup.exe: "it will be re-used by
+      # the updater", signing it into the `-setup.exe.sig` the plugin verifies.
+      # So the zip never existed, the guard failed the job on a bundle that was
+      # complete, and the release published macOS alone.
       - name: Publish the installer
         shell: bash
         env:
@@ -321,15 +326,14 @@ jobs:
 
           shopt -s nullglob
           SETUP=("$BUNDLE"/*-setup.exe)
-          ZIP=("$BUNDLE"/*.nsis.zip)
-          SIG=("$BUNDLE"/*.nsis.zip.sig)
+          SIG=("$BUNDLE"/*-setup.exe.sig)
 
-          if [ ${#SETUP[@]} -eq 0 ] || [ ${#ZIP[@]} -eq 0 ] || [ ${#SIG[@]} -eq 0 ]; then
-            echo "::error::the NSIS bundle is incomplete — installer, updater archive and signature all have to be there"
+          if [ ${#SETUP[@]} -eq 0 ] || [ ${#SIG[@]} -eq 0 ]; then
+            echo "::error::the NSIS bundle is incomplete — the installer and the signature the updater verifies both have to be there"
             exit 1
           fi
 
-          gh release upload "${GITHUB_REF_NAME}" "${SETUP[@]}" "${ZIP[@]}" "${SIG[@]}" \
+          gh release upload "${GITHUB_REF_NAME}" "${SETUP[@]}" "${SIG[@]}" \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
       # **A fragment, not `latest.json`.** `tauri-action` writes a manifest
@@ -344,14 +348,17 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE="apps/desktop/src-tauri/target/release/bundle/nsis"
-          ZIP="$(find "$BUNDLE" -name '*.nsis.zip' -print -quit)"
-          SIG="$(find "$BUNDLE" -name '*.nsis.zip.sig' -print -quit)"
+          # The setup.exe the updater downloads, and the signature it verifies
+          # it against — see the note above the publish step for why there is no
+          # archive beside it.
+          SETUP="$(find "$BUNDLE" -name '*-setup.exe' -print -quit)"
+          SIG="$(find "$BUNDLE" -name '*-setup.exe.sig' -print -quit)"
           V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
 
           jq -n \
             --arg version "$V" \
             --arg signature "$(cat "$SIG")" \
-            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$ZIP")" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$SETUP")" \
             '{version: $version, platforms: {windows-x86_64: {signature: $signature, url: $url}}}' \
             > latest-windows.json
 
