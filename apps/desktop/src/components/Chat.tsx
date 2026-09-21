@@ -39,9 +39,13 @@ type ChatProps = {
   /// `hz send` message draws. Selecting the session is all it does — the same
   /// thing clicking its sidebar row does.
   onOpenSession: (sessionId: string) => void;
-  /// Opens the subagent panel on no particular run — what the background-task
-  /// notice needs, since it stands for the whole set rather than for one of them.
-  onOpenSubagentPanel: () => void;
+  /// Opens a subagent's conversation. What the background-task notice reaches
+  /// for, since it stands for the whole set rather than for one of them.
+  ///
+  /// Absent where the session has none to open — a background task is not a
+  /// subagent, so a session can be holding one with no roster behind it, and the
+  /// notice then draws as a line rather than as a button that does nothing.
+  onOpenSubagents?: () => void;
   /// Answers a permission request. The agent is blocked until this fires, so it
   /// is the one callback here whose absence stalls a session rather than
   /// degrading a view.
@@ -133,7 +137,7 @@ export default function Chat({
   streamingBlock,
   onOpenSubagent,
   onOpenSession,
-  onOpenSubagentPanel,
+  onOpenSubagents,
   onRespondPermission,
   onAnswerQuestions,
   onCancelQuestion,
@@ -668,7 +672,7 @@ export default function Chat({
             {backgroundTaskCount > 0 && (
               <BackgroundTasksIndicator
                 count={backgroundTaskCount}
-                onOpen={onOpenSubagentPanel}
+                onOpen={onOpenSubagents}
               />
             )}
 

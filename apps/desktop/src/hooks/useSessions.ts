@@ -23,6 +23,7 @@ import { isWindowFocused, onFocusChange } from "@/lib/focus";
 import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableEffort, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
 import { stanceFor } from "@/lib/permission";
+import { isActive } from "@/lib/subagent";
 import { isProvisional, nextMainSeq, provisionalId, retireOldestProvisional } from "@/lib/provisional";
 import { tracked } from "@/lib/slow";
 import { playNotification } from "@/lib/sound";
@@ -33,6 +34,32 @@ import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
 import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
 
 const DEFAULT_EFFORT: Effort = "high";
+
+/// The children this app has watched *work*, by the child's own id.
+///
+/// **mcode's roster can name children from before this app started.** They live
+/// in the agent's own store, so a session resumed after a restart reports its
+/// whole family back — every subagent that session ever ran — and one new child
+/// then dragged all of them onto the screen at once. That is what made "the
+/// subagents vanish when I restart" read as a bug: they came back, all together,
+/// the moment the agent delegated anything.
+///
+/// So a roster keeps a child from the moment it is seen going, and keeps it
+/// afterwards — the run the reader watched finish is still there to open. What is
+/// dropped is only what this run never saw run, and those are rows whose
+/// transcripts this app could never read either.
+const watchedChildren = new Set<string>();
+
+/// A roster narrowed to the rows worth drawing. See [`watchedChildren`].
+function watchableChildren(members: DelegatedMember[]): DelegatedMember[] {
+  const kept: DelegatedMember[] = [];
+  for (const member of members) {
+    if (isActive(member)) watchedChildren.add(member.sessionId);
+    else if (!watchedChildren.has(member.sessionId)) continue;
+    kept.push(member);
+  }
+  return kept;
+}
 
 /// Images for a prompt the backend has not archived yet, through `url` and never
 /// `path`: the copy the asset protocol's scope allows is written at flush, so
@@ -2587,7 +2614,7 @@ useEffect(() => {
 useEffect(() => {
   const listenerPromise = listen<DelegationEvent>("subagent_delegations", (event) => {
     const { sessionId, members } = event.payload;
-    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: members }));
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(members) }));
   });
 
   return () => {
@@ -2703,6 +2730,11 @@ const liveTaskIds = liveTaskIdsBySession[selectedSessionId ?? ""] ?? NO_TASKS;
 // published them. Empty for a session with nothing delegated — which is the
 // ordinary state and not "not read yet": the push and the on-demand read both
 // answer with the whole roster, so an empty list is an answer.
+//
+// `delegationsBySession` is the whole map, exposed beside it because the sidebar
+// draws a row per subagent under the session that spawned it — so it needs every
+// live session's roster, not the selected one's alone. Same push, one reader
+// each: this narrowing is what the composer and the focused pane want.
 const delegations = selectedSessionId ? delegationsBySession[selectedSessionId] ?? [] : [];
 
 /// Re-reads a session's roster on demand, for a pane opened after the last push.
@@ -2713,7 +2745,7 @@ const delegations = selectedSessionId ? delegationsBySession[selectedSessionId] 
 const refreshDelegations = useCallback(async (sessionId: string) => {
   try {
     const members = await invoke<DelegatedMember[]>("session_delegations", { sessionId });
-    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: members }));
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(members) }));
   } catch {
     // Nothing to say that the empty list does not already say.
   }

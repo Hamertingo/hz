@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { activeCount, isActive, memberFor, statusWord } from "./subagent";
-import type { DelegatedMember } from "@/types/events";
+import {
+  activeCount,
+  foldSubagents,
+  isActive,
+  memberFor,
+  memberTitle,
+  runBrief,
+  statusWord,
+} from "./subagent";
+import type { AgentEvent, DelegatedMember } from "@/types/events";
 
 function member(over: Partial<DelegatedMember> = {}): DelegatedMember {
   return {
@@ -75,5 +83,55 @@ describe("statusWord", () => {
   it("draws a word this build does not know as itself", () => {
     expect(statusWord("reticulating")).toBe("reticulating");
     expect(statusWord("")).toBe("Unknown");
+  });
+});
+
+describe("foldSubagents", () => {
+  it("follows the work until the reader says otherwise", () => {
+    // Open while anything is going, so a fan-out is watchable as it happens…
+    expect(foldSubagents(undefined, [member({ status: "running" })])).toBe(false);
+    // …and folded once nothing is, so finished runs stop being rows in a list
+    // that is a worklist.
+    expect(foldSubagents(undefined, [member({ status: "completed" })])).toBe(true);
+    expect(foldSubagents(undefined, [])).toBe(true);
+  });
+
+  it("takes the reader's own pick over the work", () => {
+    expect(foldSubagents(true, [member({ status: "running" })])).toBe(true);
+    expect(foldSubagents(false, [member({ status: "completed" })])).toBe(false);
+  });
+});
+
+describe("memberTitle", () => {
+  it("takes the task, then the agent's name, then the floor", () => {
+    expect(memberTitle(member({ task: "Map the auth flow", agentName: "explore" }))).toBe(
+      "Map the auth flow",
+    );
+    expect(memberTitle(member({ agentName: "explore" }))).toBe("explore");
+    expect(memberTitle(member())).toBe("Subagent");
+  });
+
+  it("passes over a task that is only space", () => {
+    expect(memberTitle(member({ task: "   ", agentName: "explore" }))).toBe("explore");
+  });
+});
+
+describe("runBrief", () => {
+  /// Only the field the reader looks at. Everything else on a captured event is
+  /// irrelevant to reading one prompt out of it.
+  const spawn = (payload: unknown) => ({ payload }) as unknown as AgentEvent;
+
+  it("reads mcode's top-level prompt off the spawning call", () => {
+    const run = { spawn: spawn({ type: "tool_call_started", input: { prompt: "Map the auth flow" } }) };
+    expect(runBrief(run)).toBe("Map the auth flow");
+  });
+
+  it("answers nothing where the call says nothing, or is not a spawn", () => {
+    expect(runBrief({ spawn: spawn({ type: "tool_call_started", input: {} }) })).toBeNull();
+    expect(runBrief({ spawn: spawn({ type: "tool_call_started", input: { prompt: "  " } }) })).toBeNull();
+    // An update is not the announcement, and carries no input at all.
+    expect(runBrief({ spawn: spawn({ type: "tool_call_updated", input: { prompt: "x" } }) })).toBeNull();
+    // A run in a transcript replayed after a restart may hold no call.
+    expect(runBrief({ spawn: null })).toBeNull();
   });
 });

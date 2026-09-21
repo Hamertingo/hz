@@ -1,4 +1,4 @@
-import type { DelegatedMember, ToolResult } from "@/types/events";
+import type { AgentEvent, DelegatedMember, ToolResult } from "@/types/events";
 
 /// The statuses a member is still going in. The agent's own vocabulary — see
 /// [`DelegatedMember::status`] — and the set that decides whether a Stop is worth
@@ -40,6 +40,30 @@ export function memberFor(
     members.find((member) => name !== null && member.agentName?.trim() === name) ??
     null
   );
+}
+
+/// Whether a session's subagent rows are folded away in the sidebar.
+///
+/// **The reader's own pick wins; failing that the group follows the work.** Open
+/// while anything is still running, folded once none is — so a fan-out is
+/// watchable the whole time it is happening, and six finished runs stop being six
+/// rows of history in a list that is a worklist. What they leave behind is not
+/// lost: the spawning call is in the transcript, and its `SubagentRow` opens the
+/// same view the sidebar row did.
+export function foldSubagents(
+  pick: boolean | undefined,
+  members: readonly DelegatedMember[],
+): boolean {
+  return pick ?? !members.some(isActive);
+}
+
+/// What a roster member is called, wherever one is drawn.
+///
+/// The task first: that is the brief somebody wrote, and the thing two runs of
+/// the same agent are told apart by. The agent's own name second, and
+/// "Subagent" as the floor — a row still needs something to read and click on.
+export function memberTitle(member: DelegatedMember): string {
+  return member.task?.trim() || member.agentName?.trim() || "Subagent";
 }
 
 /// A status word as the panel draws it.
@@ -95,4 +119,22 @@ export function memberIdOf(
   const exact = subSessionIdOf(result);
   if (exact !== null && members.some((member) => member.sessionId === exact)) return exact;
   return memberFor(run, members)?.sessionId ?? null;
+}
+
+/// The brief a spawning call carried, where the harness states one.
+///
+/// **Read off the call alone, and that is the whole of what is available.** A
+/// roster is live-only, so a transcript replayed after a restart holds runs whose
+/// children are gone — the call is then the only account of what the subagent was
+/// asked to do, and drawing a sentence is better than drawing an empty box.
+///
+/// mcode's `task` puts it at the top level as `prompt`. The nested shapes other
+/// harnesses use are deliberately not chased: guessing wrong puts somebody else's
+/// paragraph under the reader's nose, where a miss costs a sentence and says so.
+export function runBrief(run: { spawn: AgentEvent | null }): string | null {
+  const payload = run.spawn?.payload;
+  if (payload?.type !== "tool_call_started") return null;
+
+  const prompt = (payload.input as Record<string, unknown> | null)?.prompt;
+  return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : null;
 }

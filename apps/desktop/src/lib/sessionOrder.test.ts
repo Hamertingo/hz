@@ -9,7 +9,7 @@ import {
   sortSessions,
 } from "@/components/Sidebar";
 import type { LiveSessions } from "@/components/Sidebar";
-import type { Project, SessionIndexItem } from "@/types/events";
+import type { DelegatedMember, Project, SessionIndexItem } from "@/types/events";
 
 /// Only the fields the ordering reads. Everything else on the index item is
 /// irrelevant here and spelling it out would make each case harder to read than
@@ -960,5 +960,108 @@ describe("split groups", () => {
     expect(shape(sessionGroups(items, [], undefined, false, splits))).toEqual([
       ["Group 1", ["a"]],
     ]);
+  });
+});
+
+describe("subagent rows", () => {
+  /// Only the fields a sidebar subagent row draws. The roster's other fields are
+  /// the panel's business, and this list reads the id and the position alone.
+  const sub = (sessionId: string, over: Partial<DelegatedMember> = {}) =>
+    ({
+      sessionId,
+      parentSessionId: "root",
+      agentName: null,
+      task: null,
+      status: "running",
+      backgroundTaskId: null,
+      errorMessage: null,
+      ...over,
+    }) as DelegatedMember;
+
+  /// The roster the sidebar reads, as the one function the walk takes.
+  const roster =
+    (by: Record<string, DelegatedMember[]>) =>
+    (sessionId: string): readonly DelegatedMember[] =>
+      by[sessionId] ?? [];
+
+  /// A session row and a subagent row under one label, so a case can read the list
+  /// in the order it draws without caring which species each row is.
+  const drawn = (rows: ReturnType<typeof sessionRows>) =>
+    rows.map((row) => row.member?.sessionId ?? row.item.sessionId);
+
+  it("hangs a session's subagents off it, ahead of the sessions it spawned", () => {
+    const items = [item("root", "2026-01-01T00:00:00Z"), item("child", "2026-02-01T00:00:00Z", "root")];
+
+    const rows = sessionRows(items, roster({ root: [sub("m1"), sub("m2")] }));
+
+    // Subagents first: they are work happening *in* this session, where a spawned
+    // session is somewhere else the work went.
+    expect(drawn(rows)).toEqual(["root", "m1", "m2", "child"]);
+    expect(rows.map((row) => row.depth)).toEqual([0, 1, 1, 1]);
+  });
+
+  it("draws them on the parent's rail, closing at the last one", () => {
+    const rows = sessionRows(
+      [item("root", "2026-01-01T00:00:00Z")],
+      roster({ root: [sub("m1"), sub("m2")] }),
+    );
+
+    // The parent opens a line for them…
+    expect(rows[0].opens).toBe(true);
+    // …the first carries it on, the last closes it at the elbow.
+    expect(rows[1].guides).toEqual([true]);
+    expect(rows[2].guides).toEqual([false]);
+  });
+
+  it("carries the rail past a subagent into the sessions it spawned", () => {
+    const items = [item("root", "2026-01-01T00:00:00Z"), item("child", "2026-02-01T00:00:00Z", "root")];
+
+    const rows = sessionRows(items, roster({ root: [sub("m1")] }));
+
+    // One line under the parent, shared by both species: the subagent is not the
+    // last row down there, so its level carries on to the spawned session — which
+    // is the last, and closes it.
+    expect(rows[1].guides).toEqual([true]);
+    expect(rows[2].guides).toEqual([false]);
+  });
+
+  it("keeps a subagent inside its parent's nest and run", () => {
+    const items = [
+      item("root", "2026-01-01T00:00:00Z"),
+      item("other", "2026-02-01T00:00:00Z"),
+    ];
+
+    // Newest first at the top level, and the subagent travels with the session
+    // that spawned it rather than opening a nest of its own.
+    const groups = sessionGroups(items, [], undefined, false, [], roster({ root: [sub("m1")] }));
+
+    expect(groups).toHaveLength(1);
+    expect(drawn(groups[0].rows)).toEqual(["other", "root", "m1"]);
+  });
+
+  it("carries a pinned session's subagents into the Pinned group", () => {
+    const items = [pin("root", "2026-01-01T00:00:00Z")];
+
+    const groups = sessionGroups(items, [], undefined, false, [], roster({ root: [sub("m1")] }));
+
+    expect(groups[0].kind).toBe("pinned");
+    expect(drawn(groups[0].rows)).toEqual(["root", "m1"]);
+  });
+
+  it("keeps the subagents out of the sessions-only walk", () => {
+    const items = [item("root", "2026-01-01T00:00:00Z")];
+
+    // `sortSessions` is what ⌘⇧↑/↓ steps, and it takes no roster at all — the
+    // selection moves between sessions, and a subagent is not one.
+    expect(sessionRows(items, roster({ root: [sub("m1")] }))).toHaveLength(2);
+    expect(ids(sortSessions(items))).toEqual(["root"]);
+    expect(ids(sessionUnits(items).flat())).toEqual(["root"]);
+  });
+
+  it("draws no subagent rows for a session with an empty roster", () => {
+    const items = [item("root", "2026-01-01T00:00:00Z")];
+
+    expect(drawn(sessionRows(items, roster({})))).toEqual(["root"]);
+    expect(sessionRows(items, roster({}))[0].opens).toBe(false);
   });
 });

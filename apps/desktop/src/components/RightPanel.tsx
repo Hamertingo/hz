@@ -124,7 +124,12 @@ export function PanelToggle({
 
 /// Which body the right panel is showing. This is the set, not the order —
 /// see `tabOrder`.
-export const PANEL_TABS = ["changes", "browser", "files", "todo", "subagents", "pr", "issue", "docs", "skill"] as const;
+///
+/// No `subagents`: a session's delegated runs are rows under its own row in the
+/// sidebar now, and one of them opens onto its own conversation in the main
+/// column. A pane of the same list was a second way to reach work that already
+/// had a place, and the viewer could only ever be the narrower one.
+export const PANEL_TABS = ["changes", "browser", "files", "todo", "pr", "issue", "docs", "skill"] as const;
 
 export type PanelTab = (typeof PANEL_TABS)[number];
 
@@ -142,7 +147,6 @@ const LABELS: Record<PanelTab, string> = {
   // Always drawn, for the browser's reason: its empty state is the project's
   // own tree, which is a place to start rather than a sentence.
   files: "Files",
-  subagents: "Subagents",
   // Not "Todos": the app already calls this a plan everywhere it speaks about
   // one — the strip's own line, `planLine`, the panel's header — and the tool's
   // wire name is not something a reader ever sees.
@@ -182,7 +186,6 @@ export function tabOrder({
   pr,
   docs,
   issue,
-  subagents,
   todo,
 }: {
   pr: boolean;
@@ -190,9 +193,6 @@ export function tabOrder({
   /// [useDocs](../hooks/useDocs.ts). Absent otherwise, for the PR tab's reason.
   docs: boolean;
   issue: boolean;
-  /// This session has spawned at least one subagent or background task. Absent
-  /// otherwise, for the PR tab's reason — most sessions never spawn one.
-  subagents: boolean;
   /// This session has a plan — some agent opened a todo list on it. Absent
   /// otherwise, for the same reason: most sessions never have one, and a tab
   /// whose only content is "there is nothing here" is one the eye skips.
@@ -208,12 +208,11 @@ export function tabOrder({
   // doing rather than something it read: the windows onto the session's own
   // state come first, and what it picked up along the way follows.
   if (todo) tabs.push("todo");
-  // After Changes, which is what keeps Issue immediately before Subagents.
+  // After Changes, which is where the reading order has always put it.
   if (docs) tabs.push("docs");
-  // Immediately before Subagents wherever it is drawn, so the row's order is
-  // the same one ⌘⇧[ steps whether or not a session has an issue on it.
+  // Last of the three conditional ones, so the row's order is the same one
+  // ⌘⇧[ steps whether or not a session has an issue on it.
   if (issue) tabs.push("issue");
-  if (subagents) tabs.push("subagents");
 
   return tabs;
 }
@@ -226,7 +225,7 @@ type RightPanelProps = {
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
   /// Rendered beside its tab's label. Only shown above zero — a tab reading
-  /// "Subagents 0" says the same thing as the empty state one click away.
+  /// "Plan 0" says the same thing as the empty state one click away.
   counts?: Partial<Record<PanelTab, number>>;
   /// There is a pull request tab to draw at all — see `prTabVisible`.
   pr?: boolean;
@@ -236,9 +235,6 @@ type RightPanelProps = {
   /// PR tab's reason: a tab whose only content is "there is nothing here" is one
   /// the eye skips past on every session that will never have one.
   issue?: boolean;
-  /// This session has spawned at least one subagent or background task. Absent
-  /// otherwise, for the same reason.
-  subagents?: boolean;
   /// This session has a plan. Absent otherwise, for the same reason.
   todo?: boolean;
   /// Re-reads whatever the active tab is showing, drawn at the far end of the
@@ -336,7 +332,6 @@ export default function RightPanel({
   pr = false,
   docs = false,
   issue = false,
-  subagents = false,
   todo = false,
   refresh,
   cwd,
@@ -348,7 +343,7 @@ export default function RightPanel({
   tabs,
   children,
 }: RightPanelProps) {
-  const sessionTabs = tabOrder({ pr, docs, issue, subagents, todo });
+  const sessionTabs = tabOrder({ pr, docs, issue, todo });
   // 32rem, the width this pane opened at before it could be dragged.
   const { style, handle } = useResizable({
     storageKey: "hz.rightPanelWidth",
@@ -476,8 +471,8 @@ export default function RightPanel({
         )}
 
         {/* The far end of the row, and one group rather than two `ml-auto`s:
-            Refresh is gone on Subagents and the Open button is gone off a
-            session, so whichever survives has to hold the same edge. */}
+            Refresh draws on some tabs and not on others, and the Open button is
+            gone off a session, so whichever survives has to hold the same edge. */}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {/* Leading the group because it acts on the *frame* where every
               control after it acts on the pane's contents — and because it
@@ -513,11 +508,11 @@ export default function RightPanel({
               it does not change meaning from one tab to the next. */}
           {cwd && <OpenInButton path={cwd} />}
 
-          {/* Gone entirely on Subagents, which has nothing to re-read. It
-              reserved its width back when the keycaps sat to its right and
-              would have slid on that one tab; with them anchored to the tabs
-              there is nothing left to hold still, and an empty box on the far
-              edge is a slot for a button the reader is not waiting for. */}
+          {/* Absent on a tab with nothing to re-read. It reserved its width back
+              when the keycaps sat to its right and would have slid on that one
+              tab; with them anchored to the tabs there is nothing left to hold
+              still, and an empty box on the far edge is a slot for a button the
+              reader is not waiting for. */}
           {refresh && (
             // A real tooltip rather than the `title` this used to carry: the
             // chord has to be shown somewhere, and the app puts shortcuts in
