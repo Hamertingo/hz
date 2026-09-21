@@ -1867,7 +1867,28 @@ displayName?: string | null,
 /**
  * The default this provider's first model is pinned to, if any.
  */
-selected: boolean, };
+selected: boolean, 
+/**
+ * The context window the agent will run this model at, where the provider
+ * entry records one.
+ *
+ * **Absent is the state worth drawing, and it is not zero.** A model's
+ * window is decided in three steps and this is the first: what this entry
+ * records, then what the catalog the agent ships says for that model, then
+ * `BYOK_FALLBACK_MODEL_LIMITS` in `model-resolver-byok.ts` (**200_000**
+ * context, **16_384** output). So a gateway's own statement is written
+ * here, and a gateway that states none is deliberately left absent — an
+ * absent entry lets the catalog answer, where a copy of it taken once
+ * would be believed long after the catalog moved. Only a model neither
+ * names reaches the fallback, and that is the row drawn `200k default`
+ * (`lib/providerLimits.ts` is where this build keeps the copy).
+ */
+contextLimit?: number | null, 
+/**
+ * The reply budget this model is pinned to, or absent for the same reason
+ * and with the same fallback (`16k default`).
+ */
+maxOutputTokens?: number | null, };
 
 /**
  * A gateway the agent already knows how to talk to, ready to be filled in with
