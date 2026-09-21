@@ -34,6 +34,7 @@ import RunDetail from "@/components/RunDetail";
 import AgentForm from "@/components/plugins/AgentForm";
 import McpForm from "@/components/plugins/McpForm";
 import PrsView, { PrDetail, PrTabs } from "@/components/PrsView";
+import SearchView from "@/components/SearchView";
 import { prKey, type PrRow } from "@/hooks/usePrList";
 import PrPanel from "@/components/PrPanel";
 import BrowserPane from "@/components/browser/BrowserPane";
@@ -65,9 +66,7 @@ import RightPanel, {
 } from "@/components/RightPanel";
 import { useChatColumnFloor } from "@/components/ResizeHandle";
 import Sidebar, {
-  SEARCH_INPUT_ID,
   SidebarToggle,
-  filterSessions,
   sessionUnits,
   sortSessions,
 } from "@/components/Sidebar";
@@ -179,7 +178,7 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 /// **The set, so `none` is spelled once and every page is spelled once.** Reading
 /// a page off this is what stops a question about pages being answered by a list
 /// written out again at each site — see the state's own note.
-type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins";
+type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins" | "search";
 
 /// The one stop there is for delegated work, and it sits in the window header
 /// because the composer's own Stop is under a subagent view's feet — that view
@@ -445,6 +444,7 @@ function App() {
   const [page, setPage] = useState<MainPage>("none");
   const inboxOpen = page === "inbox";
   const issuesOpen = page === "issues";
+  const searchPageOpen = page === "search";
   const prsOpen = page === "prs";
   const pluginsOpen = page === "plugins";
   /// What the Plugins page is listing, and what its pane is showing with it.
@@ -1160,19 +1160,6 @@ function App() {
   // where it is typed, but the list it filters is this one, so the ⌘⇧↑/↓ walk
   // below steps exactly the rows on screen.
   //
-  // Layered over `visibleSessions` rather than folded into it, deliberately: the
-  // marks and the ready-to-merge notice read that list to decide what to watch,
-  // and a session dropping out of it as a query is typed would stop its repo
-  // being polled and make the notice forget a pull request was already ready.
-  const [search, setSearch] = useState("");
-  // Whether the sidebar's search row is drawn as a field. Up here rather than in
-  // the sidebar, since ⌘F has to open it from a collapsed one, which is not
-  // mounted at all.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchedSessions = useMemo(
-    () => filterSessions(visibleSessions, search),
-    [visibleSessions, search],
-  );
 
   // The sidebar's marks: one `gh` per repo on screen rather than one per row —
   // see `usePrMarks`. Distinct paths, and the *active* list's only: a settled
@@ -1551,7 +1538,7 @@ function App() {
   const ordered = useMemo(
     () =>
       sortSessions(
-        searchedSessions,
+        visibleSessions,
         projects,
         // The same reading the sidebar groups by, and withheld on the same list
         // — the walk has to step the runs the eye is looking at.
@@ -1559,7 +1546,7 @@ function App() {
         showArchived,
         showArchived ? [] : spaceGroups,
       ),
-    [searchedSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
+    [visibleSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
   );
 
   // Wraps downward only. Falling off the bottom returns to the newest session,
@@ -1594,13 +1581,13 @@ function App() {
   const units = useMemo(
     () =>
       sessionUnits(
-        searchedSessions,
+        visibleSessions,
         projects,
         showArchived ? undefined : { statusBySession, asking: askingSessions },
         showArchived,
         showArchived ? [] : spaceGroups,
       ),
-    [searchedSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
+    [visibleSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
   );
   const stepGroup = (delta: number) => stepThrough(units, delta);
 
@@ -1938,12 +1925,6 @@ function App() {
     if (flags.archived === true && sessionId === selectedSessionId) {
       goToSession(handleNewSession);
     } else if (flags.archived === false) {
-      // Unsettling is the reader saying they found what they came for, so the
-      // query that found it has done its job — and left standing it would hide
-      // the row they just acted on, since the list it lands in is filtered too.
-      setSearch("");
-      setSearchOpen(false);
-
       // The row has just left whichever list it was drawn from, so follow it to
       // the one it landed in and keep it selected — from the sidebar's menu the
       // reader pressed that row, and from the composer's bar they are reading
@@ -1967,11 +1948,10 @@ function App() {
   // search nobody can see would be worse than no chord. `autoFocus` covers the
   // field this press mounts; the select covers the one already on screen, which
   // is also what makes ⌘F on a query a replace rather than an append.
-  useHotkey("search", () => {
-    setCollapsed(false);
-    setSearchOpen(true);
-    document.querySelector<HTMLInputElement>(`#${SEARCH_INPUT_ID}`)?.select();
-  });
+  // **The chord opens the view, not a field in the sidebar.** One screen holds the
+  // box, the scopes and the results, and it opens from a collapsed sidebar as
+  // readily as from an open one.
+  useHotkey("search", () => setPage("search"));
   useHotkey("session.new", () => goToSession(handleNewSession));
   // Steps the composer's project picker, and only while that picker is on
   // screen: it is drawn for a new task alone, and `enabled` unregisters rather
@@ -2285,17 +2265,9 @@ function App() {
 
     const actions: { id: ShortcutId; label: string; run: () => void }[] = [
       { id: "session.new", label: "New task", run: () => goToSession(handleNewSession) },
-      {
-        id: "search",
-        label: "Search sessions",
-        // The field lives in the sidebar, so the sidebar comes with it — the
-        // same pair the chord itself does.
-        run: () => {
-          setCollapsed(false);
-          setSearchOpen(true);
-          document.querySelector<HTMLInputElement>(`#${SEARCH_INPUT_ID}`)?.select();
-        },
-      },
+      // The row and the chord do the same thing, which is what a palette row is
+      // for — and it is the same thing whether or not the sidebar is up.
+      { id: "search", label: "Search", run: () => setPage("search") },
       { id: "sidebar.toggle", label: "Toggle the sidebar", run: toggleSidebar },
       {
         id: "panel.toggle",
@@ -2406,11 +2378,8 @@ function App() {
       overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <Sidebar
-          items={searchedSessions}
-          search={search}
-          onSearchChange={setSearch}
-          searchOpen={searchOpen}
-          onSearchOpenChange={setSearchOpen}
+          items={visibleSessions}
+          onOpenSearch={() => setPage("search")}
           projects={spaceProjects}
           spaces={spaces}
           space={space}
@@ -2546,7 +2515,9 @@ function App() {
               // its session, and the focused one's repeated up here read as a
               // second line of the same row.
               standIn={
-                inboxOpen
+                searchPageOpen
+                  ? "Search"
+                  : inboxOpen
                   ? "Inbox"
                   : issuesOpen
                   ? "Issues"
@@ -3104,6 +3075,26 @@ function App() {
       {/* Hidden rather than unmounted, like everything else in this column:
           the list, its filters and its scroll survive a trip into a session and
           back, which is the trip this page exists to make. */}
+      <TabBody active={searchPageOpen}>
+        <SearchView
+          active={searchPageOpen}
+          sessions={visibleSessions}
+          // The selected session's own checkout, since a hit opens there.
+          cwd={selectedSession?.cwd ?? null}
+          onClose={() => setPage("none")}
+          // A row is somewhere to go, and every route there closes the page: a
+          // session or a message opens that session, a file or a line opens in the
+          // one already on screen — which needs the page out of the way to be seen.
+          onOpen={(hit) => {
+            if (hit.kind === "session" || hit.kind === "message") {
+              goToSession(() => void handleSelectSessionIndexItem(hit.sessionId));
+              return;
+            }
+            goToSession(() => openInFiles(selectedSessionId, hit.path, hit.kind === "code" ? hit.line : undefined));
+          }}
+        />
+      </TabBody>
+
       <TabBody active={prsOpen}>
         <PrsView
           tabs={<InboxTabs current="prs" counts={inbox.counts} onSelect={selectInboxPage} />}

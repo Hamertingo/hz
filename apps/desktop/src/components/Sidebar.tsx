@@ -57,21 +57,11 @@ import type {
 export const SEARCH_INPUT_ID = "sidebar-search";
 
 type SidebarProps = {
-  // Already scoped to `projectFilter` and to `search` by the caller, so the list
+  // Already scoped to the space and the project filter by the caller, so the list
   // and the ⌘⇧↑/↓ walk step through exactly the same rows.
   items: SessionIndexItem[];
-  // The live search query. Owned by the caller, because the list it narrows is
-  // the caller's — the ⌘⇧↑/↓ walk reads the same array, and a query kept in here
-  // would leave the shortcut stepping rows the sidebar no longer draws.
-  search: string;
-  onSearchChange: (query: string) => void;
-  /// Whether the search row is drawn as an input rather than as its button.
-  /// Apart from the query itself, since an empty input and the button look the
-  /// same and this is only about where the caret is — and owned by the caller
-  /// because ⌘F has to open it from a *collapsed* sidebar, which is not
-  /// mounted.
-  searchOpen: boolean;
-  onSearchOpenChange: (open: boolean) => void;
+  /// Opens the search view, which is where the box lives.
+  onOpenSearch: () => void;
   // The live status of every session the app has heard about this run. Wins over
   // the item's own field, which is only as fresh as the last list fetch.
   statusBySession: Record<string, SessionStatus>;
@@ -908,10 +898,7 @@ function DevBadge() {
 
 export default function Sidebar({
   items,
-  search,
-  onSearchChange,
-  searchOpen,
-  onSearchOpenChange,
+  onOpenSearch,
   statusBySession,
   askingSessions,
   prFor,
@@ -967,11 +954,6 @@ export default function Sidebar({
     // on screen.
     pane: collapsed ? undefined : "sidebar",
   });
-
-  const closeSearch = () => {
-    onSearchOpenChange(false);
-    onSearchChange("");
-  };
 
   // Recency-ordered, with agent-spawned sessions nested under the one that
   // spawned them, and each row carrying the flags its connector rails are drawn
@@ -1066,23 +1048,9 @@ export default function Sidebar({
       named.get(path) ?? path.split("/").filter(Boolean).pop() ?? path;
   }, [projects]);
 
-  // A filtered list that comes up empty is a different fact from an empty app,
-  // and saying "No tasks yet" over a filter reads as data loss. The query leads
-  // where there is one: it is the filter the reader is holding in their hands,
-  // where the project and the settled split were already on screen.
-  const emptyText = search.trim()
-    ? `No tasks matching "${search.trim()}".`
-    : projectFilter
-      ? showArchived
-        ? "Nothing settled in this project."
-        : "No tasks in this project."
-      : space
-        ? showArchived
-          ? `Nothing settled in ${space}.`
-          : `No tasks in ${space}.`
-        : showArchived
-          ? "Nothing settled yet."
-          : "No tasks yet.";
+  // One sentence, because nothing narrows this list but the space and the project
+  // — and those say what they are in the headings above.
+  const emptyText = showArchived ? "Nothing settled yet." : "No tasks yet.";
 
   // Collapsed is nothing at all, not a rail. The toggle moves to the app header
   // in that state, which is the one row present either way.
@@ -1207,62 +1175,21 @@ export default function Sidebar({
           <ShortcutKeys ids={["inbox.open"]} className="ml-auto" />
         </Button>
 
-        {/* The button *becomes* the field, on the same row at the same height:
-            the icon holds its place, the caret lands where the label was, and
-            nothing below it moves. Bare on purpose — a fill, a border or a
-            focus ring here would draw a second kind of control into a strip
-            that is otherwise plain buttons. The transparent border is what holds
-            that promise to the pixel: every button carries one, so the icon
-            would sit a pixel further out without it. */}
-        {searchOpen ? (
-          <div className="group flex h-7 w-full items-center gap-1 border border-transparent px-1.5 text-ui">
-            <Search className="size-3.5 shrink-0" />
-            <input
-              autoFocus
-              id={SEARCH_INPUT_ID}
-              type="text"
-              value={search}
-              placeholder="Search"
-              aria-label="Search tasks"
-              onChange={(e) => onSearchChange(e.target.value)}
-              // Escape is the way out, and it takes the query with it: leaving
-              // a filter behind an input that has closed would hide rows with
-              // nothing on screen saying why.
-              onKeyDown={(e) => {
-                if (e.key !== "Escape") return;
-                e.preventDefault();
-                closeSearch();
-              }}
-              // Only where there is nothing to lose. Clicking away from a query
-              // that is narrowing the list is not a request to drop it.
-              onBlur={() => {
-                if (!search) onSearchOpenChange(false);
-              }}
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-            />
-            {/* The slot keeps naming whichever key does something here, and
-                which one that is turns on focus alone: Escape reaches this
-                input and nothing else, where ⌘F is what brings focus back to a
-                field left holding a query. Esc is withheld over an empty field,
-                which is the one state neither key has anything to do in. CSS
-                rather than a `focused` state: the browser already knows. */}
-            {search && (
-              <Kbd className="hidden group-focus-within:inline-flex">Esc</Kbd>
-            )}
-            <ShortcutKeys ids={["search"]} className="group-focus-within:hidden" />
-          </div>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onSearchOpenChange(true)}
-            className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50"
-          >
-            <Search />
-            Search
-            <ShortcutKeys ids={["search"]} className="ml-auto" />
-          </Button>
-        )}
+        {/* **The row opens the search view rather than becoming a field in
+            place.** It used to turn into an input that narrowed this list, which
+            answered one of the four questions a reader has — the other three were
+            a modal, and the two could disagree about what "searching" meant. There
+            is one screen now, it is where the box is, and this is the way in. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenSearch}
+          className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50"
+        >
+          <Search className="size-3.5" />
+          Search
+          <ShortcutKeys ids={["search"]} className="ml-auto" />
+        </Button>
       </div>
 
       {/* The filter is where project grouping went. */}
