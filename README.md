@@ -27,15 +27,18 @@ Building from source instead is [below](#getting-started).
 
 ## Layout
 
-pnpm workspace for the two JS apps; the CLI and its wire types are plain cargo
-crates beside them, with no root workspace.
+A pnpm workspace for the app and the site — the agent's own tree sits *outside*
+it, with its own lockfile — and four cargo crates beside them, with no root
+workspace.
 
-| Path                | What                                                     |
-| ------------------- | -------------------------------------------------------- |
-| `apps/desktop`      | The Tauri app. React 19 + Vite frontend, Rust backend.    |
-| `apps/web`          | Marketing site. Next.js App Router, deployed to Vercel.   |
-| `apps/cli`          | The `hz` CLI agents use to fan work out into sessions.  |
-| `crates/hz-proto` | Wire types shared by the CLI and the app.                |
+| Path                    | What                                                        |
+| ----------------------- | ----------------------------------------------------------- |
+| `apps/desktop`          | The Tauri app. React 19 + Vite frontend, Rust backend.       |
+| `apps/agent`            | The agent, vendored and renamed. `bin/hz-agent` runs it.     |
+| `apps/agent-launcher`   | The small Rust crate that starts it from the bundle.         |
+| `apps/cli`              | The `hz` CLI agents use to fan work out into sessions.       |
+| `apps/web`              | Marketing site. Next.js App Router, deployed to Vercel.      |
+| `crates/hz-proto`       | Wire types shared by the CLI and the app.                    |
 
 ## Getting started
 
@@ -72,9 +75,12 @@ leaves only that module's types behind — always follow one with a bare
 
 ## The `hz` CLI
 
-A standalone binary, not part of the app: it has to run on Linux, where no hz
-app exists. It talks to the running app over a unix socket at `~/.hz/hz.sock`,
-which is how an agent inside one session creates, lists and messages others.
+A standalone binary, not part of the app: it has to run where no hz app does.
+It talks to the running app over a **unix socket** at `~/.hz/hz.sock` — or, on
+Windows, over the **named pipe** of the same name, since there is no socket
+there to open — which is how an agent inside one session creates, lists and
+messages others. A dev build listens on `hz-dev.sock`, so the two do not take
+each other's channel.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Hamertingo/hz/main/apps/web/public/install.sh | sh
@@ -157,17 +163,15 @@ source rather than taken on trust.
 
 ## Marks
 
-The agent picker draws each harness's own mark, redrawn on `currentColor` so it
-sits in a row of muted chrome rather than shouting over it
-(`apps/desktop/src/components/AgentIcon.tsx`).
+The agent's own mark, drawn as an inline SVG on `currentColor`
+(`apps/desktop/src/components/AgentIcon.tsx`) so it sits in a row of muted chrome
+rather than shouting over it. It is **the app's mark and not a vendor's**: there
+is one agent here and it is the one this repository builds, so there is nobody
+else's logo to carry and nobody else's trademark to name.
 
-| Mark | Licence |
-| ---- | ------- |
-| [pi](https://pi.dev) | MIT, © Earendil Inc. & Contributors |
-
-Claude's and OpenAI's are trademarks of their owners, used to name the agent a
-session runs on and nothing else. pi's is under a licence that asks for
-attribution, which is why it is the only row here.
+`AgentIcon` still takes a `harness` and reads it nowhere. That is deliberate: the
+day a second agent exists, the picker draws two marks again and the argument is
+already the thing that decides which.
 
 ## Transcription
 
