@@ -1,10 +1,29 @@
-# hz
+# Hyze Code
 
-A desktop home for your coding agents. Tauri 2 app that wraps coding-agent CLIs
-— Claude Code and Codex — in a native chat UI: many sessions at once, each with
-its own worktree, diff view, PR panel, issue panel and embedded browser.
+A desktop home for a coding agent. A Tauri 2 app wrapping the agent it ships —
+[Hz Agent](apps/agent), the MiniMax Code CLI, vendored into the bundle and spoken
+to over **ACP** — in a native chat UI: many sessions at once, each in its own
+worktree, with a diff and commit view, a pull-request panel, an issue panel, a
+file tree, an embedded browser and local dictation. macOS and Windows.
 
 [![Greptile: The War on Bugs](https://www.greptile.com/badge.svg)](https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source)
+
+## Install
+
+Downloads are on the [releases page](https://github.com/Hamertingo/hz/releases).
+
+- **macOS** — the `.dmg`. The app is ad-hoc signed and notarized by nobody, so
+  macOS refuses the first launch; right-click → Open is the cure, or
+  `xattr -dr com.apple.quarantine "/Applications/Hyze Code.app"`.
+- **Windows** — the `-setup.exe`. NSIS, and it installs without an administrator
+  prompt.
+
+**The agent ships inside the bundle.** There is no CLI to install first and no
+terminal to open: the app resolves the copy it carries before anything on your
+`PATH`. Connect a provider in Settings on the first run and the model picker
+fills from whatever it answers.
+
+Building from source instead is [below](#getting-started).
 
 ## Layout
 
