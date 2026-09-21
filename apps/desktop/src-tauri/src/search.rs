@@ -11,7 +11,9 @@
 //! multi-megabyte tool result is one this misses.
 
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::process::Stdio;
+use tokio::process::Command;
 use serde_json::Value;
 use std::path::Path;
 use tokio::{
@@ -225,11 +227,313 @@ pub async fn search_transcripts(
     Ok(search_sessions(&dir, &index, &query, limit.unwrap_or(DEFAULT_LIMIT)).await?)
 }
 
+/// How many matches a project search may answer with.
+///
+/// More than a palette draws — the rows are sliced where they are built — and few
+/// enough that the parse stays a walk over one buffer. A query this large an
+/// answer to is a query somebody has to narrow.
+pub const MAX_CONTENT_MATCHES: usize = 200;
+
+/// One line of one file that a query was found on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ContentMatch {
+    /// Absolute, so a row can open it: `git grep` answers relative to the root it
+    /// was run in, and the reader's own cwd is what the app opens from.
+    pub path: String,
+    /// The same file as git spells it — the row's own text, and the shortest thing
+    /// that tells two files with one basename apart.
+    pub relative: String,
+    /// One-based, because that is how every editor numbers a line and how the
+    /// reader counts.
+    pub line: u32,
+    /// The line itself, trimmed at both ends: the row *is* the line, and leading
+    /// indentation is the least interesting part of it.
+    pub text: String,
+}
+
+/// What one search answers with.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ContentMatches {
+    pub matches: Vec<ContentMatch>,
+    /// Whether the cap cut the answer short — said rather than hidden, since a
+    /// reader who narrowed nothing else would otherwise read a slice as the whole.
+    pub truncated: bool,
+}
+
+/// What a query found in the files this session's project holds.
+///
+/// **`git grep`, not a walk of our own.** One process, `git`'s own view of the
+/// project, and no dependency added to read a tree: the alternative is the `ignore`
+/// crate walking and a read per file, which is more code to get the same answer
+/// more slowly. It also decides *which* files — the repository's own ignore rules,
+/// so `node_modules` and `target` are never searched.
+///
+/// **`--untracked` is the one flag the vendor's own search does not pass, and it is
+/// the one that matters here.** A file the agent wrote a moment ago is exactly what
+/// a reader searches for, and it is not in the index yet — without this the search
+/// would answer "not here" about the file that is on their screen. `-I` keeps
+/// binaries out of the answer; `-i`/`-F` are the same case-insensitive literal the
+/// transcript search takes, so one habit works in both boxes.
+///
+/// **A session outside a repository finds nothing**, which the palette reads as no
+/// results rather than as an error: there is nothing to be wrong about, and a
+/// sentence about it would sit between the reader and the rows that did work.
+#[tauri::command]
+pub async fn search_content(cwd: String, query: String) -> Result<ContentMatches, Fail> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return Ok(ContentMatches::default());
+    }
+
+    let root = Path::new(&cwd);
+    if !root.is_dir() {
+        return Ok(ContentMatches::default());
+    }
+
+    let Ok(out) = Command::new("git")
+        .args([
+            "grep",
+            "-z",
+            "-n",
+            "-I",
+            "--untracked",
+            "-i",
+            "-F",
+            "-e",
+            needle,
+            "--",
+        ])
+        .current_dir(root)
+        // A search never takes the index lock; the reader is usually working.
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+    else {
+        return Ok(ContentMatches::default());
+    };
+
+    // **Exit 1 is an answer, not a failure**: it is how `git grep` says it found
+    // nothing. Anything else (128 for "not a repository", a git that would not run)
+    // is the case the palette reads as no results.
+    match out.status.code() {
+        Some(0) => {}
+        Some(1) => return Ok(ContentMatches::default()),
+        _ => return Ok(ContentMatches::default()),
+    }
+
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    let mut rest = out.stdout.as_slice();
+
+    while !rest.is_empty() {
+        let Some((relative, after_path)) = take_nul(rest) else {
+            break;
+        };
+        let Some((line, after_line)) = take_nul(after_path) else {
+            break;
+        };
+        let text_end = line_text_end(after_line);
+        let text = String::from_utf8_lossy(&after_line[..text_end]);
+        rest = &after_line[text_end + 1..];
+
+        if relative.is_empty() {
+            continue;
+        }
+        if matches.len() >= MAX_CONTENT_MATCHES {
+            truncated = true;
+            break;
+        }
+
+        matches.push(ContentMatch {
+            path: root.join(&relative).to_string_lossy().into_owned(),
+            relative,
+            line: line.parse().unwrap_or(1),
+            // `-z` leaves the newline that ended the line on the text, and the last
+            // line of a file has none.
+            text: text.trim_end_matches('\n').trim().to_string(),
+        });
+    }
+
+    Ok(ContentMatches { matches, truncated })
+}
+
+/// The bytes up to the next NUL, and what follows it. `None` where there is no
+/// NUL left, which is how a truncated read ends.
+fn take_nul(bytes: &[u8]) -> Option<(String, &[u8])> {
+    let end = bytes.iter().position(|byte| *byte == 0)?;
+    Some((
+        String::from_utf8_lossy(&bytes[..end]).into_owned(),
+        &bytes[end + 1..],
+    ))
+}
+
+/// Where one matched line's text ends — the newline that closed it, or the end of
+/// the buffer for a file whose last line has none.
+fn line_text_end(bytes: &[u8]) -> usize {
+    bytes.iter().position(|byte| *byte == b'\n').unwrap_or(bytes.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     use uuid::Uuid;
+
+    /// A repository with files in it, made for one test and removed with it.
+    ///
+    /// **A real `git init` rather than a mock**, because the whole command is one
+    /// spawn: what it is asked, how its answer is shaped and which files it
+    /// considers at all are `git`'s behaviour, and a fake would pin none of it.
+    async fn repo(files: &[(&str, &str)]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hz-search-{}", Uuid::now_v7()));
+        tokio::fs::create_dir_all(&dir).await.expect("temp dir");
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .expect("git init");
+        assert!(ok.success());
+        for (name, body) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await.expect("parent");
+            }
+            tokio::fs::write(&path, body).await.expect("file");
+        }
+        dir
+    }
+
+    /// The line, the file and the place in it — what a row draws and what it opens.
+    #[tokio::test]
+    async fn answers_with_the_line_and_the_file_it_is_in() {
+        let dir = repo(&[
+            ("a.txt", "alpha needle here\nsecond needle\n"),
+            ("sub/b.txt", "needle down here\n"),
+            ("clean.txt", "nothing to see\n"),
+        ])
+        .await;
+        let found = search_content(dir.to_string_lossy().into_owned(), "needle".into())
+            .await
+            .expect("search");
+
+        let lines: Vec<(String, u32, String)> = found
+            .matches
+            .iter()
+            .map(|m| (m.relative.clone(), m.line, m.text.clone()))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                ("a.txt".into(), 1, "alpha needle here".into()),
+                ("a.txt".into(), 2, "second needle".into()),
+                ("sub/b.txt".into(), 1, "needle down here".into()),
+            ]
+        );
+        assert!(!found.truncated);
+        // Absolute, so the row can hand it to the file view without joining again.
+        assert!(found.matches[0].path.ends_with("a.txt"));
+        assert!(found.matches[0].path.starts_with('/'));
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// **The file the agent just wrote is the one a reader searches for**, and it is
+    /// not in the index yet — which is why the spawn passes `--untracked`.
+    #[tokio::test]
+    async fn finds_a_file_that_was_never_added() {
+        let dir = repo(&[("tracked.txt", "needle\n")]).await;
+        tokio::fs::write(dir.join("fresh.txt"), "needle in a new file\n")
+            .await
+            .expect("new file");
+
+        let found = search_content(dir.to_string_lossy().into_owned(), "NEEDLE".into())
+            .await
+            .expect("search");
+        let relatives: Vec<&str> = found.matches.iter().map(|m| m.relative.as_str()).collect();
+        assert!(relatives.contains(&"fresh.txt"), "{relatives:?}");
+        // Case-insensitively, like the transcript box: one habit, two searches.
+        assert!(relatives.contains(&"tracked.txt"), "{relatives:?}");
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// A query with nothing behind it, an empty box, a directory that is not a
+    /// repository, and a cwd that is gone. None of them may reach the palette as an
+    /// error.
+    #[tokio::test]
+    async fn answers_nothing_rather_than_failing() {
+        let dir = repo(&[("a.txt", "needle\n")]).await;
+        let cwd = dir.to_string_lossy().into_owned();
+
+        assert_eq!(
+            search_content(cwd.clone(), "absent".into()).await.unwrap(),
+            ContentMatches::default()
+        );
+        assert_eq!(
+            search_content(cwd.clone(), "   ".into()).await.unwrap(),
+            ContentMatches::default()
+        );
+        assert_eq!(
+            search_content(dir.join("gone").to_string_lossy().into_owned(), "needle".into())
+                .await
+                .unwrap(),
+            ContentMatches::default()
+        );
+        let plain = std::env::temp_dir().join(format!("hz-search-plain-{}", Uuid::now_v7()));
+        tokio::fs::create_dir_all(&plain).await.expect("temp dir");
+        tokio::fs::write(plain.join("a.txt"), "needle")
+            .await
+            .expect("file");
+        assert_eq!(
+            search_content(plain.to_string_lossy().into_owned(), "needle".into())
+                .await
+                .unwrap(),
+            ContentMatches::default()
+        );
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        let _ = tokio::fs::remove_dir_all(&plain).await;
+    }
+
+    /// The cap is said, not silent: a reader who narrowed nothing else has to be
+    /// able to tell a slice from the whole.
+    #[tokio::test]
+    async fn stops_at_the_cap_and_says_so() {
+        let body: String = (0..MAX_CONTENT_MATCHES + 20).map(|_| "needle\n").collect();
+        let dir = repo(&[("many.txt", &body)]).await;
+
+        let found = search_content(dir.to_string_lossy().into_owned(), "needle".into())
+            .await
+            .expect("search");
+        assert_eq!(found.matches.len(), MAX_CONTENT_MATCHES);
+        assert!(found.truncated);
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// An ignored file is not part of the project, and `git grep` is what decides
+    /// that — the reason this spawns git instead of walking.
+    #[tokio::test]
+    async fn leaves_ignored_files_out() {
+        let dir = repo(&[(".gitignore", "*.log\n"), ("a.txt", "needle\n")]).await;
+        tokio::fs::write(dir.join("noise.log"), "needle\n")
+            .await
+            .expect("ignored file");
+
+        let found = search_content(dir.to_string_lossy().into_owned(), "needle".into())
+            .await
+            .expect("search");
+        let relatives: Vec<&str> = found.matches.iter().map(|m| m.relative.as_str()).collect();
+        assert_eq!(relatives, vec!["a.txt"]);
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
 
     fn event(text: &str) -> Value {
         json!({ "seq": 7, "payload": { "type": "assistant_text", "text": text } })

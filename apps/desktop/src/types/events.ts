@@ -611,6 +611,41 @@ authorEmail: string,
 authoredAt: string, };
 
 /**
+ * One line of one file that a query was found on.
+ */
+export type ContentMatch = { 
+/**
+ * Absolute, so a row can open it: `git grep` answers relative to the root it
+ * was run in, and the reader's own cwd is what the app opens from.
+ */
+path: string, 
+/**
+ * The same file as git spells it — the row's own text, and the shortest thing
+ * that tells two files with one basename apart.
+ */
+relative: string, 
+/**
+ * One-based, because that is how every editor numbers a line and how the
+ * reader counts.
+ */
+line: number, 
+/**
+ * The line itself, trimmed at both ends: the row *is* the line, and leading
+ * indentation is the least interesting part of it.
+ */
+text: string, };
+
+/**
+ * What one search answers with.
+ */
+export type ContentMatches = { matches: Array<ContentMatch>, 
+/**
+ * Whether the cap cut the answer short — said rather than hidden, since a
+ * reader who narrowed nothing else would otherwise read a slice as the whole.
+ */
+truncated: boolean, };
+
+/**
  * One line of a reading's breakdown.
  */
 export type ContextComponent = { 

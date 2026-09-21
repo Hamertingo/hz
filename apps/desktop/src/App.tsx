@@ -76,6 +76,7 @@ import SubagentChat from "@/components/SubagentChat";
 import TodoPanel from "@/components/TodoPanel";
 import PendingAskPanel from "@/components/chat/PendingAskPanel";
 import { DROP_ATTR, useSessionDrag, type DropTarget } from "@/lib/dragSession";
+import { contentRows } from "@/lib/palette";
 import type { PaletteItem } from "@/lib/palette";
 import { recalledPrompts } from "@/lib/recall";
 import type { ShortcutId } from "@/lib/shortcuts";
@@ -108,7 +109,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
 import { useCodeTheme } from "@/hooks/useCodeTheme";
 import { refreshActiveDoc, saveActiveDoc, useDocs } from "@/hooks/useDocs";
-import { closeFile, useOpenFiles } from "@/hooks/useOpenFiles";
+import { closeFile, openInFiles, useOpenFiles } from "@/hooks/useOpenFiles";
 import { useFullscreen } from "@/hooks/useFullscreen";
 import { useGlass } from "@/hooks/useGlass";
 import { warmHighlighter } from "@/hooks/useHighlighter";
@@ -124,6 +125,7 @@ import AgentMissingNotice from "@/components/composer/AgentMissingNotice";
 import LoginExpiredNotice from "@/components/composer/LoginExpiredNotice";
 import type {
   AgentEvent,
+  ContentMatches,
   Issue,
   SessionIndexItem,
   TranscriptMatch,
@@ -661,6 +663,38 @@ function App() {
 
     return () => clearTimeout(timer);
   }, [paletteQuery, paletteOpen]);
+
+  // The same box searches the *files* the session runs in, for the same reason it
+  // searches the logs: what a reader remembers is a line they saw, and the file it
+  // is in is the one they have not opened. Scoped to the selected session, because
+  // a hit opens in *that* session's file view — a hit with no session to open into
+  // would be a row that looks like a place to go and is not.
+  const contentGen = useRef(0);
+  const [contentHits, setContentHits] = useState<ContentMatches | null>(null);
+  const contentCwd = selectedSession?.cwd ?? null;
+
+  useEffect(() => {
+    if (!paletteOpen || paletteQuery.length < 2 || !contentCwd) {
+      contentGen.current += 1;
+      setContentHits(null);
+      return;
+    }
+
+    const gen = ++contentGen.current;
+    const timer = setTimeout(() => {
+      void invoke<ContentMatches>("search_content", { cwd: contentCwd, query: paletteQuery })
+        .then((found) => {
+          if (contentGen.current === gen) setContentHits(found);
+        })
+        .catch(() => {
+          // The bargain the transcript search makes: a read that could not run is
+          // no results, never an error between the reader and the rows that worked.
+          if (contentGen.current === gen) setContentHits(null);
+        });
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [paletteQuery, paletteOpen, contentCwd]);
 
   // Which tab the *next* open lands on. Reset to Appearance as settings close,
   // so a mic press that sent the reader to Transcription does not leave every
@@ -2219,6 +2253,17 @@ function App() {
         detail: hit.snippet,
         run: () => goToSession(() => void handleSelectSessionIndexItem(hit.sessionId)),
       });
+    }
+
+    // The files themselves, under the messages: a message hit is where a word was
+    // *said*, and this is where it *is*. The row opens the line in the session's
+    // file view, which is the place to read it.
+    if (contentHits) {
+      rows.push(
+        ...contentRows(contentHits.matches, (hit) => {
+          void openInFiles(selectedSessionId, hit.path, hit.line);
+        }),
+      );
     }
 
     for (const project of projects) {

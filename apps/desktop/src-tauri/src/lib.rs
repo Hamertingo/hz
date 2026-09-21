@@ -1091,6 +1091,7 @@ pub fn run() {
             automations::delete_automation,
             automations::set_automation_enabled,
             search::search_transcripts,
+            search::search_content,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_open,
             #[cfg(all(feature = "cef", target_os = "macos"))]

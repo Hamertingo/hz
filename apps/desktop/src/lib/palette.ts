@@ -1,4 +1,5 @@
 import type { ShortcutId } from "@/lib/shortcuts";
+import type { ContentMatch } from "@/types/events";
 
 /// One row in the palette.
 ///
@@ -9,7 +10,9 @@ import type { ShortcutId } from "@/lib/shortcuts";
 export type PaletteItem = {
   /// `match` is a sentence found inside a session's log rather than a place to
   /// go: the reader typed a word they remember and the row is where it was said.
-  kind: "action" | "session" | "project" | "space" | "match";
+  /// `content` is the same thing said about a *file* — one line of the project the
+  /// session runs in, which is where the work actually is.
+  kind: "action" | "session" | "project" | "space" | "match" | "content";
   /// Unique across the list — a session id, a project path, a shortcut id.
   id: string;
   label: string;
@@ -32,6 +35,9 @@ const KIND_LABEL: Record<PaletteItem["kind"], string> = {
   // "message" rather than "match": the row is a sentence somebody wrote, and
   // this is the word the reader has for it.
   match: "message",
+  // "code" rather than "line": the reader is looking at a file, and the line is
+  // only how the row points at one.
+  content: "code",
 };
 
 export function kindLabel(kind: PaletteItem["kind"]): string {
@@ -77,4 +83,60 @@ export function matchItems(items: PaletteItem[], query: string): PaletteItem[] {
     (item.label.toLowerCase().startsWith(needle) ? starts : contains).push(item);
   }
   return [...starts, ...contains];
+}
+
+/// How many file hits the palette draws. More than anybody reads in a menu and few
+/// enough that one word does not bury the sessions they might have meant — the two
+/// other search boxes narrow by typing, and so does this one.
+export const CONTENT_ROWS = 8;
+
+/// The file hits a query found, as palette rows.
+///
+/// **The row is the line.** A palette row is one line of text and a match is one
+/// line of a file, so the label is the line itself and the detail says which file
+/// and where in it — the reader recognises the sentence they were looking for, and
+/// the path is what tells two files with one basename apart.
+///
+/// Pure, and `open` is passed in rather than reached for, so what a row *does* is
+/// the shell's business: the palette has no idea which session is on screen.
+export function contentRows(
+  matches: readonly ContentMatch[],
+  open: (hit: ContentMatch) => void,
+): PaletteItem[] {
+  return matches.slice(0, CONTENT_ROWS).map((hit) => ({
+    kind: "content",
+    // File *and* line: two hits in one file are two rows, and either half alone
+    // collides with the other.
+    id: `${hit.path}:${hit.line}`,
+    label: hit.text,
+    detail: `${hit.relative}:${hit.line}`,
+    run: () => open(hit),
+  }));
+}
+
+/// Where a query's own characters sit inside a row, for the run the palette draws
+/// in the accent colour.
+///
+/// Case-insensitive, because the search is: a row that matched `Needle` for
+/// `needle` and then drew none of it in the accent would look like a row that had
+/// matched some other way.
+///
+/// `null` where the query is not in the label at all — a row can match on its
+/// detail (a session's project, a file's path) and there is nothing to mark in the
+/// label then.
+export function highlight(
+  text: string,
+  needle: string,
+): { before: string; match: string; after: string } | null {
+  const query = needle.trim().toLowerCase();
+  if (!query) return null;
+  const at = text.toLowerCase().indexOf(query);
+  if (at < 0) return null;
+  return {
+    before: text.slice(0, at),
+    // Sliced out of the *original*, so what is drawn is the text as it is written
+    // rather than as it was folded to be found.
+    match: text.slice(at, at + query.length),
+    after: text.slice(at + query.length),
+  };
 }
