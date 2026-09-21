@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getCurrentWebview, type Webview } from "@tauri-apps/api/webview";
 import { ArrowUp, CornerDownLeft, Paperclip, Square, X } from "lucide-react";
 
-import { fileIconUrl } from "@/components/FileIcon";
+import AttachmentTray from "@/components/composer/AttachmentTray";
 import { ComposerMascot } from "@/components/composer/ComposerMascot";
 import FileMentionMenu from "@/components/composer/FileMentionMenu";
 import IssueMentionMenu from "@/components/composer/IssueMentionMenu";
@@ -12,8 +12,8 @@ import {
   addAttachmentPaths,
   addPastedText,
   clearAttachments,
-  keepAttachments,
   pickAttachments,
+  removeAttachment,
   useAttachments,
 } from "@/hooks/useAttachments";
 import { clearCitations, useCitations, type Citation } from "@/hooks/useCitations";
@@ -25,14 +25,6 @@ import { useFanOutModels } from "@/hooks/useModelFanOut";
 import { useRecentCommands } from "@/hooks/useRecentCommands";
 import { stashDraft } from "@/hooks/useStash";
 import { canFanOut } from "@/lib/fanOut";
-import {
-  attachmentOf,
-  insertToken,
-  liveAttachments,
-  tokenDeleteRange,
-  tokenParts,
-  tokensToInsert,
-} from "@/lib/attachmentToken";
 import { SEGMENT_COLOR, highlightSegments, splitMention } from "@/lib/highlight";
 import { applyIssue, issueSpan } from "@/lib/issue";
 import { overLimitNote, pasteBecomesFile } from "@/lib/composerLimits";
@@ -278,65 +270,28 @@ export default function ChatInput({
   // works rather than by moving away from the session.
   const [pasteError, setPasteError] = useState<string | null>(null);
 
-  /// What the draft still names. Read at send, and by the prune below: with the
-  /// chips in the text there is no list to draw, so **deleting the token is
-  /// detaching the file** — including when it is deleted a letter at a time.
-  const live = useMemo(() => liveAttachments(message, attachments), [message, attachments]);
-  const warnImages = !modelTakesImages && live.some((attachment) => attachment.isImage);
 
-  /// Drops what the draft **stopped** naming.
+  /// Writes into the draft what a store is holding and the text does not have
+  /// yet: a blockquote per quotation.
   ///
-  /// The rule is a change, not an absence, and that is the whole of it: an
-  /// attachment that was never named yet — just pinned, or handed back by a
-  /// cancelled prompt — is on its way into the draft, and a prune that asked "is
-  /// it in the text?" would throw it away in the gap before the insert below runs.
-  /// That gap is one commit wide and it was enough: the chip vanished the moment
-  /// it was attached.
+  /// **Attachments are not written into the draft any more.** They are tiles in
+  /// [`AttachmentTray`] above it, which is where the reader pins, sees and removes
+  /// them — where a token in the text made a photo come back from the transcript
+  /// as a paperclip in the middle of a sentence.
   ///
-  /// So a name is remembered once it has been seen, and only a name that *was*
-  /// there and is gone detaches its file. Which is also the fix for the bug that
-  /// started this: backspacing a chip left the attachment in the store, and the
-  /// next attach wrote the deleted chip back.
-  const named = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    const names = new Set(live.map((attachment) => attachment.name));
-    const was = named.current;
-    named.current = names;
-
-    if ([...was].some((name) => !names.has(name))) keepAttachments(sessionId, names);
-  }, [message]);
-
-  /// Writes into the draft everything the stores are holding and the text does
-  /// not have yet: a token per attachment, a blockquote per quotation.
-  ///
-  /// **One writer, and that is the whole point.** These were two effects, each
-  /// built from the same `message` of the render they ran in — so attaching a file
-  /// and citing an answer within one commit meant the second `setMessage` threw
-  /// the first one's work away, and the chip simply never appeared. One effect,
-  /// built once, in the order the reader did the two things.
-  ///
-  /// Every route in lands here — the `+`, a drop, a paste parked as a file, a
-  /// citation, an attachment handed back by a cancelled prompt — because they all
-  /// end up in a store, and any of them that wrote its own text would be a second
-  /// writer again. `liveAttachments` is what decides, at send, that a token the
-  /// reader backspaced is gone.
+  /// What stays is the **one writer**: a citation is still text, so the same
+  /// `setMessage` that inserts it is what keeps two effects from throwing away
+  /// each other's work.
   ///
   /// Not in an event handler because two of the three routes have no handler
   /// here: the `+` lives in `ComposerToolbar` and the selection toolbar lives in
   /// the transcript, and both reach this component as opaque nodes.
   useEffect(() => {
-    const missing = tokensToInsert(message, attachments);
-    if (!missing.length && !citations.length) return;
+    if (!citations.length) return;
 
     let next = message;
     let caret = textareaRef.current?.selectionStart ?? next.length;
 
-    for (const attachment of missing) {
-      const written = insertToken(next, caret, attachment.name, attachment.size);
-      next = written.text;
-      caret = written.caret;
-    }
     for (const citation of citations) {
       const written = insertQuote(next, caret, citation.quote);
       next = written.text;
@@ -674,7 +629,7 @@ export default function ChatInput({
   // A notice does gate it. Backend refuses the same send anyway, so this is not
   // the guard — it is what stops the reader finding that out by writing a
   // prompt and pressing a button that was never going to work.
-  const canSend = !notice && (message.trim().length > 0 || live.length > 0);
+  const canSend = !notice && (message.trim().length > 0 || attachments.length > 0);
 
   /// A draft past what one message may carry. Its own flag rather than part of
   /// `canSend`: `stopping` reads `canSend` to decide between Send and Stop, so
@@ -770,9 +725,9 @@ export default function ChatInput({
     const trimmed = message.trim();
     // An attachment on its own is a real prompt — dropping a screenshot and
     // pressing Enter is asking about the screenshot. So is a quotation, which is
-    // the same move over an answer you just read. Both are *in* the text by now,
-    // so the token is what says so.
-    if (!trimmed && !live.length) return;
+    // the same move over an answer you just read. The quotation is *in* the text
+    // by now; an attachment is a tile in the tray, which is what `attachments`
+    // answers for.
 
     // Recorded on send rather than on pick: choosing a command from the list
     // and then deleting it is not using it. Taken from the text, so a command
@@ -780,7 +735,7 @@ export default function ChatInput({
     const command = parseSlashCommand(trimmed);
     if (command) recordCommand(command.name);
 
-    onSend(trimmed, live, citations);
+    onSend(trimmed, attachments, citations);
     setMessage("");
     clearAttachments(sessionId);
     // The quotations are in the prompt now. Left here they would be inserted
@@ -1013,17 +968,24 @@ export default function ChatInput({
               </div>
             )}
 
-            {/* **Nothing rides above the box any more.** An attachment is a token
-                in the draft — `@name`, written at the caret by the effect above
-                and painted as a pill by the mirror below — so a file reads as
-                part of the sentence rather than as a second list sitting on top
-                of it, and backspacing the chip is how you take it off. The
-                composer has no row of its own left to draw. */}
-            {warnImages && (
-              <p className={cn("pb-1 text-ui text-muted-foreground", isNewTask ? "px-0" : "px-3")}>
-                This model takes text only — the image will be sent, and the provider
-                may refuse it.
-              </p>
+            {/* **What is pinned rides above the box, and this is the only place
+                it is drawn.** It was a token inside the draft — the list was
+                refused on the argument that a chip in the message beats a row
+                beside it — and the token is part of the prompt, so a photo came
+                back from the transcript as a paperclip in the middle of a
+                sentence. A picture has a thumbnail to show; a file has a name and
+                a type; the tray is where both go, and the `×` on a tile is how one
+                comes off. The "text only" warning rides inside it, so it appears
+                when an image is actually attached rather than standing under every
+                prompt this model is asked. */}
+            {attachments.length > 0 && (
+              <div className={cn("pt-3", isNewTask ? "px-0" : "px-3")}>
+                <AttachmentTray
+                  attachments={attachments}
+                  onRemove={(path) => removeAttachment(sessionId, path)}
+                  modelTakesImages={modelTakesImages}
+                />
+              </div>
             )}
 
             {/* Controls ride the text's own row, always. Measuring the box and
@@ -1130,27 +1092,6 @@ export default function ChatInput({
                     // letter go, and had to hold the key. Anywhere in the token,
                     // either key takes the whole run — and the space it came with,
                     // so the sentence does not close around a gap.
-                    if (
-                      (e.key === "Backspace" || e.key === "Delete") &&
-                      !e.metaKey &&
-                      !e.altKey &&
-                      !e.ctrlKey
-                    ) {
-                      const range = tokenDeleteRange(
-                        message,
-                        caret,
-                        e.key === "Backspace" ? "back" : "forward",
-                        attachments,
-                      );
-                      if (range) {
-                        e.preventDefault();
-                        setRecall(null);
-                        pendingCaretRef.current = range.start;
-                        setMessage(`${message.slice(0, range.start)}${message.slice(range.end)}`);
-                        return;
-                      }
-                    }
-
                     // ↑ and ↓ walk the prompts already sent in this session, and
                     // only in a box that is empty or still holding one of them
                     // unedited. After the picker above, so an open list keeps the
@@ -1242,44 +1183,6 @@ export default function ChatInput({
                       // Every glyph the textarea lays out has to be laid out here
                       // too, so a mention is dimmed rather than shortened — the
                       // transcript is where it collapses to the filename.
-                      if (segment.kind === "attachment") {
-                        const file = attachmentOf(segment.text, attachments);
-                        // A paperclip the reader typed for a file that is not
-                        // attached is just a character; the chip is for the ones
-                        // that are, which is what the store answers.
-                        if (!file) {
-                          return (
-                            <span key={i} className={SEGMENT_COLOR.attachment}>
-                              {segment.text}
-                            </span>
-                          );
-                        }
-
-                        // **The run is the chip and the chip is the run.** The
-                        // pill is an empty, absolutely-positioned shell around
-                        // it, the mark is a background image painted over the
-                        // paperclip, and the size is muted the way t3 mutes it —
-                        // three parts, all of them characters the textarea laid
-                        // out. See `.chip` in App.css.
-                        const parts = tokenParts(segment.text, file.name);
-
-                        return (
-                          <span key={i} className="chip-anchor">
-                            <span className="chip-mark">{parts.mark}</span>
-                            {parts.name}
-                            {parts.size && <span className="chip-size"> {parts.size}</span>}
-                            <span
-                              className="chip"
-                              style={
-                                {
-                                  "--chip-icon": `url(${fileIconUrl(file.path)})`,
-                                } as CSSProperties
-                              }
-                            />
-                          </span>
-                        );
-                      }
-
                       if (segment.kind === "mention") {
                         const { dir, name } = splitMention(segment.text);
 

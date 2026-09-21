@@ -97,14 +97,6 @@ export function removeAttachment(sessionId: string | null, path: string) {
 /// the entry and write the chip back on the next attach (which is the bug this
 /// exists for). A reader who only *edits* the name away detaches it too, which is
 /// the honest reading of "the message no longer names this file".
-export function keepAttachments(sessionId: string | null, names: ReadonlySet<string>) {
-  const current = bySession.get(sessionId);
-  if (!current) return;
-
-  const kept = current.filter((attachment) => names.has(attachment.name));
-  if (kept.length === current.length) return;
-  write(sessionId, kept);
-}
 
 export function clearAttachments(sessionId: string | null) {
   if (!bySession.has(sessionId)) return;

@@ -9,6 +9,8 @@ import { inlineMark } from "@/components/chat/InlineMark";
 import { useChatSession } from "@/hooks/useChatSession";
 import { absolutePath } from "@/lib/filePath";
 import {
+  ATTACHMENT_MARK,
+  ATTACHMENT_SIZE,
   SEGMENT_COLOR,
   highlightSegments,
   splitMention,
@@ -18,7 +20,6 @@ import {
 import { issueUrl, parseIdentifier } from "@/lib/issue";
 import { openLink } from "@/lib/openLink";
 import { commandBrand } from "@/lib/pluginBrand";
-import { ATTACHMENT_MARK, ATTACHMENT_SIZE } from "@/lib/attachmentToken";
 import { stripSenderPrefix } from "@/lib/relay";
 import { shortenPath } from "@/lib/tools";
 import { cn } from "@/lib/utils";
