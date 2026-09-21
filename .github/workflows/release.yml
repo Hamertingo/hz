@@ -231,6 +231,134 @@ jobs:
           done
           codesign -d --entitlements - "$APP" 2>&1 | grep -q disable-library-validation
 
+  # The Windows half of the same release.
+  #
+  # **Serialized behind `build` rather than run beside it**, which costs wall
+  # time on an operation that happens a few times a year and buys the one thing
+  # a parallel pair cannot have: a release that already exists. Both jobs publish
+  # to the same tag, and two `tauri-action` runs racing to create it is a race
+  # with an ordering-dependent release body — whichever loses writes
+  # `already_exists` into a log nobody reads.
+  #
+  # Almost nothing is shared with the macOS half: no CEF, no universal binary,
+  # no Apple credentials, and an NSIS installer instead of a `.dmg` and an
+  # `.app`. What is shared is the toolchain pin and the updater key.
+  build-windows:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same guard the macOS job opens with, and duplicated rather than
+      # shared: a job-level `if` cannot read the other job's steps, and a release
+      # that publishes a manifest no client considers newer because the tag
+      # disagreed with the conf is worth failing on in both places.
+      - name: Check the tag matches the conf
+        shell: bash
+        run: |
+          V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+          if [ "v$V" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match tauri.conf.json version v$V" >&2
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # master
+        with:
+          toolchain: 1.98.1
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            apps/desktop/src-tauri/target
+          key: windows-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: windows-cargo-
+
+      - run: pnpm install --frozen-lockfile
+
+      # The agent, and it is *not* the same step the macOS job runs: the launcher
+      # there is a `#!/bin/sh` script, and Windows cannot start one. This one
+      # builds `apps/agent-launcher` into `bin/hz-agent.exe` and copies the
+      # `node.exe` that installed the tree beside it — the only node whose ABI
+      # matches the native module the tree built. See the script.
+      - name: Stage the agent into the bundle
+        shell: bash
+        run: node apps/desktop/scripts/vendor-agent.mjs
+
+      - name: Build the installer
+        working-directory: apps/desktop
+        env:
+          # Signs the updater bundle. Not Apple's signature, and not optional:
+          # without it the client refuses the download. Present and empty for the
+          # password, exactly as the macOS half has it — see the note there for
+          # why an absent variable is not the same thing.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: pnpm tauri build --bundles nsis
+
+      # The installer *and* the archive the updater downloads. NSIS produces
+      # both; the `.zip` is the one the manifest points at, because it is what
+      # the plugin can unpack over an installed copy.
+      - name: Publish the installer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BUNDLE="apps/desktop/src-tauri/target/release/bundle/nsis"
+          ls -la "$BUNDLE"
+
+          shopt -s nullglob
+          SETUP=("$BUNDLE"/*-setup.exe)
+          ZIP=("$BUNDLE"/*.nsis.zip)
+          SIG=("$BUNDLE"/*.nsis.zip.sig)
+
+          if [ ${#SETUP[@]} -eq 0 ] || [ ${#ZIP[@]} -eq 0 ] || [ ${#SIG[@]} -eq 0 ]; then
+            echo "::error::the NSIS bundle is incomplete — installer, updater archive and signature all have to be there"
+            exit 1
+          fi
+
+          gh release upload "${GITHUB_REF_NAME}" "${SETUP[@]}" "${ZIP[@]}" "${SIG[@]}" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+
+      # **A fragment, not `latest.json`.** `tauri-action` writes a manifest
+      # containing only the platforms *it* built, so a second run for Windows
+      # would overwrite the macOS one rather than add to it — and the release
+      # would silently stop offering updates to half its users. The `manifest`
+      # job merges the two, which is where the shape is decided.
+      - name: Write the Windows updater entry
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BUNDLE="apps/desktop/src-tauri/target/release/bundle/nsis"
+          ZIP="$(find "$BUNDLE" -name '*.nsis.zip' -print -quit)"
+          SIG="$(find "$BUNDLE" -name '*.nsis.zip.sig' -print -quit)"
+          V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+
+          jq -n \
+            --arg version "$V" \
+            --arg signature "$(cat "$SIG")" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$ZIP")" \
+            '{version: $version, platforms: {windows-x86_64: {signature: $signature, url: $url}}}' \
+            > latest-windows.json
+
+          cat latest-windows.json
+          gh release upload "${GITHUB_REF_NAME}" latest-windows.json \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+
   # The manifests live on a branch rather than in the release, because
   # `/releases/latest/` skips prereleases — so beta would have no fixed URL.
   # GitHub Pages serves this branch; the artifact URLs inside still point at
@@ -247,7 +375,7 @@ jobs:
   # `updates` / `/` — the endpoint 404s, which costs auto-update and nothing
   # else. Downloads still come off the release.
   manifest:
-    needs: build
+    needs: [build, build-windows]
     runs-on: ubuntu-latest
     steps:
       # Full history, so the orphan branch below can be created on this clone.
@@ -277,6 +405,25 @@ jobs:
           gh release download "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern latest.json --output manifest.json --clobber
+
+          # Windows arrives as its own fragment, because `tauri-action` writes a
+          # manifest holding only the platforms it built — a second run would
+          # replace the macOS entries rather than add to them. Merged here, in
+          # the one job that has both halves in front of it.
+          #
+          # Absent is an ordinary state and not an error: an older tag, or a
+          # macOS-only re-release, has no Windows fragment to fold in — and a
+          # manifest that named a platform with no artifact behind it is worse
+          # than one that leaves it out.
+          if gh release download "${GITHUB_REF_NAME}" \
+               --repo "${GITHUB_REPOSITORY}" \
+               --pattern latest-windows.json --output windows.json --clobber 2>/dev/null; then
+            jq -s '.[0] as $mac | .[1] as $win | $mac + {platforms: ($mac.platforms + $win.platforms)}' \
+              manifest.json windows.json > merged.json
+            mv merged.json manifest.json
+            rm windows.json
+            echo "merged platforms: $(jq -c '.platforms | keys' manifest.json)"
+          fi
 
           # Writes the release over a channel manifest unless that would move
           # the channel *backwards*. A stable release still serves both
