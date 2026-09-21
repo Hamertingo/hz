@@ -2083,7 +2083,17 @@ mod tests {
     fn names(repos: &[String]) -> Vec<&str> {
         repos
             .iter()
-            .map(|p| p.trim_end_matches('/').rsplit('/').next().unwrap())
+            .map(|p| {
+                // Both separators, because the paths under test are `PathBuf`s
+                // and Windows spells them with a backslash. Splitting on `/`
+                // alone returned the whole path there, so the assertion compared
+                // absolute paths against bare names and failed on a difference
+                // the test had invented.
+                p.trim_end_matches(['/', '\\'])
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap()
+            })
             .collect()
     }
 
@@ -2312,6 +2322,15 @@ mod tests {
             .await
             .unwrap();
         run(at, &["config", "user.name", "Test"]).await.unwrap();
+        // **The runner's git config is not the thing under test.** Windows git
+        // ships with `core.autocrlf` on, which rewrites LF to CRLF on checkout —
+        // so a file written with LF comes back with CRLF, and a snapshot
+        // round-trip reports a change that is git's policy rather than hz's.
+        // Opting the scratch repo out keeps the assertions about hz on both
+        // platforms, where relaxing them to match the machine would have hidden
+        // a real line-ending difference if one ever appeared.
+        run(at, &["config", "core.autocrlf", "false"]).await.unwrap();
+        run(at, &["config", "core.eol", "lf"]).await.unwrap();
 
         fs::write(dir.join("keep.txt"), "a\nb\nc\n").await.unwrap();
         fs::write(dir.join("gone.txt"), "x\ny\n").await.unwrap();

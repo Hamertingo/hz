@@ -630,19 +630,36 @@ mod tests {
     /// wins over the sibling the CLI was installed against. Each dir once.
     #[test]
     fn a_resolved_bin_dir_comes_after_inherited_and_before_known() {
-        let launchd = std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin");
+        // **Both sides built with the platform's own splitter and joiner.** A
+        // literal `a:b` is four directories on unix and *one* on Windows, so a
+        // hand-written expectation was asserting two different things depending
+        // on which machine ran it.
+        let inherited_dirs = vec![
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/sbin"),
+            PathBuf::from("/sbin"),
+        ];
+        let inherited = std::env::join_paths(&inherited_dirs).unwrap();
+
         let nvm_bin = PathBuf::from("/home/u/.nvm/versions/node/v25.2.1/bin");
         let volta = PathBuf::from("/home/u/.volta/bin");
 
+        // `/bin` appears twice in `extra` and once in the inherited list: each
+        // directory lands on the child's `PATH` exactly once.
         let path = with_dirs(
-            launchd,
-            vec![PathBuf::from("/bin"), nvm_bin.clone(), nvm_bin, volta],
+            &inherited,
+            vec![
+                PathBuf::from("/bin"),
+                nvm_bin.clone(),
+                nvm_bin.clone(),
+                volta.clone(),
+            ],
         );
 
-        assert_eq!(
-            path,
-            "/usr/bin:/bin:/usr/sbin:/sbin:/home/u/.nvm/versions/node/v25.2.1/bin:/home/u/.volta/bin"
-        );
+        let expected: Vec<PathBuf> = inherited_dirs.into_iter().chain([nvm_bin, volta]).collect();
+
+        assert_eq!(std::env::split_paths(&path).collect::<Vec<_>>(), expected);
     }
 
     #[test]

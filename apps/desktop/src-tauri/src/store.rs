@@ -2480,12 +2480,15 @@ mod tests {
             .flat_map(|e| e.payload.images_mut().to_vec())
             .filter_map(|i| i.path)
             .collect();
+        // Joined rather than spelled out: the rule under test is that the
+        // directory prefix is rewritten, and the character between the prefix
+        // and the file name is the platform's business.
         assert_eq!(
             paths,
             vec![
-                "/home/.hz/attachments/child/a.png",
-                "/home/.hz/attachments/child/b.png",
-                "/tmp/elsewhere.png",
+                to_dir.join("a.png").to_string_lossy().into_owned(),
+                to_dir.join("b.png").to_string_lossy().into_owned(),
+                "/tmp/elsewhere.png".to_string(),
             ]
         );
     }

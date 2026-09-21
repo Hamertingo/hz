@@ -5,6 +5,29 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.7
+
+### Added
+
+- **hz runs on Windows.** An installer, and the agent staged for that platform
+  beside the one macOS already ships — so the app is still one download:
+  configure a provider, pick a model, work. `hz` in a terminal reaches the app
+  there too, over a named pipe rather than a socket, so an agent inside a
+  session can still create and message sessions.
+
+### Changed
+
+- **The release manifest names both platforms.** An installed copy on either one
+  updates itself from the same channel, and the two entries are merged rather
+  than one overwriting the other.
+
+### Not there yet
+
+- **The in-app browser is macOS only**, which it always was. A Windows build has
+  no Browser tab — the CEF bindings are not compiled there.
+- **"Open in app" and the terminal opener are macOS only.** Windows is told so,
+  with the path to copy, rather than handed a button that does nothing.
+
 ## 0.20.6
 
 ### Added
