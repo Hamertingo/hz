@@ -38,8 +38,10 @@ export type Segment = {
     /// the reader sent rather than a row of chevrons.
     | "quote"
     /// An attachment's chip: the paperclip the composer writes into the draft and
-    /// the name after it. Painted as a pill by the composer's mirror and as plain
-    /// words everywhere else — see `attachmentToken`.
+    /// the name after it. A pill in the composer, painted around the run by its
+    /// mirror, and one line of the sentence in the transcript — where the mark is
+    /// drawn as an icon instead of echoed as the character, so the colour emoji
+    /// never lands in the middle of a monochrome sentence. See `attachmentToken`.
     | "attachment";
   text: string;
   /// What sits between an inline mark's delimiters, for the surface that draws

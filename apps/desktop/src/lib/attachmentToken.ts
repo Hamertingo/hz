@@ -5,6 +5,11 @@ import type { Attachment } from "@/types/events";
 /// *character in the text* rather than a drawn icon — which is the only kind of
 /// icon a textarea can hold, and the reason the whole chip is a run of text
 /// rather than an element beside it.
+///
+/// **No surface draws this character as a character.** The composer paints its
+/// pill over the run, and the transcript drops the mark from the glyphs and draws
+/// the same icon beside the name — a colour emoji in the middle of a sentence was
+/// the one thing a reader called ugly about a sent attachment.
 export const ATTACHMENT_MARK = "📎";
 
 /// An attachment is a **word in the draft**, and this is its spelling.
