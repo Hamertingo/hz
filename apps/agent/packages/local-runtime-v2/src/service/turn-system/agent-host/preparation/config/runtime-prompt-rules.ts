@@ -3,6 +3,7 @@ import {
   LANGUAGE_RULES,
   SYSTEM_REMINDER_DESCRIPTION,
   TOOL_CALL_PREAMBLE_REMINDER,
+  TOOL_USAGE_RULES,
 } from '../prompt-blocks.js';
 
 export function addRuntimeRules(
@@ -18,6 +19,10 @@ export function addRuntimeRules(
     );
   }
   let result = addSectionGuidance(prompt, '# Harness', harnessRules.join('\n'));
+  // On every surface, interactive or not: choosing a tool is not a matter of who
+  // is watching, and a task child has the narrower tool list of the two — the one
+  // whose descriptions most need to be taken as the whole answer.
+  result = addSectionGuidance(result, '# Choosing a Tool', TOOL_USAGE_RULES);
   result = addSectionGuidance(
     result,
     '## Response Style',
