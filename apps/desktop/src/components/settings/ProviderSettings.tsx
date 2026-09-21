@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { HIDDEN_MODELS_KEY, byBase, hiddenSet, rowShown } from "@/lib/modelVisibility";
 import { usePreference } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
-import type { Model, ModelId, NewProvider, Provider, ProviderPreset } from "@/types/events";
+import type { Model, ModelId, NewProvider, Provider, ProviderModel, ProviderPreset } from "@/types/events";
 
 /// Where models come from — **the one setup step hz has.**
 ///
@@ -300,7 +300,7 @@ export default function ProviderSettings({
           // picker with nothing in it, so the sentence says what this screen is
           // for before drawing the ways to use it.
           <p className="max-w-prose text-ui text-muted-foreground">
-            No provider is connected, so the agent has no models to run. Connect one below — hz
+            No provider is connected, so the agent has no models to run. Connect one below — Hyze Code
             asks it which models it serves, and the composer's own picker fills in by itself.
           </p>
         )}
@@ -423,6 +423,23 @@ function ConnectedCard({
   // — a session's list is what it will accept right now, `provider list` what it
   // holds, and the two can differ for a moment after a connect.
   const count = rows.length || provider.models.length;
+
+  /// The window each of this provider's models is registered with, by the key
+  /// the rows are grouped under.
+  ///
+  /// **The key is spelled the way `models.rs` spells `base_id`** — `m:<provider>:
+  /// <model>` — because that is what `byBase` groups on, so the two sides meet
+  /// without either parsing the other's spelling. A row that misses is a row the
+  /// provider entry says nothing about, which is the state the row draws as
+  /// `default` rather than as a wrong number.
+  const windows = useMemo(() => {
+    const byKey: Record<string, ProviderModel> = {};
+    for (const model of provider.models) {
+      byKey[`m:${provider.providerId}:${model.modelId}`] = model;
+    }
+    return byKey;
+  }, [provider.models, provider.providerId]);
+
   const empty = count === 0;
   const hiddenCount = rows.filter((row) => !rowShown(row, hiddenSet(hidden))).length;
 
@@ -481,6 +498,7 @@ function ConnectedCard({
             <div className="border-t border-border/60">
               <ProviderModels
                 rows={rows}
+                windows={windows}
                 hidden={hidden}
                 onHiddenChange={onHiddenChange}
                 onRefresh={onRefreshModels}
@@ -712,7 +730,7 @@ function KeyForm({
           <Input
             id={id}
             // The reader opened this form to type in it, and it is its only
-            // field.
+            // required field.
             autoFocus
             type="password"
             autoComplete="off"
@@ -733,6 +751,7 @@ function KeyForm({
         </div>
       </div>
 
+
       <p className="text-ui text-muted-foreground">
         {host ? (
           <>
@@ -741,7 +760,7 @@ function KeyForm({
             what the agent redacts.
           </>
         ) : (
-          "hz asks the gateway which models it serves and registers them."
+          "Hyze Code asks the gateway which models it serves and registers them."
         )}
       </p>
 
@@ -930,6 +949,7 @@ function CustomGateway({
               onChange={(e) => setApiKey(e.currentTarget.value)}
             />
           </Field>
+
 
           <label className="flex items-center gap-2 text-ui text-muted-foreground">
             <Switch checked={makeDefault} onCheckedChange={setMakeDefault} />

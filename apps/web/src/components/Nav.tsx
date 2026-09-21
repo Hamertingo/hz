@@ -10,7 +10,7 @@ export async function Nav() {
 
   return (
     <nav className="flex items-center justify-between">
-      <Wordmark className="h-3.5 w-auto" />
+      <Wordmark className="text-[15px]" />
       <div className="flex items-center gap-4 text-xs text-muted-foreground sm:text-sm">
         <a
           href={FEEDBACK}

@@ -33,6 +33,7 @@ import {
   MANAGED_MINIMAX_PROVIDER_ID,
   OPENAI_CODEX_PROVIDER_ID,
 } from '../identity.js';
+import { lookupLocalCatalogModel, lookupLocalModelLimits } from './model-catalog.js';
 import { parseProviderId } from './model-key.js';
 import {
   isMiniMaxM3ModelId,
@@ -61,10 +62,6 @@ import { withByokErrorAttribution } from './byok-error-attribution.js';
 import { withLocalDynamicMaxTokens } from './dynamic-max-tokens.js';
 import { resolveLocalFileApiGatewayAuth } from './file-api-gateway-auth.js';
 
-const FALLBACK_MODEL_LIMITS = {
-  contextWindow: 200_000,
-  maxTokens: 128_000,
-} as const;
 
 const DEFAULT_LOCAL_PI_API: Api = 'anthropic-messages';
 const MANAGED_PROVIDER_API_KEY_PLACEHOLDER = 'sk-xxx';
@@ -678,26 +675,6 @@ function resolveModelStream(
   });
 }
 
-export function lookupLocalModelLimits(
-  provider: string,
-  modelId: string,
-): {
-  readonly contextWindow: number;
-  readonly maxTokens: number;
-  readonly fromCatalog: boolean;
-  readonly api?: Api;
-  readonly baseUrl?: string;
-} {
-  const entry = lookupLocalCatalogModel(provider, modelId);
-  if (!entry) return { ...FALLBACK_MODEL_LIMITS, fromCatalog: false };
-  return {
-    contextWindow: positive(entry.contextWindow) || FALLBACK_MODEL_LIMITS.contextWindow,
-    maxTokens: positive(entry.maxTokens) || FALLBACK_MODEL_LIMITS.maxTokens,
-    fromCatalog: true,
-    ...(entry.api ? { api: entry.api } : {}),
-    ...(entry.baseUrl ? { baseUrl: entry.baseUrl } : {}),
-  };
-}
 
 export function resolveLocalProviderCredentials(
   provider: string,
@@ -816,11 +793,22 @@ function deriveModelInput(modelRef: IModelRef): Model<Api>['input'] {
     : ['text'];
 }
 
-function lookupLocalCatalogModel(provider: string, modelId: string): Model<Api> | undefined {
-  const knownProvider = getProviders().find((candidate) => candidate === provider);
-  if (!knownProvider) return undefined;
-  return getModels(knownProvider).find((model) => model.id === modelId);
-}
+/**
+ * The bundled catalog's row for a model, under either spelling of its provider.
+ *
+ * **A custom provider's id is a config path, and the catalog is indexed by the
+ * gateway's own name.** `provider list` calls a reader's own gateway
+ * `custom_provider:opencode-go` — the `custom_provider:` map key and its slug —
+ * while the catalog knows the same gateway as `opencode-go`. Nothing bridged the
+ * two, so a lookup under the raw id missed, the catalog was never consulted, and
+ * every model reached through a custom provider resolved to the 200k BYOK
+ * fallback however well the catalog knew it: a million-token model drawn at a
+ * fifth of its window, and compacted there.
+ *
+ * Both spellings are tried, the stripped one first, because that is the name the
+ * catalog uses — `parseProviderId` is the same reading `list-models` takes when it
+ * builds a model's id, so the two cannot drift apart.
+ */
 
 function positive(value: unknown): number {
   return typeof value === 'number' && value > 0 ? value : 0;

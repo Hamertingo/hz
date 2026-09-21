@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Image } from "lucide-react";
+import { Image, Paperclip } from "lucide-react";
 import { memo, type CSSProperties } from "react";
 
 import SessionAvatar from "@/components/SessionAvatar";
@@ -9,6 +9,8 @@ import { inlineMark } from "@/components/chat/InlineMark";
 import { useChatSession } from "@/hooks/useChatSession";
 import { absolutePath } from "@/lib/filePath";
 import {
+  ATTACHMENT_MARK,
+  ATTACHMENT_SIZE,
   SEGMENT_COLOR,
   highlightSegments,
   splitMention,
@@ -278,6 +280,32 @@ function UserMessage({
                   >
                     {segment.text}
                   </button>
+                );
+              }
+
+              // **An attachment's run is drawn, not echoed.** The token is
+              // `📎 name size` — a paperclip *character*, because that is the
+              // only kind of mark a textarea can hold, and the composer paints
+              // its icon over it. Left as plain words here, the same run put a
+              // colour emoji in the middle of a monochrome sentence, which is
+              // what a reader saw and called ugly. So the mark is dropped from
+              // the glyphs and drawn as the icon both surfaces use, and the size
+              // steps back from the name it qualifies. Still one line, still no
+              // pill: this is the sentence the model was given, and a chip in it
+              // would stop reading as one.
+              if (segment.kind === "attachment") {
+                const run = segment.text.slice(ATTACHMENT_MARK.length);
+                const size = run.match(ATTACHMENT_SIZE);
+                const name = (size ? run.slice(0, run.length - size[0].length) : run).trim();
+                return (
+                  <span key={i}>
+                    <Paperclip
+                      aria-hidden
+                      className="mr-1 inline size-3.5 -translate-y-px align-baseline opacity-70"
+                    />
+                    <span className="font-mono">{name}</span>
+                    {size && <span className="ml-1 opacity-60">{size[0].trim()}</span>}
+                  </span>
                 );
               }
 

@@ -711,6 +711,12 @@ mod command_tests {
     /// tokio's default leaves one running, which is what made the timeout an
     /// abandonment rather than a stop. Pinned with `sleep` rather than a CLI,
     /// since the behaviour being relied on is the runtime's.
+    ///
+    /// unix-only because the fixture *is* `/bin/sleep`: what is under test is
+    /// tokio's `kill_on_drop`, and a Windows spelling of "a process that
+    /// outlives a deadline" would need a different child and a different way to
+    /// ask whether it is gone — a second test of tokio, not a test of hz.
+    #[cfg(unix)]
     #[tokio::test]
     async fn timing_out_kills_the_child_rather_than_abandoning_it() {
         let child = Command::new("/bin/sleep")

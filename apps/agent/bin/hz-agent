@@ -10,15 +10,18 @@
 #    build the app runs whenever it is present**, because a change made here is
 #    a change to the agent and a launcher that preferred the staged copy would
 #    quietly discard every one of them.
-# 2. **From the tree staged for the bundle**, which `scripts/vendor-mcode.sh`
+# 2. **From the tree staged for the bundle**, which `scripts/vendor-agent.sh`
 #    builds and which is what a release ships. Reached when this tree has no
 #    `node_modules` — the ordinary state on a machine that only wants the app to
 #    work, since the agent's dependencies are several hundred packages.
 #
-# usage: apps/agent/bin/mcode acp
+# usage: apps/agent/bin/hz-agent acp
 set -e
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-STAGED="$HERE/../desktop/src-tauri/resources/mcode/bin/mcode"
+# `resources/agent/bin/hz-agent`, which is where `vendor-agent.sh` stages it and
+# where `binpath` looks too — the rename off `mcode` left this naming a directory
+# that no longer exists, so the fallback below never ran.
+STAGED="$HERE/../desktop/src-tauri/resources/agent/bin/hz-agent"
 
 # **The node that installed this tree, not whichever one is on PATH.** A native
 # module is built for a single ABI — `better-sqlite3` is one — and `PATH` under

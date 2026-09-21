@@ -31,18 +31,30 @@ describe("calendarDay", () => {
     expect(calendarDay(new Date(2026, 7, 27, 0, 30).toISOString())).toBe("Today");
   });
 
+  /// **The year appears exactly when it stops being obvious, and the month's
+  /// spelling is not this file's business.** Both cases here were pinned to
+  /// literals — `"Aug 23"`, an English month — which is two things that move: the
+  /// fixed August stops being "past yesterday" four weeks after it is written, and
+  /// `Intl` on a machine set to another locale spells the month differently
+  /// (`15 de jun.` here). What is left is the contract: a date this year carries no
+  /// year, one from a previous year does, and neither is claimed as today.
   it("falls back to a date past yesterday", () => {
-    expect(calendarDay(new Date(2026, 7, 23, 12, 0).toISOString())).toBe("Aug 23");
+    const then = new Date(NOW.getFullYear(), NOW.getMonth() - 2, 15, 12, 0);
+    const drawn = calendarDay(then.toISOString());
+
+    expect(drawn).not.toBe("Today");
+    expect(drawn).not.toContain(String(NOW.getFullYear()));
+    // The day and the month are both in there, in whatever order `Intl` puts them.
+    expect(drawn).toContain("15");
+    expect(drawn).toContain(then.toLocaleString(undefined, { month: "short" }).replace(".", ""));
   });
 
-  /// The year is noise on every row within this year and the only thing telling
-  /// two rows apart across one.
   it("adds the year only once it stops being obvious", () => {
-    expect(calendarDay(new Date(2025, 7, 23, 12, 0).toISOString())).toBe("Aug 23, 2025");
+    const then = new Date(NOW.getFullYear() - 1, NOW.getMonth(), 15, 12, 0);
+
+    expect(calendarDay(then.toISOString())).toContain(String(NOW.getFullYear() - 1));
   });
 
-  /// A row still has to draw. An unparseable stamp costs its own cell, never the
-  /// list around it.
   it("is empty for something that is not a date", () => {
     expect(calendarDay("not a date")).toBe("");
   });

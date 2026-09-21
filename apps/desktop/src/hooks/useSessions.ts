@@ -17,21 +17,50 @@ import { clearFanOut, fanOutModels } from "@/hooks/useModelFanOut";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import { canFanOut, fanOutPlan } from "@/lib/fanOut";
 import { changeRange } from "@/lib/changes";
+import { modelsWaiting } from "@/lib/modelRead";
 import { fastFor, fastNotice } from "@/lib/fastMode";
 import { lastTurn, secondOpinionPrompt } from "@/lib/secondOpinion";
 import { isWindowFocused, onFocusChange } from "@/lib/focus";
 import { DEFAULT_MODEL_FOR, isUnsetModel, rememberedModel, usableEffort, usableModel } from "@/lib/model";
 import { notifyOS } from "@/lib/notify";
 import { stanceFor } from "@/lib/permission";
+import { isActive } from "@/lib/subagent";
 import { isProvisional, nextMainSeq, provisionalId, retireOldestProvisional } from "@/lib/provisional";
 import { tracked } from "@/lib/slow";
 import { playNotification } from "@/lib/sound";
 import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/space";
+import type { QuestionAnswer } from "@/lib/questionnaire";
 import { pendingAsksOf } from "@/lib/transcript";
 import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
 import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
 
 const DEFAULT_EFFORT: Effort = "high";
+
+/// The children this app has watched *work*, by the child's own id.
+///
+/// **mcode's roster can name children from before this app started.** They live
+/// in the agent's own store, so a session resumed after a restart reports its
+/// whole family back — every subagent that session ever ran — and one new child
+/// then dragged all of them onto the screen at once. That is what made "the
+/// subagents vanish when I restart" read as a bug: they came back, all together,
+/// the moment the agent delegated anything.
+///
+/// So a roster keeps a child from the moment it is seen going, and keeps it
+/// afterwards — the run the reader watched finish is still there to open. What is
+/// dropped is only what this run never saw run, and those are rows whose
+/// transcripts this app could never read either.
+const watchedChildren = new Set<string>();
+
+/// A roster narrowed to the rows worth drawing. See [`watchedChildren`].
+function watchableChildren(members: DelegatedMember[]): DelegatedMember[] {
+  const kept: DelegatedMember[] = [];
+  for (const member of members) {
+    if (isActive(member)) watchedChildren.add(member.sessionId);
+    else if (!watchedChildren.has(member.sessionId)) continue;
+    kept.push(member);
+  }
+  return kept;
+}
 
 /// Images for a prompt the backend has not archived yet, through `url` and never
 /// `path`: the copy the asset protocol's scope allows is written at flush, so
@@ -702,6 +731,14 @@ const preparedRef = useRef<{ id: string; cwd: string } | null>(null);
 /// arrive under, before any session exists to select.
 const [preparedId, setPreparedId] = useState<string | null>(null);
 
+/// Whether the park for the composer's current target has answered — landed or
+/// failed, either way it is no longer in flight. Read by `modelsWaitingNow`.
+const [parkLanded, setParkLanded] = useState(false);
+
+/// Whether the project list has been read, which is what tells the wait
+/// "no park is coming" apart from "the pick is not known yet".
+const [projectsSettled, setProjectsSettled] = useState(false);
+
 useEffect(() => {
   // Only for a prompt that will *create* a session: a resume re-opens its own
   // child, and there is nothing to park for it.
@@ -711,6 +748,8 @@ useEffect(() => {
   const id = crypto.randomUUID();
   preparedRef.current = { id, cwd: targetPath };
   setPreparedId(id);
+  // A park is on its way, so the model read waits for it — see `waitingOnPark`.
+  setParkLanded(false);
   // Quiet on purpose. `send_msg` spawns its own child when nothing is parked, so
   // a failure here costs the reader the boot they were going to pay regardless.
   //
@@ -732,8 +771,23 @@ useEffect(() => {
     // it is composed into the session at `session/new`. Without this the send
     // would find the park's agent did not match and pay a whole boot, so the boot
     // is paid here instead — while they are still typing.
-  }).catch(() => {});
+  })
+    .catch(() => {})
+    // Landed or failed, the model read is free to go: a park that failed also
+    // leaves no child to ask, so waiting longer would only delay the probe.
+    .finally(() => setParkLanded(true));
 }, [selectedSessionId, targetPath, agentName]);
+
+/// Whether the model read has to wait — for the project list that says whether a
+/// park is coming, and then for the park itself. The rule and its reasoning are
+/// [modelsWaiting](lib/modelRead.ts)'s, which is pure and tested; this is the
+/// state it reads.
+const modelsWaitingNow = modelsWaiting({
+  selectedSessionId,
+  projectsSettled,
+  targetPath,
+  parkLanded,
+});
 
 /// Opens a review of the newest turn: a session of its own, in its own worktree,
 /// **seeded from the work it is being asked to judge**.
@@ -1257,11 +1311,23 @@ const handleRespondPermission = async (
 const handleAnswerQuestions = async (
   sessionId: string,
   requestId: string,
-  answers: Record<string, string>,
+  answers: QuestionAnswer[],
 ) => {
   const fail = failUnlessLeft();
   try {
     await invoke("answer_questions", { sessionId, requestId, answers });
+  } catch (e) {
+    fail(e);
+  }
+};
+
+// The reader taking the question back. Same shape as the call above, and the
+// same silence: the reply is a decline, and the card learns it was retired from
+// the event the backend emits, not from anything written here.
+const handleCancelQuestion = async (sessionId: string, requestId: string) => {
+  const fail = failUnlessLeft();
+  try {
+    await invoke("cancel_question", { sessionId, requestId });
   } catch (e) {
     fail(e);
   }
@@ -1784,6 +1850,16 @@ useEffect(() => {
 }, [showArchived])
 
 useEffect(() => {
+  // **Waiting, and the spinner is the truth while it waits.** A park is inbound
+  // with the same handshake this read would have to pay for, so going now would
+  // boot a second child beside it — see [modelsWaiting](lib/modelRead.ts).
+  // Leaving `loadingModels` up is what keeps the picker from drawing "no models"
+  // for that beat.
+  if (modelsWaitingNow) {
+    setLoadingModels(true);
+    return;
+  }
+
   let cancelled = false;
   setLoadingModels(true);
 
@@ -1810,7 +1886,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [harness, modelsGeneration])
+}, [harness, modelsGeneration, modelsWaitingNow])
 
 /// Drops whatever the harnesses cached and reads again.
 ///
@@ -1843,7 +1919,10 @@ useEffect(() => {
     })
     // Without this a failed read leaves the picker silently empty, and the
     // reason only reaches the console.
-    .catch((e) => setError(String(e)));
+    .catch((e) => setError(String(e)))
+    // Settled either way, and that is what releases the model read: a failed
+    // read means no target, so there is no park left for it to wait on.
+    .finally(() => setProjectsSettled(true));
 }, [])
 
 // The repositories under the selected project: one for a project that is itself
@@ -2574,7 +2653,7 @@ useEffect(() => {
 useEffect(() => {
   const listenerPromise = listen<DelegationEvent>("subagent_delegations", (event) => {
     const { sessionId, members } = event.payload;
-    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: members }));
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(members) }));
   });
 
   return () => {
@@ -2690,6 +2769,11 @@ const liveTaskIds = liveTaskIdsBySession[selectedSessionId ?? ""] ?? NO_TASKS;
 // published them. Empty for a session with nothing delegated — which is the
 // ordinary state and not "not read yet": the push and the on-demand read both
 // answer with the whole roster, so an empty list is an answer.
+//
+// `delegationsBySession` is the whole map, exposed beside it because the sidebar
+// draws a row per subagent under the session that spawned it — so it needs every
+// live session's roster, not the selected one's alone. Same push, one reader
+// each: this narrowing is what the composer and the focused pane want.
 const delegations = selectedSessionId ? delegationsBySession[selectedSessionId] ?? [] : [];
 
 /// Re-reads a session's roster on demand, for a pane opened after the last push.
@@ -2700,7 +2784,7 @@ const delegations = selectedSessionId ? delegationsBySession[selectedSessionId] 
 const refreshDelegations = useCallback(async (sessionId: string) => {
   try {
     const members = await invoke<DelegatedMember[]>("session_delegations", { sessionId });
-    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: members }));
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(members) }));
   } catch {
     // Nothing to say that the empty list does not already say.
   }
@@ -2826,6 +2910,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, delegations, refreshDelegations, stopDelegations, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
 
 }

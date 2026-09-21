@@ -19,13 +19,27 @@
 //! Rejected: writing the provider into the CLI's config by hand. That file is
 //! the vendor's own, its shape is not this app's to keep, and a subcommand is a
 //! contract the vendor publishes where a file layout is an implementation
-//! detail. Every provider change goes through the subcommand. **One key does
-//! not, and [`set_default_model`] is where that is argued** — the subcommand
-//! that would write it is broken.
+//! detail. Every provider change goes through the subcommand. **Two keys do
+//! not**, and each is a case the subcommand cannot reach:
+//!
+//! - `defaultModel`, which [`set_default_model`] writes because the flag that
+//!   would (`--use`) refuses every time in the shipped version.
+//! - a model's `limit`, which [`add`] writes out of what the gateway's own model
+//!   list stated, because `--context-limit` is *one number for every model in
+//!   the call* and a second `add` for the same provider **replaces** its model
+//!   list — measured, not assumed. A per-model window therefore cannot come from
+//!   the flag — it is the first of the three steps a model's window is decided
+//!   in, and the only one this app can take.
+//!
+//! Both are **text surgery plus a rename**, never a parse and re-emit: this file
+//! is 600 lines of the vendor's own metadata with the reader's key in it, and a
+//! round trip would reformat all of it and drop every field this build has never
+//! heard of.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -97,6 +111,42 @@ pub struct ProviderModel {
     /// The default this provider's first model is pinned to, if any.
     #[serde(default)]
     pub selected: bool,
+    /// The context window the agent will run this model at, where the provider
+    /// entry records one.
+    ///
+    /// **Absent is the state worth drawing, and it is not zero.** A model's
+    /// window is decided in three steps and this is the first: what this entry
+    /// records, then what the catalog the agent ships says for that model, then
+    /// `BYOK_FALLBACK_MODEL_LIMITS` in `model-resolver-byok.ts` (**200_000**
+    /// context, **16_384** output). So a gateway's own statement is written
+    /// here, and a gateway that states none is deliberately left absent — an
+    /// absent entry lets the catalog answer, where a copy of it taken once
+    /// would be believed long after the catalog moved. Only a model neither
+    /// names reaches the fallback, and that is the row drawn `200k default`
+    /// (`lib/providerLimits.ts` is where this build keeps the copy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u64>,
+    /// The reply budget this model is pinned to, or absent for the same reason
+    /// and with the same fallback (`16k default`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+}
+
+/// One row of a gateway's own model list, as much of it as this app reads.
+///
+/// **The window is why this exists.** A gateway's own model list is the one
+/// place its ids are described by the party serving them, and some of those
+/// lists state a size (`context_length`). A row that carries none is left
+/// unwritten rather than guessed at, since the agent's catalog is the next step
+/// and this app is not a third source of the same fact.
+///
+/// Public because [`discover`] is, and that is the whole of the reason: it is a
+/// wire shape, not something the frontend ever sees (no `TS` derive, and nothing
+/// crosses the bridge with it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredModel {
+    id: String,
+    context_limit: Option<u64>,
 }
 
 /// The CLI's `provider list --json` reply, before the entries hz does not draw
@@ -173,7 +223,7 @@ pub struct ProviderPreset {
 /// for one key. Command Code is that gateway: Claude answers on `/v1/messages`
 /// alone and everything else on `/v1/chat/completions`. This build registers it
 /// on the OpenAI wire, the one that serves the most models, so its Claude models
-/// are simply not among the ids [`read_model_ids`] lets through.
+/// are simply not among the ids [`read_models`] lets through.
 pub fn presets() -> Vec<ProviderPreset> {
     vec![
         ProviderPreset {
@@ -182,7 +232,7 @@ pub fn presets() -> Vec<ProviderPreset> {
             base_url: "https://api.commandcode.ai/provider/v1".to_string(),
             api_format: "openai-completions".to_string(),
             models: Vec::new(),
-            note: "One key for GPT, Gemini and the open models. hz fetches the list it serves.".to_string(),
+            note: "One key for GPT, Gemini and the open models. Hyze Code fetches the list it serves.".to_string(),
         },
         ProviderPreset {
             id: "opencode-go".to_string(),
@@ -190,7 +240,7 @@ pub fn presets() -> Vec<ProviderPreset> {
             base_url: "https://opencode.ai/zen/go/v1".to_string(),
             api_format: "openai-completions".to_string(),
             models: Vec::new(),
-            note: "Every model the gateway serves — hz asks it for the list.".to_string(),
+            note: "Every model the gateway serves — Hyze Code asks it for the list.".to_string(),
         },
     ]
 }
@@ -242,10 +292,19 @@ pub async fn add(provider: &NewProvider) -> Result<Vec<Provider>> {
         bail!("a provider needs an API key");
     }
 
-    let models = if provider.models.iter().all(|model| model.trim().is_empty()) {
+    // Typed ids have no window — the reader typed them, so nothing stated one.
+    let discovered = if provider.models.iter().all(|model| model.trim().is_empty()) {
         discover(&provider.base_url, &provider.api_format, provider.api_key.trim()).await?
     } else {
-        provider.models.clone()
+        provider
+            .models
+            .iter()
+            .map(|id| DiscoveredModel {
+                id: id.trim().to_string(),
+                context_limit: None,
+            })
+            .filter(|model| !model.id.is_empty())
+            .collect()
     };
 
     let mut args: Vec<String> = vec![
@@ -259,12 +318,12 @@ pub async fn add(provider: &NewProvider) -> Result<Vec<Provider>> {
         provider.api_format.clone(),
     ];
 
-    for model in &models {
-        let model = model.trim();
-        if !model.is_empty() {
-            args.push("--model".into());
-            args.push(model.to_string());
-        }
+    // **No `--context-limit`.** It is one number for every model in the call, and
+    // a gateway serves models of several sizes — so the windows go in per model
+    // afterwards, out of what the gateway itself stated.
+    for model in &discovered {
+        args.push("--model".into());
+        args.push(model.id.clone());
     }
 
     // The name the CLI reads the key out of *its* environment, which this
@@ -284,11 +343,102 @@ pub async fn add(provider: &NewProvider) -> Result<Vec<Provider>> {
     models::forget();
     let after = list().await?;
 
+    // **Every window the gateway stated, written per model.** See
+    // [`apply_windows`]: best effort, because the provider is connected and
+    // usable whatever this does — and the model rows draw the window each one
+    // ended up on, so a write that did not land is visible rather than silent.
+    if let Some(added) = after.iter().find(|listed| listed.name == provider.name.trim()) {
+        if let Err(err) = apply_windows(&added.provider_id, &discovered).await {
+            eprintln!("[hz] could not record the model windows: {err:#}");
+        }
+    }
+    let after = list().await?;
+
     if provider.make_default {
         set_default_model(&after, provider.name.trim()).await?;
     }
 
     Ok(after)
+}
+
+/// Records the context window each model was discovered with, in the agent's own
+/// config.
+///
+/// **This is the whole of "it is right because the gateway said so".** A BYOK
+/// model with no limit of its own is answered by the agent's catalog, and by its
+/// own 200k fallback only where the catalog has no entry either — so what a
+/// gateway states here is the one step ahead of both. Some gateways state the
+/// size in their own model list (Command Code serves `context_length`), and this
+/// is what turns that statement into the
+/// number the agent runs on. A gateway that states nothing keeps the fallback,
+/// and the row shows it: the two presets hz ships differ exactly here, which is
+/// why this is one code path and not a special case per gateway.
+///
+/// Only the models that stated one are written, and only if at least one was:
+/// nothing to write is not a reason to touch a file that holds the reader's key.
+/// The write is the text surgery + rename [`with_model_limits`] describes, and a
+/// refusal puts the file back rather than leaving it half-edited.
+async fn apply_windows(provider_id: &str, models: &[DiscoveredModel]) -> Result<()> {
+    let wanted: Vec<(&str, u64)> = models
+        .iter()
+        .filter_map(|model| model.context_limit.map(|tokens| (model.id.as_str(), tokens)))
+        .collect();
+    if wanted.is_empty() {
+        return Ok(());
+    }
+
+    let path = config_path().await?;
+    let text = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("couldn't read {}", path.display()))?;
+
+    let mut edited = text.clone();
+    let mut written = 0usize;
+    for (model_id, tokens) in &wanted {
+        if let Some(next) = with_model_limits(&edited, provider_id, model_id, Some(*tokens), None) {
+            edited = next;
+            written += 1;
+        }
+    }
+    if written == 0 {
+        bail!("none of the {provider_id}'s models are in the agent's config");
+    }
+
+    let tmp = path.with_extension("yaml.tmp");
+    tokio::fs::write(&tmp, &edited)
+        .await
+        .with_context(|| format!("couldn't write {}", tmp.display()))?;
+    if let Err(err) = tokio::fs::rename(&tmp, &path).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(err).with_context(|| format!("couldn't land {}", path.display()));
+    }
+
+    // The agent is the only thing that can say whether that was a config. One
+    // reading, then one comparison per model — a window that did not take means
+    // the file is not the shape this writes, and a half-believed config is worse
+    // than the 200k it started on.
+    models::forget();
+    if let Ok(after) = list().await {
+        let recorded = |model_id: &str| {
+            after
+                .iter()
+                .find(|listed| listed.provider_id == provider_id)
+                .and_then(|listed| {
+                    listed
+                        .models
+                        .iter()
+                        .find(|model| model.model_id == model_id)
+                })
+                .and_then(|model| model.context_limit)
+        };
+        if wanted.iter().all(|(id, tokens)| recorded(id) == Some(*tokens)) {
+            return Ok(());
+        }
+    }
+
+    let _ = tokio::fs::write(&path, &text).await;
+    models::forget();
+    bail!("the agent did not take those windows, so the config was put back")
 }
 
 /// Points the agent at a model the provider that was just added serves.
@@ -397,6 +547,174 @@ async fn config_path() -> Result<std::path::PathBuf> {
     Ok(path)
 }
 
+/// Sets one model's `limit` in the agent's config, or clears it.
+///
+/// **The per-model context window, and it is the only lever there is.** A BYOK
+/// model with no `limit.context` of its own is answered by the catalog the agent
+/// ships, and only a model that is absent from that too is drawn — and
+/// compacted — at the agent's 200k fallback. `provider add --context-limit`
+/// sets one number for every model in that call, re-adding the same provider
+/// **replaces** its model list, and no ACP config option carries a window — so
+/// the config file is the only place a per-model window can be written. That is
+/// where the agent's own picker writes it too.
+///
+/// **Text surgery, not a round trip**, for the reason [`with_default_model`]
+/// gives and one worse: this file is 600 lines of the vendor's own model
+/// metadata with the reader's API key in it, and a parse-and-re-emit would
+/// reformat all of it — and drop any key this build has never heard of.
+///
+/// Indentation is the whole of the parsing, and it is the vendor's own shape:
+/// `provider:` at 0, the slug at 2, `models:` at 4, the model id at 6, its
+/// fields at 8, the limit's own fields at 10. `None` where the provider or the
+/// model is not in the file — a model the CLI lists but the config never wrote
+/// is not something to guess an insertion point for.
+///
+/// Pure, so the rule is pinned against that shape without a `~/.hz` to write
+/// into.
+fn with_model_limits(
+    text: &str,
+    provider_id: &str,
+    model_id: &str,
+    context: Option<u64>,
+    output: Option<u64>,
+) -> Option<String> {
+    // **`provider list` names the block by its own path.** A BYOK provider is
+    // `custom_provider:<slug>`, and the config says exactly that: a top-level
+    // `custom_provider:` map with the slug under it. The managed account is
+    // `minimax`, under the top-level `provider:` map — so the id is a path and
+    // nothing here has to guess which map a provider lives in.
+    let (parent, slug) = provider_id.split_once(':')?;
+    const SLUG: usize = 2;
+    const MODELS: usize = 4;
+    const MODEL: usize = 6;
+    const FIELD: usize = 8;
+    const LIMIT: usize = 10;
+
+    fn indent(line: &str) -> usize {
+        line.len() - line.trim_start().len()
+    }
+    // Whether this line is the map key `want`, with any quoting taken off it.
+    //
+    // **Two spellings, and the second is not belt-and-braces.** A key whose own
+    // text holds a colon — a model id like `vendor/model:free` — is written bare
+    // by the agent, and splitting on the *first* colon reads `vendor/model` out
+    // of it, which matches nothing. So a line ending in `:` is compared whole,
+    // and only a line carrying a value falls back to the first colon — which is
+    // what reads `context: 1000000` and `baseURL: https://…` as their keys.
+    fn is_key(line: &str, want: &str) -> bool {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_suffix(':') {
+            if rest.trim().trim_matches(['"', '\'']) == want {
+                return true;
+            }
+        }
+        match trimmed.split_once(':') {
+            Some((before, _)) => before.trim().trim_matches(['"', '\'']) == want,
+            None => false,
+        }
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let provider_at = lines
+        .iter()
+        .position(|line| line.trim() == format!("{parent}:"))?;
+    let body = &lines[provider_at + 1..];
+    // A top-level line ends the map, so a slug below one belongs to a later
+    // document rather than to `provider:`.
+    let end = body
+        .iter()
+        .position(|line| {
+            indent(line) == 0 && !line.trim().is_empty() && !line.trim().starts_with('#')
+        })
+        .unwrap_or(body.len());
+
+    let slug_at = (0..end).find(|i| indent(body[*i]) == SLUG && is_key(body[*i], slug))?;
+    let models_at = (slug_at + 1..end)
+        .find(|i| indent(body[*i]) <= SLUG || (indent(body[*i]) == MODELS && is_key(body[*i], "models")))?;
+    if indent(body[models_at]) != MODELS {
+        return None;
+    }
+    let model_at = (models_at + 1..end)
+        .find(|i| indent(body[*i]) <= MODELS || (indent(body[*i]) == MODEL && is_key(body[*i], model_id)))?;
+    if indent(body[model_at]) != MODEL {
+        return None;
+    }
+    // Where this model's own fields stop: the next line at or above its own
+    // indent, which is the next model or the end of the map.
+    let fields_end = (model_at + 1..end)
+        .find(|i| indent(body[*i]) <= MODEL && !body[*i].trim().is_empty())
+        .unwrap_or(end);
+
+    let find_field = |from: usize, to: usize, level: usize, want: &str| {
+        (from..to).find(|i| indent(body[*i]) == level && is_key(body[*i], want))
+    };
+
+    let limit_at = find_field(model_at + 1, fields_end, FIELD, "limit");
+    let limit_end = limit_at
+        .map(|at| {
+            (at + 1..fields_end)
+                .find(|i| indent(body[*i]) <= FIELD && !body[*i].trim().is_empty())
+                .unwrap_or(fields_end)
+        })
+        .unwrap_or(model_at + 1);
+
+    // The limit's children with ours taken out and every key this build does
+    // not manage carried through untouched — the entry may hold limits of its
+    // own that are none of this app's business.
+    let kept: Vec<String> = limit_at
+        .map(|at| {
+            body[at + 1..limit_end]
+                .iter()
+                .filter(|line| {
+                    !(indent(line) == LIMIT
+                        && (is_key(line, "context") || is_key(line, "output")))
+                })
+                .map(|line| (*line).to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut written: Vec<String> = Vec::new();
+    for (want, tokens) in [("context", context), ("output", output)] {
+        if let Some(tokens) = tokens {
+            written.push(format!("{}{want}: {tokens}", " ".repeat(LIMIT)));
+        }
+    }
+
+    // Nothing asked for and nothing there: the file is left exactly as it was,
+    // which is the honest answer for a model this build has nothing to say
+    // about.
+    if written.is_empty() && limit_at.is_none() {
+        return None;
+    }
+
+    // An emptied limit goes entirely, rather than standing over its children.
+    let block: Vec<String> = if written.is_empty() && kept.is_empty() {
+        Vec::new()
+    } else {
+        let mut block = vec![format!("{}limit:", " ".repeat(FIELD))];
+        block.extend(written);
+        block.extend(kept);
+        block
+    };
+
+    // Where the block goes: over the one it replaces, or before the model's own
+    // fields where it never had one. Placing it *there* rather than at the top
+    // of the entry keeps an existing block where the reader put it — including
+    // ahead of a `contextWindowOptions` list, which the agent's own picker reads.
+    let at = limit_at.unwrap_or(model_at + 1);
+
+    // Everything above `provider:` untouched, everything from there out of
+    // `body` in order with the old block swapped for the new one.
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + block.len());
+    out.extend(lines[..provider_at + 1].iter().map(|line| (*line).to_string()));
+    out.extend(body[..at].iter().map(|line| (*line).to_string()));
+    out.extend(block);
+    out.extend(body[limit_end..].iter().map(|line| (*line).to_string()));
+
+    Some(out.join("\n") + "\n")
+}
+
 /// The config with its one top-level `defaultModel` line replaced, or appended
 /// where the agent never wrote one.
 ///
@@ -440,7 +758,7 @@ fn with_default_model(text: &str, value: &str) -> String {
 /// since a wrong key and a wrong URL are what the reader needs to be told, and
 /// walking a fallback chain past an authentication error reports the last URL
 /// tried rather than the real reason.
-pub async fn discover(base_url: &str, api_format: &str, api_key: &str) -> Result<Vec<String>> {
+pub async fn discover(base_url: &str, api_format: &str, api_key: &str) -> Result<Vec<DiscoveredModel>> {
     let mut problem = "the provider serves no models".to_string();
 
     for url in model_list_urls(base_url, api_format) {
@@ -496,7 +814,7 @@ fn origin(base: &str) -> Option<String> {
 /// because only it is worth trying the next URL over: a 401 is the answer, and
 /// trying three more URLs after it buries it.
 enum Answer {
-    Models(Vec<String>),
+    Models(Vec<DiscoveredModel>),
     /// 404 or 405 — no list endpoint at this URL.
     NoEndpoint(String),
     Failed(String),
@@ -532,7 +850,7 @@ async fn ask_for_models(url: &str, base_url: &str, api_key: &str, api_format: &s
     }
 
     match response.json::<serde_json::Value>().await {
-        Ok(payload) => Answer::Models(read_model_ids(&payload, api_format)),
+        Ok(payload) => Answer::Models(read_models(&payload, api_format)),
         Err(err) => Answer::Failed(format!("the reply is not the JSON this reads: {err}")),
     }
 }
@@ -548,20 +866,51 @@ async fn ask_for_models(url: &str, base_url: &str, api_key: &str, api_format: &s
 /// end of the first turn that picks one, which is exactly the failure this app
 /// refuses to ship (see the MiniMax account's own models, dropped for the same
 /// reason). So the list is narrowed to the wire being configured.
-fn read_model_ids(payload: &serde_json::Value, api_format: &str) -> Vec<String> {
+fn read_models(payload: &serde_json::Value, api_format: &str) -> Vec<DiscoveredModel> {
     payload
         .get("data")
         .and_then(|data| data.as_array())
         .map(|rows| {
             rows.iter()
                 .filter(|row| serves_wire(row, api_format))
-                .filter_map(|row| row.get("id").and_then(|id| id.as_str()))
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-                .map(String::from)
+                .filter_map(|row| {
+                    let id = row.get("id")?.as_str()?.trim();
+                    if id.is_empty() {
+                        return None;
+                    }
+                    Some(DiscoveredModel {
+                        id: id.to_string(),
+                        context_limit: read_context_window(row),
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The context window a gateway states for one of its models, or `None`.
+///
+/// **Every name here is one a real endpoint was seen to use**, and that is the
+/// whole of the rule: a field this build has not seen is not guessed at, because
+/// the number ends up governing when the agent compacts. Command Code serves
+/// `context_length` (a million on its Claude rows); the vLLM-family gateways
+/// serve `max_model_len`; OpenRouter nests a `context_length` under
+/// `top_provider`; some serve `context_window`.
+///
+/// **OpenCode Go and Zen serve none of them** — their list carries `id` and
+/// nothing else — so those models keep the agent's own fallback, which is what
+/// the bundled catalog is for. See the module note on the two halves.
+fn read_context_window(row: &serde_json::Value) -> Option<u64> {
+    const FIELDS: [&str; 3] = ["context_length", "max_model_len", "context_window"];
+    let direct = FIELDS.iter().find_map(|field| {
+        row.get(*field).and_then(serde_json::Value::as_u64).filter(|tokens| *tokens > 0)
+    });
+    direct.or_else(|| {
+        row.get("top_provider")
+            .and_then(|top| top.get("context_length"))
+            .and_then(serde_json::Value::as_u64)
+            .filter(|tokens| *tokens > 0)
+    })
 }
 
 /// Whether a row says it answers on this wire.
@@ -601,14 +950,26 @@ fn is_opencode_go(base_url: &str) -> bool {
 /// connection and never answers would otherwise hold the form's spinner for as
 /// long as the OS keeps the socket, which reads as the button being broken.
 /// The agent holds its own discovery to the same ten seconds.
+/// The HTTP client discovery goes through.
+///
+/// **Named, and the identity is not a nicety.** Command Code's model list answers
+/// **403** to a request with no `User-Agent` — measured on the shipped host: no
+/// header 403, `curl/8.7.1` and `MiniMaxCode` both 200. A client that sends
+/// none, as this one did, could not discover anything there, and the refusal
+/// arrived as "authentication failed (HTTP 403)" — a sentence about the reader's
+/// key, which was fine. The same identity `analytics` and `linear` already send;
+/// the OpenCode header below overrides it per gateway where that identity is part
+/// of the request.
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent(concat!("hz/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .unwrap_or_default()
+});
+
 fn client() -> &'static reqwest::Client {
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_default()
-    })
+    &CLIENT
 }
 
 /// Removes a provider hz added.
@@ -699,6 +1060,140 @@ async fn run(args: &[&str], api_key: Option<&str>) -> Result<String> {
 mod tests {
     use super::*;
 
+    /// The ids a list reply yields, which is what most of these assert on: the
+    /// window beside them has its own test.
+    fn ids(payload: &serde_json::Value, api_format: &str) -> Vec<String> {
+        read_models(payload, api_format)
+            .into_iter()
+            .map(|model| model.id)
+            .collect()
+    }
+
+    /// A slice of the agent's real config, indentation and all: a provider map
+    /// whose models are `name:`/`kind:` and then an indented `models:` map, one
+    /// of which already carries a hand-written `limit:` (as the machine this was
+    /// written on does) and one of which does not.
+    const CONFIG: &str = r#"version: 1
+defaultModel: custom_provider:example/alpha
+provider:
+  minimax:
+    name: MiniMax
+    models:
+      beta:
+        reasoning: true
+custom_provider:
+  example:
+    name: Example
+    kind: custom
+    enabled: true
+    options:
+      baseURL: https://example.test/v1
+    models:
+      alpha:
+        reasoning: true
+        thinking_config:
+          mode: switchable
+          default_value: 'true'
+        limit:
+          context: 1000000
+          output: 128000
+        contextWindowOptions:
+          - 256000
+          - 1000000
+      beta:
+        reasoning: true
+      gamma:
+        reasoning: false
+  other:
+    name: Other
+    kind: custom
+    models:
+      beta:
+        reasoning: true
+permissionMode: auto
+"#;
+
+    fn lines_of(text: &str) -> Vec<&str> {
+        text.lines().collect()
+    }
+
+    /// Sets a window where the model has none, and leaves every other line of
+    /// the file exactly where it was.
+    #[test]
+    fn a_window_is_written_before_the_models_own_fields() {
+        let out = with_model_limits(CONFIG, "custom_provider:example", "beta", Some(262_144), Some(32_768)).unwrap();
+
+        assert!(
+            out.contains("      beta:\n        limit:\n          context: 262144\n          output: 32768\n        reasoning: true\n"),
+            "wrote {out}"
+        );
+        // Every other line survives, in order — the whole point of doing this as
+        // text rather than a round trip.
+        let before: Vec<&str> = lines_of(CONFIG)
+            .into_iter()
+            .filter(|line| !line.contains("limit:") && !line.contains("context:") && !line.contains("output:") && !line.contains("contextWindowOptions") && !line.contains("- 256000") && !line.contains("- 1000000"))
+            .collect();
+        let after: Vec<&str> = lines_of(&out)
+            .into_iter()
+            .filter(|line| !line.contains("limit:") && !line.contains("context:") && !line.contains("output:") && !line.contains("contextWindowOptions") && !line.contains("- 256000") && !line.contains("- 1000000"))
+            .collect();
+        assert_eq!(before, after);
+    }
+
+    /// An existing window is replaced in place, and the keys beside it that this
+    /// build knows nothing about are carried through.
+    #[test]
+    fn an_existing_window_is_replaced_where_it_stands() {
+        let out = with_model_limits(CONFIG, "custom_provider:example", "alpha", Some(400_000), None).unwrap();
+
+        // Where the reader put it: after `thinking_config:` and before the
+        // `contextWindowOptions` list, not at the top of the entry.
+        assert!(
+            out.contains(
+                "          default_value: 'true'\n        limit:\n          context: 400000\n        contextWindowOptions:\n          - 256000\n"
+            ),
+            "wrote {out}"
+        );
+        // The old output line went with the limit it belonged to, so a cleared
+        // budget falls back rather than keeping the stale number.
+        assert!(!out.contains("output: 128000"));
+        // And no second limit block for the same model.
+        assert_eq!(out.matches("limit:").count(), 1);
+    }
+
+    /// A model id is matched inside its own provider, so two providers may list
+    /// the same one without the write landing on the wrong entry.
+    #[test]
+    fn a_model_is_matched_inside_its_own_provider() {
+        let out = with_model_limits(CONFIG, "custom_provider:other", "beta", Some(64_000), None).unwrap();
+
+        let other = out.split("  other:").nth(1).unwrap();
+        assert!(other.contains("        limit:\n          context: 64000\n"), "wrote {out}");
+        // The first provider's `beta` is untouched.
+        let example = out.split("  other:").next().unwrap();
+        assert!(!example.contains("        limit:\n          context: 64000\n"));
+    }
+
+    /// Nothing to write and nothing there is not a reason to touch the file.
+    #[test]
+    fn an_unknown_model_is_refused_rather_than_invented() {
+        assert!(with_model_limits(CONFIG, "custom_provider:example", "delta", None, None).is_none());
+        assert!(with_model_limits(CONFIG, "custom_provider:nope", "alpha", Some(1), None).is_none());
+        // The managed map carries a `beta` too, and it is not this one.
+        assert!(with_model_limits(CONFIG, "provider:minimax", "alpha", Some(1), None).is_none());
+        assert!(with_model_limits(CONFIG, "custom_provider:example", "gamma", None, None).is_none());
+    }
+
+    /// Clearing both limits takes the block with them, rather than leaving a
+    /// `limit:` standing over nothing.
+    #[test]
+    fn clearing_both_limits_removes_the_block() {
+        let out = with_model_limits(CONFIG, "custom_provider:example", "alpha", None, None).unwrap();
+        assert!(!out.contains("        limit:"), "wrote {out}");
+        // The list that followed it is still there.
+        assert!(out.contains("        contextWindowOptions:\n          - 256000\n"));
+    }
+
     /// The form's own refusals, before any child is spawned. Each is a field
     /// the CLI would prompt for — and a prompt with no stdin is an EOF, which
     /// reads to the reader as the button doing nothing.
@@ -766,13 +1261,13 @@ mod tests {
             ]
         });
         assert_eq!(
-            read_model_ids(&payload, "openai-completions"),
+            ids(&payload, "openai-completions"),
             vec!["minimax-m3", "kimi-k3"]
         );
 
         // A provider that answered with prose, or an error envelope, is not a
         // list of models — an empty answer rather than a panic.
-        assert!(read_model_ids(&serde_json::json!({ "error": "nope" }), "openai-completions").is_empty());
+        assert!(ids(&serde_json::json!({ "error": "nope" }), "openai-completions").is_empty());
     }
 
     /// A gateway serving two wires answers one list for both, so the list is
@@ -790,15 +1285,15 @@ mod tests {
         });
 
         assert_eq!(
-            read_model_ids(&payload, "openai-completions"),
+            ids(&payload, "openai-completions"),
             vec!["gpt-6-astra", "laguna-s-2.1-free"]
         );
         assert_eq!(
-            read_model_ids(&payload, "openai-responses"),
+            ids(&payload, "openai-responses"),
             vec!["gpt-6-astra"]
         );
         assert_eq!(
-            read_model_ids(&payload, "anthropic-messages"),
+            ids(&payload, "anthropic-messages"),
             vec!["claude-sonnet-5"]
         );
 
@@ -808,8 +1303,45 @@ mod tests {
             "data": [{ "id": "minimax-m3" }, { "id": "kimi-k3" }]
         });
         assert_eq!(
-            read_model_ids(&quiet, "anthropic-messages"),
+            ids(&quiet, "anthropic-messages"),
             vec!["minimax-m3", "kimi-k3"]
+        );
+    }
+
+    /// The window a gateway states is read off its own row, under whichever of
+    /// the names a real endpoint was seen to use — and a row that states none
+    /// keeps `None` rather than a neighbour's number.
+    #[test]
+    fn a_row_states_its_window_or_it_does_not() {
+        let payload = serde_json::json!({
+            "data": [
+                { "id": "command-code-style", "context_length": 1000000 },
+                { "id": "vllm-style", "max_model_len": 262144 },
+                { "id": "other-style", "context_window": 131072 },
+                { "id": "openrouter-style", "top_provider": { "context_length": 200000 } },
+                { "id": "silent" },
+                { "id": "nonsense", "context_length": "not a number" },
+                { "id": "zero", "context_length": 0 }
+            ]
+        });
+
+        let rows = read_models(&payload, "openai-completions");
+        let windows: Vec<(&str, Option<u64>)> = rows
+            .iter()
+            .map(|model| (model.id.as_str(), model.context_limit))
+            .collect();
+
+        assert_eq!(
+            windows,
+            vec![
+                ("command-code-style", Some(1_000_000)),
+                ("vllm-style", Some(262_144)),
+                ("other-style", Some(131_072)),
+                ("openrouter-style", Some(200_000)),
+                ("silent", None),
+                ("nonsense", None),
+                ("zero", None),
+            ]
         );
     }
 
@@ -831,8 +1363,8 @@ mod tests {
             ]
         });
 
-        let openai = read_model_ids(&payload, "openai-completions");
-        let claude = read_model_ids(&payload, "anthropic-messages");
+        let openai = ids(&payload, "openai-completions");
+        let claude = ids(&payload, "anthropic-messages");
 
         assert!(!openai.iter().any(|id| id.starts_with("claude")));
         assert!(openai.contains(&"gpt-6-astra".to_string()));
@@ -867,8 +1399,9 @@ mod tests {
             .await
             .expect("the gateway lists its models");
 
-        assert!(ids.len() > 10, "only got {} models: {ids:?}", ids.len());
-        assert!(ids.contains(&"minimax-m3".to_string()), "{ids:?}");
+        let listed: Vec<&str> = ids.iter().map(|model| model.id.as_str()).collect();
+        assert!(listed.len() > 10, "only got {} models: {listed:?}", listed.len());
+        assert!(listed.contains(&"minimax-m3"), "{listed:?}");
     }
 
     /// The same lookup against Command Code, where the **two wires** are the
@@ -894,12 +1427,18 @@ mod tests {
 
         assert!(openai.len() > 10, "only got {} models", openai.len());
         assert!(claude.len() > 1, "only got {} models", claude.len());
+        // **The window comes back with the ids**, which is the whole point of
+        // reading rows rather than ids: Command Code states one per model.
         assert!(
-            openai.iter().all(|id| !id.starts_with("claude")),
+            openai.iter().all(|model| model.context_limit.is_some()),
+            "a row came back with no window: {openai:?}"
+        );
+        assert!(
+            openai.iter().all(|model| !model.id.starts_with("claude")),
             "a Claude model reached the OpenAI wire: {openai:?}"
         );
         assert!(
-            claude.iter().all(|id| id.starts_with("claude")),
+            claude.iter().all(|model| model.id.starts_with("claude")),
             "a non-Claude model reached the Anthropic wire: {claude:?}"
         );
     }

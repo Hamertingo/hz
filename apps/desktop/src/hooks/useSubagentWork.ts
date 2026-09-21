@@ -20,6 +20,13 @@ const POLL_MS = 1200;
 /// re-render. Keyed by the child's own id, which is what the agent's request takes.
 const work = new Map<string, AgentEvent[]>();
 
+/// What a child with nothing read yet answers with.
+///
+/// One array rather than a fresh `[]` per call: this is handed straight to
+/// `buildTranscript`, whose memo is keyed on the array — a new one every render
+/// would walk the same (empty) event list on every delta of the parent's turn.
+const NO_MESSAGES: AgentEvent[] = [];
+
 const listeners = new Set<() => void>();
 let version = 0;
 
@@ -41,9 +48,13 @@ function snapshot() {
 
 /// The live work of the delegated children named, read while `live`.
 ///
-/// **One poll for the whole panel, not one per row.** Every member is read in the
+/// **One poll for the whole set, not one per row.** Every member is read in the
 /// same pass, because they are all reads of the same child agent and a timer per
 /// row would be a timer per subagent.
+///
+/// The caller names one member — the subagent whose conversation the column is
+/// showing. The shape is the panel's, since the sidebar's rows can want a page of
+/// them at once.
 export function useSubagentWork(
   sessionId: string | null,
   memberIds: readonly string[],
@@ -53,7 +64,7 @@ export function useSubagentWork(
   const revision = useSyncExternalStore(subscribe, snapshot);
 
   // The ids as one string: an array rebuilt every render would restart the poll on
-  // every event, and the panel is rebuilt on every event.
+  // every event, and the caller is rebuilt on every event.
   const key = memberIds.join(",");
 
   useEffect(() => {
@@ -84,7 +95,7 @@ export function useSubagentWork(
     // **Once, always.** A child's *last* read is the one carrying its answer, and
     // it happens exactly when the child stops being active — so a poll that only
     // ran while something was running could stop one read short and leave the
-    // panel holding a transcript that ends on the tool call. This is that read.
+    // view holding a transcript that ends on the tool call. This is that read.
     void read();
     if (!live) return;
 
@@ -97,6 +108,7 @@ export function useSubagentWork(
 
   return {
     revision,
-    messagesFor: (memberId: string | null) => (memberId ? work.get(memberId) ?? [] : []),
+    messagesFor: (memberId: string | null) =>
+      memberId ? work.get(memberId) ?? NO_MESSAGES : NO_MESSAGES,
   };
 }

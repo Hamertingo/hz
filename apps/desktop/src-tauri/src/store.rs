@@ -243,6 +243,12 @@ pub async fn get_home_app_dir() -> Result<PathBuf> {
 ///
 /// Best-effort: a directory that cannot be narrowed is worth carrying on with,
 /// since the alternative is an app that refuses to start.
+///
+/// **Windows has nothing to do here**, which is why this is split rather than
+/// translated: `~/.hz` sits inside the user's own profile, and Windows ACLs that
+/// profile to the account, so the directory arrives private without anybody
+/// asking. There are no mode bits to write and no `chmod` to write them with.
+#[cfg(unix)]
 async fn restrict_to_owner(path: &PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -250,6 +256,9 @@ async fn restrict_to_owner(path: &PathBuf) {
         eprintln!("[app dir permissions err] {e}");
     }
 }
+
+#[cfg(not(unix))]
+async fn restrict_to_owner(_path: &PathBuf) {}
 
 /// `~/.hz/sessions`, creating it if needed.
 pub async fn get_sessions_dir() -> Result<PathBuf> {
@@ -2471,12 +2480,15 @@ mod tests {
             .flat_map(|e| e.payload.images_mut().to_vec())
             .filter_map(|i| i.path)
             .collect();
+        // Joined rather than spelled out: the rule under test is that the
+        // directory prefix is rewritten, and the character between the prefix
+        // and the file name is the platform's business.
         assert_eq!(
             paths,
             vec![
-                "/home/.hz/attachments/child/a.png",
-                "/home/.hz/attachments/child/b.png",
-                "/tmp/elsewhere.png",
+                to_dir.join("a.png").to_string_lossy().into_owned(),
+                to_dir.join("b.png").to_string_lossy().into_owned(),
+                "/tmp/elsewhere.png".to_string(),
             ]
         );
     }

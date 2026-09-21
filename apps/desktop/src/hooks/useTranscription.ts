@@ -256,7 +256,7 @@ export function useRecorder<T>({
 
       if (refusal?.kind === "needsPermission") {
         handlers.current.onMessage(
-          "hz needs microphone access. Turn it on in System Settings › Privacy & Security › Microphone.",
+          "Hyze Code needs microphone access. Turn it on in System Settings › Privacy & Security › Microphone.",
         );
         return;
       }

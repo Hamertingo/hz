@@ -1045,67 +1045,6 @@
    land where the textarea's did, or the caret points at the wrong letter. Hence
    an absolutely-positioned element with a real border on it: out of flow, so the
    border is free. */
-.chip-anchor {
-  position: relative;
-}
-
-.chip {
-  --chip-accent: var(--accent-mention);
-
-  position: absolute;
-  /* **t3's own metric: `h-[1.41em]`, centred on the run.** A pill sized by its
-     insets grew with the font's line box (32px against a 21px run) and read as a
-     box drawn over the sentence rather than as a chip in it. */
-  top: 50%;
-  height: 1.41em;
-  transform: translateY(-50%);
-  /* Horizontal padding is the one thing the flow cannot hold, and it has to stay
-     **under half a space**: two chips side by side are separated by the space the
-     reader typed between them, and an inset wider than that makes one pill climb
-     over the other's name. */
-  /* **Nothing on the left.** The mirror clips at its own edge, so an overhang
-     there was cut off at the start of a line — a chip whose left border was
-     missing. The space before it is the gap; only the right side takes padding,
-     which is the side the caret comes from. */
-  inset-inline-start: 0;
-  inset-inline-end: -0.2em;
-  border: 1px solid color-mix(in oklab, var(--chip-accent) 38%, var(--border));
-  border-radius: 0.5em;
-  background-color: color-mix(in oklab, var(--chip-accent) 13%, transparent);
-  /* **The file's own mark, painted rather than placed.** It is the same SVG the
-     trays and the file rows draw, drawn here as a background over the character
-     that reserved its space — the paperclip, which is transparent. An element
-     with real size would be layout, and layout is the one thing this may not
-     touch. */
-  background-image: var(--chip-icon, none);
-  background-repeat: no-repeat;
-  background-position: 0.28em center;
-  background-size: 1.05em 1.05em;
-  /* The overlay lets clicks through to the textarea — that is what makes the
-     whole composer feel like one field, and it is how the caret gets to a token
-     the reader wants to delete. */
-  pointer-events: none;
-}
-
-
-/* The placeholder the mark is painted over: an emoji, laid out by the textarea
-   like every other glyph in the run, so the icon lands in the space the flow
-   itself reserved for it.
-
-   **`opacity`, not `color: transparent`.** A colour emoji is drawn with its own
-   palette and ignores the text colour, so `color` left the paperclip sitting
-   beside the icon it was meant to be. Transparency that a colour glyph obeys is
-   the only one that hides it — and it stays in the flow, because `display: none`
-   would take the space and slide the name under the icon. */
-.chip-mark {
-  opacity: 0;
-}
-
-/* The size, one step back from the name — t3's arrangement, and the same
-   reason: it qualifies the file rather than naming it. */
-.chip-size {
-  color: var(--muted-foreground);
-}
 
 @layer base {
   * {
@@ -1413,4 +1352,79 @@
 body.session-drag,
 body.session-drag * {
   cursor: grabbing !important;
+}
+
+/* The composer's pixel cat: two frames swapped on a loop with a one-pixel hop,
+   arcade style, plus the coins it jumps for. Ported from MonoCode's runner.
+   Reduced motion freezes on the resting frame — the patrol is decoration, and
+   the working indicator already says the turn is running. */
+.composer-mascot-active {
+  animation: composer-mascot-hop var(--mascot-beat, 460ms) infinite;
+}
+
+.composer-mascot-rest {
+  animation: composer-mascot-swap-off var(--mascot-beat, 460ms) infinite;
+}
+
+.composer-mascot-talk {
+  animation: composer-mascot-swap-on var(--mascot-beat, 460ms) infinite;
+}
+
+.composer-coin-face {
+  animation: composer-mascot-swap-off 320ms infinite;
+}
+
+.composer-coin-edge {
+  animation: composer-mascot-swap-on 320ms infinite;
+}
+
+@keyframes composer-mascot-hop {
+  0%,
+  49.99% {
+    transform: translateY(0);
+  }
+  50%,
+  100% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes composer-mascot-swap-off {
+  0%,
+  49.99% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes composer-mascot-swap-on {
+  0%,
+  49.99% {
+    opacity: 0;
+  }
+  50%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-mascot-active,
+  .composer-mascot-rest,
+  .composer-mascot-talk,
+  .composer-coin-face,
+  .composer-coin-edge {
+    animation: none;
+  }
+
+  .composer-mascot-rest {
+    opacity: 1;
+  }
+
+  .composer-mascot-talk {
+    opacity: 0;
+  }
 }

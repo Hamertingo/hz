@@ -15,12 +15,20 @@
 //! reads this launch.
 
 /// The identifier this build answers to.
+///
+/// Gated with [`adopt_previous_identity`] rather than left bare: it is the only
+/// reader of either constant, and it is itself a no-op on Windows — where the
+/// identifier names a registry key and an `AppData` directory this file does not
+/// claim to know. Ungated, both constants are dead code there, which
+/// `-D warnings` refuses.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 const CURRENT: &str = "com.hamerti.hz";
 
 /// The identifiers it answered to before, newest first. One entry per name the
 /// app has shipped under — an install that skipped several still lands here
 /// with everything it had, since each step moved its own directory into the
 /// next one's place.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 const PREVIOUS: &[&str] = &["com.yogesh.dray"];
 
 /// The directories per platform that hold an application's persisted state,

@@ -1,0 +1,217 @@
+# The desktop app's Windows gate.
+#
+# A sibling of app.yml rather than a second job in it, because almost nothing
+# below is shared: no CEF (macOS-only, and gated off), no `brew`, no universal
+# binary, no code signing. What *is* shared is the reason this exists at all —
+# release.yml is tag-only, so without a job on `main` a Windows build would be
+# attempted for the first time on the tag that ships it.
+#
+# The one thing a reader would otherwise get wrong is the same as app.yml's:
+# `cargo test` runs *unfiltered*. A filter makes ts-rs regenerate
+# `src/types/events.ts` with only the types whose exports ran, and the frontend
+# build then fails for everyone who pulls the branch.
+name: app-windows
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "apps/cli/**"
+      - "crates/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/app-windows.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "apps/cli/**"
+      - "crates/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/app-windows.yml"
+  workflow_dispatch:
+
+# Nothing here writes anything but a status check.
+permissions:
+  contents: read
+
+# **Superseded runs are cancelled**, which is the opposite of what warm-cache.yml
+# does and for the opposite reason. Four pushes to one branch left four of these
+# building the same tree at once, three of them answering a question about a
+# commit nobody was looking at any more — on the most expensive runner this
+# repository uses. warm-cache cannot do this because its *build* is the signal
+# (nothing else compiles `cef`), where a gate's verdict is only ever interesting
+# for the newest commit on a ref. That is exactly what a concurrency group says.
+concurrency:
+  group: app-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    # A wedged build would otherwise hold the runner for GitHub's six-hour cap.
+    # The number is for the run that *does* everything: the release compile,
+    # makensis and the cache save together — eight minutes each, measured — which
+    # is now `main`'s run rather than every one.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The same toolchain version app.yml pins, and the same reason: the
+      # compiler is a number here so a clippy release cannot redden this
+      # repository on a line nobody touched. A different number per platform is
+      # how the two gates start disagreeing about what compiles.
+      #
+      # `components: clippy` because naming a toolchain explicitly installs it
+      # with the minimal profile, which has none.
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # master
+        with:
+          toolchain: 1.98.1
+          components: clippy
+
+      # **Restore and save are separate steps, and the save runs on failure.**
+      # That is the whole reason this job is not unbearably slow. `actions/cache`
+      # writes its entry from a post-step that is skipped when the job fails — so
+      # while every Windows run failed, no `windows-cargo` entry was ever
+      # created, and every run compiled the whole dependency tree from scratch.
+      # Measured: four runs, twenty minutes each, none of them warm.
+      #
+      # The expensive thing here is the tree, and a run that died on a `cfg` typo
+      # has still built all of it. `warm-cache.yml` makes the same bargain on
+      # macOS, for the same reason.
+      - id: paths
+        shell: bash
+        run: |
+          {
+            echo 'paths<<EOF'
+            printf '%s\n' '~/.cargo/registry/index' '~/.cargo/registry/cache' \
+              '~/.cargo/registry/src' '~/.cargo/git/db' \
+              'apps/desktop/src-tauri/target'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.paths.outputs.paths }}
+          # **The same key `release.yml` uses, and that is the point**: the gate
+          # writes it on `main` and the release reads it, so the tag that ships
+          # Windows starts from a warm tree instead of forty minutes of compile.
+          #
+          # It carried `github.sha` for a while, on the argument that an entry is
+          # immutable and each run should save what *it* built. What that bought
+          # was a warm release profile for the next run; what it cost was **two
+          # gigabytes uploaded on every run** — measured at 488s of a 1795s job,
+          # the single most expensive step in the file — plus the churn of a 10 GB
+          # quota, which evicts the entries the next run needs. Keyed on the
+          # lockfile alone the entry is written once and hit thereafter, and the
+          # release profile is rebuilt from warm dependencies in the eight minutes
+          # the installer step already takes. See the save step for why it is
+          # gated the way it is.
+          key: windows-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            windows-cargo-
+
+      - run: pnpm install --frozen-lockfile
+
+      # `bundle.resources` names `resources/agent`, and tauri-build fails at
+      # *compile* time when that path is absent — every clean checkout, since
+      # the staged tree is gitignored build output. Same step the macOS setup
+      # action runs, for the same reason.
+      - shell: bash
+        run: mkdir -p apps/desktop/src-tauri/resources/agent
+
+      # `tsc && vite build`. Two jobs in one: the type-check gate, and the
+      # `dist/` the Rust step needs — `tauri::generate_context!()` reads
+      # `frontendDist` from tauri.conf.json at compile time.
+      - name: Type-check and build the frontend
+        run: pnpm --filter hz run build
+
+      # **Not the frontend tests or the frontend lint.** Both run in node, on the
+      # same files, on the machine this repository checks in four minutes forty —
+      # there is nothing platform-shaped about vitest or biome, and this is the
+      # slowest runner here. The *build* above stays because the Rust step reads
+      # `dist/` off the disk, not because it is a check.
+
+      # **Lint before test, which is the opposite of app.yml's order.** Both
+      # compile the same tree, so the total is the same either way; what changes
+      # is which verdict a red run reports first. Microsoft's runner is the
+      # slowest this repository uses and the class of failure that only shows up
+      # here is exactly `-D warnings` — dead code behind a `cfg`, an import only
+      # one platform's branch names. Learning that nineteen minutes in, with the
+      # test result buried under it, is the price of the usual order.
+      - name: Lint the Rust
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Bare, never filtered — see the header.
+      - name: Run the Rust tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+
+      - name: Test and lint the wire crate, the CLI and the agent launcher
+        run: |
+          cargo test --manifest-path crates/hz-proto/Cargo.toml
+          cargo clippy --manifest-path crates/hz-proto/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path apps/cli/Cargo.toml
+          cargo clippy --manifest-path apps/cli/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path apps/agent-launcher/Cargo.toml
+          cargo clippy --manifest-path apps/agent-launcher/Cargo.toml --all-targets -- -D warnings
+
+      # **The installer, and the updater artifacts deliberately off.**
+      #
+      # `createUpdaterArtifacts` is on in the config, and signing one needs
+      # `TAURI_SIGNING_PRIVATE_KEY` — which this job must not have. A routine
+      # gate that holds the key that decides what every install downloads is a
+      # key handed to anything that can open a pull request; the release job is
+      # where it belongs, and where it proves the signed path end to end.
+      #
+      # What is lost is small and stated: this job shows the installer builds,
+      # not that its signature does. Everything else — the release compile, the
+      # NSIS run, the agent staged in — is the same work.
+      #
+      # `--bundles nsis` rather than the config's `"targets": "all"`, which on
+      # Windows would also mean an MSI and the WiX toolchain that comes with it.
+      # NSIS is the one that installs without an administrator prompt.
+      # **On `main`, not on every pull request.** What this step adds over the
+      # lint and the tests above is one thing: that the *release* profile compiles
+      # and that `makensis` produces a setup.exe. That is the rehearsal this file's
+      # header is about — "without a job on `main` a Windows build would be
+      # attempted for the first time on the tag that ships it" — and it is eight
+      # minutes on the slowest runner this repository uses. A pull request gets the
+      # verdict that is about *its change* in about four minutes; `main` gets the
+      # one about shipping.
+      - name: Build the installer
+        if: github.event_name != 'pull_request'
+        working-directory: apps/desktop
+        shell: bash
+        run: pnpm tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Check the installer is there
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="apps/desktop/src-tauri/target/release/bundle/nsis"
+          ls -la "$APP"
+          test -n "$(find "$APP" -name '*-setup.exe' -print -quit)" || {
+            echo "::error::no *-setup.exe under $APP"
+            exit 1
+          }
+
+      # Last, and `always()` is the point: a red run is still a run that compiled
+      # the dependency tree, and that tree is the twenty minutes. `!cancelled()`
+      # because a cancelled one is not evidence of anything — the entry is
+      # immutable, so a half-built tree saved here would be the tree every later
+      # run restores and none of them could replace.
+      - if: always() && !cancelled() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.paths.outputs.paths }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}

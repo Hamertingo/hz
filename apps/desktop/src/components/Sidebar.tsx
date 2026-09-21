@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckCheck, ChevronDown, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
+import { Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
+
+import BloubAvatar from "@/components/BloubAvatar";
 
 import PrStateIcon, { prStateLabel } from "@/components/PrStateIcon";
 import UpdateRow from "@/components/UpdateRow";
@@ -37,9 +39,11 @@ import { isToday, relativeTime } from "@/lib/format";
 import { groupName, members, type SplitGroup } from "@/lib/groups";
 import { projectKey } from "@/lib/project";
 import { sessionBranch } from "@/lib/pr";
+import { foldSubagents, isActive, memberTitle, statusWord } from "@/lib/subagent";
 import { useResizable } from "@/components/ResizeHandle";
 import { cn } from "@/lib/utils";
 import type {
+  DelegatedMember,
   PrMark,
   Project,
   SessionIndexItem,
@@ -53,21 +57,11 @@ import type {
 export const SEARCH_INPUT_ID = "sidebar-search";
 
 type SidebarProps = {
-  // Already scoped to `projectFilter` and to `search` by the caller, so the list
+  // Already scoped to the space and the project filter by the caller, so the list
   // and the ⌘⇧↑/↓ walk step through exactly the same rows.
   items: SessionIndexItem[];
-  // The live search query. Owned by the caller, because the list it narrows is
-  // the caller's — the ⌘⇧↑/↓ walk reads the same array, and a query kept in here
-  // would leave the shortcut stepping rows the sidebar no longer draws.
-  search: string;
-  onSearchChange: (query: string) => void;
-  /// Whether the search row is drawn as an input rather than as its button.
-  /// Apart from the query itself, since an empty input and the button look the
-  /// same and this is only about where the caret is — and owned by the caller
-  /// because ⌘F has to open it from a *collapsed* sidebar, which is not
-  /// mounted.
-  searchOpen: boolean;
-  onSearchOpenChange: (open: boolean) => void;
+  /// Opens the search view, which is where the box lives.
+  onOpenSearch: () => void;
   // The live status of every session the app has heard about this run. Wins over
   // the item's own field, which is only as fresh as the last list fetch.
   statusBySession: Record<string, SessionStatus>;
@@ -80,6 +74,19 @@ type SidebarProps = {
   /// merged — or nothing. A lookup rather than a field on the item, because
   /// pull requests are read per repo and the index knows nothing about them.
   prFor: (repoPath: string, branch: string | null) => PrMark | undefined;
+  /// Every live session's delegated subagents, by session id — the rows drawn
+  /// under the session whose agent spawned them.
+  ///
+  /// Live-only and unpersisted, because a member names a child session no
+  /// restart survives: a session whose agent is not running has none to draw,
+  /// which is the honest reading rather than a gap in the list.
+  delegations: Record<string, DelegatedMember[]>;
+  /// Opens one subagent's conversation in the main column. Takes the parent as
+  /// well as the child, since the roster that read it belongs to the parent.
+  onOpenSubagent: (sessionId: string, memberSessionId: string) => void;
+  /// The subagent the column is showing, as `sessionId:memberSessionId`, so its
+  /// row draws lit. Null with nothing open.
+  openSubagentKey: string | null;
   selectedSessionId: string | null;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -152,8 +159,16 @@ type SidebarProps = {
 
 /// One drawn row: the session, how deep it sits, and the flags its connector
 /// rails are drawn from.
+///
+/// **Two species share it.** A row with no `member` is a session; one with a
+/// `member` is a delegated subagent hanging off `item` — the session whose agent
+/// spawned it. They are one type rather than two lists because the rails are one
+/// tree: a subagent sits at `depth + 1` under its parent's own rail, so the walk
+/// that orders the list has to know about both to draw them at all.
 type SessionListRow = {
   item: SessionIndexItem;
+  /// Present on a subagent row, absent on a session row.
+  member?: DelegatedMember;
   /// Levels below the top. 0 is a root and draws no connector at all.
   depth: number;
   /// One entry per level *above* this row, saying whether that level's rail
@@ -164,6 +179,16 @@ type SessionListRow = {
   /// This row opens a rail of its own for the rows under it.
   opens: boolean;
 };
+
+/// The delegated subagents to draw under one session, in the order they should
+/// appear. Absent from every caller that only wants the sessions — the ⌘⇧↑/↓
+/// walk among them — which is what keeps the two readings from drifting.
+export type SubagentsOf = (sessionId: string) => readonly DelegatedMember[];
+
+/// The empty roster, shared rather than rebuilt: `subagentsOf` runs once per
+/// session per render, and a fresh `[]` each time would be a new array in every
+/// row's props.
+const NO_SUBAGENTS: DelegatedMember[] = [];
 
 /// The order the list is drawn in, with a session spawned by an agent sitting
 /// directly under the one that spawned it — and the depth and guide flags each
@@ -183,7 +208,16 @@ type SessionListRow = {
 /// Depth is drawn rather than flattened: the cap allows a spawned session to
 /// spawn, so a grandchild exists, and it hangs off its own parent's rail while
 /// that parent still hangs off the root's.
-export function sessionRows(items: SessionIndexItem[]): SessionListRow[] {
+///
+/// **A subagent hangs off the same walk.** `subagentsOf` supplies the delegated
+/// runs to draw under one session, and they come out one level down, ahead of the
+/// sessions it spawned — a subagent is work happening *in* this session, where a
+/// spawned session is somewhere else the work went. A caller that passes nothing
+/// gets the sessions alone, which is what the keyboard walk wants.
+export function sessionRows(
+  items: SessionIndexItem[],
+  subagentsOf?: SubagentsOf,
+): SessionListRow[] {
   const byRecency = (a: SessionIndexItem, b: SessionIndexItem) =>
     Date.parse(b.modified) - Date.parse(a.modified);
 
@@ -219,9 +253,29 @@ export function sessionRows(items: SessionIndexItem[]): SessionListRow[] {
     const kids = (children.get(item.sessionId) ?? [])
       .filter((child) => !seen.has(child.sessionId))
       .sort(byRecency);
+
+    // Everything drawn one level down, subagents first. One list because the
+    // parent's rail is one line: `guides` is read by the rails, so a row's "does
+    // the level above carry on past me" has to count both species or the line
+    // stops at the last spawned session while a subagent still hangs below it.
+    const subs = subagentsOf?.(item.sessionId) ?? [];
+    const below = subs.length + kids.length;
+
     const before = rows.length;
-    kids.forEach((child, i) => {
-      walk(child, depth + 1, [...guides, i < kids.length - 1]);
+    let at = 0;
+    for (const member of subs) {
+      rows.push({
+        item,
+        member,
+        depth: depth + 1,
+        guides: [...guides, at < below - 1],
+        opens: false,
+      });
+      at += 1;
+    }
+    kids.forEach((child) => {
+      walk(child, depth + 1, [...guides, at < below - 1]);
+      at += 1;
     });
     row.opens = rows.length > before;
   };
@@ -375,12 +429,19 @@ function splitPinned(
 /// Rows inside a run stay newest-first, and a nest stays whole under its own
 /// root. Recency alone no longer orders a project, though — the runs do, so a
 /// session that has just finished sits above an idle one modified since.
+///
+/// **A subagent travels with the session that spawned it**, wherever that
+/// session lands: same project, same state run, same nest. It is read through
+/// `subagentsOf` rather than carried in `items` because it is not a session —
+/// it has no project of its own to be grouped by, and the two readings only ever
+/// agree if they come from one place.
 export function sessionGroups(
   items: SessionIndexItem[],
   projects: Project[] = [],
   live?: LiveSessions,
   settled = false,
   splits: SplitGroup[] = [],
+  subagentsOf?: SubagentsOf,
 ): SessionGroup[] {
   // A split group is drawn as its own run, in grid order, and its members
   // nowhere else — not under their project, not under Pinned. Rows only, no
@@ -406,7 +467,7 @@ export function sessionGroups(
   // Every subtree the walk emits opens with its own root, so a depth-0 row is
   // where one nest ends and the next begins.
   const nests: SessionListRow[][] = [];
-  for (const row of sessionRows(rest)) {
+  for (const row of sessionRows(rest, subagentsOf)) {
     if (row.depth === 0 || nests.length === 0) nests.push([]);
     nests[nests.length - 1].push(row);
   }
@@ -415,10 +476,15 @@ export function sessionGroups(
   // a question carries its parent up with it. Ranking on the root alone would
   // leave the run that says "these want you" silent about the only session in it
   // that does.
+  // Subagent rows carry their parent's own `item`, so reading them here would
+  // count that session's state a second time — harmless for a minimum, and
+  // skipped so the rule stays "a nest's state is its sessions'".
   const nestState = (nest: SessionListRow[]) =>
     SESSION_STATES[
       Math.min(
-        ...nest.map((row) => SESSION_STATES.indexOf(sessionState(row.item, live))),
+        ...nest
+          .filter((row) => !row.member)
+          .map((row) => SESSION_STATES.indexOf(sessionState(row.item, live))),
       )
     ];
 
@@ -499,7 +565,7 @@ export function sessionGroups(
       SESSION_STATES.indexOf(a.state) - SESSION_STATES.indexOf(b.state),
   );
 
-  const pinnedRows = sessionRows(pinned);
+  const pinnedRows = sessionRows(pinned, subagentsOf);
   return [
     ...splitRuns,
     ...(pinnedRows.length ? [{ kind: "pinned" as const, rows: pinnedRows }] : []),
@@ -832,13 +898,13 @@ function DevBadge() {
 
 export default function Sidebar({
   items,
-  search,
-  onSearchChange,
-  searchOpen,
-  onSearchOpenChange,
+  onOpenSearch,
   statusBySession,
   askingSessions,
   prFor,
+  delegations,
+  onOpenSubagent,
+  openSubagentKey,
   selectedSessionId,
   collapsed,
   onToggleCollapsed,
@@ -889,11 +955,6 @@ export default function Sidebar({
     pane: collapsed ? undefined : "sidebar",
   });
 
-  const closeSearch = () => {
-    onSearchOpenChange(false);
-    onSearchChange("");
-  };
-
   // Recency-ordered, with agent-spawned sessions nested under the one that
   // spawned them, and each row carrying the flags its connector rails are drawn
   // from — then gathered under the project it belongs to, in the project list's
@@ -908,13 +969,56 @@ export default function Sidebar({
         : { statusBySession, asking: askingSessions },
     [showArchived, statusBySession, askingSessions],
   );
+  /// The sessions whose subagent rows the reader has folded away, by their own
+  /// pick. A session nobody has clicked is absent, which reads as "follow the
+  /// work" — see [`foldSubagents`].
+  ///
+  /// In memory, the same bargain the crew's own hide makes: what is folded
+  /// differs from one conversation to the next, so keeping it across runs would
+  /// be remembering a preference nobody expressed.
+  const [foldedSubagents, setFoldedSubagents] = useState<Record<string, boolean>>({});
+
   // No split runs in the settled list, for the reason it draws no Pinned group.
-  const groups = useMemo(
-    () => sessionGroups(items, projects, live, showArchived, showArchived ? [] : splits),
-    [items, projects, live, showArchived, splits],
+  //
+  // No subagents there either, and for the same shape of reason: a roster is
+  // live-only, so a history has nothing to draw and asking for one would put a
+  // session that has no agent running through a lookup that can only miss.
+  //
+  // A session whose group is folded answers with no members at all, which is
+  // what keeps the fold out of the walk: `sessionRows` draws what it is given, so
+  // a folded session simply has no subagent children — and its `opens` rail, the
+  // guides of the sessions under it and the ⌘⇧↑/↓ walk all stay right without
+  // knowing the fold exists.
+  const subagentsOf = useMemo<SubagentsOf | undefined>(
+    () =>
+      showArchived
+        ? undefined
+        : (sessionId: string) => {
+            const members = delegations[sessionId] ?? NO_SUBAGENTS;
+            if (members.length === 0) return NO_SUBAGENTS;
+            return foldSubagents(foldedSubagents[sessionId], members)
+              ? NO_SUBAGENTS
+              : members;
+          },
+    [showArchived, delegations, foldedSubagents],
   );
+  const groups = useMemo(
+    () =>
+      sessionGroups(
+        items,
+        projects,
+        live,
+        showArchived,
+        showArchived ? [] : splits,
+        subagentsOf,
+      ),
+    [items, projects, live, showArchived, splits, subagentsOf],
+  );
+  // Sessions only, not every drawn row: this is what decides whether the
+  // shortcut hint is worth drawing, and the chords step between *sessions*. A
+  // session with two subagents under it is still one place to switch away from.
   const rowCount = useMemo(
-    () => groups.reduce((n, group) => n + group.rows.length, 0),
+    () => groups.reduce((n, group) => n + group.rows.filter((row) => !row.member).length, 0),
     [groups],
   );
 
@@ -944,23 +1048,9 @@ export default function Sidebar({
       named.get(path) ?? path.split("/").filter(Boolean).pop() ?? path;
   }, [projects]);
 
-  // A filtered list that comes up empty is a different fact from an empty app,
-  // and saying "No tasks yet" over a filter reads as data loss. The query leads
-  // where there is one: it is the filter the reader is holding in their hands,
-  // where the project and the settled split were already on screen.
-  const emptyText = search.trim()
-    ? `No tasks matching "${search.trim()}".`
-    : projectFilter
-      ? showArchived
-        ? "Nothing settled in this project."
-        : "No tasks in this project."
-      : space
-        ? showArchived
-          ? `Nothing settled in ${space}.`
-          : `No tasks in ${space}.`
-        : showArchived
-          ? "Nothing settled yet."
-          : "No tasks yet.";
+  // One sentence, because nothing narrows this list but the space and the project
+  // — and those say what they are in the headings above.
+  const emptyText = showArchived ? "Nothing settled yet." : "No tasks yet.";
 
   // Collapsed is nothing at all, not a rail. The toggle moves to the app header
   // in that state, which is the one row present either way.
@@ -1085,62 +1175,21 @@ export default function Sidebar({
           <ShortcutKeys ids={["inbox.open"]} className="ml-auto" />
         </Button>
 
-        {/* The button *becomes* the field, on the same row at the same height:
-            the icon holds its place, the caret lands where the label was, and
-            nothing below it moves. Bare on purpose — a fill, a border or a
-            focus ring here would draw a second kind of control into a strip
-            that is otherwise plain buttons. The transparent border is what holds
-            that promise to the pixel: every button carries one, so the icon
-            would sit a pixel further out without it. */}
-        {searchOpen ? (
-          <div className="group flex h-7 w-full items-center gap-1 border border-transparent px-1.5 text-ui">
-            <Search className="size-3.5 shrink-0" />
-            <input
-              autoFocus
-              id={SEARCH_INPUT_ID}
-              type="text"
-              value={search}
-              placeholder="Search"
-              aria-label="Search tasks"
-              onChange={(e) => onSearchChange(e.target.value)}
-              // Escape is the way out, and it takes the query with it: leaving
-              // a filter behind an input that has closed would hide rows with
-              // nothing on screen saying why.
-              onKeyDown={(e) => {
-                if (e.key !== "Escape") return;
-                e.preventDefault();
-                closeSearch();
-              }}
-              // Only where there is nothing to lose. Clicking away from a query
-              // that is narrowing the list is not a request to drop it.
-              onBlur={() => {
-                if (!search) onSearchOpenChange(false);
-              }}
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-            />
-            {/* The slot keeps naming whichever key does something here, and
-                which one that is turns on focus alone: Escape reaches this
-                input and nothing else, where ⌘F is what brings focus back to a
-                field left holding a query. Esc is withheld over an empty field,
-                which is the one state neither key has anything to do in. CSS
-                rather than a `focused` state: the browser already knows. */}
-            {search && (
-              <Kbd className="hidden group-focus-within:inline-flex">Esc</Kbd>
-            )}
-            <ShortcutKeys ids={["search"]} className="group-focus-within:hidden" />
-          </div>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onSearchOpenChange(true)}
-            className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50"
-          >
-            <Search />
-            Search
-            <ShortcutKeys ids={["search"]} className="ml-auto" />
-          </Button>
-        )}
+        {/* **The row opens the search view rather than becoming a field in
+            place.** It used to turn into an input that narrowed this list, which
+            answered one of the four questions a reader has — the other three were
+            a modal, and the two could disagree about what "searching" meant. There
+            is one screen now, it is where the box is, and this is the way in. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenSearch}
+          className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50"
+        >
+          <Search className="size-3.5" />
+          Search
+          <ShortcutKeys ids={["search"]} className="ml-auto" />
+        </Button>
       </div>
 
       {/* The filter is where project grouping went. */}
@@ -1245,50 +1294,97 @@ export default function Sidebar({
                   />
                 )}
 
-                {group.rows.map(({ item, depth, guides, opens }) => (
-                  <SessionRow
-                    key={item.sessionId}
-                    item={item}
-                    depth={depth}
-                    guides={guides}
-                    opens={opens}
-                    status={statusBySession[item.sessionId] ?? item.status}
-                    asking={askingSessions.has(item.sessionId)}
-                    pr={prFor(item.projectPath, sessionBranch(item))}
-                    active={item.sessionId === selectedSessionId}
-                    // The settled list is a history, and the question asked of it is
-                    // "what did I finish today" — so everything older is held back
-                    // rather than filtered out. Only there: the active list is a
-                    // worklist, where an older row is still open work.
-                    faded={showArchived && !isToday(item.modified)}
-                    // Nothing refreshes marks over here: the archived view asks for
-                    // no repos, so its rows draw from a cache nothing will update.
-                    // A stale glyph is the accepted trade; a stale *spinner* is not,
-                    // since it animates a claim that something is happening now.
-                    marksLive={!showArchived}
-                    nested={isNested(item, items)}
-                    // A row drawn under Pinned below the top is there because
-                    // its parent is — `splitPinned` only carries a nest whole.
-                    // Unless it holds a pin of its own as well: that flag is
-                    // real and outlives the ancestor's, so hiding the action
-                    // there would strand it, and the row would come back pinned
-                    // for no reason the reader could see once the ancestor was
-                    // unpinned.
-                    inheritsPin={
-                      group.kind === "pinned" && depth > 0 && !item.pinned
-                    }
-                    onSelect={onSelect}
-                    onDragStart={
-                      onDropSession && !showArchived
-                        ? (e) => startSessionDrag(e, item.sessionId, item.title, onDropSession)
-                        : undefined
-                    }
-                    onSetFlags={onSetFlags}
-                    onFork={onFork}
-                    onDelete={onDelete}
-                    onDetach={onDetach}
-                  />
-                ))}
+                {group.rows.map(({ item, member, depth, guides, opens }) => {
+                  if (member) {
+                    // The subagent's own row, one level under the session that
+                    // spawned it. Keyed by both ids, since the same child id is
+                    // only unique within the parent's roster.
+                    return (
+                      <SidebarSubagentRow
+                        key={`${item.sessionId}:${member.sessionId}`}
+                        member={member}
+                        depth={depth}
+                        guides={guides}
+                        active={
+                          openSubagentKey === `${item.sessionId}:${member.sessionId}`
+                        }
+                        onOpen={() => onOpenSubagent(item.sessionId, member.sessionId)}
+                      />
+                    );
+                  }
+
+                  // Read off the roster rather than off the rows, because a
+                  // folded group draws none of them and still has to say how many
+                  // it is holding — see `subagentsOf`, which is what turns the
+                  // fold into an empty list for the walk.
+                  const members = delegations[item.sessionId] ?? NO_SUBAGENTS;
+                  const folded =
+                    members.length > 0 &&
+                    foldSubagents(foldedSubagents[item.sessionId], members);
+
+                  return (
+                    <SessionRow
+                      key={item.sessionId}
+                      item={item}
+                      depth={depth}
+                      guides={guides}
+                      opens={opens}
+                      status={statusBySession[item.sessionId] ?? item.status}
+                      asking={askingSessions.has(item.sessionId)}
+                      pr={prFor(item.projectPath, sessionBranch(item))}
+                      active={item.sessionId === selectedSessionId}
+                      // The settled list is a history, and the question asked of it is
+                      // "what did I finish today" — so everything older is held back
+                      // rather than filtered out. Only there: the active list is a
+                      // worklist, where an older row is still open work.
+                      faded={showArchived && !isToday(item.modified)}
+                      // Nothing refreshes marks over here: the archived view asks for
+                      // no repos, so its rows draw from a cache nothing will update.
+                      // A stale glyph is the accepted trade; a stale *spinner* is not,
+                      // since it animates a claim that something is happening now.
+                      marksLive={!showArchived}
+                      nested={isNested(item, items)}
+                      // A row drawn under Pinned below the top is there because
+                      // its parent is — `splitPinned` only carries a nest whole.
+                      // Unless it holds a pin of its own as well: that flag is
+                      // real and outlives the ancestor's, so hiding the action
+                      // there would strand it, and the row would come back pinned
+                      // for no reason the reader could see once the ancestor was
+                      // unpinned.
+                      inheritsPin={
+                        group.kind === "pinned" && depth > 0 && !item.pinned
+                      }
+                      subagents={
+                        members.length > 0
+                          ? {
+                              count: members.length,
+                              folded,
+                              // The inverse of what is *drawn*, which is the
+                              // automatic reading until the reader says
+                              // otherwise — so the first click pins the group
+                              // the way it already looks, rather than flipping it
+                              // out from under them.
+                              onToggle: () =>
+                                setFoldedSubagents((prev) => ({
+                                  ...prev,
+                                  [item.sessionId]: !folded,
+                                })),
+                            }
+                          : undefined
+                      }
+                      onSelect={onSelect}
+                      onDragStart={
+                        onDropSession && !showArchived
+                          ? (e) => startSessionDrag(e, item.sessionId, item.title, onDropSession)
+                          : undefined
+                      }
+                      onSetFlags={onSetFlags}
+                      onFork={onFork}
+                      onDelete={onDelete}
+                      onDetach={onDetach}
+                    />
+                  );
+                })}
               </Fragment>
             );
           })
@@ -1668,6 +1764,62 @@ function RowAction({
   );
 }
 
+/// The control that folds a session's subagent rows away, drawn at the head of
+/// the row they hang off.
+///
+/// **A real button inside the row's own `role="button"` div** — the arrangement
+/// `RowAction` already uses, and the reason the row is a div rather than a
+/// button. Both events stop: the row reads a click as "select me" and Enter or
+/// Space the same, so without that, tidying the list would also open the session
+/// in the column the reader is tidying it around.
+///
+/// Drawn rather than revealed on hover, unlike the pin and settle controls: this
+/// is not only a control but the one thing on the row saying subagents are
+/// hanging off it at all, and a mark that exists only under the cursor cannot say
+/// that to somebody scanning the list.
+function SubagentFold({
+  count,
+  folded,
+  onToggle,
+}: {
+  count: number;
+  folded: boolean;
+  onToggle: () => void;
+}) {
+  const label = count === 1 ? "1 subagent" : `${count} subagents`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-expanded={!folded}
+          aria-label={folded ? `Show ${label}` : `Hide ${label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+          }}
+          className="mr-0.5 flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        >
+          {/* The transcript's own fold glyph, one quarter turn from closed to
+              open, so a chevron means the same thing wherever it is drawn. */}
+          <ChevronRight
+            className={cn("size-3 transition-transform", !folded && "rotate-90")}
+          />
+        </button>
+      </TooltipTrigger>
+      {/* The count, because a folded group is the one place it cannot be read off
+          the rows — and what the press does, like every other control here. */}
+      <TooltipContent side="bottom">
+        {folded ? `Show ${label}` : `Hide ${label}`}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /// The fork submenu's rows, in the order they are drawn. The number key that
 /// picks one is its position here — the rule the pane digits follow too — so
 /// reordering moves the digits with it and there is no second table to fall out
@@ -1844,6 +1996,93 @@ const RAIL_X = 12;
 const STEP = 12;
 const ELBOW = 10;
 
+/// How far a row at `depth` indents before its own content starts, so every row
+/// at a level begins its title on the same column whatever else it carries.
+function contentInset(depth: number) {
+  return RAIL_X + (depth - 1) * STEP + ELBOW - 8;
+}
+
+/// The lineage, drawn as rails: a row elbows onto its parent's, and an
+/// ancestor's carries straight through to the last row of its subtree.
+///
+/// **One component for both row kinds**, because a subagent row sits in the same
+/// tree as the sessions around it — drawn separately, the two would answer
+/// `depth` and `guides` differently and a rail would point at a row that is not
+/// its parent.
+///
+/// Aria-hidden and never a target — it is a picture of the list's own shape, and
+/// a screen reader reads the rows in the order they are drawn anyway.
+///
+/// Every piece sits on its own pixel and no two overlap. `--sidebar-border` is
+/// white at 8%, so two segments sharing a column stack to ~15% and read as a
+/// bright patch halfway down the rail.
+function NestRails({
+  depth,
+  guides,
+  opens,
+}: {
+  depth: number;
+  guides: boolean[];
+  opens: boolean;
+}) {
+  // The rail this row elbows onto is its parent's, one step to the left of the
+  // one it opens for its own children.
+  const ownRail = RAIL_X + (depth - 1) * STEP;
+  const parentCarriesOn = guides[depth - 1] ?? false;
+
+  return (
+    <>
+      {/* One pass-through per ancestor above this row's own parent whose line
+          is still open, each on its own column. */}
+      {guides.slice(0, -1).map(
+        (open, level) =>
+          open && (
+            <span
+              key={level}
+              aria-hidden
+              className="pointer-events-none absolute top-0 -bottom-px w-px bg-sidebar-border"
+              style={{ left: RAIL_X + level * STEP }}
+            />
+          ),
+      )}
+
+      {depth > 0 && (
+        <>
+          {/* Stops at the elbow unless the parent's rail carries on below —
+              never a full-height line with the corner drawn over half of it.
+              Rows sit in a `gap-px` column, so a piece that carries on has to
+              reach 1px past its own bottom edge or the rail reads dashed. */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute top-0 w-px bg-sidebar-border"
+            style={{
+              left: ownRail,
+              height: parentCarriesOn ? "calc(100% + 1px)" : "50%",
+            }}
+          />
+          {/* Square corner, started one pixel clear of the vertical's own
+              column. */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute h-px bg-sidebar-border"
+            style={{ left: ownRail + 1, top: "50%", width: ELBOW - 5 }}
+          />
+        </>
+      )}
+
+      {/* The rail this row opens for the rows under it, from its own centre
+          down. Without it a parent's line would start a row late. */}
+      {opens && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -bottom-px w-px bg-sidebar-border"
+          style={{ left: RAIL_X + depth * STEP, top: "50%" }}
+        />
+      )}
+    </>
+  );
+}
+
 function SessionRow({
   item,
   depth,
@@ -1859,6 +2098,7 @@ function SessionRow({
   onDragStart,
   nested = false,
   inheritsPin = false,
+  subagents,
   onSetFlags,
   onFork,
   onDelete,
@@ -1895,6 +2135,13 @@ function SessionRow({
   /// its own pin keeps the action whatever its ancestor does: that flag is the
   /// one thing there the reader can still be surprised by later.
   inheritsPin?: boolean;
+  /// This row's delegated subagents, where it has any: how many, whether their
+  /// rows are folded away, and the control that changes it.
+  ///
+  /// Absent on a session with none, so nothing is drawn that would open onto
+  /// nothing — and the row's head stays exactly as it was for every session that
+  /// never delegated.
+  subagents?: { count: number; folded: boolean; onToggle: () => void };
   onSetFlags: (
     sessionId: string,
     flags: { archived?: boolean; pinned?: boolean },
@@ -1909,11 +2156,6 @@ function SessionRow({
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
-
-  // The rail this row elbows onto is its parent's, one step to the left of the
-  // one it opens for its own children.
-  const ownRail = RAIL_X + (depth - 1) * STEP;
-  const parentCarriesOn = guides[depth - 1] ?? false;
 
   return (
     <RowMenu
@@ -1998,68 +2240,14 @@ function SessionRow({
           )}
         </span>
 
-        {/* The lineage, drawn as rails: this row elbows onto its parent's, and
-            an ancestor's carries straight through to the last row of its
-            subtree. Aria-hidden and never a target — it is a picture of the
-            list's own shape, and a screen reader reads the rows in the order
-            they are drawn anyway.
-
-            Every piece sits on its own pixel and no two overlap.
-            `--sidebar-border` is white at 8%, so two segments sharing a column
-            stack to ~15% and read as a bright patch halfway down the rail. */}
-
-        {/* One pass-through per ancestor above this row's own parent whose line
-            is still open, each on its own column. */}
-        {guides.slice(0, -1).map(
-          (open, level) =>
-            open && (
-              <span
-                key={level}
-                aria-hidden
-                className="pointer-events-none absolute top-0 -bottom-px w-px bg-sidebar-border"
-                style={{ left: RAIL_X + level * STEP }}
-              />
-            ),
-        )}
-
-        {depth > 0 && (
-          <>
-            {/* Stops at the elbow unless the parent's rail carries on below —
-                never a full-height line with the corner drawn over half of it.
-                Rows sit in a `gap-px` column, so a piece that carries on has to
-                reach 1px past its own bottom edge or the rail reads dashed. */}
-            <span
-              aria-hidden
-              className="pointer-events-none absolute top-0 w-px bg-sidebar-border"
-              style={{
-                left: ownRail,
-                height: parentCarriesOn ? "calc(100% + 1px)" : "50%",
-              }}
-            />
-            {/* Square corner, started one pixel clear of the vertical's own
-                column. */}
-            <span
-              aria-hidden
-              className="pointer-events-none absolute h-px bg-sidebar-border"
-              style={{ left: ownRail + 1, top: "50%", width: ELBOW - 5 }}
-            />
-          </>
-        )}
-
-        {/* The rail this row opens for the rows under it, from its own centre
-            down. Without it a parent's line would start a row late. */}
-        {opens && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute -bottom-px w-px bg-sidebar-border"
-            style={{ left: RAIL_X + depth * STEP, top: "50%" }}
-          />
-        )}
+        {/* The lineage this row sits in — see [`NestRails`], shared with the
+            subagent rows so the two cannot draw the tree two ways. */}
+        <NestRails depth={depth} guides={guides} opens={opens} />
 
         {/* A fixed slot rather than padding, so every row at a level starts its
             title on the same column whatever else the row is carrying. */}
         {depth > 0 && (
-          <span aria-hidden className="shrink-0" style={{ width: ownRail + ELBOW - 8 }} />
+          <span aria-hidden className="shrink-0" style={{ width: contentInset(depth) }} />
         )}
 
         {/* Ahead of the title, and it takes no room when there is none — unlike
@@ -2088,6 +2276,11 @@ function SessionRow({
             itself a control, and a tooltip on it would open every time the
             cursor crossed the list. Number first and the state after it, since
             the state is a clause now that a failure can extend it. */}
+        {/* The fold for this row's subagents, ahead of everything else the row
+            carries: it is the one control here that decides what is *below* the
+            row rather than describing the row itself. */}
+        {subagents && <SubagentFold {...subagents} />}
+
         {pr && (
           <span
             className="mr-1 flex shrink-0 items-center"
@@ -2212,5 +2405,104 @@ function SessionRow({
         </div>
       </div>
     </RowMenu>
+  );
+}
+
+/// One delegated subagent, drawn under the session whose agent spawned it.
+///
+/// **A row of its own kind, not a session row.** A subagent is not a session: it
+/// has no index entry, no branch, nothing to fork, settle or drag, and its
+/// conversation can only be read while its parent's agent is running. So it takes
+/// the same shell and the same rails and nothing else — no context menu, no
+/// draggable body, no hover actions — and a click opens it in the column.
+///
+/// **The avatar leads.** It is the one thing that tells a subagent from the
+/// sessions around it at a glance, and it carries the two facts the row would
+/// otherwise need a second line for: which agent this is, and whether it is still
+/// going.
+function SidebarSubagentRow({
+  member,
+  depth,
+  guides,
+  active,
+  onOpen,
+}: {
+  member: DelegatedMember;
+  /// Levels below the top, one deeper than the session it hangs off. See
+  /// [`sessionRows`] — the geometry comes out of the same walk that ordered the
+  /// list, so a rail cannot point at a row that is not this one's parent.
+  depth: number;
+  guides: boolean[];
+  active: boolean;
+  onOpen: () => void;
+}) {
+  const title = memberTitle(member);
+  const live = isActive(member);
+  const failed = member.status === "failed";
+
+  // Same as `SessionRow`'s: the row opened from the column scrolls itself into
+  // view, and `nearest` leaves one already on screen where it is.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  return (
+    // A button cannot nest a button, and this row has none inside it — but it
+    // keeps the div-with-a-role shape the session rows use so the two can sit in
+    // one list without a `button` and a `div` behaving differently under focus.
+    <div
+      ref={ref}
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className={cn(
+        "group relative flex min-h-7 w-full cursor-pointer items-center rounded-md pl-0 pr-0.5",
+        "transition-[color,background-color]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50",
+      )}
+    >
+      {/* The unread rail's own slot, empty here and held anyway: the session rows
+          reserve it, and a subagent's content has to start on the same column as
+          the session it hangs off. */}
+      <span className="flex w-2 shrink-0 items-center self-stretch" aria-hidden />
+
+      <NestRails depth={depth} guides={guides} opens={false} />
+
+      {/* A subagent is always nested, so this always draws — it is what puts the
+          avatar where a session row's own mark starts. */}
+      <span aria-hidden className="shrink-0" style={{ width: contentInset(depth) }} />
+
+      <BloubAvatar
+        name={member.agentName ?? title}
+        size={16}
+        live={live}
+        mood={live ? "working" : failed ? "failed" : "done"}
+      />
+
+      <span
+        className={cn("ml-1.5 min-w-0 flex-1 truncate text-ui", live && "shimmer-text")}
+      >
+        {title}
+      </span>
+
+      {/* The status only while there is one to read: a finished row's own line
+          already says so, and a word at the right edge of every settled subagent
+          is a column of the same four letters. */}
+      {live && (
+        <span className="shrink-0 pr-1 text-xs text-muted-foreground">
+          {statusWord(member.status)}
+        </span>
+      )}
+    </div>
   );
 }

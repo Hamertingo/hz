@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Plus } from "lucide-react";
+import { ChevronLeft, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -34,6 +34,7 @@ import RunDetail from "@/components/RunDetail";
 import AgentForm from "@/components/plugins/AgentForm";
 import McpForm from "@/components/plugins/McpForm";
 import PrsView, { PrDetail, PrTabs } from "@/components/PrsView";
+import SearchView from "@/components/SearchView";
 import { prKey, type PrRow } from "@/hooks/usePrList";
 import PrPanel from "@/components/PrPanel";
 import BrowserPane from "@/components/browser/BrowserPane";
@@ -65,17 +66,16 @@ import RightPanel, {
 } from "@/components/RightPanel";
 import { useChatColumnFloor } from "@/components/ResizeHandle";
 import Sidebar, {
-  SEARCH_INPUT_ID,
   SidebarToggle,
-  filterSessions,
   sessionUnits,
   sortSessions,
 } from "@/components/Sidebar";
 import SplitView, { DragGhost, DropZone } from "@/components/SplitView";
-import SubagentPanel from "@/components/SubagentPanel";
+import SubagentChat from "@/components/SubagentChat";
 import TodoPanel from "@/components/TodoPanel";
 import PendingAskPanel from "@/components/chat/PendingAskPanel";
 import { DROP_ATTR, useSessionDrag, type DropTarget } from "@/lib/dragSession";
+import { contentRows } from "@/lib/palette";
 import type { PaletteItem } from "@/lib/palette";
 import { recalledPrompts } from "@/lib/recall";
 import type { ShortcutId } from "@/lib/shortcuts";
@@ -94,16 +94,21 @@ import {
   type SplitGroup,
 } from "@/lib/groups";
 import ComposerToolbar from "@/components/composer/ComposerToolbar";
+import ContextMeter from "@/components/composer/ContextMeter";
+import PermissionSelector, {
+  offersPermissionModes,
+} from "@/components/composer/PermissionSelector";
 import DictateControl from "@/components/composer/DictateControl";
 import AppShell from "@/components/layout/AppShell";
 import SessionHeader from "@/components/layout/SessionHeader";
+import BloubAvatar from "@/components/BloubAvatar";
 import { nextEffort } from "@/components/composer/ModelSelector";
 import { cycledModels, rowModel } from "@/lib/modelVisibility";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
 import { useCodeTheme } from "@/hooks/useCodeTheme";
 import { refreshActiveDoc, saveActiveDoc, useDocs } from "@/hooks/useDocs";
-import { closeFile, useOpenFiles } from "@/hooks/useOpenFiles";
+import { closeFile, openInFiles, useOpenFiles } from "@/hooks/useOpenFiles";
 import { useFullscreen } from "@/hooks/useFullscreen";
 import { useGlass } from "@/hooks/useGlass";
 import { warmHighlighter } from "@/hooks/useHighlighter";
@@ -113,11 +118,13 @@ import { dismissNotice, getNotices, pushNotice } from "@/hooks/useNotices";
 import { useIntegrations } from "@/hooks/useIntegrations";
 import { useSessionIssues } from "@/hooks/useIssues";
 import { useSessions } from "@/hooks/useSessions";
+import { useSubagentWork } from "@/hooks/useSubagentWork";
 import { useAgentAvailability, useMissingAgent } from "@/hooks/useAgentAvailability";
 import AgentMissingNotice from "@/components/composer/AgentMissingNotice";
 import LoginExpiredNotice from "@/components/composer/LoginExpiredNotice";
 import type {
   AgentEvent,
+  ContentMatches,
   Issue,
   SessionIndexItem,
   TranscriptMatch,
@@ -147,6 +154,7 @@ import {
 } from "@/lib/space";
 import { worktreeNoticeDetail } from "@/lib/worktree";
 import { buildTranscript } from "@/lib/transcript";
+import { isActive, memberIdOf, memberTitle, runBrief, statusWord } from "@/lib/subagent";
 import {
   EMPTY_VISITS,
   prune,
@@ -170,7 +178,50 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 /// **The set, so `none` is spelled once and every page is spelled once.** Reading
 /// a page off this is what stops a question about pages being answered by a list
 /// written out again at each site — see the state's own note.
-type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins";
+type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins" | "search";
+
+/// The one stop there is for delegated work, and it sits in the window header
+/// because the composer's own Stop is under a subagent view's feet — that view
+/// has no composer.
+///
+/// **"All" rather than the number**, and a count is deliberately absent: mcode
+/// publishes no per-task handle, so the request ends every run the session
+/// delegated. Naming one here would be a lie about the blast radius. The agent's
+/// own refusal is drawn beside the button rather than in the composer, which
+/// belongs to a session this view is not about.
+function StopDelegations({
+  sessionId,
+  onStop,
+}: {
+  sessionId: string;
+  onStop: (sessionId: string) => Promise<string | null>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <>
+      {error && (
+        <span className="max-w-48 shrink-0 truncate text-xs text-destructive">{error}</span>
+      )}
+
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={busy}
+        className="shrink-0 cursor-pointer"
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          setError(await onStop(sessionId));
+          setBusy(false);
+        }}
+      >
+        Stop all
+      </Button>
+    </>
+  );
+}
 
 function App() {
   const {
@@ -210,6 +261,7 @@ function App() {
     backgroundTasks,
     liveTaskIds,
     delegations,
+    delegationsBySession,
     refreshDelegations,
     stopDelegations,
     compacting,
@@ -240,6 +292,7 @@ function App() {
     handleCancelQueued,
     handleRespondPermission,
     handleAnswerQuestions,
+    handleCancelQuestion,
     handleSelectSessionIndexItem,
     handleNewSession,
     setSessionFlags,
@@ -321,7 +374,16 @@ function App() {
   // rest of its life with nothing saying why. Same reading Stop and fork take.
   const anyRunning = Object.values(statusBySession).some((s) => s === "in_progress");
 
-  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
+  /// The subagent whose conversation the main column is showing, if any.
+  ///
+  /// Holds the pair rather than the child's id alone, because the read takes
+  /// both: a roster belongs to the session that delegated it, and that session is
+  /// still the selected one behind this view — its header, its right panel and
+  /// its marks are all one click back.
+  const [subagentView, setSubagentView] = useState<{
+    sessionId: string;
+    memberSessionId: string;
+  } | null>(null);
 
   /// Where ⌘[ and ⌘] walk. Held here rather than in a store because it dies with
   /// the window and nothing else reads it — see [tabVisitHistory](lib/tabVisitHistory.ts).
@@ -382,6 +444,7 @@ function App() {
   const [page, setPage] = useState<MainPage>("none");
   const inboxOpen = page === "inbox";
   const issuesOpen = page === "issues";
+  const searchPageOpen = page === "search";
   const prsOpen = page === "prs";
   const pluginsOpen = page === "plugins";
   /// What the Plugins page is listing, and what its pane is showing with it.
@@ -601,6 +664,38 @@ function App() {
     return () => clearTimeout(timer);
   }, [paletteQuery, paletteOpen]);
 
+  // The same box searches the *files* the session runs in, for the same reason it
+  // searches the logs: what a reader remembers is a line they saw, and the file it
+  // is in is the one they have not opened. Scoped to the selected session, because
+  // a hit opens in *that* session's file view — a hit with no session to open into
+  // would be a row that looks like a place to go and is not.
+  const contentGen = useRef(0);
+  const [contentHits, setContentHits] = useState<ContentMatches | null>(null);
+  const contentCwd = selectedSession?.cwd ?? null;
+
+  useEffect(() => {
+    if (!paletteOpen || paletteQuery.length < 2 || !contentCwd) {
+      contentGen.current += 1;
+      setContentHits(null);
+      return;
+    }
+
+    const gen = ++contentGen.current;
+    const timer = setTimeout(() => {
+      void invoke<ContentMatches>("search_content", { cwd: contentCwd, query: paletteQuery })
+        .then((found) => {
+          if (contentGen.current === gen) setContentHits(found);
+        })
+        .catch(() => {
+          // The bargain the transcript search makes: a read that could not run is
+          // no results, never an error between the reader and the rows that worked.
+          if (contentGen.current === gen) setContentHits(null);
+        });
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [paletteQuery, paletteOpen, contentCwd]);
+
   // Which tab the *next* open lands on. Reset to Appearance as settings close,
   // so a mic press that sent the reader to Transcription does not leave every
   // later ⌘, opening there too.
@@ -772,6 +867,57 @@ function App() {
   // nothing idle, and the peek is the only way to Commit at all.
   const stripPlan = busy ? todoPlan : null;
   const stripShown = liveRuns.length > 0 || stripPlan !== null;
+
+  // ── The open subagent ─────────────────────────────────────────────────────
+  //
+  // Three accounts of one child meet here, and none can be derived from another.
+  // The roster says what it is and whether it is still going. The spawning call —
+  // the row the reader clicked in the transcript — says what it was asked to do.
+  // The child's own session is the work itself, read while it runs.
+  //
+  // A run the roster no longer holds is drawn from the log alone, which is every
+  // run in a transcript replayed after a restart: a roster is live-only and
+  // unpersisted, so there is nothing left to read and the brief is the whole of
+  // what that case can show.
+  const openSubagentMember = subagentView
+    ? (delegationsBySession[subagentView.sessionId] ?? []).find(
+        (member) => member.sessionId === subagentView.memberSessionId,
+      ) ?? null
+    : null;
+
+  const openSubagentFallback =
+    subagentView && !openSubagentMember
+      ? subagents.find((run) => run.id === subagentView.memberSessionId) ?? null
+      : null;
+
+  const openSubagentLive = openSubagentMember !== null && isActive(openSubagentMember);
+
+  // One child, one poll. Nothing is asked when the view names a run rather than a
+  // member — there is no child session behind it to read.
+  const { messagesFor } = useSubagentWork(
+    openSubagentMember && subagentView ? subagentView.sessionId : null,
+    openSubagentMember ? [openSubagentMember.sessionId] : [],
+    openSubagentLive,
+  );
+
+  const openSubagentEvents = openSubagentMember
+    ? messagesFor(openSubagentMember.sessionId)
+    : [];
+
+  // In the order the two accounts fall: the roster's where it holds a row, the
+  // log's otherwise. `status` is null for a run, which is what tells the view to
+  // draw no status word rather than one it invented.
+  const openSubagentTitle = openSubagentMember
+    ? memberTitle(openSubagentMember)
+    : (openSubagentFallback?.status ??
+      openSubagentFallback?.description ??
+      openSubagentFallback?.label ??
+      "Subagent");
+  const openSubagentAgent = openSubagentMember
+    ? openSubagentMember.agentName
+    : openSubagentFallback?.label ?? null;
+  const openSubagentStatus = openSubagentMember ? openSubagentMember.status : null;
+  const openSubagentBrief = openSubagentFallback ? runBrief(openSubagentFallback) : null;
 
   // What the composer's handoff row draws itself from, and — one line down —
   // which branch the pull requests are looked up by. Read on the same falling
@@ -1014,19 +1160,6 @@ function App() {
   // where it is typed, but the list it filters is this one, so the ⌘⇧↑/↓ walk
   // below steps exactly the rows on screen.
   //
-  // Layered over `visibleSessions` rather than folded into it, deliberately: the
-  // marks and the ready-to-merge notice read that list to decide what to watch,
-  // and a session dropping out of it as a query is typed would stop its repo
-  // being polled and make the notice forget a pull request was already ready.
-  const [search, setSearch] = useState("");
-  // Whether the sidebar's search row is drawn as a field. Up here rather than in
-  // the sidebar, since ⌘F has to open it from a collapsed one, which is not
-  // mounted at all.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchedSessions = useMemo(
-    () => filterSessions(visibleSessions, search),
-    [visibleSessions, search],
-  );
 
   // The sidebar's marks: one `gh` per repo on screen rather than one per row —
   // see `usePrMarks`. Distinct paths, and the *active* list's only: a settled
@@ -1142,14 +1275,6 @@ function App() {
   const pendingBrowserTab = usePendingTab(selectedSessionId ?? "");
   const hasBrowserTabs = browserTabs && browserTabs.length > 0;
 
-  // A live background task counts even where no run is built for it yet, or the
-  // chat's background-tasks indicator offers a tab that isn't in the row.
-  // The roster counts as much as the runs do: a child that is running before its
-  // spawning call lands in the log is still work the reader can open and stop, and
-  // a tab that appeared a beat later would be one they had already looked for.
-  const hasSubagentsTab =
-    subagents.length > 0 || backgroundTasks.length > 0 || delegations.length > 0;
-
   // Read off the session's own log rather than off `busy`: a plan outlives the
   // turn that wrote it, and the tab is what the strip hands the finished one to.
   const hasTodoTab = todoPlan !== null;
@@ -1158,7 +1283,6 @@ function App() {
     pr: hasPrTab,
     docs: hasDocsTab,
     issue: hasIssueTab,
-    subagents: hasSubagentsTab,
     todo: hasTodoTab,
   });
 
@@ -1193,24 +1317,75 @@ function App() {
     setPanelTab(tabs[(from + delta + tabs.length) % tabs.length]);
   };
 
-  // Opens the tab without touching the selection, so a run the reader already
-  // had expanded is still expanded when they come back to it.
-  const openSubagentPanel = () => {
-    showPanelTab("subagents");
-    // **The roster is live-only, so opening the pane is when it is read.** A push
-    // covers every move while the child is up; this covers the pane opened after
-    // the last one — a session reopened, or a tab switched back to long after the
-    // last child finished.
-    if (selectedSessionId) void refreshDelegations(selectedSessionId);
+  /// Opens one subagent's conversation in the main column.
+  ///
+  /// **The session stays selected.** A subagent is not a session — it has no
+  /// index entry, no branch and no composer — so the view is read-only and the
+  /// column keeps describing the session the work belongs to. Selecting the parent
+  /// is what makes that true for a row clicked in *another* session's list, and
+  /// it is why the roster is read again here: it is live-only, so opening a view
+  /// is the moment it is asked for.
+  const openSubagentView = (sessionId: string, memberSessionId: string) => {
+    goToSession(() => {
+      if (sessionId !== selectedSessionId) void handleSelectSessionIndexItem(sessionId);
+    });
+    setSubagentView({ sessionId, memberSessionId });
+    void refreshDelegations(sessionId);
   };
 
-  const openSubagent = (id: string) => {
-    setSelectedSubagentId(id);
-    openSubagentPanel();
+  const closeSubagentView = () => setSubagentView(null);
+
+  // The view belongs to the session under it. Anything that moves the selection
+  // elsewhere — the sidebar, a chord, a fork, a notice — closes it, or the column
+  // would go on drawing one session's subagent under another's header. Written as
+  // one invariant rather than at each of those call sites, which is the same
+  // reason `visibleSessions` states the space narrowing once.
+  //
+  // `selectedSessionId` is set synchronously by the select above, so a view
+  // opened in the same batch is not cleared on the way in.
+  useEffect(() => {
+    if (subagentView && subagentView.sessionId !== selectedSessionId) setSubagentView(null);
+  }, [subagentView, selectedSessionId]);
+
+  /// The lit row in the sidebar, as one key. Built here so the row and the view
+  /// cannot disagree about which subagent is open.
+  const openSubagentKey = subagentView
+    ? `${subagentView.sessionId}:${subagentView.memberSessionId}`
+    : null;
+
+  /// Opens the first subagent the session has, for the two controls that point at
+  /// "the subagents" rather than at one of them — the background-tasks notice and
+  /// the follow-up strip's overflow row. A running one wins, since that is the one
+  /// worth looking at; an empty roster opens nothing and leaves the caller to draw
+  /// no control at all.
+  const openFirstSubagent = () => {
+    const first = delegations.find(isActive) ?? delegations[0];
+    if (selectedSessionId && first) openSubagentView(selectedSessionId, first.sessionId);
+  };
+
+  /// Whether the controls that point at "the subagents" have anything to open.
+  /// Asks the roster and the runs rather than the task count: a background task
+  /// is not a subagent, so a session can hold one with nothing to open.
+  const canOpenSubagent = delegations.length > 0 || subagents.length > 0;
+
+  /// Opens the run a transcript row names.
+  ///
+  /// Resolved through the roster where it can be, so the view is the child's own
+  /// session; a run the roster no longer holds — every run in a transcript
+  /// replayed after a restart — opens on the log's own account of it instead,
+  /// which is the brief and nothing to read. Guessing at neither is the one
+  /// answer that would open somebody else's work.
+  const openSubagentRun = (runId: string) => {
+    if (!selectedSessionId) return;
+    const run = subagents.find((candidate) => candidate.id === runId);
+    if (!run) return;
+
+    const memberId = memberIdOf(run, delegations, resultByCallId.get(runId));
+    openSubagentView(selectedSessionId, memberId ?? runId);
   };
 
   /// Opens the plan in the pane, for the rows the strip had no room for. Same
-  /// bargain as the subagent panel: the tab, not the selection.
+  /// bargain as the subagent view: the tab, not the selection.
   const openTodoPanel = () => showPanelTab("todo");
 
   // An open session's own directory, since project- and local-scoped commands
@@ -1341,10 +1516,10 @@ function App() {
   // its answer had gone stale.
   const revision = `${selectedSession?.events.length ?? 0}:${busy}:${repoRevision}`;
 
-  // One button, so the tab decides what it re-reads. Diff and Subagents have
-  // nothing to fetch here: `ChangesView` owns its own reads and re-runs them
-  // off `revision` and off becoming the tab on screen, so a second handle on
-  // them would be a second way to ask for the same thing.
+  // One button, so the tab decides what it re-reads. Diff has nothing to fetch
+  // here: `ChangesView` owns its own reads and re-runs them off `revision` and
+  // off becoming the tab on screen, so a second handle on them would be a second
+  // way to ask for the same thing.
   const panelRefresh =
     activeTab === "pr"
       ? { onRefresh: pullRequests.refresh, loading: pullRequests.loading }
@@ -1363,7 +1538,7 @@ function App() {
   const ordered = useMemo(
     () =>
       sortSessions(
-        searchedSessions,
+        visibleSessions,
         projects,
         // The same reading the sidebar groups by, and withheld on the same list
         // — the walk has to step the runs the eye is looking at.
@@ -1371,7 +1546,7 @@ function App() {
         showArchived,
         showArchived ? [] : spaceGroups,
       ),
-    [searchedSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
+    [visibleSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
   );
 
   // Wraps downward only. Falling off the bottom returns to the newest session,
@@ -1406,13 +1581,13 @@ function App() {
   const units = useMemo(
     () =>
       sessionUnits(
-        searchedSessions,
+        visibleSessions,
         projects,
         showArchived ? undefined : { statusBySession, asking: askingSessions },
         showArchived,
         showArchived ? [] : spaceGroups,
       ),
-    [searchedSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
+    [visibleSessions, projects, showArchived, statusBySession, askingSessions, spaceGroups],
   );
   const stepGroup = (delta: number) => stepThrough(units, delta);
 
@@ -1750,12 +1925,6 @@ function App() {
     if (flags.archived === true && sessionId === selectedSessionId) {
       goToSession(handleNewSession);
     } else if (flags.archived === false) {
-      // Unsettling is the reader saying they found what they came for, so the
-      // query that found it has done its job — and left standing it would hide
-      // the row they just acted on, since the list it lands in is filtered too.
-      setSearch("");
-      setSearchOpen(false);
-
       // The row has just left whichever list it was drawn from, so follow it to
       // the one it landed in and keep it selected — from the sidebar's menu the
       // reader pressed that row, and from the composer's bar they are reading
@@ -1779,11 +1948,10 @@ function App() {
   // search nobody can see would be worse than no chord. `autoFocus` covers the
   // field this press mounts; the select covers the one already on screen, which
   // is also what makes ⌘F on a query a replace rather than an append.
-  useHotkey("search", () => {
-    setCollapsed(false);
-    setSearchOpen(true);
-    document.querySelector<HTMLInputElement>(`#${SEARCH_INPUT_ID}`)?.select();
-  });
+  // **The chord opens the view, not a field in the sidebar.** One screen holds the
+  // box, the scopes and the results, and it opens from a collapsed sidebar as
+  // readily as from an open one.
+  useHotkey("search", () => setPage("search"));
   useHotkey("session.new", () => goToSession(handleNewSession));
   // Steps the composer's project picker, and only while that picker is on
   // screen: it is drawn for a new task alone, and `enabled` unregisters rather
@@ -1908,8 +2076,8 @@ function App() {
   useHotkey("panel.tab.next", () => stepTab(1));
   // ⌘R re-reads whatever the panel is showing — the same one button in the tab
   // row, so the chord means "refresh this" and never "refresh a specific
-  // thing". `panelRefresh` is null on Subagents, which has nothing to fetch,
-  // and the pane being closed is a no-op: refreshing something invisible is
+  // thing". `panelRefresh` is null on the tabs with nothing to fetch, and the
+  // pane being closed is a no-op: refreshing something invisible is
   // work with no way to see it land, and both panel hooks pause their reads
   // there anyway.
   //
@@ -2067,6 +2235,17 @@ function App() {
       });
     }
 
+    // The files themselves, under the messages: a message hit is where a word was
+    // *said*, and this is where it *is*. The row opens the line in the session's
+    // file view, which is the place to read it.
+    if (contentHits) {
+      rows.push(
+        ...contentRows(contentHits.matches, (hit) => {
+          void openInFiles(selectedSessionId, hit.path, hit.line);
+        }),
+      );
+    }
+
     for (const project of projects) {
       rows.push({
         kind: "project",
@@ -2086,17 +2265,9 @@ function App() {
 
     const actions: { id: ShortcutId; label: string; run: () => void }[] = [
       { id: "session.new", label: "New task", run: () => goToSession(handleNewSession) },
-      {
-        id: "search",
-        label: "Search sessions",
-        // The field lives in the sidebar, so the sidebar comes with it — the
-        // same pair the chord itself does.
-        run: () => {
-          setCollapsed(false);
-          setSearchOpen(true);
-          document.querySelector<HTMLInputElement>(`#${SEARCH_INPUT_ID}`)?.select();
-        },
-      },
+      // The row and the chord do the same thing, which is what a palette row is
+      // for — and it is the same thing whether or not the sidebar is up.
+      { id: "search", label: "Search", run: () => setPage("search") },
       { id: "sidebar.toggle", label: "Toggle the sidebar", run: toggleSidebar },
       {
         id: "panel.toggle",
@@ -2207,11 +2378,8 @@ function App() {
       overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <Sidebar
-          items={searchedSessions}
-          search={search}
-          onSearchChange={setSearch}
-          searchOpen={searchOpen}
-          onSearchOpenChange={setSearchOpen}
+          items={visibleSessions}
+          onOpenSearch={() => setPage("search")}
           projects={spaceProjects}
           spaces={spaces}
           space={space}
@@ -2225,6 +2393,12 @@ function App() {
           statusBySession={statusBySession}
           askingSessions={askingSessions}
           prFor={prMarks.prFor}
+          // The whole roster, not the selected session's slice: a subagent is
+          // drawn under the session that delegated it, so the sidebar needs every
+          // live session's.
+          delegations={delegationsBySession}
+          onOpenSubagent={openSubagentView}
+          openSubagentKey={openSubagentKey}
           // Cleared while a page is up. The column is showing that page, so a
           // lit row would name a session that is nowhere on screen — and the
           // selection itself is kept, which is what makes coming back free.
@@ -2233,7 +2407,15 @@ function App() {
           onToggleCollapsed={toggleSidebar}
           onOpenSettings={() => setSettingsOpen(true)}
           onSelect={(sessionId) =>
-            goToSession(() => void handleSelectSessionIndexItem(sessionId))
+            goToSession(() => {
+              // **The row is the way out of a subagent too.** Landing back on the
+              // parent with its child's conversation still filling the column is
+              // the one case the selection-changed rule cannot catch: the
+              // selection does not move. Dropped here so the click always lands
+              // on the session's own transcript.
+              setSubagentView(null);
+              void handleSelectSessionIndexItem(sessionId);
+            })
           }
           groups={spaceGroups}
           onDropSession={dropSession}
@@ -2282,27 +2464,78 @@ function App() {
               already covers this edge. */}
           {sidebarLead}
 
-          <SessionHeader
-            session={selectedSession}
-            branch={prBranch}
-            // The group's name over a grid: each pane's header already names
-            // its session, and the focused one's repeated up here read as a
-            // second line of the same row.
-            standIn={
-              inboxOpen
-                ? "Inbox"
-                : issuesOpen
-                ? "Issues"
-                : prsOpen
-                  ? "Pull requests"
-                  : pluginsOpen
-                    ? "Plugins"
-                    : activeGroup
-                      ? groupName(activeGroup)
-                      : null
-            }
-            className="flex-1"
-          />
+          {/* **The way back out of a subagent.** The view fills the column and the
+              composer is gone with it, so this arrow is the only control saying
+              the column can be left — and drawn against the session's own name it
+              is what says whose subagent is on screen. */}
+          {subagentView && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={closeSubagentView}
+              aria-label="Back to the session"
+              className="shrink-0"
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+          )}
+
+          {subagentView ? (
+            // **The header names what the column is showing**, the same bargain
+            // `SessionHeader` makes — and the subagent view draws no bar of its
+            // own, because the chat it is does not have one either.
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-ui">
+              <BloubAvatar
+                name={openSubagentAgent ?? openSubagentTitle}
+                size={16}
+                live={openSubagentLive}
+                mood={openSubagentLive ? "working" : "done"}
+              />
+
+              <span
+                className={cn(
+                  "min-w-0 truncate font-medium text-foreground",
+                  openSubagentLive && "shimmer-text",
+                )}
+              >
+                {openSubagentTitle}
+              </span>
+
+              {openSubagentStatus && (
+                <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-xs text-muted-foreground">
+                  {statusWord(openSubagentStatus)}
+                </span>
+              )}
+            </div>
+          ) : (
+            <SessionHeader
+              session={selectedSession}
+              branch={prBranch}
+              // The group's name over a grid: each pane's header already names
+              // its session, and the focused one's repeated up here read as a
+              // second line of the same row.
+              standIn={
+                searchPageOpen
+                  ? "Search"
+                  : inboxOpen
+                  ? "Inbox"
+                  : issuesOpen
+                  ? "Issues"
+                  : prsOpen
+                    ? "Pull requests"
+                    : pluginsOpen
+                      ? "Plugins"
+                      : activeGroup
+                        ? groupName(activeGroup)
+                        : null
+              }
+              className="flex-1"
+            />
+          )}
+
+          {subagentView && openSubagentLive && selectedSessionId && (
+            <StopDelegations sessionId={selectedSessionId} onStop={stopDelegations} />
+          )}
 
           {issuesOpen
             ? // Only once something is open to close. Nothing on this page can
@@ -2543,7 +2776,6 @@ function App() {
             pr={hasPrTab}
             docs={hasDocsTab}
             issue={hasIssueTab}
-            subagents={hasSubagentsTab}
             todo={hasTodoTab}
             refresh={panelRefresh}
             cwd={selectedSession.cwd}
@@ -2603,19 +2835,6 @@ function App() {
             <TabBody active={hasTodoTab && activeTab === "todo"}>
               <TodoPanel plan={todoPlan} live={busy} />
             </TabBody>
-            <TabBody active={activeTab === "subagents"}>
-              <SubagentPanel
-                sessionId={selectedSessionId}
-                runs={subagents}
-                selectedId={selectedSubagentId}
-                resultByCallId={resultByCallId}
-                onSelect={setSelectedSubagentId}
-                members={delegations}
-                onStopAll={
-                  selectedSessionId ? () => stopDelegations(selectedSessionId) : undefined
-                }
-              />
-            </TabBody>
             <TabBody active={hasPrTab && activeTab === "pr"}>
               <PrPanel
                 branch={prBranch}
@@ -2653,7 +2872,12 @@ function App() {
         // send into a session the reader had left. Safe to unmount: the draft, the
         // attachments and the fan-out set are module-level stores precisely
         // because the composer already unmounts crossing the empty state.
-        pageOpen ? null : (
+        //
+        // A subagent view hides it too, and for a nearer reason: a delegated child
+        // cannot be prompted at all — the agent publishes no way to send into one —
+        // so a composer under it would be the one control on screen that lies
+        // about what it does. The way back is the arrow in the header.
+        pageOpen || subagentView ? null : (
         <ChatInput
           onSend={handleSendMsg}
           commands={slashCommands}
@@ -2669,8 +2893,8 @@ function App() {
               runs={liveRuns}
               plan={stripPlan}
               live={busy}
-              onOpenRun={openSubagent}
-              onOpenPanel={openSubagentPanel}
+              onOpenRun={openSubagentRun}
+              onOpenPanel={openFirstSubagent}
               onOpenPlan={openTodoPanel}
             />
           }
@@ -2721,6 +2945,7 @@ function App() {
                 sessionId={selectedSessionId}
                 onRespond={handleRespondPermission}
                 onAnswer={handleAnswerQuestions}
+                onCancelQuestion={handleCancelQuestion}
                 autoFocus
               />
             ) : undefined
@@ -2773,6 +2998,30 @@ function App() {
               />
             ) : null
           }
+          permission={
+            offersPermissionModes(harness) ? (
+              <PermissionSelector
+                harness={harness}
+                value={permissionMode}
+                onChange={setPermissionMode}
+              />
+            ) : null
+          }
+          // **Placed by the composer, not the toolbar.** The reading belongs on the
+          // row under the text, and which row that is changes with the state: the
+          // toolbar is above the input before a session exists and under it after.
+          // Keyed by session, because a reading belongs to one.
+          meter={
+            <ContextMeter
+              key={selectedSessionId ?? "new"}
+              sessionId={selectedSessionId}
+              used={contextUsage?.used ?? 0}
+              max={contextUsage?.max ?? 0}
+              costUsd={contextUsage?.costUsd ?? null}
+              events={selectedSession?.events ?? EMPTY_EVENTS}
+              stored={selectedSession?.contextReading ?? null}
+            />
+          }
           toolbar={
             <ComposerToolbar
               harness={harness}
@@ -2786,8 +3035,6 @@ function App() {
               onRefreshModels={refreshModels}
               onOpenProviderSettings={openProviderSettings}
               loadingModels={loadingModels}
-              permissionMode={permissionMode}
-              onPermissionModeChange={setPermissionMode}
               projects={spaceProjects}
               projectPath={projectPath}
               onSelectProject={handleSelectProject}
@@ -2809,11 +3056,6 @@ function App() {
               useWorktree={useWorktree}
               onToggleWorktree={() => setUseWorktree((v) => !v)}
               onAttach={() => void pickAttachments(selectedSessionId)}
-              contextUsage={contextUsage}
-              events={selectedSession?.events ?? EMPTY_EVENTS}
-              // Off the session's own index entry, so a session reopened with no
-              // agent running still draws the last reading the agent gave it.
-              contextReading={selectedSession?.contextReading ?? null}
               sessionId={selectedSessionId}
               isNewSession={!selectedSessionId}
             />
@@ -2833,6 +3075,26 @@ function App() {
       {/* Hidden rather than unmounted, like everything else in this column:
           the list, its filters and its scroll survive a trip into a session and
           back, which is the trip this page exists to make. */}
+      <TabBody active={searchPageOpen}>
+        <SearchView
+          active={searchPageOpen}
+          sessions={visibleSessions}
+          // The selected session's own checkout, since a hit opens there.
+          cwd={selectedSession?.cwd ?? null}
+          onClose={() => setPage("none")}
+          // A row is somewhere to go, and every route there closes the page: a
+          // session or a message opens that session, a file or a line opens in the
+          // one already on screen — which needs the page out of the way to be seen.
+          onOpen={(hit) => {
+            if (hit.kind === "session" || hit.kind === "message") {
+              goToSession(() => void handleSelectSessionIndexItem(hit.sessionId));
+              return;
+            }
+            goToSession(() => openInFiles(selectedSessionId, hit.path, hit.kind === "code" ? hit.line : undefined));
+          }}
+        />
+      </TabBody>
+
       <TabBody active={prsOpen}>
         <PrsView
           tabs={<InboxTabs current="prs" counts={inbox.counts} onSelect={selectInboxPage} />}
@@ -2898,6 +3160,41 @@ function App() {
           make: the transcript keeps its scroll position and its highlighted
           diffs across a trip into a page and back. */}
       <TabBody active={!pageOpen}>
+      {/* **The subagent's own conversation, when one is open.** A second
+          `TabBody` rather than a branch inside `Chat`, for the reason above: the
+          transcript has a scroll position and a window of backfilled turns to
+          keep, and swapping the two inside one component would lose both. The
+          column shows one or the other, and each names itself in the window
+          header. */}
+      <TabBody active={subagentView !== null}>
+        {selectedSession && subagentView && (openSubagentMember || openSubagentFallback) ? (
+          <SubagentChat
+            // Keyed by the pair, so switching subagents resets the reading rather
+            // than leaving the last child's turns under the new one's name.
+            key={openSubagentKey ?? ""}
+            // The parent, not the child: a child has no `cwd` and no project of
+            // its own, and every read behind this view is addressed through the
+            // session that delegated it.
+            parent={selectedSession}
+            memberSessionId={subagentView.memberSessionId}
+            events={openSubagentEvents}
+            live={openSubagentLive}
+            brief={openSubagentBrief}
+            crowded={!collapsed && panelShown}
+            onOpenSession={(id) => void handleSelectSessionIndexItem(id)}
+          />
+        ) : (
+          // Nothing has resolved yet: the selection the row was clicked under is
+          // still landing, or the session's own transcript has not been read. One
+          // sentence rather than an empty view, since "nothing was recorded" is
+          // an answer this does not have yet.
+          <p className="px-6 py-6 text-chat text-muted-foreground/70">
+            Reading what it is working on…
+          </p>
+        )}
+      </TabBody>
+
+      <TabBody active={subagentView === null}>
       {activeGroup ? (
         <SplitView
           columns={paneColumns}
@@ -2909,15 +3206,17 @@ function App() {
           // `chatShown`, not `!pageOpen`: the pane at its wide size covers this
           // column too, and a transcript that is not on screen must not follow
           // the stream — a `scrollTop` written against a `display: none` element
-          // lands at zero, which is what the reader would come back to.
-          active={chatShown}
+          // lands at zero, which is what the reader would come back to. A subagent
+          // view over it is the third way this column stops being on screen.
+          active={chatShown && subagentView === null}
           chat={{
-            onOpenSubagent: openSubagent,
+            onOpenSubagent: openSubagentRun,
             onOpenSession: (id) => void handleSelectSessionIndexItem(id),
             onSendNow: handleSendNow,
-            onOpenSubagentPanel: openSubagentPanel,
+            onOpenSubagents: canOpenSubagent ? openFirstSubagent : undefined,
             onRespondPermission: handleRespondPermission,
             onAnswerQuestions: handleAnswerQuestions,
+            onCancelQuestion: handleCancelQuestion,
           }}
         />
       ) : (
@@ -2932,11 +3231,12 @@ function App() {
         streamingBlock={
           selectedSessionId ? streamingContentBlock[selectedSessionId] ?? null : null
         }
-        onOpenSubagent={openSubagent}
+        onOpenSubagent={openSubagentRun}
         onOpenSession={(id) => void handleSelectSessionIndexItem(id)}
-        onOpenSubagentPanel={openSubagentPanel}
+        onOpenSubagents={canOpenSubagent ? openFirstSubagent : undefined}
         onRespondPermission={handleRespondPermission}
         onAnswerQuestions={handleAnswerQuestions}
+        onCancelQuestion={handleCancelQuestion}
         busy={busy}
         backgroundTaskCount={backgroundTasks.length}
         liveTaskIds={liveTaskIds}
@@ -2946,11 +3246,12 @@ function App() {
         onSendNow={handleSendNow}
         working={working}
         crowded={!collapsed && (panelShown || (pageOpen && !!pickedIssue))}
-        active={chatShown}
+        active={chatShown && subagentView === null}
       />
       {singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       </div>
       )}
+      </TabBody>
       </TabBody>
       </RenderErrorBoundary>
     </AppShell>

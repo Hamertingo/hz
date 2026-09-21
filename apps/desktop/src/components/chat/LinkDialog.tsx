@@ -49,7 +49,7 @@ export default function LinkDialog() {
         <AlertDialogHeader>
           <AlertDialogTitle>Open this link?</AlertDialogTitle>
           <AlertDialogDescription>
-            In hz's browser, or in your default browser.
+            In Hyze Code's browser, or in your default browser.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="max-h-32 min-w-0 overflow-y-auto rounded-md bg-muted p-3 font-mono text-ui break-all">
@@ -76,7 +76,7 @@ export default function LinkDialog() {
             System browser
           </Button>
           <AlertDialogAction ref={action} onClick={() => resolveLink(false)}>
-            Open in hz
+            Open in Hyze Code
             <CornerDownLeft data-icon="inline-end" className="opacity-70" />
           </AlertDialogAction>
         </AlertDialogFooter>

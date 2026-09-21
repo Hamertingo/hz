@@ -14,6 +14,7 @@ import {
   type MiniMaxM3ThinkingMode,
 } from '../contracts.js';
 import { CUSTOM_PROVIDER_ID_PREFIX } from '../identity.js';
+import { lookupLocalCatalogModel } from './model-catalog.js';
 import {
   OPENPLATFORM_THINKING_VARIANTS_CAPABILITY,
   type OpenPlatformThinkingVariants,
@@ -69,6 +70,16 @@ export interface ModelRefOverride {
   readonly implicitCustomProviderThinking?: boolean;
 }
 
+/// The bundled catalog's `input` list for a model, under either spelling of the
+/// provider — [lookupLocalCatalogModel] takes the config's id and the gateway's
+/// own name alike.
+function catalogInputModalities(
+  catalog: { readonly provider: string; readonly modelId: string } | undefined,
+): readonly string[] {
+  if (!catalog) return [];
+  return lookupLocalCatalogModel(catalog.provider, catalog.modelId)?.input ?? [];
+}
+
 export function modelRefForModel(
   provider: string,
   modelId: string,
@@ -81,13 +92,14 @@ export function modelRefForModel(
     return {
       provider,
       model_id: modelId,
-      capabilities: capabilitiesFromModelConfig(modelConfig),
+      capabilities: capabilitiesFromModelConfig(modelConfig, { provider, modelId }),
       ...modelLimitsFromConfig(modelConfig),
       ...resolveManagedParameters(modelConfig, options),
     };
   }
   const selectedEffort = resolveEffectiveThinkingEffort(provider, modelId, modelConfig, options);
-  const capabilities = capabilitiesFromModelConfig(modelConfig) ?? {};
+  const capabilities =
+    capabilitiesFromModelConfig(modelConfig, { provider, modelId }) ?? {};
   if (selectedEffort) {
     Reflect.set(capabilities, SELECTED_THINKING_EFFORT_CAPABILITY, selectedEffort);
   }
@@ -484,10 +496,26 @@ export function resolveModelThinkingProtocol(
   };
 }
 
+/**
+ * What a model can take, from its entry and then from the catalog the agent ships.
+ *
+ * **The entry is not the only source, and reading only it is what told a vision
+ * model it could not see.** `support_image` decides whether an attached image
+ * goes to the model inline or whether the turn hands it the sentence "the current
+ * model cannot read this image inline" — and a custom provider's entry carries no
+ * `modalities` at all unless somebody wrote them, so every model behind a gateway
+ * came out text-only. `deepseek-v4.1-flash` has vision and the catalog says so
+ * (`input: ["text", "image"]`); the reader met the opposite.
+ *
+ * So the order is the entry, then the catalog, then not-supported: a gateway that
+ * states modalities still wins, and the catalog answers for the far more ordinary
+ * case where nobody stated anything.
+ */
 export function capabilitiesFromModelConfig(
   modelConfig: LocalModelConfig | undefined,
+  catalog?: { readonly provider: string; readonly modelId: string },
 ): LocalModelRefCapabilities {
-  const modalities = modelConfig?.modalities?.input ?? [];
+  const modalities = modelConfig?.modalities?.input ?? catalogInputModalities(catalog);
   const capabilities: LocalModelRefCapabilities = {
     support_image:
       modalities.includes('image') || modelConfig?.capabilities?.support_image === true,

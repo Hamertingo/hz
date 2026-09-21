@@ -27,6 +27,34 @@ export const FILE_OPERATION_RULES = [
   "- Verify a concrete file's current state before reporting it as existing or delivering it. Reuse conclusive tool results; check the filesystem when the state is uncertain.",
 ].join('\n');
 
+/**
+ * How to *choose* a tool, which is the half the tool schemas cannot state.
+ *
+ * The base prompt's `# Tool Usage` section covers the style of the preamble that
+ * accompanies a call; it says nothing about which tool to reach for. This says
+ * that, once, for every surface — including custom and task-child prompts, which
+ * is why it is injected rather than written into a base prompt file.
+ *
+ * **It names no tools on purpose.** A policy that lists `grep`/`glob`/`read` ages
+ * badly the moment a tool is added or renamed, and the tool list it must agree
+ * with is built per turn from that turn's facts. What is durable is the shape of
+ * the decision — known target versus unknown, specialized versus generic, act
+ * versus delegate — so that is what is written down here.
+ *
+ * The first sentence is the load-bearing one: it makes the tool list itself the
+ * answer, which is what stops an agent from spending calls investigating how to
+ * do something a tool already does.
+ */
+export const TOOL_USAGE_RULES = [
+  'The available tool list and each tool description are authoritative. Do not search the workspace, the web, or documentation to find out how an available tool works, and do not call a tool merely to discover whether another one exists.',
+  '- Choose the tool that most directly matches the operation, and prefer a specialized tool over a generic shell command that would do the same thing.',
+  '- Reach for search and discovery when you do not know where something is, and for read or lookup when you do.',
+  '- Use the file-editing tools to change files, and the execution tools for commands, tests, builds, and other runtime work.',
+  '- Use an external-service tool for the service it belongs to, and a delegation tool when the work is independent enough to run on its own.',
+  '- Do not do by hand what an available tool does directly.',
+  '- When a call fails, read the error and change the next action rather than repeating the same call.',
+].join('\n');
+
 export interface MemoryPromptBlockOptions {
   /** Hidden task children and legacy read-through blocks are read-only. */
   readonly includeWriteGuidance?: boolean;

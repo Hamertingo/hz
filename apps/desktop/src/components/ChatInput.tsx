@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getCurrentWebview, type Webview } from "@tauri-apps/api/webview";
 import { ArrowUp, CornerDownLeft, Paperclip, Square, X } from "lucide-react";
 
-import { fileIconUrl } from "@/components/FileIcon";
+import AttachmentTray from "@/components/composer/AttachmentTray";
+import { ComposerMascot } from "@/components/composer/ComposerMascot";
 import FileMentionMenu from "@/components/composer/FileMentionMenu";
 import IssueMentionMenu from "@/components/composer/IssueMentionMenu";
 import SlashCommandMenu from "@/components/composer/SlashCommandMenu";
@@ -11,8 +12,8 @@ import {
   addAttachmentPaths,
   addPastedText,
   clearAttachments,
-  keepAttachments,
   pickAttachments,
+  removeAttachment,
   useAttachments,
 } from "@/hooks/useAttachments";
 import { clearCitations, useCitations, type Citation } from "@/hooks/useCitations";
@@ -24,14 +25,6 @@ import { useFanOutModels } from "@/hooks/useModelFanOut";
 import { useRecentCommands } from "@/hooks/useRecentCommands";
 import { stashDraft } from "@/hooks/useStash";
 import { canFanOut } from "@/lib/fanOut";
-import {
-  attachmentOf,
-  insertToken,
-  liveAttachments,
-  tokenDeleteRange,
-  tokenParts,
-  tokensToInsert,
-} from "@/lib/attachmentToken";
 import { SEGMENT_COLOR, highlightSegments, splitMention } from "@/lib/highlight";
 import { applyIssue, issueSpan } from "@/lib/issue";
 import { overLimitNote, pasteBecomesFile } from "@/lib/composerLimits";
@@ -88,6 +81,15 @@ type ChatInputProps = {
   /// How many prompts are waiting. Only decides whether Esc is bound — the rows
   /// themselves are drawn by the transcript, above this component.
   queuedCount?: number;
+  /// How much rope the agent gets. Placed with the reading rather than among the
+  /// pickers: both are about *how this runs* rather than what it is, and the row
+  /// under the text is where the composer's least-touched answers go.
+  permission?: ReactNode;
+  /// What the session has spent of its window, drawn on the row under the text —
+  /// where a reading about this turn belongs, and the one place in both states that
+  /// is always below the input. The empty composer puts it on the send hint's own
+  /// line, which is otherwise most of a row of nothing.
+  meter?: ReactNode;
   /// Rendered outside the card — below it normally, above it on a new task. A
   /// node rather than the controls' own props, so this component keeps owning
   /// layout and measurement and nothing else.
@@ -119,7 +121,7 @@ type ChatInputProps = {
   modelTakesImages?: boolean;
   /// The "hand it back" actions, clipped to a sliver above the card and opening
   /// on hover. A node for the toolbar's reason, and placed here rather than by
-  /// the shell so it sits inside the same `max-w-3xl` column and against the
+  /// the shell so it sits inside the same column the composer uses and against the
   /// card's own top edge — it clips itself to that edge, so nothing can come
   /// between them. Absent on a new task: there is no session to send into.
   handoff?: ReactNode;
@@ -150,7 +152,7 @@ type ChatInputProps = {
   /// the shell, and this component has no session events of its own.
   history?: string[];
   /// A backend failure, shown above the composer. Lives here rather than in the
-  /// shell so it inherits the form's `max-w-3xl` column and lines up with the
+  /// shell so it inherits the form's own column and lines up with the
   /// input; the transcript is the wrong home for it, since most of these fail
   /// before any session exists to have a transcript.
   error?: string | null;
@@ -186,19 +188,9 @@ const NEW_TASK_MAX_ROWS = 20;
 // and is applied at both call sites alongside this.
 const TEXT_BOX = "py-1 text-composer";
 
-// `String.raw` because the glyphs are drawn with backslashes; an ordinary
-// template literal would eat them as escapes.
-// const WORDMARK = String.raw` ___    ____    ____  __ __
-// |   \  |    \  /    ||  |  |
-// |    \ |  D  )|  o  ||  |  |
-// |  D  ||    / |     ||  ~  |
-// |     ||    \ |  _  ||___, |
-// |     ||  .  \|  |  ||     |
-// |_____||__|\_||__|__||____/`;
-
-// The file is the source, so editing the logo needs no change here — but an
-// <img> paints the file's own fill and this has to take the page's text color.
-// So it is a mask over a `currentColor` background: the SVG supplies the shape,
+// The app's mark: the hz cat, drawn by `public/assets/hz-logo.svg`. An <img>
+// paints the file's own fill, and this has to take the page's text color — so
+// it is a mask over a `currentColor` background: the SVG supplies the shape,
 // the CSS supplies the ink. Prefixed as well as not, for the older WebKit a
 // Linux build runs on.
 const WORDMARK_MASK = {
@@ -231,6 +223,8 @@ export default function ChatInput({
   onCancelQueued,
   onCancelRecording,
   queuedCount = 0,
+  meter,
+  permission,
   toolbar,
   dictation,
   dictating = false,
@@ -255,6 +249,12 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
+  // The runner is mounted only while a turn is live, and stays mounted through
+  // the sprite's exit hop — it calls back once it has hopped off the rim.
+  const [runnerLive, setRunnerLive] = useState(false);
+  useEffect(() => {
+    if (busy) setRunnerLive(true);
+  }, [busy]);
 
   // Where the caret is, tracked so the picker can tell a command being typed
   // from a slash that has already been left behind.
@@ -281,65 +281,28 @@ export default function ChatInput({
   // works rather than by moving away from the session.
   const [pasteError, setPasteError] = useState<string | null>(null);
 
-  /// What the draft still names. Read at send, and by the prune below: with the
-  /// chips in the text there is no list to draw, so **deleting the token is
-  /// detaching the file** — including when it is deleted a letter at a time.
-  const live = useMemo(() => liveAttachments(message, attachments), [message, attachments]);
-  const warnImages = !modelTakesImages && live.some((attachment) => attachment.isImage);
 
-  /// Drops what the draft **stopped** naming.
+  /// Writes into the draft what a store is holding and the text does not have
+  /// yet: a blockquote per quotation.
   ///
-  /// The rule is a change, not an absence, and that is the whole of it: an
-  /// attachment that was never named yet — just pinned, or handed back by a
-  /// cancelled prompt — is on its way into the draft, and a prune that asked "is
-  /// it in the text?" would throw it away in the gap before the insert below runs.
-  /// That gap is one commit wide and it was enough: the chip vanished the moment
-  /// it was attached.
+  /// **Attachments are not written into the draft any more.** They are tiles in
+  /// [`AttachmentTray`] above it, which is where the reader pins, sees and removes
+  /// them — where a token in the text made a photo come back from the transcript
+  /// as a paperclip in the middle of a sentence.
   ///
-  /// So a name is remembered once it has been seen, and only a name that *was*
-  /// there and is gone detaches its file. Which is also the fix for the bug that
-  /// started this: backspacing a chip left the attachment in the store, and the
-  /// next attach wrote the deleted chip back.
-  const named = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    const names = new Set(live.map((attachment) => attachment.name));
-    const was = named.current;
-    named.current = names;
-
-    if ([...was].some((name) => !names.has(name))) keepAttachments(sessionId, names);
-  }, [message]);
-
-  /// Writes into the draft everything the stores are holding and the text does
-  /// not have yet: a token per attachment, a blockquote per quotation.
-  ///
-  /// **One writer, and that is the whole point.** These were two effects, each
-  /// built from the same `message` of the render they ran in — so attaching a file
-  /// and citing an answer within one commit meant the second `setMessage` threw
-  /// the first one's work away, and the chip simply never appeared. One effect,
-  /// built once, in the order the reader did the two things.
-  ///
-  /// Every route in lands here — the `+`, a drop, a paste parked as a file, a
-  /// citation, an attachment handed back by a cancelled prompt — because they all
-  /// end up in a store, and any of them that wrote its own text would be a second
-  /// writer again. `liveAttachments` is what decides, at send, that a token the
-  /// reader backspaced is gone.
+  /// What stays is the **one writer**: a citation is still text, so the same
+  /// `setMessage` that inserts it is what keeps two effects from throwing away
+  /// each other's work.
   ///
   /// Not in an event handler because two of the three routes have no handler
   /// here: the `+` lives in `ComposerToolbar` and the selection toolbar lives in
   /// the transcript, and both reach this component as opaque nodes.
   useEffect(() => {
-    const missing = tokensToInsert(message, attachments);
-    if (!missing.length && !citations.length) return;
+    if (!citations.length) return;
 
     let next = message;
     let caret = textareaRef.current?.selectionStart ?? next.length;
 
-    for (const attachment of missing) {
-      const written = insertToken(next, caret, attachment.name, attachment.size);
-      next = written.text;
-      caret = written.caret;
-    }
     for (const citation of citations) {
       const written = insertQuote(next, caret, citation.quote);
       next = written.text;
@@ -516,7 +479,12 @@ export default function ChatInput({
     el.style.height = "0px";
     // scrollHeight includes padding, so the row cap has to as well.
     const rows = isNewTask ? NEW_TASK_MAX_ROWS : MAX_ROWS;
-    el.style.height = `${Math.min(el.scrollHeight, lineHeight * rows + chrome)}px`;
+    // **The box is as tall as its text, and no taller**, which is also what keeps
+    // dictation and Send on the text's own line: they are `items-end` in that row,
+    // so a floor under the height would put them at the bottom of an empty box and
+    // read as controls that had fallen off the message they belong to.
+    const height = Math.min(el.scrollHeight, lineHeight * rows + chrome);
+    el.style.height = `${height}px`;
     card.style.height = "";
   }, [message, resizeTick, isNewTask]);
 
@@ -677,7 +645,7 @@ export default function ChatInput({
   // A notice does gate it. Backend refuses the same send anyway, so this is not
   // the guard — it is what stops the reader finding that out by writing a
   // prompt and pressing a button that was never going to work.
-  const canSend = !notice && (message.trim().length > 0 || live.length > 0);
+  const canSend = !notice && (message.trim().length > 0 || attachments.length > 0);
 
   /// A draft past what one message may carry. Its own flag rather than part of
   /// `canSend`: `stopping` reads `canSend` to decide between Send and Stop, so
@@ -773,9 +741,9 @@ export default function ChatInput({
     const trimmed = message.trim();
     // An attachment on its own is a real prompt — dropping a screenshot and
     // pressing Enter is asking about the screenshot. So is a quotation, which is
-    // the same move over an answer you just read. Both are *in* the text by now,
-    // so the token is what says so.
-    if (!trimmed && !live.length) return;
+    // the same move over an answer you just read. The quotation is *in* the text
+    // by now; an attachment is a tile in the tray, which is what `attachments`
+    // answers for.
 
     // Recorded on send rather than on pick: choosing a command from the list
     // and then deleting it is not using it. Taken from the text, so a command
@@ -783,7 +751,7 @@ export default function ChatInput({
     const command = parseSlashCommand(trimmed);
     if (command) recordCommand(command.name);
 
-    onSend(trimmed, live, citations);
+    onSend(trimmed, attachments, citations);
     setMessage("");
     clearAttachments(sessionId);
     // The quotations are in the prompt now. Left here they would be inserted
@@ -836,8 +804,15 @@ export default function ChatInput({
 
   return (
     <div className="px-4 pb-4">
+      {/* **An ask card is not part of the prompt being composed.** It answers
+          the agent, not the composer, and the card is a `form` of its own — put
+          inside this one it is nested markup, and a submit in it bubbles to the
+          form below, which reads as the reader pressing send. Drawn above the
+          form at the form's own measure, so the two still line up. */}
+      {ask && <div className="mx-auto max-w-3xl">{ask}</div>}
+
       <form
-        className="mx-auto max-w-3xl"
+        className="mx-auto w-full max-w-3xl"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -854,8 +829,6 @@ export default function ChatInput({
             className="mb-4 h-10 w-full max-w-30 bg-current text-foreground/10"
           />
         )}
-
-        {ask}
 
         {notice}
 
@@ -1011,17 +984,24 @@ export default function ChatInput({
               </div>
             )}
 
-            {/* **Nothing rides above the box any more.** An attachment is a token
-                in the draft — `@name`, written at the caret by the effect above
-                and painted as a pill by the mirror below — so a file reads as
-                part of the sentence rather than as a second list sitting on top
-                of it, and backspacing the chip is how you take it off. The
-                composer has no row of its own left to draw. */}
-            {warnImages && (
-              <p className={cn("pb-1 text-ui text-muted-foreground", isNewTask ? "px-0" : "px-3")}>
-                This model takes text only — the image will be sent, and the provider
-                may refuse it.
-              </p>
+            {/* **What is pinned rides above the box, and this is the only place
+                it is drawn.** It was a token inside the draft — the list was
+                refused on the argument that a chip in the message beats a row
+                beside it — and the token is part of the prompt, so a photo came
+                back from the transcript as a paperclip in the middle of a
+                sentence. A picture has a thumbnail to show; a file has a name and
+                a type; the tray is where both go, and the `×` on a tile is how one
+                comes off. The "text only" warning rides inside it, so it appears
+                when an image is actually attached rather than standing under every
+                prompt this model is asked. */}
+            {attachments.length > 0 && (
+              <div className={cn("pt-3", isNewTask ? "px-0" : "px-3")}>
+                <AttachmentTray
+                  attachments={attachments}
+                  onRemove={(path) => removeAttachment(sessionId, path)}
+                  modelTakesImages={modelTakesImages}
+                />
+              </div>
             )}
 
             {/* Controls ride the text's own row, always. Measuring the box and
@@ -1128,27 +1108,6 @@ export default function ChatInput({
                     // letter go, and had to hold the key. Anywhere in the token,
                     // either key takes the whole run — and the space it came with,
                     // so the sentence does not close around a gap.
-                    if (
-                      (e.key === "Backspace" || e.key === "Delete") &&
-                      !e.metaKey &&
-                      !e.altKey &&
-                      !e.ctrlKey
-                    ) {
-                      const range = tokenDeleteRange(
-                        message,
-                        caret,
-                        e.key === "Backspace" ? "back" : "forward",
-                        attachments,
-                      );
-                      if (range) {
-                        e.preventDefault();
-                        setRecall(null);
-                        pendingCaretRef.current = range.start;
-                        setMessage(`${message.slice(0, range.start)}${message.slice(range.end)}`);
-                        return;
-                      }
-                    }
-
                     // ↑ and ↓ walk the prompts already sent in this session, and
                     // only in a box that is empty or still holding one of them
                     // unedited. After the picker above, so an open list keeps the
@@ -1240,44 +1199,6 @@ export default function ChatInput({
                       // Every glyph the textarea lays out has to be laid out here
                       // too, so a mention is dimmed rather than shortened — the
                       // transcript is where it collapses to the filename.
-                      if (segment.kind === "attachment") {
-                        const file = attachmentOf(segment.text, attachments);
-                        // A paperclip the reader typed for a file that is not
-                        // attached is just a character; the chip is for the ones
-                        // that are, which is what the store answers.
-                        if (!file) {
-                          return (
-                            <span key={i} className={SEGMENT_COLOR.attachment}>
-                              {segment.text}
-                            </span>
-                          );
-                        }
-
-                        // **The run is the chip and the chip is the run.** The
-                        // pill is an empty, absolutely-positioned shell around
-                        // it, the mark is a background image painted over the
-                        // paperclip, and the size is muted the way t3 mutes it —
-                        // three parts, all of them characters the textarea laid
-                        // out. See `.chip` in App.css.
-                        const parts = tokenParts(segment.text, file.name);
-
-                        return (
-                          <span key={i} className="chip-anchor">
-                            <span className="chip-mark">{parts.mark}</span>
-                            {parts.name}
-                            {parts.size && <span className="chip-size"> {parts.size}</span>}
-                            <span
-                              className="chip"
-                              style={
-                                {
-                                  "--chip-icon": `url(${fileIconUrl(file.path)})`,
-                                } as CSSProperties
-                              }
-                            />
-                          </span>
-                        );
-                      }
-
                       if (segment.kind === "mention") {
                         const { dir, name } = splitMention(segment.text);
 
@@ -1304,30 +1225,50 @@ export default function ChatInput({
           </div>
         </div>
 
-        {isNewTask ? (
-          // Gone while a picker is open, and the list sitting over this row is
-          // the smaller half of why: Enter completes the highlighted row there
-          // rather than sending, and the picker draws its own ↵ hint saying so.
-          // Two Enter legends at once, one of them untrue.
-          //
-          // The menu, not its rows — including while it is still placeholders.
-          // Enter does send there, so the legend would be *true*; it is dropped
-          // anyway, because a send hint under an open picker reads as belonging
-          // to the list and there is nothing in the list to send. Omitting a
-          // hint costs less than drawing one that looks like it means the row
-          // above it.
-          !menuOpen && (
-            <div className="flex items-center gap-1 pt-2 text-ui text-muted-foreground/60">
+        {/* **The row under the text, and what the space in it is for.** It held the
+            send hint and nothing else, most of it empty on the widest window the app
+            runs in — so the session's context reading rides here, at the far end, in
+            both states, because this is the one row that is always below the input:
+            the toolbar itself is above it before a session exists.
+
+            `ml-auto` rather than a spacer, so the legend keeps the middle of the row
+            and the reading stays pinned right.
+
+            The hint is dropped while a picker is open: Enter completes the
+            highlighted row there rather than sending, and the list draws its own ↵
+            legend saying so. Two Enter legends at once, one of them untrue — and
+            the menu, not its rows, because a send hint under an open picker reads
+            as belonging to the list. */}
+        <div className="flex items-center gap-1 pt-1.5">
+          {isNewTask && !menuOpen && (
+            <span className="flex items-center gap-1 text-ui text-muted-foreground/60">
               Press <CornerDownLeft className="size-3" strokeWidth={2} /> to send
               {/* Named here because it is the one place the press's *outcome*
-                  changes: one prompt, several sessions, each in its own
-                  worktree. The trigger beside it already says how many. */}
+                  changes: one prompt, several sessions, each in its own worktree.
+                  The trigger beside it already says how many. */}
               {canFanOut(fanOut) && <> to {fanOut.length} models</>}
+            </span>
+          )}
+
+          {/* The toolbar's own scroll, for the reason its row states. */}
+          {!isNewTask && (
+            <div className="scrollbar-none flex min-w-0 items-center gap-1 overflow-x-auto">
+              {toolbar}
             </div>
-          )
-        ) : (
-          // Its own scroll, for the reason the new-task row above states.
-          <div className="scrollbar-none overflow-x-auto pt-1.5">{toolbar}</div>
+          )}
+
+          {/* Both at the far end, in the order they are read: what the agent may
+              do, then what it has spent doing it. */}
+          {permission && <span className="ml-auto shrink-0">{permission}</span>}
+          {meter && <span className={cn("shrink-0", !permission && "ml-auto")}>{meter}</span>}
+        </div>
+
+        {runnerLive && (
+          <ComposerMascot
+            boxRef={cardRef}
+            busy={busy}
+            onExited={() => setRunnerLive(false)}
+          />
         )}
       </form>
     </div>

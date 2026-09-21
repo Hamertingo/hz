@@ -9,8 +9,8 @@ import type { SubagentRun } from "@/lib/transcript";
 
 /// How many runs the strip names before it stops counting them out. Three is
 /// where a session is still describable at a glance; past it the list stops
-/// being a status line and starts being the panel, so the rest fold into one
-/// row that opens it.
+/// being a status line and starts being the sidebar's rows, so the rest fold
+/// into one row that opens the first of them.
 const RUN_LIMIT = 3;
 
 /// How many plan rows fit before the same thing happens to them. Higher than
@@ -48,7 +48,7 @@ export default function FollowupStrip({
   plan: TodoPlan | null;
   live: boolean;
   onOpenRun: (id: string) => void;
-  /// Opens the subagent panel, for the runs the strip stopped naming.
+  /// Opens the first subagent, for the runs the strip stopped naming.
   onOpenPanel: () => void;
   /// Opens the plan panel, for the rows this stopped naming.
   onOpenPlan: () => void;

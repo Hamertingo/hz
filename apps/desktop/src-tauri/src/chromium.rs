@@ -324,7 +324,7 @@ pub async fn remove(app: &AppHandle) -> Result<()> {
     tokio::task::spawn_blocking(|| {
         let loaded = load_guard();
         if *loaded {
-            bail!("Chromium is in use. Quit and reopen hz, then remove it.");
+            bail!("Chromium is in use. Quit and reopen Hyze Code, then remove it.");
         }
         match std::fs::remove_dir_all(version_dir()) {
             Ok(()) => Ok(()),

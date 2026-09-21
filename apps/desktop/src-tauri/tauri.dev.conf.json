@@ -1,10 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "hz-dev",
+  "productName": "Hyze Code Dev",
   "app": {
     "windows": [
       {
-        "title": "hz dev",
+        "title": "Hyze Code dev",
         "width": 1200,
         "height": 800,
         "minWidth": 720,

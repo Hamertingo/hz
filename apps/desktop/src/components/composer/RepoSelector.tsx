@@ -71,12 +71,12 @@ export default function RepoSelector({
               type="button"
               variant="ghost"
               size="sm"
-              className="max-w-40 gap-1.5 px-1.5 text-ui text-muted-foreground"
+              className="min-w-0 max-w-40 gap-1.5 px-1.5 text-ui text-muted-foreground"
             >
               {/* Same slot and same size as the project and branch glyphs beside
                   it, so the row reads as one set of controls. */}
               <FolderGit2 className="size-3.5 shrink-0" />
-              <span className="truncate">{name}</span>
+              <span className="min-w-0 truncate">{name}</span>
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>

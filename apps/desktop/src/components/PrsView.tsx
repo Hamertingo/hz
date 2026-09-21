@@ -515,7 +515,7 @@ export function prUnavailableText(error: PrUnavailable, cwd: string): string {
       // question is *which* one was refused: a token can be fine everywhere but
       // one organisation, and a sentence without a subject sends the reader to
       // their GitHub settings with nothing to look up.
-      return `GitHub refused this read for ${cwd}: the token it is signed in with is missing a permission hz needs. Settings → Source control shows which account and where its credential comes from.`;
+      return `GitHub refused this read for ${cwd}: the token it is signed in with is missing a permission Hyze Code needs. Settings → Source control shows which account and where its credential comes from.`;
     case "no_remote":
       return `No GitHub repository at ${cwd} — a project that holds repositories has no pull requests of its own. Pick one in the composer, or select a session.`;
     default:

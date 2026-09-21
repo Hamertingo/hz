@@ -451,7 +451,7 @@ export function ConnectLinear({
             model working off a one-line title, finds it out the expensive way.
             Said here, while they are already setting this up, and said once. */}
         <p className="border-t border-border pt-3 text-ui text-muted-foreground">
-          hz reads your issues with this key, and writes only the status or priority you pick.
+          Hyze Code reads your issues with this key, and writes only the status or priority you pick.
           To let the agent read and manage issues in chat, add{" "}
           <button
             type="button"

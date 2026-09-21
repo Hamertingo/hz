@@ -482,7 +482,15 @@ export function resolveLocalMcpDisclosureOptions(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): McpDisclosureOptions {
   return {
-    enabled: resolveOption(env.MAVIS_MCP_TOOL_SEARCH_ENABLED, raw?.enabled, true, parseBoolean),
+    // Off unless something asks for it.
+    //
+    // mcode ships this on and gates it on a model whitelist that defaults to
+    // empty, so it is inert either way — the difference is that pinned off it is
+    // inert *on purpose*. This agent lists its tools, and a tool the model has to
+    // search for is one its own prompt tells it not to go looking for; the two
+    // sentences cannot both be true. Opt in with
+    // `MAVIS_MCP_TOOL_SEARCH_ENABLED=1` or the config key.
+    enabled: resolveOption(env.MAVIS_MCP_TOOL_SEARCH_ENABLED, raw?.enabled, false, parseBoolean),
     modelWhitelist: resolveModelWhitelist(env.MAVIS_MCP_TOOL_SEARCH_WHITELIST, raw),
     thresholdPct: resolveOption(
       env.MAVIS_MCP_TOOL_SEARCH_THRESHOLD_PCT,

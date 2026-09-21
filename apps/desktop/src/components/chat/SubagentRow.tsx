@@ -6,8 +6,8 @@ import type { SubagentRun } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
 
 /// The subagent's place in the main conversation: one compact row. It never
-/// expands inline — clicking opens the subagent panel, which is where the run's
-/// own work actually lives.
+/// expands inline — clicking opens the run's own conversation, which takes the
+/// column the way a selected session does.
 ///
 /// The row says what the agent is doing and nothing else. Its tool name is
 /// harness vocabulary ("Task", "local_bash") that names the mechanism rather

@@ -57,7 +57,7 @@ export const THEMES: Theme[] = [
   // falls back to, what the pre-paint script in index.html stamps, and what every
   // retired name (`neutral`, `shadcn`) lands on — renaming it would strand every
   // stored pick on a palette that no longer answers to what is written down.
-  { id: "default", label: "hz", flatInFullscreen: true },
+  { id: "default", label: "Hyze Code", flatInFullscreen: true },
   {
     id: "catppuccin",
     label: "Catppuccin",

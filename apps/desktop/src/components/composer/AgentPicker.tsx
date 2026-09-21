@@ -63,7 +63,9 @@ export default function AgentPicker({
           ) : (
             <Bot className="size-3.5 shrink-0" />
           )}
-          <span className="max-w-40 truncate">{picked?.displayName ?? "Default agent"}</span>
+          <span className="min-w-0 max-w-40 truncate">
+            {picked?.displayName ?? "Default agent"}
+          </span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </Button>
       </DropdownMenuTrigger>

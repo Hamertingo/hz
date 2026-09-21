@@ -16,7 +16,23 @@
 /// while typing that goes plain once sent — or the reverse — reads as a bug in
 /// whichever surface the reader noticed second.
 import { findPromptPaths } from "@/lib/filePath";
-import { ATTACHMENT_MARK, ATTACHMENT_SIZE } from "@/lib/attachmentToken";
+/// The shape of an attachment's token as a **build that wrote one into the draft**
+/// spelled it: a paperclip, the file's name, and its size.
+///
+/// Nothing writes one any more — an attachment is a tile in the composer's tray,
+/// which is where a reader pins, sees and removes one. These are read for the
+/// logs already on disk: every session written before that change has the token in
+/// its prompt text, and the transcript still has to draw it as what it is rather
+/// than as a stray emoji in a sentence.
+///
+/// Kept here, beside the walk that finds one, because the two cannot disagree
+/// about where a token ends — a chip drawn one character long or short is a
+/// sentence that reads wrong.
+export const ATTACHMENT_MARK = "📎";
+
+/// The size `formatBytes` wrote, as it sits after a token's name. A match is
+/// allowed to end early: the reader could edit either half.
+export const ATTACHMENT_SIZE = /^ [\d.]+ ?(?:B|KB|MB|GB)\b/;
 import { OPENERS, parseIdentifier } from "@/lib/issue";
 import { parseSlashCommand } from "@/lib/slash";
 
@@ -37,9 +53,10 @@ export type Segment = {
     /// prompt text — a markdown blockquote — so the transcript draws the quote
     /// the reader sent rather than a row of chevrons.
     | "quote"
-    /// An attachment's chip: the paperclip the composer writes into the draft and
-    /// the name after it. Painted as a pill by the composer's mirror and as plain
-    /// words everywhere else — see `attachmentToken`.
+    /// An attachment's token as a build before the tray wrote it into the draft:
+    /// the paperclip, the name, the size. Read off the logs that already hold one
+    /// — nothing writes it now — and drawn with the mark as an icon rather than as
+    /// the character, so a colour emoji never lands in a monochrome sentence.
     | "attachment";
   text: string;
   /// What sits between an inline mark's delimiters, for the surface that draws
@@ -89,7 +106,7 @@ export const SEGMENT_COLOR: Record<Segment["kind"], string> = {
   // business — see `UserMessage`.
   quote: "text-muted-foreground",
   // The same blue a file mention takes, because an attachment is a file mention
-  // a moment early. The pill itself is `.chip-inline`, which the *mirror* adds —
+  // a moment early. The pill around a citation is the composer's own —
   // this is only what the transcript draws, where the paperclip and the name are
   // ordinary words in a sentence.
   attachment: "text-accent-mention",

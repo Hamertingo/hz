@@ -611,6 +611,41 @@ authorEmail: string,
 authoredAt: string, };
 
 /**
+ * One line of one file that a query was found on.
+ */
+export type ContentMatch = { 
+/**
+ * Absolute, so a row can open it: `git grep` answers relative to the root it
+ * was run in, and the reader's own cwd is what the app opens from.
+ */
+path: string, 
+/**
+ * The same file as git spells it — the row's own text, and the shortest thing
+ * that tells two files with one basename apart.
+ */
+relative: string, 
+/**
+ * One-based, because that is how every editor numbers a line and how the
+ * reader counts.
+ */
+line: number, 
+/**
+ * The line itself, trimmed at both ends: the row *is* the line, and leading
+ * indentation is the least interesting part of it.
+ */
+text: string, };
+
+/**
+ * What one search answers with.
+ */
+export type ContentMatches = { matches: Array<ContentMatch>, 
+/**
+ * Whether the cap cut the answer short — said rather than hidden, since a
+ * reader who narrowed nothing else would otherwise read a slice as the whole.
+ */
+truncated: boolean, };
+
+/**
  * One line of a reading's breakdown.
  */
 export type ContextComponent = { 
@@ -1867,7 +1902,28 @@ displayName?: string | null,
 /**
  * The default this provider's first model is pinned to, if any.
  */
-selected: boolean, };
+selected: boolean, 
+/**
+ * The context window the agent will run this model at, where the provider
+ * entry records one.
+ *
+ * **Absent is the state worth drawing, and it is not zero.** A model's
+ * window is decided in three steps and this is the first: what this entry
+ * records, then what the catalog the agent ships says for that model, then
+ * `BYOK_FALLBACK_MODEL_LIMITS` in `model-resolver-byok.ts` (**200_000**
+ * context, **16_384** output). So a gateway's own statement is written
+ * here, and a gateway that states none is deliberately left absent — an
+ * absent entry lets the catalog answer, where a copy of it taken once
+ * would be believed long after the catalog moved. Only a model neither
+ * names reaches the fallback, and that is the row drawn `200k default`
+ * (`lib/providerLimits.ts` is where this build keeps the copy).
+ */
+contextLimit?: number | null, 
+/**
+ * The reply budget this model is pinned to, or absent for the same reason
+ * and with the same fallback (`16k default`).
+ */
+maxOutputTokens?: number | null, };
 
 /**
  * A gateway the agent already knows how to talk to, ready to be filled in with
@@ -1994,18 +2050,31 @@ additions: number, deletions: number, changedFiles: number, updatedAt: string, }
 /**
  * One question from a [`QuestionsAsked`](AgentEventPayload::QuestionsAsked).
  *
- * [`question`](Self::question) is both the prompt and the key its answer is
- * filed under, so the text has to survive the round trip unchanged — the
- * harness matches on it verbatim.
+ * [`id`](Self::id) is the step the agent matches the answer on, and what the
+ * reply is keyed by. [`question`](Self::question) is only the text the reader
+ * reads — two steps that happen to word it the same are still two steps.
  */
-export type Question = { question: string, 
+export type Question = { 
+/**
+ * The agent's own step id. Opaque here, and the key the answer goes back
+ * under.
+ */
+id: string, question: string, 
 /**
  * A short chip label for the question — "Indentation", "Auth method".
+ *
+ * No ACP elicitation carries one, so the chip falls back to the step's
+ * ordinal; a harness that ships one gets it drawn.
  */
 header: string | null, 
 /**
- * Whether several options may be picked, in which case the answer is one
- * comma-separated string rather than a list.
+ * Whether the agent refuses a reply that leaves this step out, which is
+ * what hides the card's `Skip`.
+ */
+required: boolean, 
+/**
+ * Whether several options may be picked, in which case the answer carries
+ * a value per option rather than one.
  */
 multiSelect: boolean, 
 /**
@@ -2016,22 +2085,25 @@ multiSelect: boolean,
  */
 options: Array<QuestionOption>, 
 /**
- * Whether an answer outside [`options`](Self::options) is one the asker can
- * take.
- *
- * True for `AskUserQuestion`, where the CLI promises the user a box and
- * tells the model not to offer an "Other" option because of it. False for
- * pi's `select` and `confirm`, which are a closed list and a boolean: the
- * extension that asked will be handed whatever comes back, and a typed
- * sentence where it expected one of its own labels is an answer it cannot
- * use.
+ * Whether a typed answer beside [`options`](Self::options) is one the asker
+ * can take. True for a step the agent allocated an other-field to, and for
+ * a step that is nothing but a box.
  */
-freeText: boolean, };
+freeText: boolean, 
+/**
+ * The agent's own wording for the typed answer's box, off the other-field
+ * it allocated. `None` means the card picks its own.
+ */
+otherPlaceholder: string | null, };
 
 export type QuestionOption = { 
 /**
- * What the user picks, and what travels back as the answer — the harness
- * has no option ids, so the label is the value.
+ * What travels back as the answer, and what the agent matches the option
+ * on.
+ */
+value: string, 
+/**
+ * What the user reads and picks.
  */
 label: string, description: string | null, 
 /**

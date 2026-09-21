@@ -406,7 +406,7 @@ export default function ModelSelector({
               type="button"
               variant="ghost"
               size="sm"
-              className="gap-1 px-1.5 text-ui text-muted-foreground"
+              className="min-w-0 max-w-56 gap-1 px-1.5 text-ui text-muted-foreground"
             >
               {/* **The model's mark, not the agent's.** One harness runs here and
                   it is the child process, so a mark of *it* names the same thing
@@ -430,7 +430,12 @@ export default function ModelSelector({
                 <span className="text-accent-mention">{fanOut.length} models</span>
               ) : (
                 <>
-                  <span>{selectedName}</span>
+                  {/* The name is the row's only unbounded item, so it is the one
+                      that gives way: capped, and truncated rather than wrapped, so a
+                      long label costs its own tail and never a second line for the
+                      whole toolbar. `min-w-0` is what lets a truncating child shrink
+                      below its own min-content width. */}
+                  <span className="min-w-0 truncate">{selectedName}</span>
                   {selectedVariant !== undefined && (
                     <span className="text-muted-foreground/60">
                       {VARIANT_LABELS[selectedVariant] ?? selectedVariant}

@@ -50,6 +50,7 @@ import {
   type RuntimeApplications,
   type RuntimeSkillApplication,
 } from "./application/index.js";
+import { createQuestionnaireTurnStreamMirror } from "./application/session/questionnaire-turn-stream.js";
 import { createRuntimeQueueSelection } from "./application/session/runtime-queue-selection.js";
 import { createForkState } from "./application/session/conversation-fork-state.js";
 import {
@@ -409,12 +410,20 @@ export async function createRuntimeServices(
   const sandbox = initializeRuntimeSandbox(options);
   const { bindSessionSystem, inspector } =
     await createRuntimeInspector(options);
-  const writeGlobalEvent = createServiceGlobalEventWriter(
+  const questionnaireTurnStream = createQuestionnaireTurnStreamMirror();
+  const publishGlobalEvent = createServiceGlobalEventWriter(
     options,
     state,
     browserUseComposition.service,
     sandbox,
   );
+  // Every global event also gets a look from the questionnaire mirror, which
+  // puts an ask on the asking Turn's stream as well: that stream, not the
+  // global one, is what a running prompt blocks on.
+  const writeGlobalEvent = (event: GlobalEventInput): void => {
+    publishGlobalEvent(event);
+    questionnaireTurnStream.observe(event);
+  };
   const workspace = createServiceWorkspace(writeGlobalEvent);
   const turnCapabilities = new AgentHostTurnCapabilityLifecycle();
   options.overrides?.inspectTurnCapabilities?.(turnCapabilities);
@@ -501,6 +510,13 @@ export async function createRuntimeServices(
   });
   const { channelSystem, owners, queryCollapseKeys } = promptBoundOwners;
   state.agentApplication = owners.agentApplication;
+  const turnInspection = owners.turnSystem.inspection;
+  if (turnInspection) {
+    questionnaireTurnStream.bind({
+      stream: sessionSystem.stream,
+      activeTurnId: (sessionId) => turnInspection.activeTurnId(sessionId),
+    });
+  }
   const { conversation, skill } = createRuntimeUserApplications({
     options,
     owners,

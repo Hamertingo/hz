@@ -5,6 +5,20 @@ import { cn } from "@/lib/utils"
 import { buttonVariants, type Button } from "@/components/ui/button"
 import { CheckIcon } from "lucide-react"
 
+/// The question card's own primitives, dressed in this app's language.
+///
+/// **Restated rather than inherited.** These are shadcn's stock wrappers, and
+/// their defaults speak a vocabulary this app does not have — `border-input`,
+/// `bg-primary`, `ring-ring`, a 44px touch floor and a radius of their own. One
+/// card drawn in that language beside a transcript drawn in this one reads as a
+/// component from somewhere else, which is what a reader sees before they see
+/// anything it says. So every class here is a token from [DESIGN.md](../../DESIGN.md):
+/// the same radius rungs, the same `--border`, the same `--sidebar-accent` hover
+/// the sidebar's own rows take.
+///
+/// Nothing structural changed — the data slots, the parts and the shortcuts are
+/// the primitive's, and the behaviour that reads them is untouched.
+
 function Questionnaire({
   className,
   ...props
@@ -12,7 +26,7 @@ function Questionnaire({
   return (
     <QuestionnairePrimitive.Root
       data-slot="questionnaire"
-      className={cn("flex w-full min-w-0 flex-col gap-4", className)}
+      className={cn("flex w-full min-w-0 flex-col gap-2.5", className)}
       {...props}
     />
   )
@@ -26,7 +40,7 @@ function QuestionnaireProgress({
     <QuestionnairePrimitive.Progress
       data-slot="questionnaire-progress"
       className={cn(
-        "min-h-[1lh] w-fit min-w-[14ch] text-xs font-medium text-muted-foreground tabular-nums",
+        "min-h-[1lh] w-fit text-xs font-medium text-muted-foreground tabular-nums",
         className
       )}
       {...props}
@@ -41,10 +55,7 @@ function QuestionnaireItem({
   return (
     <QuestionnairePrimitive.Item
       data-slot="questionnaire-item"
-      className={cn(
-        "flex min-w-0 flex-col gap-4 border-0 p-0 outline-none",
-        className
-      )}
+      className={cn("flex min-w-0 flex-col gap-1 border-0 p-0 outline-none", className)}
       {...props}
     />
   )
@@ -57,10 +68,10 @@ function QuestionnaireTitle({
   return (
     <QuestionnairePrimitive.Title
       data-slot="questionnaire-title"
-      className={cn(
-        "font-heading text-base leading-snug font-medium text-pretty [&:not(:has(~[data-slot=questionnaire-description]))]:mb-4",
-        className
-      )}
+      // `text-ui` rather than a heading size: this card sits against the
+      // composer it is answered into, and a heading here is the loudest thing in
+      // a column that is otherwise the reader's own words at that size.
+      className={cn("px-2 text-ui leading-snug font-medium text-pretty", className)}
       {...props}
     />
   )
@@ -73,10 +84,9 @@ function QuestionnaireChoices({
   return (
     <QuestionnairePrimitive.Choices
       data-slot="questionnaire-choices"
-      className={cn(
-        "group/questionnaire-choices grid min-w-0 gap-2",
-        className
-      )}
+      // `gap-px` rather than a gap between boxes: these are rows of one list —
+      // the shape the sidebar's own rows take — not a stack of cards.
+      className={cn("group/questionnaire-choices grid min-w-0 gap-px", className)}
       {...props}
     />
   )
@@ -91,7 +101,9 @@ function QuestionnaireChoice({
     <QuestionnairePrimitive.Choice
       data-slot="questionnaire-choice"
       className={cn(
-        "group/questionnaire-choice relative flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg border border-input bg-transparent px-3 py-2.5 text-start text-sm transition-colors outline-none select-none hover:bg-muted/50 has-[>input:focus-visible]:border-ring has-[>input:focus-visible]:ring-3 has-[>input:focus-visible]:ring-ring/50 data-invalid:border-destructive dark:bg-input/20 data-checked:border-primary/40 data-checked:bg-muted dark:data-checked:bg-muted",
+        "group/questionnaire-choice relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-ui text-start transition-colors outline-none select-none",
+        // The one hover and the one focus ring every row in this app takes.
+        "hover:bg-sidebar-accent/50 data-checked:bg-sidebar-accent/50 has-[>input:focus-visible]:bg-sidebar-accent/50 has-[>input:focus-visible]:ring-2 has-[>input:focus-visible]:ring-sidebar-ring",
         "data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
         className
       )}
@@ -104,13 +116,19 @@ function QuestionnaireChoice({
       <span
         aria-hidden="true"
         data-slot="questionnaire-choice-indicator"
-        className="pointer-events-none relative flex size-4 shrink-0 translate-y-[--spacing(0.45)] items-center justify-center rounded-[4px] border border-input group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[type=radio]/questionnaire-choice:rounded-full group-data-checked/questionnaire-choice:border-primary group-data-checked/questionnaire-choice:bg-primary group-data-checked/questionnaire-choice:text-primary-foreground dark:bg-input/30 dark:group-data-checked/questionnaire-choice:bg-primary"
+        // The mark is neutral until it is picked, then it is the foreground —
+        // not an accent. A colour here would say the *app* has an opinion about
+        // the answer, which is the one thing a question must not say.
+        className="pointer-events-none relative flex size-3.5 shrink-0 translate-y-[--spacing(0.4)] items-center justify-center rounded-[3px] border border-border group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[type=radio]/questionnaire-choice:rounded-full group-data-checked/questionnaire-choice:border-foreground group-data-checked/questionnaire-choice:bg-foreground group-data-checked/questionnaire-choice:text-background"
       >
         <span
           data-slot="questionnaire-choice-indicator-dot"
-          className="hidden size-2 rounded-full bg-primary-foreground group-data-[type=checkbox]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block"
+          className="hidden size-1.5 rounded-full bg-background group-data-[type=checkbox]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block"
         />
-        <CheckIcon data-slot="questionnaire-choice-indicator-check" className="hidden size-3.5 group-data-[type=radio]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block" />
+        <CheckIcon
+          data-slot="questionnaire-choice-indicator-check"
+          className="hidden size-2.5 group-data-[type=radio]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block"
+        />
       </span>
       <QuestionnairePrimitive.ChoiceLabel
         data-slot="questionnaire-choice-label"
@@ -120,7 +138,7 @@ function QuestionnaireChoice({
       </QuestionnairePrimitive.ChoiceLabel>
       <QuestionnairePrimitive.ChoiceShortcut
         data-slot="questionnaire-choice-shortcut"
-        className="pointer-events-none ms-auto hidden size-5 shrink-0 translate-y-[--spacing(0.45)] items-center justify-center rounded-md border border-input bg-background font-mono text-[0.625rem] leading-none font-medium text-muted-foreground group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[shortcut]/questionnaire-choice:inline-flex"
+        className="pointer-events-none ms-auto hidden size-4 shrink-0 translate-y-[--spacing(0.4)] items-center justify-center rounded-sm border border-border bg-background font-mono text-[0.625rem] leading-none font-medium text-muted-foreground group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[shortcut]/questionnaire-choice:inline-flex"
       />
     </QuestionnairePrimitive.Choice>
   )
@@ -151,8 +169,7 @@ function QuestionnaireInput({
       <QuestionnairePrimitive.Input
         data-slot="questionnaire-input"
         className={cn(
-          "h-8 min-h-11 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-[color,box-shadow,background-color] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 sm:min-h-0 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
-          "selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground",
+          "w-full min-w-0 rounded-md border border-border bg-transparent px-2 py-1.5 text-ui transition-[color,box-shadow,background-color] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
           className
         )}
         {...props}
@@ -168,10 +185,10 @@ function QuestionnaireActions({
   return (
     <div
       data-slot="questionnaire-actions"
-      className={cn(
-        "grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 sm:min-h-8",
-        className
-      )}
+      // A plain row. The stock part is a three-column grid sized by its tracks,
+      // which is a fixed height for a set of buttons mostly hidden — only ever
+      // two of Previous, Next, Skip and Send are up at once.
+      className={cn("flex w-full min-w-0 items-center justify-end gap-1.5", className)}
       {...props}
     />
   )
@@ -180,8 +197,8 @@ function QuestionnaireActions({
 function QuestionnairePrevious({
   children,
   className,
-  size = "default",
-  variant = "outline",
+  size = "sm",
+  variant = "ghost",
   ...props
 }: React.ComponentProps<typeof QuestionnairePrimitive.Previous> &
   Pick<React.ComponentProps<typeof Button>, "size" | "variant">) {
@@ -190,14 +207,10 @@ function QuestionnairePrevious({
       data-slot="questionnaire-previous"
       data-size={size}
       data-variant={variant}
-      className={cn(
-        buttonVariants({ size, variant }),
-        "col-start-1 row-start-1 min-h-11 justify-self-start sm:min-h-0",
-        className
-      )}
+      className={cn(buttonVariants({ size, variant }), "me-auto", className)}
       {...props}
     >
-      {children ?? "Previous"}
+      {children ?? "Back"}
     </QuestionnairePrimitive.Previous>
   )
 }
@@ -205,8 +218,8 @@ function QuestionnairePrevious({
 function QuestionnaireSkip({
   children,
   className,
-  size = "default",
-  variant = "outline",
+  size = "sm",
+  variant = "ghost",
   ...props
 }: React.ComponentProps<typeof QuestionnairePrimitive.Skip> &
   Pick<React.ComponentProps<typeof Button>, "size" | "variant">) {
@@ -215,11 +228,7 @@ function QuestionnaireSkip({
       data-slot="questionnaire-skip"
       data-size={size}
       data-variant={variant}
-      className={cn(
-        buttonVariants({ size, variant }),
-        "col-start-2 row-start-1 min-h-11 justify-self-end sm:min-h-0",
-        className
-      )}
+      className={cn(buttonVariants({ size, variant }), className)}
       {...props}
     >
       {children ?? "Skip"}
@@ -230,8 +239,8 @@ function QuestionnaireSkip({
 function QuestionnaireNext({
   children,
   className,
-  size = "default",
-  variant = "default",
+  size = "sm",
+  variant = "secondary",
   ...props
 }: React.ComponentProps<typeof QuestionnairePrimitive.Next> &
   Pick<React.ComponentProps<typeof Button>, "size" | "variant">) {
@@ -240,11 +249,7 @@ function QuestionnaireNext({
       data-slot="questionnaire-next"
       data-size={size}
       data-variant={variant}
-      className={cn(
-        buttonVariants({ size, variant }),
-        "col-start-3 row-start-1 min-h-11 justify-self-end sm:min-h-0",
-        className
-      )}
+      className={cn(buttonVariants({ size, variant }), className)}
       {...props}
     >
       {children ?? "Next"}
@@ -255,8 +260,8 @@ function QuestionnaireNext({
 function QuestionnaireSubmit({
   children,
   className,
-  size = "default",
-  variant = "default",
+  size = "sm",
+  variant = "secondary",
   ...props
 }: React.ComponentProps<typeof QuestionnairePrimitive.Submit> &
   Pick<React.ComponentProps<typeof Button>, "size" | "variant">) {
@@ -265,11 +270,7 @@ function QuestionnaireSubmit({
       data-slot="questionnaire-submit"
       data-size={size}
       data-variant={variant}
-      className={cn(
-        buttonVariants({ size, variant }),
-        "col-start-3 row-start-1 min-h-11 justify-self-end sm:min-h-0",
-        className
-      )}
+      className={cn(buttonVariants({ size, variant }), className)}
       {...props}
     >
       {children ?? "Submit"}

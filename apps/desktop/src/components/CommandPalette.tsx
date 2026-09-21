@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { kindLabel, matchItems, type PaletteItem } from "@/lib/palette";
+import { highlight, kindLabel, matchItems, type PaletteItem } from "@/lib/palette";
 import { cn } from "@/lib/utils";
 
 /// One box over the window: jump to a session, switch project or space, run
@@ -91,7 +91,7 @@ export default function CommandPalette({
               setQuery(e.currentTarget.value);
               onQueryChange?.(e.currentTarget.value);
             }}
-            placeholder="Search sessions, messages, projects and actions — or type > for actions"
+            placeholder="Search sessions, messages, files, projects and actions — or type > for actions"
             aria-label="Command palette"
             className="min-w-0 flex-1 bg-transparent text-chat outline-none placeholder:text-muted-foreground"
             onKeyDown={(e) => {
@@ -117,7 +117,16 @@ export default function CommandPalette({
           // Capped and scrolled: a palette that grows to the window edge is a
           // list the reader has to look around the box to read.
           <div ref={listRef} className="max-h-[50vh] overflow-y-auto py-1">
-            {rows.map((item, i) => (
+            {rows.map((item, i) => {
+              // **Where the row says what was typed.** A palette row is found by
+              // its words, and the accent is what tells the reader *which* words
+              // answered — the same service the search box does for the file it
+              // found. `null` where the row matched on its detail instead (a
+              // session's project, a file's path) and there is nothing to mark in
+              // the label.
+              const marked = highlight(item.label, query);
+
+              return (
               <button
                 key={`${item.kind}:${item.id}`}
                 type="button"
@@ -131,7 +140,17 @@ export default function CommandPalette({
                   i === active ? "bg-surface-selected" : "hover:bg-surface-selected/50",
                 )}
               >
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {marked ? (
+                    <>
+                      {marked.before}
+                      <span className="text-accent-mention">{marked.match}</span>
+                      {marked.after}
+                    </>
+                  ) : (
+                    item.label
+                  )}
+                </span>
                 {item.detail && (
                   <span className="min-w-0 max-w-[40%] truncate text-muted-foreground">
                     {item.detail}
@@ -145,7 +164,8 @@ export default function CommandPalette({
                 </span>
                 {item.shortcut && <ShortcutKeys ids={[item.shortcut]} />}
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </DialogContent>

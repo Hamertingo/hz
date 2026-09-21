@@ -9,6 +9,7 @@ import type {
   LocalModelsConfig,
 } from '../contracts.js';
 import { mergeProviderHeaders } from '../connectivity/provider-request.js';
+import { lookupLocalModelLimits } from './model-catalog.js';
 import {
   isModelProviderApi,
   MANAGED_MINIMAX_PROVIDER_ID,
@@ -92,7 +93,7 @@ export function planCustomProviderResolution(input: {
     provider: input.provider,
     api: resolveCustomProviderApi(config.api),
     ...credentials,
-    ...customProviderLimits(modelConfig),
+    ...customProviderLimits(modelConfig, input.providerKey, input.modelId),
     ...(configHeaders ? { configHeaders } : {}),
     ...(modelCompat ? { modelCompat } : {}),
   };
@@ -121,11 +122,31 @@ function resolveCustomProviderCredentials(
   };
 }
 
+/**
+ * The window and output budget a custom provider's model runs at.
+ *
+ * **The entry is not the only source, and reading only it is what made a correct
+ * model look wrong.** A gateway's own model list states the window only sometimes
+ * — Command Code does, OpenCode's does not — so a model with no `limit.context`
+ * of its own is resolved against the bundled catalog under the *provider's* name
+ * before it is given the 200k fallback. Without that step a gateway the catalog
+ * knows perfectly well ran every model at a fifth of its size: `opencode-go`'s
+ * `minimax-m3` at 200k against a real million.
+ *
+ * The catalog is consulted by `providerKey` — the slug under `custom_provider:`,
+ * which is the name the catalog indexes a gateway by — and the *recorded* limit
+ * still wins, because that is where a gateway's own statement lands.
+ */
 function customProviderLimits(
   modelConfig: LocalModelConfig,
+  providerKey: string,
+  modelId: string,
 ): Pick<ByokResolutionPlan, 'contextWindow' | 'maxTokens'> {
+  const catalog = lookupLocalModelLimits(providerKey, modelId);
   return {
-    contextWindow: modelConfig.limit?.context ?? BYOK_FALLBACK_MODEL_LIMITS.contextWindow,
+    contextWindow:
+      modelConfig.limit?.context ??
+      (catalog.fromCatalog ? catalog.contextWindow : BYOK_FALLBACK_MODEL_LIMITS.contextWindow),
     maxTokens: byokEffectiveOutputLimit(modelConfig),
   };
 }

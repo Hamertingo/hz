@@ -640,6 +640,30 @@ describe('model capability helpers', () => {
     });
   });
 
+  it('takes a custom model\'s modalities from the catalog when the entry states none', () => {
+    // A gateway's entry carries no `modalities` unless somebody wrote them, and
+    // the turn reads this to decide whether an image goes to the model inline or
+    // whether it hands it "the current model cannot read this image inline". The
+    // named model is one that has vision and that the vendored catalog describes
+    // as such, which is the whole of what this pins: the catalog is asked at all.
+    const opencodeGo = { provider: 'custom_provider:opencode-go', modelId: 'deepseek-v4.1-flash' };
+    expect(capabilitiesFromModelConfig(undefined, opencodeGo)).toMatchObject({
+      support_image: true,
+    });
+
+    // An entry that does state modalities still wins, and a model nothing knows
+    // is still text-only — "ask the catalog" must not become "ignore the config".
+    expect(
+      capabilitiesFromModelConfig(
+        { modalities: { input: ['text'], output: ['text'] } },
+        opencodeGo,
+      ),
+    ).toMatchObject({ support_image: false });
+    expect(
+      capabilitiesFromModelConfig(undefined, { provider: 'custom_provider:work', modelId: 'nope' }),
+    ).toMatchObject({ support_image: false });
+  });
+
   it('projects the explicit json_object capability into the selected model ref', () => {
     const capabilities = capabilitiesFromModelConfig({
       capabilities: { support_json_object_output: true },

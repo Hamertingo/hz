@@ -7,6 +7,7 @@
 pub mod mcode;
 
 pub mod permissions;
+pub mod questions;
 
 pub mod rpc;
 
@@ -235,11 +236,19 @@ mod path_tests {
     /// lands on the node it was installed beside.
     #[test]
     fn the_spawned_binary_dir_leads_the_additions() {
-        let bin = std::path::Path::new("/home/u/.fnm/node-versions/v22/installation/bin/pi");
+        // **An absolute path of *this* platform, built rather than written.**
+        // `/home/u/…` is only *rooted* on Windows, not absolute, and `agent_path`
+        // skips a non-absolute `bin` outright — so the hand-written fixture made
+        // this assert something else there, passing for the wrong reason on one
+        // machine and failing on the other.
+        let bin = std::env::temp_dir()
+            .join("hz-agent-path")
+            .join("node-versions/v22/installation/bin")
+            .join("pi");
         let inherited: Vec<std::path::PathBuf> =
             std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
 
-        let path = super::agent_path(bin);
+        let path = super::agent_path(&bin);
         let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
 
         assert_eq!(&dirs[..inherited.len()], &inherited[..]);
@@ -252,7 +261,13 @@ mod path_tests {
     fn a_bare_name_adds_no_empty_segment() {
         let path = super::agent_path(std::path::Path::new("pi"));
 
-        assert!(!path.split(':').any(str::is_empty), "{path}");
+        // Split the platform's own way. Splitting on `:` made this vacuous on
+        // Windows, where the separator is `;`: one segment, the whole string,
+        // never empty, so the test passed without looking at anything.
+        assert!(
+            !std::env::split_paths(&path).any(|p| p.as_os_str().is_empty()),
+            "{path}"
+        );
     }
 }
 
@@ -792,7 +807,7 @@ impl Harness {
     pub fn install_command(self) -> &'static str {
         match self {
             // **Empty, and that is the product.** The CLI is staged into the
-            // bundle by `scripts/vendor-mcode.sh`, so hz is one download and
+            // bundle by `scripts/vendor-agent.sh`, so hz is one download and
             // there is no command a reader could be given. A copyable installer
             // here would send them to fetch a second copy of what they already
             // have — and the notice is built to draw the sentence alone where

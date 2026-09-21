@@ -139,7 +139,7 @@ async fn resolve_mcode() -> PathBuf {
 /// candidates, cheapest first:
 ///
 /// - **A release bundle**: `<Name>.app/Contents/Resources/agent/bin/hz-agent`,
-///   which `scripts/vendor-mcode.sh` wrote and Tauri copied in. Read off the
+///   which `scripts/vendor-agent.sh` wrote and Tauri copied in. Read off the
 ///   running executable, two directories up, because Tauri's own `resource_dir`
 ///   needs an `AppHandle` this module has no business holding.
 /// - **The source tree this repository owns**: `apps/agent/bin/hz-agent`, the
@@ -154,22 +154,68 @@ async fn resolve_mcode() -> PathBuf {
 ///
 /// Every one of these is a *launcher*, not the CLI's JS: the app spawns
 /// `<this> acp`, so whatever is named here has to take the subcommand.
+///
+/// On Windows there is one fewer candidate and the name moves — see
+/// [`LAUNCHER`] and [`resource_dir`].
+///
+/// What the agent's launcher is called on this platform.
+///
+/// The one thing Windows spells differently, and it has to: the staged file
+/// there is an executable image, which is the only kind of thing `Command` can
+/// start — a `.cmd` is found by name and then fails to launch. See
+/// `apps/agent-launcher`.
+const LAUNCHER: &str = if cfg!(windows) {
+    "hz-agent.exe"
+} else {
+    "hz-agent"
+};
+
+/// Where Tauri put `bundle.resources`, relative to this executable.
+///
+/// macOS nests them under `Contents/Resources` and Windows drops them beside
+/// the `.exe`, and that is the whole of the difference.
+///
+/// Read off the running executable rather than through `AppHandle::path`, which
+/// this module has no business holding — it is called from the spawn path,
+/// which has no handle.
+fn resource_dir(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        Some(dir.parent()?.join("Resources"))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(dir.to_path_buf())
+    }
+}
+
 fn shipped_mcode() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let resources = exe.parent()?.parent()?.join("Resources");
-    let bundled = resources.join("agent").join("bin").join("hz-agent");
+    let bundled = resource_dir(&exe)?.join("agent").join("bin").join(LAUNCHER);
     if bundled.is_file() {
         return Some(bundled);
     }
 
-    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace = crate_dir.parent()?.parent()?.parent()?;
-    [
-        workspace.join("apps/agent/bin/hz-agent"),
-        crate_dir.join("resources/agent/bin/hz-agent"),
-    ]
-    .into_iter()
-    .find(|candidate| candidate.is_file())
+    // The source tree's launcher is the `#!/bin/sh` script, so it is a
+    // candidate only where a shell can run one. On Windows there is nothing
+    // there to spawn, and the staged tree below is the only other answer.
+    #[cfg(unix)]
+    {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = crate_dir.parent()?.parent()?.parent()?;
+        let from_source = workspace.join("apps/agent/bin").join(LAUNCHER);
+        if from_source.is_file() {
+            return Some(from_source);
+        }
+    }
+
+    let staged = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources/agent/bin")
+        .join(LAUNCHER);
+    staged.is_file().then_some(staged)
 }
 
 /// Whether the agent's CLI is installed and usable.
@@ -258,28 +304,56 @@ pub fn known_dirs() -> Vec<PathBuf> {
         return Vec::new();
     };
 
-    vec![
-        home.join(".local/bin"),
-        home.join(".claude/local"),
-        home.join(".bun/bin"),
-        home.join(".npm-global/bin"),
-        // Managers whose shims run on their own, found by absolute path. asdf's
-        // and mise's do not — one is a script calling `asdf`, the other refuses
-        // a tool pinned in no config — so those are globbed by install below.
-        home.join(".volta/bin"),
-        home.join("Library/pnpm"),
-        home.join(".local/share/pnpm"),
-        home.join(".yarn/bin"),
-        home.join(".n/bin"),
-        // Nix keeps binaries in the store; these profile links are how they
-        // reach a PATH. The second is home-manager's per-user profile.
-        home.join(".nix-profile/bin"),
-        PathBuf::from("/etc/profiles/per-user")
-            .join(home.file_name().unwrap_or_default())
-            .join("bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]
+    // Windows spreads these across the profile's own folders and the two
+    // program directories, and there is no `Library/pnpm`, no Nix store and no
+    // `/opt/homebrew` to look in. `%APPDATA%` before `%LOCALAPPDATA%`, because
+    // npm puts its globals in the roaming one.
+    #[cfg(windows)]
+    {
+        let roaming = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Local"));
+
+        vec![
+            home.join(".local").join("bin"),
+            home.join(".bun").join("bin"),
+            home.join(".volta").join("bin"),
+            home.join(".claude").join("local"),
+            home.join("scoop").join("shims"),
+            roaming.join("npm"),
+            local.join("pnpm"),
+            PathBuf::from(r"C:\Program Files\nodejs"),
+        ]
+    }
+
+    #[cfg(not(windows))]
+    {
+        vec![
+            home.join(".local/bin"),
+            home.join(".claude/local"),
+            home.join(".bun/bin"),
+            home.join(".npm-global/bin"),
+            // Managers whose shims run on their own, found by absolute path. asdf's
+            // and mise's do not — one is a script calling `asdf`, the other refuses
+            // a tool pinned in no config — so those are globbed by install below.
+            home.join(".volta/bin"),
+            home.join("Library/pnpm"),
+            home.join(".local/share/pnpm"),
+            home.join(".yarn/bin"),
+            home.join(".n/bin"),
+            // Nix keeps binaries in the store; these profile links are how they
+            // reach a PATH. The second is home-manager's per-user profile.
+            home.join(".nix-profile/bin"),
+            PathBuf::from("/etc/profiles/per-user")
+                .join(home.file_name().unwrap_or_default())
+                .join("bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]
+    }
 }
 
 /// The directory each resolved CLI sits in, for the child's `PATH`.
@@ -429,6 +503,7 @@ fn find_versioned(root: &Path, depth: usize, layouts: &[&str], bin: &str) -> Opt
 /// `-l` matters more than it looks: without it zsh reads `.zshrc` only, and a
 /// `PATH` exported from `.zprofile` — where the installers write it — stays
 /// invisible.
+#[cfg(unix)]
 async fn login_shell_which(bin: &str) -> Option<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
@@ -448,6 +523,35 @@ async fn login_shell_which(bin: &str) -> Option<PathBuf> {
     // `command -v` prints the name unchanged for a shell builtin or function,
     // which is not something we can spawn.
     let path = PathBuf::from(line.trim());
+    is_executable(&path).then_some(path)
+}
+
+/// The same question, asked of Windows.
+///
+/// There is no login shell to source and no rc chain to miss, so the `-l` half
+/// of the unix answer has no counterpart here. `where.exe` is this platform's
+/// own resolution order: it walks `PATH` and the current directory and prints
+/// every match, one per line, first the one a shell would run. Only that first
+/// line is taken, since it is the one typing the name would have run.
+#[cfg(windows)]
+async fn login_shell_which(bin: &str) -> Option<PathBuf> {
+    let output = Command::new("where")
+        .arg(bin)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        // Exit 1 with nothing on stdout is `where`'s "no match", which is an
+        // answer rather than a failure.
+        return None;
+    }
+
+    let text = String::from_utf8(output.stdout).ok()?;
+    let first = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let path = PathBuf::from(first);
     is_executable(&path).then_some(path)
 }
 
@@ -526,19 +630,36 @@ mod tests {
     /// wins over the sibling the CLI was installed against. Each dir once.
     #[test]
     fn a_resolved_bin_dir_comes_after_inherited_and_before_known() {
-        let launchd = std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin");
+        // **Both sides built with the platform's own splitter and joiner.** A
+        // literal `a:b` is four directories on unix and *one* on Windows, so a
+        // hand-written expectation was asserting two different things depending
+        // on which machine ran it.
+        let inherited_dirs = vec![
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/sbin"),
+            PathBuf::from("/sbin"),
+        ];
+        let inherited = std::env::join_paths(&inherited_dirs).unwrap();
+
         let nvm_bin = PathBuf::from("/home/u/.nvm/versions/node/v25.2.1/bin");
         let volta = PathBuf::from("/home/u/.volta/bin");
 
+        // `/bin` appears twice in `extra` and once in the inherited list: each
+        // directory lands on the child's `PATH` exactly once.
         let path = with_dirs(
-            launchd,
-            vec![PathBuf::from("/bin"), nvm_bin.clone(), nvm_bin, volta],
+            &inherited,
+            vec![
+                PathBuf::from("/bin"),
+                nvm_bin.clone(),
+                nvm_bin.clone(),
+                volta.clone(),
+            ],
         );
 
-        assert_eq!(
-            path,
-            "/usr/bin:/bin:/usr/sbin:/sbin:/home/u/.nvm/versions/node/v25.2.1/bin:/home/u/.volta/bin"
-        );
+        let expected: Vec<PathBuf> = inherited_dirs.into_iter().chain([nvm_bin, volta]).collect();
+
+        assert_eq!(std::env::split_paths(&path).collect::<Vec<_>>(), expected);
     }
 
     #[test]

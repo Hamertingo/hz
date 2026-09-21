@@ -40,7 +40,14 @@ export class TuiAcpPromptContinuation {
       this.wake();
       return;
     }
-    if (event.type === 'questionnaire.dismiss' || event.type === 'questionnaire.superseded') {
+    if (event.type === 'questionnaire.dismiss') {
+      // The Runtime ends its own record of an ask once the answers land, so an
+      // `answered` dismissal reports a request that continues.
+      if (event.status === 'answered') return;
+      this.settleQuestionnaire(event.requestId, false);
+      return;
+    }
+    if (event.type === 'questionnaire.superseded') {
       this.settleQuestionnaire(event.requestId, false);
       return;
     }

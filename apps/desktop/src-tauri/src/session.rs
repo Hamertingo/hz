@@ -3,12 +3,13 @@ use crate::{
     context::ContextSnapshot,
     events::{
         now_rfc3339, prompt_ts, AgentEvent, AgentEventPayload, ApprovalPolicy, ErrorSource, ImageRef,
-        MessageSender,
+        MessageSender, PermissionBehavior,
     },
     git,
     harness::{
         mcode::{self, McodeSession},
         permissions::{PendingPermissions, Reply},
+        questions::PendingQuestions,
         FastMode,
     },
     issues::{self, IssueRef},
@@ -1381,7 +1382,7 @@ impl SessionManager {
         }
         if !parent.harness.names_a_cli() {
             bail!(
-                "this session runs on {}, which this version of hz can't drive — update hz",
+                "this session runs on {}, which this version of Hyze Code can't drive — update Hyze Code",
                 parent.harness.label()
             );
         }
@@ -1633,7 +1634,7 @@ impl SessionManager {
         &self,
         session_id: &str,
         request_id: &str,
-        answers: HashMap<String, String>,
+        answers: Vec<mcode::elicitation::QuestionAnswer>,
         app: &AppHandle,
     ) -> Result<()> {
         let mut sessions_guard = self.sessions.lock().await;
@@ -1641,6 +1642,21 @@ impl SessionManager {
             bail!("no running session {session_id}");
         };
         session.answer_questions(request_id, answers, app).await
+    }
+
+    /// Takes back a question the reader would rather not answer, which is the
+    /// TUI's own way out of a questionnaire.
+    pub async fn cancel_question(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        app: &AppHandle,
+    ) -> Result<()> {
+        let mut sessions_guard = self.sessions.lock().await;
+        let Some(session) = sessions_guard.get_mut(session_id) else {
+            bail!("no running session {session_id}");
+        };
+        session.cancel_question(request_id, app).await
     }
 
     /// Deletes the worktree a session was running in and moves the session to
@@ -1821,6 +1837,10 @@ pub struct Session {
     pub status: Arc<Mutex<StatusTracker>>,
     /// Permission requests the mapper has registered and nobody has answered.
     pub pending_permissions: PendingPermissions,
+    /// Questions the child is waiting on an answer to — the sibling of the map
+    /// above, held for the same reason and filled the same way. See
+    /// [`PendingQuestions`].
+    pub pending_questions: PendingQuestions,
     /// Prompts typed during a running turn, waiting for the next boundary.
     /// Shared with the stdout task, which is what flushes them.
     pub queued: QueuedMessages,
@@ -1889,7 +1909,7 @@ impl Session {
             // and picking one would run a different agent inside somebody else's
             // conversation.
             Harness::Other(name) => {
-                bail!("this session runs on {name}, which this version of hz can't drive — update hz")
+                bail!("this session runs on {name}, which this version of Hyze Code can't drive — update Hyze Code")
             }
         }
     }
@@ -2224,9 +2244,109 @@ impl Session {
             automatic: false,
         };
 
-        // Emitted, never persisted — it exists to retire the request's card, and
-        // the request itself is not persisted either. Still numbered through the
-        // shared counter so the live transcript orders it correctly.
+        self.emit_decision(payload, app)
+    }
+
+    /// Answers a form the agent is waiting on.
+    ///
+    /// The sibling of [`respond_permission`](Self::respond_permission), and the
+    /// same two halves: the reader's own words go back under the id the request
+    /// arrived on, and a decided event retires the card.
+    pub async fn answer_questions(
+        &mut self,
+        request_id: &str,
+        answers: Vec<mcode::elicitation::QuestionAnswer>,
+        app: &AppHandle,
+    ) -> Result<()> {
+        let (pending, outcome, answered) = {
+            let mut guard = self
+                .pending_questions
+                .lock()
+                .expect("pending questions mutex poisoned");
+
+            let pending = guard
+                .get(request_id)
+                .with_context(|| format!("no pending question request {request_id}"))?
+                .clone();
+
+            // Built before the entry is taken, so a form that somehow cannot be
+            // answered stays answerable rather than stranding the turn.
+            let outcome = mcode::elicitation::accepted(&pending, &answers);
+            // A question the reader skipped is absent from the reply, and it is
+            // not one they answered — so the count is of steps that carried
+            // something, which is the same set the agent read.
+            let answered = answers
+                .iter()
+                .filter(|a| !a.selected.is_empty() || a.other.is_some())
+                .count();
+            guard.remove(request_id).expect("just read under this lock");
+            (pending, outcome, answered)
+        };
+
+        let (Transport::Acp(session), Reply::Rpc(rpc_id)) = (&self.stdin, &pending.reply);
+        session.client.respond(*rpc_id, outcome)?;
+
+        let payload = AgentEventPayload::PermissionDecided {
+            request_id: request_id.to_string(),
+            // A form is not a tool call, so there is no row for this to file
+            // beside — see `raise_question`.
+            tool_use_id: String::new(),
+            // Nothing here allows or denies anything. The field is the permission
+            // card's, and an answered question is the nearer of its two values:
+            // the reader was asked and did reply.
+            behavior: PermissionBehavior::Allow,
+            label: format!("{answered} answers"),
+            automatic: false,
+        };
+
+        self.emit_decision(payload, app)
+    }
+
+    /// Takes back a form the agent is waiting on, the way the TUI's own picker
+    /// does.
+    ///
+    /// The reply is the wire's `decline` — the only non-accept ACP has for an
+    /// elicitation, and what the agent reads as "not continued". The entry goes
+    /// either way: the card is closed on this side whether or not the child took
+    /// the news, and a question left answerable after the reader dismissed it
+    /// would be one they could still be charged for.
+    pub async fn cancel_question(&mut self, request_id: &str, app: &AppHandle) -> Result<()> {
+        let pending = {
+            let mut guard = self
+                .pending_questions
+                .lock()
+                .expect("pending questions mutex poisoned");
+            guard
+                .remove(request_id)
+                .with_context(|| format!("no pending question request {request_id}"))?
+        };
+
+        let (Transport::Acp(session), Reply::Rpc(rpc_id)) = (&self.stdin, &pending.reply);
+        session.client.respond(*rpc_id, mcode::elicitation::declined())?;
+
+        let payload = AgentEventPayload::PermissionDecided {
+            request_id: request_id.to_string(),
+            tool_use_id: String::new(),
+            behavior: PermissionBehavior::Deny,
+            label: "dismissed".to_string(),
+            automatic: false,
+        };
+
+        self.emit_decision(payload, app)
+    }
+
+    /// Mints the `PermissionDecided` that retires an ask's card.
+    ///
+    /// Every answer on this channel — a permission, a question, a dismissal —
+    /// retires its card with this one event rather than a variant each, because
+    /// the frontend shares a `requestId` space across both kinds and
+    /// `pendingAsksOf` already reads the decision as "this ask is over".
+    ///
+    /// Emitted, never persisted: the request it retires is not persisted either.
+    /// Numbered through the shared counter all the same, so the live transcript
+    /// orders it correctly. A failure to emit is returned rather than swallowed,
+    /// since a card that will not retire is a reader with no way forward.
+    fn emit_decision(&self, payload: AgentEventPayload, app: &AppHandle) -> Result<()> {
         let decision = AgentEvent {
             id: Uuid::now_v7().to_string(),
             session_id: self.id.clone(),
@@ -2242,21 +2362,6 @@ impl Session {
         app.emit("agent_event", &decision)?;
 
         Ok(())
-    }
-
-    /// Answers an `AskUserQuestion`.
-    ///
-    /// Unreachable rather than unimplemented: mcode asks nothing but permission
-    /// over ACP — its capabilities name no elicitation, no question and no
-    /// dialog — so a questions card has nothing that could have raised it, and
-    /// the manager refuses the call before it ever reaches a session.
-    pub async fn answer_questions(
-        &mut self,
-        _request_id: &str,
-        _answers: HashMap<String, String>,
-        _app: &AppHandle,
-    ) -> Result<()> {
-        bail!("mcode does not ask questions over ACP")
     }
 
     /// Ends the child process. Takes `self` by value — a stopped session can't
@@ -2325,7 +2430,11 @@ async fn deliver_prompt(
     // a non-image attachment becomes an `@path` mention on the prompt, and
     // the transcript has to show what the model was actually given.
     let prepared = attachments::prepare(session_id, prompt, attachment_paths, harness).await?;
-    let text = prepared.text;
+    // The event records what the reader wrote, the wire carries what the model
+    // needs. They differ for an image: its path is the model's only way to the
+    // file, and the transcript already draws the picture it names.
+    let text = prepared.display;
+    let prompt_for_model = prepared.text;
 
     let payload = AgentEventPayload::UserMessage {
         text: text.clone(),
@@ -2385,9 +2494,9 @@ async fn deliver_prompt(
     // a stray. Everything queued during a turn is flushed at the boundary,
     // joined into one.
     let Transport::Acp(session) = transport;
-    mcode::start_turn(session, &text).await?;
+    mcode::start_turn(session, &prompt_for_model).await?;
 
-    Ok(text)
+    Ok(prompt_for_model)
 }
 
 /// The handles a read loop needs once its harness has stopped being relevant.
@@ -2936,7 +3045,7 @@ pub async fn strand_queue_on_exit(
                 .await
             {
                 Ok(prepared) => (
-                    prepared.text,
+                    prepared.display,
                     prepared
                         .images
                         .iter()

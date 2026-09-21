@@ -97,7 +97,7 @@ else
 fi
 
 for suffix in "" " (GPU)" " (Renderer)" " (Plugin)" " (Alerts)"; do
-  name="hz Helper$suffix"
+  name="Hyze Code Helper$suffix"
   app="$OUT/$name.app"
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS"

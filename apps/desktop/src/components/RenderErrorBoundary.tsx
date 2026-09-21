@@ -52,7 +52,7 @@ export default class RenderErrorBoundary extends Component<Props, State> {
     const { error } = this.state;
     const { subject } = this.props;
     return [
-      subject ? `hz — ${subject}` : "hz",
+      subject ? `Hyze Code — ${subject}` : "Hyze Code",
       error?.name ? `${error.name}: ${error.message}` : String(error),
       "",
       error?.stack ?? "(no stack)",

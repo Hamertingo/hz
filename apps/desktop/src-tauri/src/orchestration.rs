@@ -32,8 +32,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::{UnixListener, UnixStream},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     sync::OnceCell,
 };
 
@@ -96,6 +95,26 @@ pub async fn serve(app: AppHandle) -> Result<()> {
     // the only one.
     let dir = store::get_home_app_dir().await?;
 
+    // Windows needs neither the check nor the narrowing below. Its pipe is
+    // created inside a namespace that carries only the name, so the account is
+    // what scopes it (see `hz_proto::pipe_name`), and the platform's default
+    // pipe ACL grants no other account the *write* this channel answers — there
+    // are no mode bits to inspect and none to set.
+    #[cfg(windows)]
+    {
+        let _ = &dir;
+        serve_pipe(&path, app).await
+    }
+
+    #[cfg(unix)]
+    {
+        serve_unix(&path, &dir, app).await
+    }
+}
+
+/// The unix half: narrow the directory, bind the socket, accept forever.
+#[cfg(unix)]
+async fn serve_unix(path: &Path, dir: &Path, app: AppHandle) -> Result<()> {
     // That narrowing is best-effort — the app has to start whether or not it
     // lands — so this checks rather than assumes. A directory that stayed
     // group- or world-reachable leaves the racy chmod as the socket's only
@@ -105,7 +124,7 @@ pub async fn serve(app: AppHandle) -> Result<()> {
     // Refusing costs orchestration and nothing else, which is the bargain this
     // whole module already makes: the caller logs and drops the error, and the
     // app carries on without a side channel.
-    let mode = owner_bits(&dir).await?;
+    let mode = owner_bits(dir).await?;
     if mode & 0o077 != 0 {
         bail!(
             "{} is mode {mode:04o}; refusing to serve a socket that other accounts can reach. \
@@ -121,12 +140,12 @@ pub async fn serve(app: AppHandle) -> Result<()> {
     // this path names one build*: unlinking can only ever take the channel from
     // another copy of the same build, never from the release app a dev one is
     // running beside.
-    tokio::fs::remove_file(&path).await.ok();
+    tokio::fs::remove_file(path).await.ok();
 
-    let listener = UnixListener::bind(&path)
+    let listener = tokio::net::UnixListener::bind(path)
         .with_context(|| format!("could not bind {}", path.display()))?;
 
-    restrict(&path)?;
+    restrict(path)?;
 
     loop {
         let (stream, _) = match listener.accept().await {
@@ -137,17 +156,67 @@ pub async fn serve(app: AppHandle) -> Result<()> {
             }
         };
 
-        let app = app.clone();
-        // Per connection, so one slow create cannot hold the next caller off.
-        tokio::spawn(async move {
-            if let Err(e) = handle(stream, &app).await {
-                eprintln!("[orchestration conn err] {e:#}");
-            }
-        });
+        spawn_handle(stream, app.clone());
     }
 }
 
-/// The permission bits on a directory, for the check above.
+/// The Windows half: a named pipe, one instance at a time, with the next one
+/// made before the connection just accepted is handed off.
+#[cfg(windows)]
+async fn serve_pipe(path: &Path, app: AppHandle) -> Result<()> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let name = path.to_string_lossy().into_owned();
+
+    // `first_pipe_instance` is the whole of the single-owner rule. Windows lets
+    // one name carry several instances and hands a client whichever of them is
+    // listening, so two apps of one build would each answer half the requests —
+    // a session made in one appearing in the other's sidebar, with the ledger
+    // of neither able to dedup a retry that landed on its neighbour. Losing
+    // this costs orchestration and nothing else, which is the bargain this
+    // module already makes everywhere else.
+    //
+    // Cost, stated: here the *older* instance keeps the channel, where the unix
+    // half lets the newer one take it by unlinking. Same-build instances only —
+    // a dev build has a name of its own, so a release app beside it is never
+    // the one being refused.
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&name)
+        .with_context(|| format!("could not create {name} — is another Hyze Code serving it?"))?;
+
+    loop {
+        if let Err(e) = server.connect().await {
+            eprintln!("[orchestration accept err] {e}");
+            continue;
+        }
+
+        // Re-armed *before* the hand-off, or a caller arriving in between finds
+        // a name with no listening instance on it.
+        let connected = server;
+        server = ServerOptions::new()
+            .create(&name)
+            .with_context(|| format!("could not re-arm {name}"))?;
+
+        spawn_handle(connected, app.clone());
+    }
+}
+
+/// Serves one connection on its own task, so a slow create cannot hold the next
+/// caller off.
+fn spawn_handle<S>(stream: S, app: AppHandle)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        if let Err(e) = handle(stream, &app).await {
+            eprintln!("[orchestration conn err] {e:#}");
+        }
+    });
+}
+
+/// The permission bits on a directory, for the check in [`serve_unix`].
+#[cfg(unix)]
 async fn owner_bits(path: &Path) -> Result<u32> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -161,6 +230,7 @@ async fn owner_bits(path: &Path) -> Result<u32> {
 /// `0600` on the socket itself. Defence in depth behind the `0700` directory,
 /// which is the boundary that holds from before the socket exists — this one
 /// cannot, because `bind` has already applied the umask by the time it runs.
+#[cfg(unix)]
 fn restrict(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -175,7 +245,7 @@ fn mismatch(theirs: u32) -> String {
     let cure = if theirs < PROTOCOL_VERSION {
         "run `hz update`"
     } else {
-        "update the hz app"
+        "update the Hyze Code app"
     };
 
     format!("this hz CLI speaks protocol v{theirs}, the app speaks v{PROTOCOL_VERSION} — {cure}")
@@ -276,8 +346,14 @@ fn ledger() -> &'static tokio::sync::Mutex<Ledger> {
 
 /// Reads one request, answers it, closes. A connection carries one command so
 /// that a client crashing mid-line costs nothing but itself.
-async fn handle(stream: UnixStream, app: &AppHandle) -> Result<()> {
-    let (read_half, mut write_half) = stream.into_split();
+async fn handle<S>(stream: S, app: &AppHandle) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    // `tokio::io::split` rather than the stream's own `into_split`: a unix
+    // socket and a Windows named pipe are different types with different
+    // inherent splitters, and this is the one that covers both.
+    let (read_half, mut write_half) = tokio::io::split(stream);
 
     let mut line = String::new();
     BufReader::new(read_half.take(MAX_LINE))
@@ -340,7 +416,7 @@ async fn browse(request: hz_proto::BrowserRequest) -> Result<Response> {
     #[cfg(not(all(feature = "cef", target_os = "macos")))]
     {
         let _ = request;
-        Ok(Response::error("this build of hz has no browser"))
+        Ok(Response::error("this build of Hyze Code has no browser"))
     }
 }
 
@@ -789,7 +865,7 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
 fn attribute(prompt: &str, from: Option<&MessageSender>) -> String {
     match from {
         Some(from) => format!(
-            "[message from the hz session \"{}\" ({})]\n\n{prompt}",
+            "[message from the Hyze Code session \"{}\" ({})]\n\n{prompt}",
             from.title, from.session_id
         ),
         None => prompt.to_string(),
@@ -939,7 +1015,7 @@ mod tests {
         let prompt = attribute("review is done", Some(&from));
 
         assert!(prompt.starts_with(
-            "[message from the hz session \"Fix the login redirect\" (abc-123)]\n\n"
+            "[message from the Hyze Code session \"Fix the login redirect\" (abc-123)]\n\n"
         ));
         assert!(prompt.ends_with("review is done"));
     }
@@ -963,7 +1039,7 @@ mod tests {
     #[test]
     fn the_mismatch_names_whichever_side_is_behind() {
         assert!(mismatch(PROTOCOL_VERSION - 1).contains("hz update"));
-        assert!(mismatch(PROTOCOL_VERSION + 1).contains("update the hz app"));
+        assert!(mismatch(PROTOCOL_VERSION + 1).contains("update the Hyze Code app"));
         assert!(!mismatch(PROTOCOL_VERSION + 1).contains("hz update"));
     }
 

@@ -29,6 +29,7 @@ pub mod agents;
 pub mod commands;
 pub mod context;
 pub mod delegation;
+pub mod elicitation;
 pub mod mapper;
 pub mod mcp;
 pub mod models;
@@ -40,6 +41,7 @@ pub mod skills;
 
 use crate::events::{AgentEvent, AgentEventPayload, ApprovalPolicy, BlockRef, DeltaEvent};
 use crate::harness::permissions::PendingPermissions;
+use crate::harness::questions::PendingQuestions;
 use crate::harness::{read_stderr, record_failure, Harness::Mcode};
 use crate::models::{Effort, Model, ModelId};
 use crate::session::{QueuedMessages, Session, StatusTracker, Transport};
@@ -135,6 +137,10 @@ impl McodeSession {
     fn configs(&self, configs: &parser::ConfigOptions) {
         *self.model.lock().expect("mcode model poisoned") = configs.model().map(str::to_string);
         *self.efforts.lock().expect("mcode efforts poisoned") = models::effort_levels(configs);
+        // Every `set_config_option` reply restates the whole list, so this is a
+        // free reading for the picker — and it is the one that keeps a session's
+        // provider change visible without a probe.
+        models::remember_configs(configs);
     }
 }
 
@@ -551,12 +557,18 @@ async fn start_session(
     let client = RpcClient::new(stdin);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let pending: PendingPermissions = Default::default();
+    // The question side of the same arrangement: the read loop registers from
+    // its own task, the session answers from the caller's.
+    let pending_questions: PendingQuestions = Default::default();
+    let stderr_tail: StderrTail = Default::default();
 
     let reader = ReaderHandles {
         client: client.clone(),
         session_id: session_id.to_string(),
         session_cwd: session_cwd.to_string(),
         pending: pending.clone(),
+        pending_questions: pending_questions.clone(),
+        stderr_tail: stderr_tail.clone(),
         app: app.clone(),
     };
 
@@ -583,7 +595,7 @@ async fn start_session(
     });
 
     tokio::spawn(async move {
-        if let Err(error) = read_stderr(Mcode, stderr).await {
+        if let Err(error) = read_mcode_stderr(stderr, stderr_tail).await {
             eprintln!("Failed to read mcode stderr: {error}");
         }
     });
@@ -625,6 +637,13 @@ async fn start_session(
         probe: Arc::new(Mutex::new(None)),
     };
     let _ = config;
+
+    // **Taken, though the settings around it are not.** This is the composer's
+    // park as often as it is a send — the handshake runs the moment a project is
+    // acquired — so the list the picker needs is on the wire here before the
+    // reader has opened anything, and taking it is what keeps the picker from
+    // booting a child of its own beside this one.
+    models::remember_configs(&config);
 
     let settings = Instant::now();
 
@@ -697,6 +716,7 @@ async fn start_session(
         seq,
         status,
         pending_permissions: pending,
+        pending_questions,
         queued,
     })
 }
@@ -725,6 +745,14 @@ async fn open_session(
                 "clientCapabilities": {
                     "fs": {"readTextFile": false, "writeTextFile": false},
                     "terminal": false,
+                    // **Form elicitation, which is how the agent asks a
+                    // question.** Without it the agent degrades `ask_user` into a
+                    // permission card — `handleQuestionnaire`'s own fallback —
+                    // which draws a question's options as allow/deny buttons.
+                    // `{}` is the value that means yes: the field is
+                    // `form?: … | null`, and only absent or `null` reads as
+                    // unsupported.
+                    "elicitation": {"form": {}},
                     // **What turns the agent's own extension notifications on.**
                     // It gates pushes, not requests: `mcode/session/delegation/get`
                     // and its siblings answer whether or not this is here, but
@@ -1140,7 +1168,7 @@ pub async fn open_control() -> Result<Control> {
     });
 
     let opened = open_session(&client, &control_id, &scratch_cwd, true, None, None).await;
-    let (id, _configs) = match opened {
+    let (id, configs) = match opened {
         Ok(opened) => opened,
         Err(error) => {
             // Post-spawn, so the child is running with nobody left to talk to it.
@@ -1149,6 +1177,13 @@ pub async fn open_control() -> Result<Control> {
             return Err(error);
         }
     };
+
+    // The list, and nothing else about it. A management question is not a turn, so
+    // the *settings* above are deliberately left unapplied — but the reply states
+    // the model list the same way every session's does, and the machine's
+    // configuration is what it describes rather than this scratch directory's.
+    // Free, and it seeds the picker for a launch whose only session is this one.
+    models::remember_configs(&configs);
 
     Ok(Control {
         // The settings are not applied: a control child is never asked to run a
@@ -1174,7 +1209,72 @@ struct ReaderHandles {
     session_id: String,
     session_cwd: String,
     pending: PendingPermissions,
+    /// Questions the agent is waiting on an answer to. Cloned from the session
+    /// like `pending` above, for the same reason: only the reader sees the
+    /// request, and only the session can be told to answer it.
+    pending_questions: PendingQuestions,
+    /// The child's most recent stderr, for the turn it dies in. See
+    /// [`stderr_tail_note`].
+    stderr_tail: StderrTail,
     app: AppHandle,
+}
+
+/// How many of the child's last stderr lines are kept for a turn that fails.
+///
+/// A dying Node process prints its stack and nothing else, and that stack is the
+/// only account of *why* it died. Twelve lines is one Node crash with its
+/// message — enough to name the file and the reason, short enough that a loop
+/// printing every frame cannot push the reason out.
+const STDERR_TAIL_LINES: usize = 12;
+
+/// The child's recent stderr, shared between the task that drains it and the
+/// read loop that reports the turn it died in.
+type StderrTail = Arc<Mutex<std::collections::VecDeque<String>>>;
+
+/// The child's last words, as something a transcript row can carry.
+///
+/// **A bundle has no terminal.** The stderr drain prints to one for a dev run,
+/// where the stack is right there to scroll to — but a reader running the built
+/// app was told only that the agent exited, with the reason unreachable on their
+/// machine. This puts it where the failure is.
+fn stderr_tail_note(tail: &StderrTail) -> Option<String> {
+    let held = tail.lock().expect("stderr tail mutex poisoned");
+    if held.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Its last output:\n\n```\n{}\n```",
+        held.iter().cloned().collect::<Vec<_>>().join("\n")
+    ))
+}
+
+/// Drains the child's stderr, keeping the tail of it for a turn that dies.
+///
+/// The printing is [`read_stderr`](crate::harness::read_stderr)'s, unchanged —
+/// and the buffer is the half a *bundle* needs, where the printed line goes
+/// nowhere anybody can read.
+async fn read_mcode_stderr(
+    stderr: tokio::process::ChildStderr,
+    tail: StderrTail,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut lines = tokio::io::BufReader::new(stderr).lines();
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        eprintln!("[{} stderr] {line}", Mcode.wire_name());
+
+        let mut held = tail.lock().expect("stderr tail mutex poisoned");
+        if held.len() == STDERR_TAIL_LINES {
+            held.pop_front();
+        }
+        held.push_back(line);
+    }
+
+    Ok(())
 }
 
 /// How long a held text delta waits for company before it goes out.
@@ -1498,6 +1598,21 @@ async fn read_stdout(
                                 .client
                                 .respond(id, json!({"outcome": {"outcome": "cancelled"}}));
                         }
+                    } else if method == "elicitation/create" {
+                        if let Err(err) = raise_question(&handles, &mut mapper, id, &line).await {
+                            record_failure(
+                                Mcode,
+                                &handles.session_id,
+                                "unsupported_request",
+                                &err.to_string(),
+                                &line,
+                            )
+                            .await;
+                            // Declined rather than left hanging: the agent reads
+                            // that as "no answer", where silence blocks the turn
+                            // exactly as an unanswered permission does.
+                            let _ = handles.client.respond(id, json!({"action": "decline"}));
+                        }
                     } else {
                         // `fs/*` and `terminal/*` were declined at the
                         // handshake, so one arriving is mcode asking past the
@@ -1600,11 +1715,18 @@ async fn read_stdout(
                 &handles.session_id, Mcode, &queued, &seq, &events, &handles.app,
             )
             .await;
+            // The reason, carried where the failure is. A bundled app has no
+            // terminal to read the child's stack from, so without this the row
+            // says only that the agent exited — see [`stderr_tail_note`].
+            let detail = stderr_tail_note(&handles.stderr_tail);
             let closed = mapper.synthesize(AgentEventPayload::TurnCompleted {
                 status: crate::events::TurnStatus::Error,
                 stop_reason: Some("mcode exited".to_string()),
                 auth_failed: false,
-                final_text: Some("mcode exited before the turn finished.".to_string()),
+                final_text: Some(match detail {
+                    Some(detail) => format!("mcode exited before the turn finished.\n\n{detail}"),
+                    None => "mcode exited before the turn finished.".to_string(),
+                }),
                 usage: None,
                 duration_ms: None,
                 head: None,
@@ -1717,6 +1839,57 @@ async fn raise_permission(
         // child's would be the one thing worse than saying nothing.
         agent_id: None,
         options,
+    });
+
+    handles.app.emit("agent_event", &event)?;
+    Ok(())
+}
+
+/// Turns `elicitation/create` into the question card, holding the request until
+/// the reader answers it.
+///
+/// The sibling of [`raise_permission`], and the same bargain: the form is kept
+/// whole in Rust so the reply is composed from what the agent asked rather than
+/// from anything the frontend invented. What goes back is the reader's own text,
+/// filed under the field the question came from — see
+/// [`elicitation::accepted`].
+///
+/// Read from the raw line rather than the `params` the demux made, because a
+/// form's steps are only in order in the bytes — see
+/// [`parser::ElicitationEnvelope`].
+async fn raise_question(
+    handles: &ReaderHandles,
+    mapper: &mut mapper::Mapper,
+    rpc_id: i64,
+    line: &str,
+) -> Result<()> {
+    let request: parser::ElicitationRequest =
+        serde_json::from_str::<parser::ElicitationEnvelope>(line)
+            .context("unreadable question request")?
+            .params;
+    let (pending, questions) = elicitation::pending_for(&request, rpc_id);
+
+    // A form whose properties all failed to name themselves has nothing the
+    // reader could answer, and a card of no questions would block the turn on a
+    // click that cannot exist.
+    if questions.is_empty() {
+        bail!("a question form with nothing to answer");
+    }
+
+    let request_id = rpc_id.to_string();
+    handles
+        .pending_questions
+        .lock()
+        .expect("pending questions mutex poisoned")
+        .insert(request_id.clone(), pending);
+
+    let event = mapper.synthesize(AgentEventPayload::QuestionsAsked {
+        request_id,
+        // No tool call behind it: mcode asks through its own extension rather
+        // than through a tool the transcript drew, so there is no row for the
+        // answers to be filed beside.
+        tool_use_id: String::new(),
+        questions,
     });
 
     handles.app.emit("agent_event", &event)?;

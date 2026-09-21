@@ -37,10 +37,18 @@ export default function BranchSelector({
           disabled={disabled}
           // The popover above already dims the row; going translucent on top of
           // that would read as broken rather than busy.
-          className="max-w-40 gap-1.5 px-1.5 text-ui text-muted-foreground disabled:opacity-100"
+          // `w-full` because this button's wrapper is the row's only shrinkable
+          // item: when the controls outgrow the line the wrapper gives up its
+          // width, and the button has to give up its own with it — otherwise it
+          // keeps the full 160px cap and paints over the permission picker
+          // beside it. `min-w-0` on both so the name ellipsises instead of
+          // setting the button's floor.
+          className="w-full min-w-0 max-w-40 gap-1.5 px-1.5 text-ui text-muted-foreground disabled:opacity-100"
         >
           <GitBranchIcon className="size-3.5 shrink-0" />
-          <span className="truncate">{value ?? branches.current ?? "detached"}</span>
+          <span className="min-w-0 truncate">
+            {value ?? branches.current ?? "detached"}
+          </span>
         </Button>
       </DropdownMenuTrigger>
 

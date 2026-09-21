@@ -25,6 +25,7 @@
 //! silently, and this file is the only thing that stands between the child and
 //! a reader who never learns why a turn went quiet.
 
+use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -326,6 +327,126 @@ pub struct Command {
 pub struct CommandInput {
     #[serde(default)]
     pub hint: String,
+}
+
+/// `elicitation/create`, read off the line it arrived on.
+///
+/// From the **raw line**, not the [`Value`] the demux made of it: a form's steps
+/// are only ordered in the bytes. `serde_json::Value`'s object is a `BTreeMap`,
+/// so a request that has been through one has already been sorted by step id,
+/// and that is a different questionnaire from the one the agent wrote.
+#[derive(Debug, Default, Deserialize)]
+pub struct ElicitationEnvelope {
+    #[serde(default)]
+    pub params: ElicitationRequest,
+}
+
+/// `elicitation/create`'s params: the agent asking the reader a question.
+///
+/// ACP's `form` mode carries a JSON-Schema object whose properties are the
+/// questions — one per step the agent's own `ask_user` was given, because that
+/// is what the schema was built from. hz reads it into the same
+/// [`Question`](crate::events::Question) card that has been here since a harness
+/// asked over `can_use_tool`, so nothing on screen is new.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElicitationRequest {
+    #[serde(default)]
+    pub session_id: String,
+    /// The form's own title, or the agent's fallback sentence.
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub requested_schema: ElicitationSchema,
+}
+
+/// The form itself.
+#[derive(Debug, Default, Deserialize)]
+pub struct ElicitationSchema {
+    #[serde(default)]
+    pub properties: ElicitationProperties,
+    #[serde(default)]
+    pub required: Vec<String>,
+}
+
+/// The form's steps, in the order the agent wrote them.
+///
+/// serde has no map-to-sequence coercion, and the order is the questionnaire —
+/// so this reads the JSON object itself rather than letting a map type decide.
+#[derive(Debug, Default)]
+pub struct ElicitationProperties(pub Vec<(String, ElicitationProperty)>);
+
+impl<'de> Deserialize<'de> for ElicitationProperties {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Steps;
+
+        impl<'de> Visitor<'de> for Steps {
+            type Value = Vec<(String, ElicitationProperty)>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object of steps, keyed by step id")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut steps = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(step) = map.next_entry()? {
+                    steps.push(step);
+                }
+                Ok(steps)
+            }
+        }
+
+        Ok(ElicitationProperties(deserializer.deserialize_map(Steps)?))
+    }
+}
+
+/// One question. Its `title` is the text the reader sees; its **key** in
+/// [`properties`](ElicitationSchema::properties) is what the answer is filed
+/// under.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElicitationProperty {
+    /// `string`, or `array` for a step that takes several answers.
+    #[serde(default, rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub title: String,
+    /// The step's own words under its question. On the `<id>__other` sibling
+    /// this is the step's `otherPlaceholder`.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// A closed list — the step's own options, for a single-choice step.
+    #[serde(default)]
+    pub one_of: Vec<ElicitationChoice>,
+    /// The same list one level down, for a step that takes several.
+    #[serde(default)]
+    pub items: Option<ElicitationItems>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElicitationItems {
+    #[serde(default)]
+    pub any_of: Vec<ElicitationChoice>,
+}
+
+/// One option: `const` is what travels back as the value, `title` is what the
+/// card draws.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElicitationChoice {
+    #[serde(default, rename = "const")]
+    pub value: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// `session/request_permission`'s params. The options are mcode's and go back as
@@ -879,5 +1000,31 @@ pub(crate) mod tests {
                 "compact"
             ]
         );
+    }
+
+    /// A form's properties keep the order the agent wrote them in — read off the
+    /// line, since anything that has been through a `Value` is already sorted by
+    /// step id.
+    #[test]
+    fn a_form_keeps_the_order_its_steps_were_written_in() {
+        let line = r#"{"jsonrpc":"2.0","id":3,"method":"elicitation/create","params":{
+            "requestedSchema": {"properties": {
+                "z_last": {"type": "string", "title": "Written first"},
+                "a_first": {"type": "string", "title": "Written second"}
+            }}
+        }}"#;
+
+        let request = serde_json::from_str::<ElicitationEnvelope>(line)
+            .expect("a readable form")
+            .params;
+
+        let ids: Vec<&str> = request
+            .requested_schema
+            .properties
+            .0
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["z_last", "a_first"]);
     }
 }

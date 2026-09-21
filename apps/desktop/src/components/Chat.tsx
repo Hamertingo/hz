@@ -25,6 +25,7 @@ import { addCitation } from "@/hooks/useCitations";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import type { ApiRetryState, QueuedPrompt, StreamingBlock, Working } from "@/hooks/useSessions";
+import type { QuestionAnswer } from "@/lib/questionnaire";
 import { toolArgument } from "@/lib/tools";
 import { buildTranscript } from "@/lib/transcript";
 import { firstMount, grow, mountedTurns } from "@/lib/turnWindow";
@@ -38,20 +39,22 @@ type ChatProps = {
   /// `hz send` message draws. Selecting the session is all it does — the same
   /// thing clicking its sidebar row does.
   onOpenSession: (sessionId: string) => void;
-  /// Opens the subagent panel on no particular run — what the background-task
-  /// notice needs, since it stands for the whole set rather than for one of them.
-  onOpenSubagentPanel: () => void;
+  /// Opens a subagent's conversation. What the background-task notice reaches
+  /// for, since it stands for the whole set rather than for one of them.
+  ///
+  /// Absent where the session has none to open — a background task is not a
+  /// subagent, so a session can be holding one with no roster behind it, and the
+  /// notice then draws as a line rather than as a button that does nothing.
+  onOpenSubagents?: () => void;
   /// Answers a permission request. The agent is blocked until this fires, so it
   /// is the one callback here whose absence stalls a session rather than
   /// degrading a view.
   onRespondPermission: (sessionId: string, requestId: string, optionId: string) => void;
   /// Answers an `AskUserQuestion`. Blocks the agent the same way, and an empty
-  /// map is a real answer — the reader skipped every question.
-  onAnswerQuestions: (
-    sessionId: string,
-    requestId: string,
-    answers: Record<string, string>,
-  ) => void;
+  /// list is a real answer — the reader skipped every question.
+  onAnswerQuestions: (sessionId: string, requestId: string, answers: QuestionAnswer[]) => void;
+  /// Takes an `AskUserQuestion` back, which the agent reads as a decline.
+  onCancelQuestion: (sessionId: string, requestId: string) => void;
   /// Whether this session has a turn in flight, so the transcript can show the
   /// agent is still working.
   busy?: boolean;
@@ -134,9 +137,10 @@ export default function Chat({
   streamingBlock,
   onOpenSubagent,
   onOpenSession,
-  onOpenSubagentPanel,
+  onOpenSubagents,
   onRespondPermission,
   onAnswerQuestions,
+  onCancelQuestion,
   onSendNow,
   busy = false,
   working = null,
@@ -631,6 +635,7 @@ export default function Chat({
                     onAnswer={(answers) =>
                       onAnswerQuestions(session.sessionId, ask.requestId, answers)
                     }
+                    onCancel={() => onCancelQuestion(session.sessionId, ask.requestId)}
                     autoFocus={false}
                   />
                 ) : (
@@ -667,7 +672,7 @@ export default function Chat({
             {backgroundTaskCount > 0 && (
               <BackgroundTasksIndicator
                 count={backgroundTaskCount}
-                onOpen={onOpenSubagentPanel}
+                onOpen={onOpenSubagents}
               />
             )}
 

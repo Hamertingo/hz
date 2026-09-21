@@ -313,3 +313,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## MonoCode — the project search's shape
+
+<https://github.com/monorepo-labs/monocode>
+
+`search_content` in [search.rs](apps/desktop/src-tauri/src/search.rs) — one
+`git grep` with `-z -n`, and the NUL-delimited record it answers with — follows
+the search in MonoCode's `src-tauri/src/search.rs`, which is where the shape of
+that spawn and its parse were read from. Rewritten for this app rather than
+copied: the flags differ (`--untracked` and `-I` are this app's, for the file the
+agent just wrote), and so does everything around it — the row model, the
+highlighting and where a hit opens are this repository's own.
+
+MIT License, Copyright (c) 2026 Nick.

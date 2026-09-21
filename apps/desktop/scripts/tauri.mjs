@@ -6,7 +6,19 @@
 // It also picks the dev server's port, because Vite and Tauri have to agree on
 // one and only this side can choose it before either starts.
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
+
+// **The CLI's own JS entry, run under this node — not the `tauri` shim on
+// `PATH`.** On Windows that shim is a `.cmd`, and `CreateProcess` cannot start a
+// batch file, so `spawn("tauri")` fails with `ENOENT`: that is exactly how the
+// first Windows build died, and it is the same wall `apps/agent-launcher` exists
+// to get around on the agent's side.
+//
+// The alternative, `shell: true`, would put the `dev` branch's JSON config
+// through `cmd.exe`'s quoting. Resolving the entry point avoids both.
+const require = createRequire(import.meta.url);
+const cli = require.resolve("@tauri-apps/cli/tauri.js");
 
 /// A port nothing holds, from the OS: `listen(0)` hands out one no socket on
 /// any address is using, which a probe of our own got wrong across two
@@ -41,7 +53,7 @@ if (args[0] === "dev" && !args.some((a) => a === "-c" || a === "--config")) {
   args.push("--config", JSON.stringify({ build: { devUrl: `http://localhost:${port}` } }));
 }
 
-const child = spawn("tauri", args, { stdio: "inherit", env });
+const child = spawn(process.execPath, [cli, ...args], { stdio: "inherit", env });
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 1);

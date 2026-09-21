@@ -1,4 +1,11 @@
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
+
+// `emit` and `path` are trait methods, so the traits only need to be in scope
+// where they are called — and this module posts a banner from Rust on macOS
+// alone, every other target having its own backend. Imported unconditionally
+// they are dead code on Windows, which `-D warnings` refuses.
+#[cfg(target_os = "macos")]
+use tauri::{Emitter, Manager};
 
 /// Show a desktop notification that clicks back into the session it came from.
 ///

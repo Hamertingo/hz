@@ -465,6 +465,11 @@ function createRuntimeInteraction(
     if (!runtimeSessionId || !agentName) return undefined;
     const resolved = options.resolveSession(runtimeSessionId);
     if (!resolved) return undefined;
+    // A request the Run took over is the Run's to settle: the Runtime closing
+    // its own record of the ask is what the Run reads as the answer landing,
+    // not a second opinion on the same request. Only a request whose Run never
+    // started is settled from here.
+    let started = false;
     return {
       id: runtimeInteractionId('questionnaire', resolved.acpSessionId, event.request.id),
       terminalIds: runtimeInteractionTerminalAliases(
@@ -475,12 +480,15 @@ function createRuntimeInteraction(
       ),
       key: resolved.acpSessionId,
       attachmentSignal: resolved.attachmentSignal,
-      run: (signal) =>
-        handleQuestionnaire(options, event, resolved, agentName, signal, enqueueProjection),
+      run: (signal) => {
+        started = true;
+        return handleQuestionnaire(options, event, resolved, agentName, signal, enqueueProjection);
+      },
       cancel: async () => {
         await options.runtime.dismissQuestionnaire(agentName, event.request.id).catch(() => false);
       },
       terminated: () => {
+        if (started) return;
         for (const projection of options.onQuestionnaireSettled?.({
           sessionId: resolved.acpSessionId,
           requestId: event.request.id,
@@ -625,11 +633,8 @@ async function handleQuestionnaire(
       }
       if (response && acp.CreateElicitationResponse.isAccept(response) && resolved.isCurrent()) {
         const content = response.content ?? ({} as Record<string, acp.ElicitationContentValue>);
-        continued = await options.runtime.replyQuestionnaire(
-          agentName,
-          request.id,
-          questionnaireAnswers(request, content),
-        );
+        const answers = questionnaireAnswers(request, content);
+        continued = await options.runtime.replyQuestionnaire(agentName, request.id, answers);
       }
     } else {
       continued = await answerSimpleQuestionnaireWithPermission(
