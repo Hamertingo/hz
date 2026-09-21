@@ -49,10 +49,9 @@ jobs:
   test:
     runs-on: windows-latest
     # A wedged build would otherwise hold the runner for GitHub's six-hour cap.
-    # Measured on the first run that reached the end: 36m46s of `release` compile
-    # alone, then makensis, then a two-gigabyte cache upload. Ninety minutes, not
-    # the sixty it was, because the run that finally gets there is the one whose
-    # timeout nobody wants to be near.
+    # The number is for the run that *does* everything: the release compile,
+    # makensis and the cache save together — eight minutes each, measured — which
+    # is now `main`'s run rather than every one.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -101,16 +100,22 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ steps.paths.outputs.paths }}
-          # **The sha is in the key so that a run can save what it built.** An
-          # entry is immutable — a restore that hits can never be updated — and
-          # the release profile is forty minutes of this job. Keyed on the
-          # lockfile alone, the *first* run to save would freeze a cache with no
-          # release artifacts in it and every later run would restore that and
-          # rebuild them anyway. With the sha, each run writes its own and the
-          # next restores the newest by prefix.
-          key: windows-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}-${{ github.sha }}
+          # **The same key `release.yml` uses, and that is the point**: the gate
+          # writes it on `main` and the release reads it, so the tag that ships
+          # Windows starts from a warm tree instead of forty minutes of compile.
+          #
+          # It carried `github.sha` for a while, on the argument that an entry is
+          # immutable and each run should save what *it* built. What that bought
+          # was a warm release profile for the next run; what it cost was **two
+          # gigabytes uploaded on every run** — measured at 488s of a 1795s job,
+          # the single most expensive step in the file — plus the churn of a 10 GB
+          # quota, which evicts the entries the next run needs. Keyed on the
+          # lockfile alone the entry is written once and hit thereafter, and the
+          # release profile is rebuilt from warm dependencies in the eight minutes
+          # the installer step already takes. See the save step for why it is
+          # gated the way it is.
+          key: windows-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
-            windows-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}-
             windows-cargo-
 
       - run: pnpm install --frozen-lockfile
@@ -128,11 +133,11 @@ jobs:
       - name: Type-check and build the frontend
         run: pnpm --filter hz run build
 
-      - name: Run the frontend tests
-        run: pnpm --filter hz run test
-
-      - name: Lint the frontend
-        run: pnpm --filter hz run lint
+      # **Not the frontend tests or the frontend lint.** Both run in node, on the
+      # same files, on the machine this repository checks in four minutes forty —
+      # there is nothing platform-shaped about vitest or biome, and this is the
+      # slowest runner here. The *build* above stays because the Rust step reads
+      # `dist/` off the disk, not because it is a check.
 
       # **Lint before test, which is the opposite of app.yml's order.** Both
       # compile the same tree, so the total is the same either way; what changes
@@ -174,12 +179,22 @@ jobs:
       # `--bundles nsis` rather than the config's `"targets": "all"`, which on
       # Windows would also mean an MSI and the WiX toolchain that comes with it.
       # NSIS is the one that installs without an administrator prompt.
+      # **On `main`, not on every pull request.** What this step adds over the
+      # lint and the tests above is one thing: that the *release* profile compiles
+      # and that `makensis` produces a setup.exe. That is the rehearsal this file's
+      # header is about — "without a job on `main` a Windows build would be
+      # attempted for the first time on the tag that ships it" — and it is eight
+      # minutes on the slowest runner this repository uses. A pull request gets the
+      # verdict that is about *its change* in about four minutes; `main` gets the
+      # one about shipping.
       - name: Build the installer
+        if: github.event_name != 'pull_request'
         working-directory: apps/desktop
         shell: bash
         run: pnpm tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Check the installer is there
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -190,9 +205,12 @@ jobs:
             exit 1
           }
 
-      # Last, and `always()`, which is the point: a red run is still a run that
-      # compiled the dependency tree, and that tree is the twenty minutes.
-      - if: always() && steps.cache.outputs.cache-hit != 'true'
+      # Last, and `always()` is the point: a red run is still a run that compiled
+      # the dependency tree, and that tree is the twenty minutes. `!cancelled()`
+      # because a cancelled one is not evidence of anything — the entry is
+      # immutable, so a half-built tree saved here would be the tree every later
+      # run restores and none of them could replace.
+      - if: always() && !cancelled() && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ steps.paths.outputs.paths }}
