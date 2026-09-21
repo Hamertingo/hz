@@ -10,13 +10,23 @@
 //! *configured* under them — not what the session will take, and nothing about
 //! a managed account's own catalog.
 //!
-//! **The cost of that shape is a probe.** Nothing before a session names a
-//! model, so the composer's picker would be empty until the reader had already
-//! sent something. [`all`] therefore opens one short ACP session, reads the
-//! options off it and closes the child — cached, for the reason
-//! [`ProbeCache`](crate::harness::ProbeCache) exists. Put plainly: **probing
-//! leaves a session behind in mcode's own store**, which the reader will see in
-//! their TUI history. Everything else about a model choice is free.
+//! **Every session states the list, so a live one is the better probe.**
+//! Nothing before a session names a model, so the composer's picker would be
+//! empty until the reader had already sent something — and the obvious cure,
+//! opening a session of its own to ask, is a second child booted beside the
+//! session already up. Measured: that boot is the whole cost and `session/new`
+//! is not (1.0s to answer `initialize`, then 0.02s per session on a child that
+//! has already done it). So the reply is taken wherever it is read, in
+//! [`remember_configs`] — on every `session/new`, `session/resume`,
+//! `session/fork` and `set_config_option`, the composer's park included, since
+//! that runs the whole handshake while the reader is still typing.
+//!
+//! [`all`] keeps its own probe for the one case nothing else covers: a picker
+//! opened with no session anywhere, which is the settings screen on a cold app
+//! with no project attached. It is cached, for the reason
+//! [`ProbeCache`](crate::harness::ProbeCache) exists, and **it leaves a session
+//! behind in mcode's own store**, which the reader will see in their TUI
+//! history — the rare path now, where it used to be the launch path.
 //!
 //! **Effort is per model and only the active model's ladder is ever stated.**
 //! One reading therefore fills `efforts` on the row it is running and leaves
@@ -76,6 +86,27 @@ pub async fn find(id: &ModelId) -> Option<Model> {
 /// Drops the cached answer, so the next read probes again.
 pub fn forget() {
     CACHE.forget();
+}
+
+/// Takes the list off a session's own `configOptions`.
+///
+/// **The funnel every session's reply goes through**, and the reason the picker
+/// almost never pays for a probe: the agent states this list on `session/new`,
+/// on `session/resume`, on `session/fork` and on every `set_config_option`, so a
+/// session that is already up has answered the question [`all`] would otherwise
+/// open a child to ask. It is the same list on every session — the machine's own
+/// provider configuration is what it describes, not the project — so one
+/// session's reply stands for all of them.
+///
+/// A reply that names no model is ignored rather than stored: an empty list
+/// would blank a picker that already has a good answer, which is the same
+/// direction [`all`] takes when its probe fails.
+pub fn remember_configs(configs: &ConfigOptions) {
+    let models = from_configs(configs);
+    if models.is_empty() {
+        return;
+    }
+    CACHE.insert("models", models);
 }
 
 /// The models a session's own `configOptions` state.
@@ -450,5 +481,42 @@ mod tests {
         // takes.
         let models = from_configs(&configs);
         assert_eq!(models[0].efforts, vec![Effort::Low, Effort::High]);
+    }
+
+    /// What the picker draws after a session has opened is that session's own
+    /// reply — not a second reading taken from a child of the picker's own.
+    ///
+    /// **Deterministic, which is why the list is hand-built rather than the
+    /// capture's.** A probe fetches the machine's whole catalog, so a session's
+    /// reply holding exactly one row is an answer nothing else can be mistaken
+    /// for: without the seed this fails on every machine, by booting a child and
+    /// getting either nothing or somebody else's list.
+    #[tokio::test]
+    async fn a_session_reply_is_what_the_picker_draws_from() {
+        // The cache is process-wide, so a neighbour's reading would go on to
+        // make the assertion below pass for the wrong reason.
+        forget();
+
+        let reply = serde_json::json!({
+            "configOptions": [
+                {
+                    "type": "select",
+                    "id": "model",
+                    "currentValue": "m:custom_provider%3Aopencode-go:minimax-m3:v:thinking",
+                    "options": [
+                        {"value": "m:custom_provider%3Aopencode-go:minimax-m3:v:thinking", "name": "minimax-m3 · thinking"}
+                    ]
+                }
+            ]
+        });
+        remember_configs(&ConfigOptions::of(&reply));
+
+        let listed = all().await;
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].id,
+            ModelId::new("m:custom_provider%3Aopencode-go:minimax-m3:v:thinking")
+        );
     }
 }

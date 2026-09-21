@@ -17,6 +17,7 @@ import { clearFanOut, fanOutModels } from "@/hooks/useModelFanOut";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import { canFanOut, fanOutPlan } from "@/lib/fanOut";
 import { changeRange } from "@/lib/changes";
+import { modelsWaiting } from "@/lib/modelRead";
 import { fastFor, fastNotice } from "@/lib/fastMode";
 import { lastTurn, secondOpinionPrompt } from "@/lib/secondOpinion";
 import { isWindowFocused, onFocusChange } from "@/lib/focus";
@@ -730,6 +731,14 @@ const preparedRef = useRef<{ id: string; cwd: string } | null>(null);
 /// arrive under, before any session exists to select.
 const [preparedId, setPreparedId] = useState<string | null>(null);
 
+/// Whether the park for the composer's current target has answered — landed or
+/// failed, either way it is no longer in flight. Read by `modelsWaitingNow`.
+const [parkLanded, setParkLanded] = useState(false);
+
+/// Whether the project list has been read, which is what tells the wait
+/// "no park is coming" apart from "the pick is not known yet".
+const [projectsSettled, setProjectsSettled] = useState(false);
+
 useEffect(() => {
   // Only for a prompt that will *create* a session: a resume re-opens its own
   // child, and there is nothing to park for it.
@@ -739,6 +748,8 @@ useEffect(() => {
   const id = crypto.randomUUID();
   preparedRef.current = { id, cwd: targetPath };
   setPreparedId(id);
+  // A park is on its way, so the model read waits for it — see `waitingOnPark`.
+  setParkLanded(false);
   // Quiet on purpose. `send_msg` spawns its own child when nothing is parked, so
   // a failure here costs the reader the boot they were going to pay regardless.
   //
@@ -760,8 +771,23 @@ useEffect(() => {
     // it is composed into the session at `session/new`. Without this the send
     // would find the park's agent did not match and pay a whole boot, so the boot
     // is paid here instead — while they are still typing.
-  }).catch(() => {});
+  })
+    .catch(() => {})
+    // Landed or failed, the model read is free to go: a park that failed also
+    // leaves no child to ask, so waiting longer would only delay the probe.
+    .finally(() => setParkLanded(true));
 }, [selectedSessionId, targetPath, agentName]);
+
+/// Whether the model read has to wait — for the project list that says whether a
+/// park is coming, and then for the park itself. The rule and its reasoning are
+/// [modelsWaiting](lib/modelRead.ts)'s, which is pure and tested; this is the
+/// state it reads.
+const modelsWaitingNow = modelsWaiting({
+  selectedSessionId,
+  projectsSettled,
+  targetPath,
+  parkLanded,
+});
 
 /// Opens a review of the newest turn: a session of its own, in its own worktree,
 /// **seeded from the work it is being asked to judge**.
@@ -1824,6 +1850,16 @@ useEffect(() => {
 }, [showArchived])
 
 useEffect(() => {
+  // **Waiting, and the spinner is the truth while it waits.** A park is inbound
+  // with the same handshake this read would have to pay for, so going now would
+  // boot a second child beside it — see [modelsWaiting](lib/modelRead.ts).
+  // Leaving `loadingModels` up is what keeps the picker from drawing "no models"
+  // for that beat.
+  if (modelsWaitingNow) {
+    setLoadingModels(true);
+    return;
+  }
+
   let cancelled = false;
   setLoadingModels(true);
 
@@ -1850,7 +1886,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [harness, modelsGeneration])
+}, [harness, modelsGeneration, modelsWaitingNow])
 
 /// Drops whatever the harnesses cached and reads again.
 ///
@@ -1883,7 +1919,10 @@ useEffect(() => {
     })
     // Without this a failed read leaves the picker silently empty, and the
     // reason only reaches the console.
-    .catch((e) => setError(String(e)));
+    .catch((e) => setError(String(e)))
+    // Settled either way, and that is what releases the model read: a failed
+    // read means no target, so there is no park left for it to wait on.
+    .finally(() => setProjectsSettled(true));
 }, [])
 
 // The repositories under the selected project: one for a project that is itself

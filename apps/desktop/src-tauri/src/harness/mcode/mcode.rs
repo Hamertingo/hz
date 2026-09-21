@@ -137,6 +137,10 @@ impl McodeSession {
     fn configs(&self, configs: &parser::ConfigOptions) {
         *self.model.lock().expect("mcode model poisoned") = configs.model().map(str::to_string);
         *self.efforts.lock().expect("mcode efforts poisoned") = models::effort_levels(configs);
+        // Every `set_config_option` reply restates the whole list, so this is a
+        // free reading for the picker — and it is the one that keeps a session's
+        // provider change visible without a probe.
+        models::remember_configs(configs);
     }
 }
 
@@ -633,6 +637,13 @@ async fn start_session(
         probe: Arc::new(Mutex::new(None)),
     };
     let _ = config;
+
+    // **Taken, though the settings around it are not.** This is the composer's
+    // park as often as it is a send — the handshake runs the moment a project is
+    // acquired — so the list the picker needs is on the wire here before the
+    // reader has opened anything, and taking it is what keeps the picker from
+    // booting a child of its own beside this one.
+    models::remember_configs(&config);
 
     let settings = Instant::now();
 
@@ -1157,7 +1168,7 @@ pub async fn open_control() -> Result<Control> {
     });
 
     let opened = open_session(&client, &control_id, &scratch_cwd, true, None, None).await;
-    let (id, _configs) = match opened {
+    let (id, configs) = match opened {
         Ok(opened) => opened,
         Err(error) => {
             // Post-spawn, so the child is running with nobody left to talk to it.
@@ -1166,6 +1177,13 @@ pub async fn open_control() -> Result<Control> {
             return Err(error);
         }
     };
+
+    // The list, and nothing else about it. A management question is not a turn, so
+    // the *settings* above are deliberately left unapplied — but the reply states
+    // the model list the same way every session's does, and the machine's
+    // configuration is what it describes rather than this scratch directory's.
+    // Free, and it seeds the picker for a launch whose only session is this one.
+    models::remember_configs(&configs);
 
     Ok(Control {
         // The settings are not applied: a control child is never asked to run a
