@@ -15,7 +15,15 @@ name: app-windows
 on:
   pull_request:
     paths:
-      - "apps/desktop/**"
+      # **`apps/desktop/src-tauri/**`, not `apps/desktop/**`.** The frontend is
+      # one tree on both platforms and `app.yml` already type-checks and builds
+      # it, so a pull request that only moves React was paying for a Windows
+      # runner to compile nothing that could differ. What is here is what can
+      # actually break a Windows build: the Rust, the bundle config, the
+      # capabilities. Cost, stated: a frontend change that breaks the Windows
+      # build *only* is not caught here — and there is no such change, the
+      # command that builds it is the same one.
+      - "apps/desktop/src-tauri/**"
       - "apps/cli/**"
       - "crates/**"
       - "pnpm-lock.yaml"
@@ -23,7 +31,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "apps/desktop/**"
+      - "apps/desktop/src-tauri/**"
       - "apps/cli/**"
       - "crates/**"
       - "pnpm-lock.yaml"
