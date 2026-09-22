@@ -1075,6 +1075,7 @@ function Sidebar({
           right to clear them — except in fullscreen, where they're gone and the
           left edge is free. */}
       <div
+        data-drag-left=""
         className={cn(
           "flex h-(--titlebar-h) shrink-0 items-center px-2",
           // Left-aligned, the toggle's larger icon would sit 2px inside the

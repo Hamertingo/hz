@@ -52,6 +52,19 @@ async fn canonical(path: &str) -> Result<String> {
 #[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, Fail> {
     let mut projects: Vec<Project> = read_json(&projects_path().await?).await?;
+
+    // **A name that is still its own path is repaired on the way out.** The label
+    // is cached at attach time, and a build that derived it by splitting on `/`
+    // alone named every Windows project `\\?\C:\Users\…` — the whole path,
+    // because a canonicalized Windows path holds no `/` in it at all. Repairing
+    // here rather than in a migration keeps this read free of writes: the next
+    // attach, retag or selection rewrites the file with the fixed value.
+    for project in &mut projects {
+        if project.name.contains('/') || project.name.contains('\\') {
+            project.name = basename(&project.path);
+        }
+    }
+
     // Descending, so the newest selection sorts to the front. RFC 3339 stamps
     // compare correctly as strings at fixed width.
     projects.sort_by(|a, b| b.last_selected.cmp(&a.last_selected));
@@ -288,13 +301,42 @@ mod containment_tests {
 
 /// Trailing path segment. Mirrors the frontend's `basename` so a project's
 /// cached label matches what the UI would derive from the path.
+///
+/// **Windows canonicalizes with `\` and a `\\?\` prefix, and neither is a path
+/// a reader wrote.** `\\?\C:\Users\me\Downloads` holds no `/` at all, so a
+/// split on that alone handed the whole string back — and a project's row drew
+/// `\\?\C:\Users\Dashi\Downloads…` where its folder name belongs.
 fn basename(path: &str) -> String {
-    path.trim_end_matches('/')
-        .rsplit('/')
+    let trimmed = strip_verbatim(path).trim_end_matches(['/', '\\']);
+    trimmed
+        .rsplit(['/', '\\'])
         .next()
         .filter(|s| !s.is_empty())
-        .unwrap_or(path)
+        .unwrap_or(trimmed)
         .to_string()
+}
+
+/// Windows' verbatim path prefix, which names no folder and hides the ones that follow.
+fn strip_verbatim(path: &str) -> &str {
+    path.strip_prefix(r"\\?\UNC\")
+        .or_else(|| path.strip_prefix(r"\\?\"))
+        .unwrap_or(path)
+}
+
+#[cfg(test)]
+mod basename_tests {
+    use super::basename;
+
+    #[test]
+    fn a_project_is_named_the_folder_it_is() {
+        assert_eq!(basename("/Users/me/Downloads"), "Downloads");
+        assert_eq!(basename("/Users/me/Downloads/"), "Downloads");
+        // Windows, canonicalized: no forward slash anywhere in it, and a prefix
+        // that is not part of any name.
+        assert_eq!(basename(r"\\?\C:\Users\me\Downloads"), "Downloads");
+        assert_eq!(basename(r"\\?\UNC\server\share\proj"), "proj");
+        assert_eq!(basename(r"C:\Users\me\proj"), "proj");
+    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+import { basename as basenameShared } from "./format";
 import type { DirEntry } from "@/types/events";
 
 /// One drawn row: an entry and how deep it sits.
@@ -67,6 +68,6 @@ export function tabLabels(paths: readonly string[]): string[] {
   });
 }
 
-function basename(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1);
-}
+// One rule for a trailing segment, shared with the rest of the app — see
+// `basename` in format.ts, which learned about Windows' `\\?\` prefix.
+const basename = (path: string): string => basenameShared(path);

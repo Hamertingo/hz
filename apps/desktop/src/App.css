@@ -1439,6 +1439,9 @@ body.session-drag * {
   overflow: hidden;
 }
 
-[data-platform="windows"] [data-tauri-drag-region] {
+/* The sidebar's strip is at the left edge, where no control is drawn, so
+   reserving room there only cost it the space its own label needs — the spaces
+   switcher drew as `A…` on Windows. */
+[data-platform="windows"] [data-tauri-drag-region]:not([data-drag-left]) {
   padding-right: calc(138px + 0.75rem);
 }

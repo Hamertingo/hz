@@ -31,6 +31,8 @@ second description of it. GitHub's generated commit list is appended below it.
 
 ### Changed
 
+### Changed
+
 - **Windows draws its own window.** The system title bar is gone
   (`decorations: false`, in a `tauri.windows.conf.json` overlay so nothing else
   moves), the corners are rounded by CSS from the app's own radius, and the three
