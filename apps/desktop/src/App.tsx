@@ -115,6 +115,7 @@ import { dismissNotice, getNotices, pushNotice } from "@/hooks/useNotices";
 import { useIntegrations } from "@/hooks/useIntegrations";
 import { useSessionIssues } from "@/hooks/useIssues";
 import { useSessions } from "@/hooks/useSessions";
+import { useStableCallback } from "@/hooks/useStableCallback";
 import { useSubagentWork } from "@/hooks/useSubagentWork";
 import { useAgentAvailability, useMissingAgent } from "@/hooks/useAgentAvailability";
 import AgentMissingNotice from "@/components/composer/AgentMissingNotice";
@@ -1163,19 +1164,24 @@ function App() {
   // The dropped session is the one just opened, so it takes the focus. Only
   // on a drop that opens something: selecting after a refused one would swap
   // the grid for that session's single view.
-  const dropSession = ({ sessionId: anchor, region }: DropTarget, dropped: string) => {
-    if (!dropLabel(spaceGroups, anchor, dropped, region)) return;
-    // Nothing open, so the drop is the click: the session opens whole.
-    if (anchor !== EMPTY_VIEW) setGroups((prev) => openBeside(prev, anchor, dropped, region, space));
-    void handleSelectSessionIndexItem(dropped);
-  };
+  //
+  // Stable for the sidebar row's drag wiring, which the memo there compares.
+  const dropSession = useStableCallback(
+    ({ sessionId: anchor, region }: DropTarget, dropped: string) => {
+      if (!dropLabel(spaceGroups, anchor, dropped, region)) return;
+      // Nothing open, so the drop is the click: the session opens whole.
+      if (anchor !== EMPTY_VIEW)
+        setGroups((prev) => openBeside(prev, anchor, dropped, region, space));
+      void handleSelectSessionIndexItem(dropped);
+    },
+  );
 
-  const closeSessionPane = (sessionId: string) => {
+  const closeSessionPane = useStableCallback((sessionId: string) => {
     setGroups((prev) => closePane(prev, sessionId));
     if (sessionId !== selectedSessionId || !activeGroup) return;
     const next = members(activeGroup).find((id) => id !== sessionId);
     if (next) void handleSelectSessionIndexItem(next);
-  };
+  });
 
   // The single view's own drop zone; a grid's panes draw theirs. The empty
   // column is one too, drawn whole: the drop opens the session, so there is
@@ -1358,13 +1364,13 @@ function App() {
   /// is what makes that true for a row clicked in *another* session's list, and
   /// it is why the roster is read again here: it is live-only, so opening a view
   /// is the moment it is asked for.
-  const openSubagentView = (sessionId: string, memberSessionId: string) => {
+  const openSubagentView = useStableCallback((sessionId: string, memberSessionId: string) => {
     goToSession(() => {
       if (sessionId !== selectedSessionId) void handleSelectSessionIndexItem(sessionId);
     });
     setSubagentView({ sessionId, memberSessionId });
     void refreshDelegations(sessionId);
-  };
+  });
 
   const closeSubagentView = () => setSubagentView(null);
 
@@ -1391,10 +1397,10 @@ function App() {
   /// the follow-up strip's overflow row. A running one wins, since that is the one
   /// worth looking at; an empty roster opens nothing and leaves the caller to draw
   /// no control at all.
-  const openFirstSubagent = () => {
+  const openFirstSubagent = useStableCallback(() => {
     const first = delegations.find(isActive) ?? delegations[0];
     if (selectedSessionId && first) openSubagentView(selectedSessionId, first.sessionId);
-  };
+  });
 
   /// Whether the controls that point at "the subagents" have anything to open.
   /// Asks the roster and the runs rather than the task count: a background task
@@ -1408,14 +1414,14 @@ function App() {
   /// replayed after a restart — opens on the log's own account of it instead,
   /// which is the brief and nothing to read. Guessing at neither is the one
   /// answer that would open somebody else's work.
-  const openSubagentRun = (runId: string) => {
+  const openSubagentRun = useStableCallback((runId: string) => {
     if (!selectedSessionId) return;
     const run = subagents.find((candidate) => candidate.id === runId);
     if (!run) return;
 
     const memberId = memberIdOf(run, delegations, resultByCallId.get(runId));
     openSubagentView(selectedSessionId, memberId ?? runId);
-  };
+  });
 
   /// Opens the plan in the pane, for the rows the strip had no room for. Same
   /// bargain as the subagent view: the tab, not the selection.
@@ -1782,7 +1788,7 @@ function App() {
   /// sentence. A settled session is in neither list the moment the reader is on
   /// the live one, so matching on the index alone kept exactly the cards nobody
   /// could account for.
-  const changeSpace = (next: string | null) => {
+  const changeSpace = useStableCallback((next: string | null) => {
     setStoredSpace(next);
     setProjectFilter(null);
 
@@ -1795,7 +1801,7 @@ function App() {
         dismissNotice(notice.sessionId, notice.kind);
       }
     }
-  };
+  });
 
   /// Declares a space, and reports it only where one is actually made.
   ///
@@ -1891,11 +1897,11 @@ function App() {
 
   /// The sidebar's own "New space", which is a request for the field rather
   /// than for a space — naming it is Settings' job, so this only opens the tab.
-  const openNewSpace = () => {
+  const openNewSpace = useStableCallback(() => {
     setSettingsTab("spaces");
     setNamingSpace(true);
     setSettingsOpen(true);
-  };
+  });
 
   /// Leaves the issues page for the empty composer, with the issue tagged in
   /// the draft.
@@ -1930,10 +1936,8 @@ function App() {
   /// and nothing else: the row left the settled list it was drawn from, the
   /// view stayed settled, and the session the reader had just taken back was
   /// nowhere on screen.
-  const handleSetSessionFlags = async (
-    sessionId: string,
-    flags: { archived?: boolean; pinned?: boolean },
-  ) => {
+  const handleSetSessionFlags = useStableCallback(
+    async (sessionId: string, flags: { archived?: boolean; pinned?: boolean }) => {
     // Everything below describes a move the index has made. A failed write —
     // or one naming a session that is no longer there — has moved nothing, so
     // it gets no celebration, no worktree offer, and no navigation: the row is
@@ -1973,9 +1977,76 @@ function App() {
       setShowArchived(false);
       goToSession(() => void handleSelectSessionIndexItem(sessionId));
     }
-  };
+  },
+  );
 
-  const toggleSidebar = () => setCollapsed((prev) => !prev);
+  const toggleSidebar = useStableCallback(() => setCollapsed((prev) => !prev));
+
+  // The memoized surfaces — the sidebar and the split panes — compare the
+  // callbacks they take, so each one's identity has to outlive App's per-delta
+  // renders. Only props of those two are stabilized here; everything else keeps
+  // its fresh closure. The hook's own handlers are rebuilt every render, so the
+  // ones a memoized surface receives go through the wrapper under new names.
+  const openSearch = useStableCallback(() => setPage("search"));
+  const openSettings = useStableCallback(() => setSettingsOpen(true));
+  const openSessionById = useStableCallback((id: string) =>
+    void handleSelectSessionIndexItem(id),
+  );
+  const newSessionFromSidebar = useStableCallback(() => goToSession(handleNewSession));
+  const newSessionInProject = useStableCallback((path: string) =>
+    goToSession(() => {
+      handleSelectProject(path);
+      handleNewSession();
+    }),
+  );
+  const selectFromSidebar = useStableCallback((sessionId: string) =>
+    goToSession(() => {
+      // **The row is the way out of a subagent too.** Landing back on the
+      // parent with its child's conversation still filling the column is
+      // the one case the selection-changed rule cannot catch: the
+      // selection does not move. Dropped here so the click always lands
+      // on the session's own transcript.
+      setSubagentView(null);
+      void handleSelectSessionIndexItem(sessionId);
+    }),
+  );
+  const toggleArchived = useStableCallback(() => setShowArchived((v) => !v));
+  const installUpdateFromRow = useStableCallback(() => void installUpdate());
+  const paneSendNow = useStableCallback(handleSendNow);
+  const paneRespondPermission = useStableCallback(handleRespondPermission);
+  const paneAnswerQuestions = useStableCallback(handleAnswerQuestions);
+  const paneCancelQuestion = useStableCallback(handleCancelQuestion);
+  const paneDetach = useStableCallback(detachSession);
+  const paneFork = useStableCallback(forkSession);
+  const paneDelete = useStableCallback(deleteSession);
+
+  // The callback bundle every split pane's transcript takes. Memoized because
+  // `SplitView` is: a stable object is the difference between the panes
+  // re-rendering and the grid being skipped outright.
+  const paneChatProps = useMemo(
+    () => ({
+      onOpenSubagent: openSubagentRun,
+      onOpenSession: openSessionById,
+      onSendNow: paneSendNow,
+      onOpenSubagents: canOpenSubagent ? openFirstSubagent : undefined,
+      onRespondPermission: paneRespondPermission,
+      onAnswerQuestions: paneAnswerQuestions,
+      onCancelQuestion: paneCancelQuestion,
+      onLoadOlder: loadOlderEvents,
+    }),
+    [
+      openSubagentRun,
+      openSessionById,
+      paneSendNow,
+      canOpenSubagent,
+      openFirstSubagent,
+      paneRespondPermission,
+      paneAnswerQuestions,
+      paneCancelQuestion,
+      loadOlderEvents,
+    ],
+  );
+
   useHotkey("sidebar.toggle", toggleSidebar);
   // Takes the sidebar with it: the field lives there, and a chord that opened a
   // search nobody can see would be worse than no chord. `autoFocus` covers the
@@ -2412,7 +2483,7 @@ function App() {
       sidebar={
         <Sidebar
           items={visibleSessions}
-          onOpenSearch={() => setPage("search")}
+          onOpenSearch={openSearch}
           projects={spaceProjects}
           spaces={spaces}
           space={space}
@@ -2438,28 +2509,13 @@ function App() {
           selectedSessionId={pageOpen ? null : selectedSessionId}
           collapsed={collapsed}
           onToggleCollapsed={toggleSidebar}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onSelect={(sessionId) =>
-            goToSession(() => {
-              // **The row is the way out of a subagent too.** Landing back on the
-              // parent with its child's conversation still filling the column is
-              // the one case the selection-changed rule cannot catch: the
-              // selection does not move. Dropped here so the click always lands
-              // on the session's own transcript.
-              setSubagentView(null);
-              void handleSelectSessionIndexItem(sessionId);
-            })
-          }
+          onOpenSettings={openSettings}
+          onSelect={selectFromSidebar}
           groups={spaceGroups}
           onDropSession={dropSession}
           splitLearned={splitLearned}
-          onNewSession={() => goToSession(handleNewSession)}
-          onNewSessionInProject={(path) =>
-            goToSession(() => {
-              handleSelectProject(path);
-              handleNewSession();
-            })
-          }
+          onNewSession={newSessionFromSidebar}
+          onNewSessionInProject={newSessionInProject}
           onOpenPlugins={openPlugins}
           pluginsOpen={pluginsOpen}
           onOpenInbox={openInbox}
@@ -2468,16 +2524,16 @@ function App() {
           // Lit on the inbox alone, a reader who opened an issue from it would
           // see nothing saying where they are or how to get back.
           inboxActive={inboxOpen || issuesOpen || prsOpen}
-          onDetach={detachSession}
+          onDetach={paneDetach}
           onSetFlags={handleSetSessionFlags}
-          onFork={forkSession}
-          onDelete={deleteSession}
+          onFork={paneFork}
+          onDelete={paneDelete}
           showArchived={showArchived}
-          onToggleArchived={() => setShowArchived((v) => !v)}
+          onToggleArchived={toggleArchived}
           updateStatus={updateStatus}
           updateBlocked={anyRunning}
           updateManual={updateManual}
-          onInstallUpdate={() => void installUpdate()}
+          onInstallUpdate={installUpdateFromRow}
         />
       }
       header={
@@ -3262,7 +3318,7 @@ function App() {
           focusedId={selectedSessionId}
           paneState={paneState}
           groups={spaceGroups}
-          onFocus={(id) => void handleSelectSessionIndexItem(id)}
+          onFocus={openSessionById}
           onClose={closeSessionPane}
           // `chatShown`, not `!pageOpen`: the pane at its wide size covers this
           // column too, and a transcript that is not on screen must not follow
@@ -3270,16 +3326,8 @@ function App() {
           // lands at zero, which is what the reader would come back to. A subagent
           // view over it is the third way this column stops being on screen.
           active={chatShown && subagentView === null}
-          chat={{
-            onOpenSubagent: openSubagentRun,
-            onOpenSession: (id) => void handleSelectSessionIndexItem(id),
-            onSendNow: handleSendNow,
-            onOpenSubagents: canOpenSubagent ? openFirstSubagent : undefined,
-            onRespondPermission: handleRespondPermission,
-            onAnswerQuestions: handleAnswerQuestions,
-            onCancelQuestion: handleCancelQuestion,
-            onLoadOlder: (id) => loadOlderEvents(id),
-          }}
+
+          chat={paneChatProps}
         />
       ) : (
       // The single view is one drop target: a row let go here opens beside

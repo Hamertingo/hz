@@ -94,7 +94,16 @@ export type PendingAsk = PermissionRequestPayload | QuestionsAskedPayload;
 /// app already memoises once per session. The two callers read the same rule, so
 /// the card in the transcript and the card at the composer can never disagree
 /// about which requests are live.
+///
+/// Pure in the array, so the walk is cached on its identity: `App` and the
+/// pane's `Chat` hand in the same session log, and a committed event replaces
+/// the array whole where a delta never touches it.
+const pendingAsksCache = new WeakMap<readonly AgentEvent[], PendingAsk[]>();
+
 export function pendingAsksOf(source: readonly AgentEvent[]): PendingAsk[] {
+  const cached = pendingAsksCache.get(source);
+  if (cached) return cached;
+
   const asks: PendingAsk[] = [];
   const answered = new Set<string>();
 
@@ -106,7 +115,9 @@ export function pendingAsksOf(source: readonly AgentEvent[]): PendingAsk[] {
     if (payload.type === "permission_decided") answered.add(payload.requestId);
   }
 
-  return asks.filter((ask) => !answered.has(ask.requestId));
+  const live = asks.filter((ask) => !answered.has(ask.requestId));
+  pendingAsksCache.set(source, live);
+  return live;
 }
 
 export function isToolGroup(item: WorkItem): item is ToolGroup {
@@ -622,22 +633,9 @@ function isPlanSource(event: AgentEvent): event is AgentEvent & TodoSource {
   return type === "tool_call_started" || type === "tool_call_completed";
 }
 
-export function buildTranscript(
-  source: AgentEvent[],
-  /// Whether a child is actually running this session. A call with no result is
-  /// only *pending* while something could still produce one; with the process
-  /// gone it is abandoned, and rendering it as in-flight leaves a row shimmering
-  /// forever. Most visible on `AskUserQuestion`, which blocks the harness until
-  /// the app answers and so is the call most likely to be open at a quit — but
-  /// it is true of any tool call caught mid-flight.
-  live = false,
-  /// Background tasks the child still holds, by task id. A call that spawned
-  /// one of these is pending whatever `live` says: the turn ends on its
-  /// `result`, but a background subagent reports back in a turn of its own, and
-  /// marking its call abandoned in between would flicker the row to "never
-  /// finished" seconds before its result lands.
-  liveTaskIds: ReadonlySet<string> = EMPTY_TASKS,
-): {
+/// What one pass over a session's log answers. Named so the transcript cache
+/// below can hold it.
+export type Transcript = {
   /// Main-thread events only, in `seq` order. Subagent work is excluded; the
   /// spawning tool call stays so the chat can show a row linking to the panel.
   events: AgentEvent[];
@@ -674,7 +672,40 @@ export function buildTranscript(
   /// chat — and a main-thread one would sit buried in a turn that collapses
   /// once it closes. One place, below the transcript, works for both.
   pendingAsks: PendingAsk[];
-} {
+};
+
+/// One pass over a session log per answer, not one per caller: `App` and the
+/// pane's `Chat` build the same transcript off the same array every render, and
+/// the walk is the expensive thing in the render path. Keyed on the events
+/// array's identity — a committed event replaces the array whole, a delta never
+/// touches it — and on the two arguments that can differ under one array, since
+/// a changed `live` or task set with an unchanged log must recompute.
+const transcriptCache = new WeakMap<
+  AgentEvent[],
+  { live: boolean; liveTaskIds: ReadonlySet<string>; result: Transcript }
+>();
+
+export function buildTranscript(
+  source: AgentEvent[],
+  /// Whether a child is actually running this session. A call with no result is
+  /// only *pending* while something could still produce one; with the process
+  /// gone it is abandoned, and rendering it as in-flight leaves a row shimmering
+  /// forever. Most visible on `AskUserQuestion`, which blocks the harness until
+  /// the app answers and so is the call most likely to be open at a quit — but
+  /// it is true of any tool call caught mid-flight.
+  live = false,
+  /// Background tasks the child still holds, by task id. A call that spawned
+  /// one of these is pending whatever `live` says: the turn ends on its
+  /// `result`, but a background subagent reports back in a turn of its own, and
+  /// marking its call abandoned in between would flicker the row to "never
+  /// finished" seconds before its result lands.
+  liveTaskIds: ReadonlySet<string> = EMPTY_TASKS,
+): Transcript {
+  const cached = transcriptCache.get(source);
+  if (cached && cached.live === live && cached.liveTaskIds === liveTaskIds) {
+    return cached.result;
+  }
+
   const events = [...source].sort(bySeq);
 
   const resultByCallId = new Map<string, ToolResult>();
@@ -811,7 +842,7 @@ export function buildTranscript(
   // parent that is reading this one.
   const todo = todoTimeline(mainThread.filter(isPlanSource));
 
-  return {
+  const result: Transcript = {
     events: mainThread,
     // `subagentById` is keyed by the spawning call's id, so its key set is
     // exactly the calls that render as a `SubagentRow` and must not group.
@@ -829,6 +860,9 @@ export function buildTranscript(
     todoPlan: todo.plan,
     pendingAsks,
   };
+
+  transcriptCache.set(source, { live, liveTaskIds, result });
+  return result;
 }
 
 /// Merges a fetched page of older log under what a session already holds.

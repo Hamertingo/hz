@@ -135,6 +135,10 @@ const removingWorktrees = new Set<string>();
 /// One shared empty set, so a session with no tasks keeps its transcript memo.
 const NO_TASKS: ReadonlySet<string> = new Set();
 
+/// One shared empty queue, for the same reason: a pane with nothing held used
+/// to draw a fresh `[]` per render, and that identity is what its memo compares.
+const NO_QUEUED: QueuedPrompt[] = [];
+
 /// What a transcript pane draws for one session. The selected session's fields
 /// on the hook's return are this, spread.
 export type PaneState = {
@@ -2774,7 +2778,9 @@ useDockBadge(statusBySession, asksBySession, sessionIndexItems);
 // Prompts typed into the running turn and not yet handed to the CLI. Not gated
 // on `busy` like the live state below: a queue only exists while a turn runs,
 // and the flush that empties it is the thing that clears these.
-const queuedMessages = selectedSessionId ? queuedBySession[selectedSessionId] ?? [] : [];
+const queuedMessages = selectedSessionId
+  ? queuedBySession[selectedSessionId] ?? NO_QUEUED
+  : NO_QUEUED;
 
 // What the agent is blocked on, for the cards the composer draws. Read here
 // rather than in `Chat` because the composer is `App`'s own footer and the
@@ -2857,36 +2863,81 @@ const stopDelegations = useCallback(async (sessionId: string): Promise<string | 
   }
 }, []);
 
-const compacting = compactingOf(selectedSession, busy);
-const apiRetry = apiRetryOf(selectedSession, busy);
+// The compaction/retry walks, run once per busy session here instead of once
+// per pane per render: a streaming turn renders `App` once per coalesced delta,
+// and `paneState` used to re-walk each pane's log on every one of them. Only
+// busy sessions are in the map — the walks are gated on busy, so an idle
+// session answers without a walk at all — and the selected session's own
+// `compacting`/`apiRetry` read the same map, since its `busy` is the same
+// status lookup `paneState` does.
+const paneWalks = useMemo(() => {
+  const indexStatus = new Map(sessionIndexItems.map((i) => [i.sessionId, i.status]));
+  const walks = new Map<string, { compacting: boolean; apiRetry: ApiRetryState | null }>();
+  for (const session of sessions) {
+    const status =
+      statusBySession[session.sessionId] ?? indexStatus.get(session.sessionId) ?? "idle";
+    if (status !== "in_progress") continue;
+    walks.set(session.sessionId, {
+      compacting: compactingOf(session, true),
+      apiRetry: apiRetryOf(session, true),
+    });
+  }
+  return walks;
+}, [sessions, statusBySession, sessionIndexItems]);
+
+const selectedWalk = selectedSessionId ? paneWalks.get(selectedSessionId) : undefined;
+const compacting = selectedWalk?.compacting ?? false;
+const apiRetry = selectedWalk?.apiRetry ?? null;
 
 /// The live state one split pane draws — what the selected session's own
 /// fields above answer, for any loaded session.
-const paneState = (sessionId: string): PaneState => {
-  const session = sessions.find((s) => s.sessionId === sessionId) ?? null;
-  const status =
-    statusBySession[sessionId]
-    ?? sessionIndexItems.find((i) => i.sessionId === sessionId)?.status
-    ?? "idle";
-  const paneBusy = status === "in_progress";
-  return {
-    session,
-    streamingBlock: streamingContentBlock[sessionId] ?? null,
-    busy: paneBusy,
-    working: paneBusy ? workingBySession[sessionId] ?? null : null,
-    backgroundTaskCount: tasksBySession[sessionId]?.length ?? 0,
-    liveTaskIds: liveTaskIdsBySession[sessionId] ?? NO_TASKS,
-    compacting: compactingOf(session, paneBusy),
-    apiRetry: apiRetryOf(session, paneBusy),
-    queuedMessages: queuedBySession[sessionId] ?? [],
-  };
-};
+///
+/// Wrapped and fed by memos because its caller builds a fresh object per pane
+/// per render: the pane's transcript memo compares these fields, so the walks
+/// come from `paneWalks` and the empty-slot fallbacks are shared constants —
+/// a fresh `[]` or a re-run walk per render is exactly what defeats them.
+const paneState = useCallback(
+  (sessionId: string): PaneState => {
+    const session = sessions.find((s) => s.sessionId === sessionId) ?? null;
+    const status =
+      statusBySession[sessionId]
+      ?? sessionIndexItems.find((i) => i.sessionId === sessionId)?.status
+      ?? "idle";
+    const paneBusy = status === "in_progress";
+    const walk = paneWalks.get(sessionId);
+    return {
+      session,
+      streamingBlock: streamingContentBlock[sessionId] ?? null,
+      busy: paneBusy,
+      working: paneBusy ? workingBySession[sessionId] ?? null : null,
+      backgroundTaskCount: tasksBySession[sessionId]?.length ?? 0,
+      liveTaskIds: liveTaskIdsBySession[sessionId] ?? NO_TASKS,
+      compacting: walk?.compacting ?? false,
+      apiRetry: walk?.apiRetry ?? null,
+      queuedMessages: queuedBySession[sessionId] ?? NO_QUEUED,
+    };
+  },
+  [
+    sessions,
+    statusBySession,
+    sessionIndexItems,
+    streamingContentBlock,
+    workingBySession,
+    tasksBySession,
+    liveTaskIdsBySession,
+    queuedBySession,
+    paneWalks,
+  ],
+);
 
 // What the harness said about fast mode on the newest turn — drawn beside the
 // switch, never folded back into the composer's pick. `fast` is what was asked
 // for; this is what the CLI did with it, and the two disagreeing is the whole
 // point of drawing it.
-const fastNote = fastNotice(selectedSession?.events ?? []);
+const fastNote = useMemo(
+  () => fastNotice(selectedSession?.events ?? []),
+  [selectedSession?.events],
+);
 
 // How full the model's context is. Derived from the log rather than tracked,
 // because both things that move it are already persisted there — a turn's own
@@ -2897,7 +2948,7 @@ const fastNote = fastNotice(selectedSession?.events ?? []);
 // and the turn before it does the reverse. Not gated on `busy` like the two
 // above — occupancy is a fact about the conversation, not about a live run, so
 // a settled session's last reading is still the right one.
-const contextUsage: { used: number; max: number; costUsd: number | null } | null = (() => {
+const contextUsage: { used: number; max: number; costUsd: number | null } | null = useMemo(() => {
   // **The live reading leads, and it is the same number the walk below would
   // find.** The mapper folds a `usage_update` onto the `turn_completed` that
   // follows it, so the two agree wherever both exist — but this copy exists
@@ -2945,7 +2996,9 @@ const contextUsage: { used: number; max: number; costUsd: number | null } | null
   }
 
   return used !== null && max !== null ? { used, max, costUsd: cost } : null;
-})();
+  // The live half reads `usageBySession`, the walk reads the log; a committed
+  // event replaces the events array whole, so identity is the right gate.
+}, [selectedSessionId, usageBySession, selectedSession]);
 
 // The agent's own command list for the session on screen, or `null` where its
 // child has not published one. **`null` is "not yet", never "none"** — the
