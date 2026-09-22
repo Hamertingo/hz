@@ -1,6 +1,7 @@
 import { defaultRehypePlugins, type StreamdownProps } from "streamdown";
 
 import { findPromptPaths, isFilePath, isRelativePath, splitLocator } from "@/lib/filePath";
+import { findPrRefs } from "@/lib/prRef";
 
 // `rehype-harden` drops the href of any link it cannot resolve, which is right,
 // and then writes " [blocked]" into the prose beside it, which is not: two
@@ -88,6 +89,15 @@ export const FILE_PATH_CLASS = "hz-file-path";
 /// this opens anything.
 export const FILE_LINK_CLASS = "hz-file-path-link";
 
+/// The marker `rehypePrRefs` leaves on a pull request a message names, and what
+/// tells `Markdown`'s `span` override which spans are its own.
+///
+/// The number rides `data-pr` rather than being read back out of the text, the
+/// same reason a path rides `title`: the label a reader sees is the reference as
+/// it was written, and a chip that parsed its own label would be a second copy
+/// of a rule that already ran.
+export const PR_REF_CLASS = "hz-pr-ref";
+
 /// Enough of hast to walk it. Typed here rather than pulled from `@types/hast`,
 /// which is not a dependency and would be one for four fields.
 type HastNode = {
@@ -119,6 +129,22 @@ function marked(path: string, children: HastNode[], wasLink = false, line?: numb
       ...(line ? { dataLine: String(line) } : {}),
     },
     children,
+  };
+}
+
+/// The span a named pull request is marked with.
+///
+/// A `span` and not an `a`, which is the one place this departs from
+/// [anchorToFile]: a link here does not leave the app, and an anchor that
+/// Streamdown hands to `Anchor` would raise the "open it out there?" dialog for
+/// something that opens a pane. Nothing downstream has to know the difference —
+/// `span` is already where the file-path marker lands.
+function markedPr(number: number, label: string): HastNode {
+  return {
+    type: "element",
+    tagName: "span",
+    properties: { className: [PR_REF_CLASS], dataPr: String(number) },
+    children: [{ type: "text", value: label }],
   };
 }
 
@@ -164,6 +190,13 @@ function decodePath(href: string): string {
   }
 }
 
+/// A run of prose one of the passes acts on: where it sits, and the element that
+/// replaces it.
+type Run = { start: number; end: number; node: HastNode };
+
+/// What a pass looks for in a string of prose.
+type Finder = (value: string) => Run[];
+
 /// Marks every path in the prose so `Markdown` can draw it as a link.
 ///
 /// Runs after sanitize, which would otherwise strip what this adds, and
@@ -175,7 +208,44 @@ function rehypeFilePaths() {
   return (tree: HastNode) => walk(tree);
 }
 
-export function walk(node: HastNode) {
+/// Marks every pull request a message names, so `Markdown` can draw it as a
+/// chip that opens the pull-requests page on that number.
+///
+/// A second pass rather than a second thing the file pass looks for, because
+/// the two answer different questions — a path is a file on this machine, a
+/// number is a pull request in this repository — and the walk they share is the
+/// only part that is the same.
+function rehypePrRefs() {
+  return (tree: HastNode) =>
+    walk(tree, (value) =>
+      findPrRefs(value).map((ref) => ({
+        start: ref.start,
+        end: ref.end,
+        node: markedPr(ref.number, value.slice(ref.start, ref.end)),
+      })),
+    );
+}
+
+/// One walk, and the two passes above hand it what to look for.
+///
+/// The file pass is the default because it was here first and because it is the
+/// one its own tests drive by name; `element` is its own step — an anchor whose
+/// href names a file is *converted* rather than descended into — and is left
+/// out by a pass that has no such element. Everything else is shared: the
+/// recursion, the elements nothing descends into, and the splitting of one text
+/// node into the runs around a match.
+export function walk(
+  node: HastNode,
+  find: Finder = (value) =>
+    findPromptPaths(value).map(({ start, end, path, line }) => ({
+      start,
+      end,
+      // The label is the match and not `path`: the two differ by the locator,
+      // which the link keeps on screen and leaves out of what it opens.
+      node: marked(path, [{ type: "text", value: value.slice(start, end) }], false, line),
+    })),
+  element: (node: HastNode) => HastNode | null = anchorToFile,
+) {
   const children = node.children;
   if (!children) return;
 
@@ -187,14 +257,14 @@ export function walk(node: HastNode) {
     const child = children[i];
 
     if (child.type === "element") {
-      const link = anchorToFile(child);
+      const link = element?.(child);
       if (link) {
         next ??= children.slice(0, i);
         next.push(link);
         continue;
       }
 
-      if (!NOT_PROSE.has(child.tagName ?? "")) walk(child);
+      if (!NOT_PROSE.has(child.tagName ?? "")) walk(child, find, element);
       next?.push(child);
       continue;
     }
@@ -202,9 +272,9 @@ export function walk(node: HastNode) {
     const value = child.type === "text" ? child.value : undefined;
     // Relative paths too, the bubble's own reading. The pass has no working
     // directory to resolve one against, so the span carries it as written and
-    // `FilePathSpan` resolves it against the chat's cwd, as a mention is.
-    const matches = value ? findPromptPaths(value) : [];
-    if (!value || matches.length === 0) {
+    // `MarkedSpan` resolves it against the chat's cwd, as a mention is.
+    const runs = value ? find(value) : [];
+    if (!value || runs.length === 0) {
       next?.push(child);
       continue;
     }
@@ -212,11 +282,9 @@ export function walk(node: HastNode) {
     next ??= children.slice(0, i);
 
     let at = 0;
-    // The label is the match and not `path`: the two differ by the locator,
-    // which the link keeps on screen and leaves out of what it opens.
-    for (const { start, end, path, line } of matches) {
+    for (const { start, end, node } of runs) {
       if (start > at) next.push({ type: "text", value: value.slice(at, start) });
-      next.push(marked(path, [{ type: "text", value: value.slice(start, end) }], false, line));
+      next.push(node);
       at = end;
     }
     if (at < value.length) next.push({ type: "text", value: value.slice(at) });
@@ -225,17 +293,20 @@ export function walk(node: HastNode) {
   if (next) node.children = next;
 }
 
-/// The same pipeline with paths marked, for the one surface where a path names
-/// a file on *this* machine.
+/// The same pipeline with the references a session can act on marked: paths that
+/// name a file on *this* machine, and pull request numbers that name one in this
+/// repository.
 ///
 /// A second list rather than a flag, because which surface gets this is the
 /// part worth being able to read. An issue description or a PR comment names
-/// paths from somebody else's checkout, so linking them there would offer to
-/// open files the reader does not have.
-export const REHYPE_PLUGINS_WITH_FILE_PATHS = [
+/// paths from somebody else's checkout and numbers from its own repository's
+/// world, so marking them there would offer to open files the reader does not
+/// have — and there is no session for a chip to be resolved against.
+export const REHYPE_PLUGINS_WITH_SESSION_REFS = [
   defaultRehypePlugins.raw,
   defaultRehypePlugins.sanitize,
   rehypeTableCells,
   rehypeFilePaths,
+  rehypePrRefs,
   HARDEN,
 ] as StreamdownProps["rehypePlugins"];

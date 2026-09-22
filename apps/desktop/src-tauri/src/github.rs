@@ -2268,6 +2268,32 @@ async fn list_pull_requests_inner(
     })
 }
 
+/// One pull request, by its number.
+///
+/// **A number and nothing else**, which is what a message carries: an agent
+/// writes `#7`, and the repository is the one the session runs in rather than
+/// anything the prose says. Neither existing read can answer it —
+/// [`prs_for_branch`] is keyed by a branch, which a message does not name, and
+/// the listing only holds what its own state filter asked for, so the merged
+/// pull request an agent reports on would be missing from it.
+///
+/// The same fields the listing asks for, so a row opened from a message is the
+/// row the page would have drawn and the pane beside it needs no second shape.
+#[tauri::command]
+pub async fn pull_request_by_number(
+    cwd: String,
+    number: u64,
+) -> Result<PrListItem, PrUnavailable> {
+    let out = gh(&cwd, &["pr", "view", &number.to_string(), "--json", LIST_FIELDS])
+        .await
+        .map_err(unavailable)?;
+
+    let raw: RawListItem = serde_json::from_str(&out)
+        .map_err(|e| unavailable(format!("could not read pull request #{number}: {e}")))?;
+
+    Ok(raw.map())
+}
+
 /// Deletes a merged or closed PR's head branch from the remote, and nothing
 /// else.
 ///

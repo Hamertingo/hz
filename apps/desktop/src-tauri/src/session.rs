@@ -1116,80 +1116,19 @@ impl SessionManager {
             // the child fails — the prompt event is persisted ahead of stdin too.
             touch_session_index_item(session_id, model.clone(), effort, permission_mode, fast).await?;
 
-            // A model call is open, so this prompt is held rather than sent, and
-            // none of the live controls below fire with it — `set_model`,
-            // `set_permission_mode` and `set_fast` alike. The first two were
-            // verified switching an *idle* child; what any of them do to a turn
-            // mid-flight is unknown, and a queued prompt is not worth finding
-            // out on. The index above has the user's pick either way, so the
-            // next idle send applies it.
+            // **Applied before the queue branch below, so the pick a prompt
+            // carries is the one it runs under.** Measured against 0.4.12: all
+            // three are accepted while a turn is in flight and the turn
+            // finishes normally — a turn asked for `session/set_config_option`
+            // `{model}` and `{permissionMode}`, and `session/set_mode` `plan`,
+            // six seconds in, ended `end_turn` each time with the new value in
+            // the reply's list. Before that they were held for an idle child and
+            // a queued prompt ran on the turn before it.
             //
-            // The cost is stated under _Known issues_ and is the same for all
-            // three: the pick is on screen and in the index from here, while the
-            // prompt this queue delivers still runs under the old one.
-            //
-            // Gated on the turn, not on `busy`: a session holding a background
-            // task reads busy with its main thread idle, and queueing there left
-            // the prompt waiting on a boundary that task would never produce.
-            if turn_in_flight {
-                // A tool is running, so the CLI's next injection point — that
-                // tool's result — is still ahead, and writing now is what lands
-                // the prompt on it. Holding for the `tool_call_completed` this
-                // app can see would miss it: the CLI dispatches the next model
-                // call within a few milliseconds of emitting the result line, so
-                // the prompt would sit in its buffer through another whole tool
-                // call before being read. Measured, and the reason this branch
-                // exists rather than one uniform hold.
-                //
-                // The cost is that there is no window to cancel in — which the
-                // UI states by itself, since a prompt written straight through
-                // draws no pending row and so offers no Esc.
-                // ACP has no injection point: `session/prompt` blocks for the
-                // turn and a second one written meanwhile takes over the one id
-                // the read loop settles the turn on, so the first is never
-                // closed. A prompt typed mid-turn queues to the turn's end — and
-                // the decision is atomic with the turn-end reservation, so a
-                // completion cannot slip between the check and the enqueue.
-                // `None` means the turn ended under this read: fall through and
-                // start a new one.
-                if matches!(s.stdin, Transport::Acp(_)) {
-                    if let Some(queued) = s
-                        .acp_queue_if_in_flight(
-                            prompt,
-                            attachment_paths,
-                            issues,
-                            from.clone(),
-                            sent_at,
-                        )
-                        .await
-                    {
-                        return Ok(SendOutcome {
-                            snapshot: None,
-                            queued: Some(queued),
-                            issues: linked,
-                        });
-                    }
-                } else {
-                    if tool_in_flight {
-                        s.queue_and_flush(prompt, attachment_paths, issues, from, sent_at, app)
-                            .await;
-                        return Ok(SendOutcome {
-                            issues: linked,
-                            ..Default::default()
-                        });
-                    }
-
-                    let queued = s
-                        .queue_msg(prompt, attachment_paths, issues, from, sent_at)
-                        .await;
-                    return Ok(SendOutcome {
-                        snapshot: None,
-                        queued: Some(queued),
-                        issues: linked,
-                    });
-                }
-            }
-
+            // A refusal reads the same way it does on an idle child, which is
+            // the point of sharing one path: a refused model fails the send and
+            // leaves the text in the composer, a refused effort is a notice
+            // beside a turn that runs anyway, and a refused stance is fatal.
             // The other side of the respawn rule above, and read off the same
             // table so the two cannot disagree. They were two equality tests
             // against two different harnesses, which is one edit away from a
@@ -1279,6 +1218,77 @@ impl SessionManager {
             }
             if caps.applies_permission_in_place && s.permission_mode != permission_mode {
                 s.set_permission_mode(permission_mode).await?;
+            }
+
+
+            // **The picks are already on the child by now.** The controls are
+            // applied above this branch, so a prompt held behind a running turn
+            // runs under the model, effort and stance it was sent with, and not
+            // the previous turn's. It was the other way round until the
+            // measurement below was taken: this branch returned first, leaving
+            // the pick on screen and in the index while the prompt it was made
+            // with ran on the old settings.
+            //
+            // Gated on the turn, not on `busy`: a session holding a background
+            // task reads busy with its main thread idle, and queueing there left
+            // the prompt waiting on a boundary that task would never produce.
+            if turn_in_flight {
+                // A tool is running, so the CLI's next injection point — that
+                // tool's result — is still ahead, and writing now is what lands
+                // the prompt on it. Holding for the `tool_call_completed` this
+                // app can see would miss it: the CLI dispatches the next model
+                // call within a few milliseconds of emitting the result line, so
+                // the prompt would sit in its buffer through another whole tool
+                // call before being read. Measured, and the reason this branch
+                // exists rather than one uniform hold.
+                //
+                // The cost is that there is no window to cancel in — which the
+                // UI states by itself, since a prompt written straight through
+                // draws no pending row and so offers no Esc.
+                // ACP has no injection point: `session/prompt` blocks for the
+                // turn and a second one written meanwhile takes over the one id
+                // the read loop settles the turn on, so the first is never
+                // closed. A prompt typed mid-turn queues to the turn's end — and
+                // the decision is atomic with the turn-end reservation, so a
+                // completion cannot slip between the check and the enqueue.
+                // `None` means the turn ended under this read: fall through and
+                // start a new one.
+                if matches!(s.stdin, Transport::Acp(_)) {
+                    if let Some(queued) = s
+                        .acp_queue_if_in_flight(
+                            prompt,
+                            attachment_paths,
+                            issues,
+                            from.clone(),
+                            sent_at,
+                        )
+                        .await
+                    {
+                        return Ok(SendOutcome {
+                            snapshot: None,
+                            queued: Some(queued),
+                            issues: linked,
+                        });
+                    }
+                } else {
+                    if tool_in_flight {
+                        s.queue_and_flush(prompt, attachment_paths, issues, from, sent_at, app)
+                            .await;
+                        return Ok(SendOutcome {
+                            issues: linked,
+                            ..Default::default()
+                        });
+                    }
+
+                    let queued = s
+                        .queue_msg(prompt, attachment_paths, issues, from, sent_at)
+                        .await;
+                    return Ok(SendOutcome {
+                        snapshot: None,
+                        queued: Some(queued),
+                        issues: linked,
+                    });
+                }
             }
 
             // Last thing before the prompt goes down the pipe: the child is idle

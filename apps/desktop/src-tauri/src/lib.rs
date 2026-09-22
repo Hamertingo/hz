@@ -1264,6 +1264,7 @@ pub fn run() {
             github::prs_for_branch,
             github::pr_marks,
             github::list_pull_requests,
+            github::pull_request_by_number,
             github::list_workflow_runs,
             github::get_workflow_run,
             github::rerun_workflow,

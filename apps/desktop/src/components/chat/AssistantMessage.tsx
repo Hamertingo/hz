@@ -24,7 +24,7 @@ function AssistantMessage({
     <div data-answer="">
       {/* The one surface whose paths name files on this machine, so the one that
           draws them as something to open. */}
-      <Markdown streaming={streaming} linkFilePaths>
+      <Markdown streaming={streaming} sessionRefs>
         {text}
       </Markdown>
     </div>
