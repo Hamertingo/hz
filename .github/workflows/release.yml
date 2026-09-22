@@ -150,6 +150,27 @@ jobs:
       # meant rather than an accident: it refuses one otherwise, because an
       # ad-hoc signature passes every check in this file and fails on a user's
       # Mac.
+
+      # **The compiler-rt the ggml objects ask for.** `transcribe-cpp-sys` compiles
+      # `ggml-metal-device.m` with clang, and an `@available` check in it lowers to
+      # `___isPlatformVersionAtLeast` — a symbol `libclang_rt.osx.a` provides. rustc
+      # links with `-nodefaultlibs`, so that library is not there and the link dies
+      # with `Undefined symbols` for every ARM64 build. Ask the same clang for its
+      # own runtime rather than guessing a path.
+      #
+      # Cost, stated: `RUSTFLAGS` changes cargo's fingerprints, so this makes the
+      # cargo cache a miss — a slower build, against no build at all.
+      - name: Point the linker at clang's runtime
+        shell: bash
+        run: |
+          rt="$(clang --print-file-name=libclang_rt.osx.a)"
+          if [ -f "$rt" ]; then
+            echo "RUSTFLAGS=-C link-arg=$rt" >> "$GITHUB_ENV"
+            echo "using $rt"
+          else
+            echo "clang named no compiler-rt ($rt) — leaving RUSTFLAGS alone" >&2
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
