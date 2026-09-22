@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { calendarDay, clockTime, formatDuration, formatElapsed } from "@/lib/format";
+import { basename, calendarDay, clockTime, formatDuration, formatElapsed } from "@/lib/format";
 
 /// Fixed so "today" is a known afternoon rather than whenever the suite runs —
 /// every case here is about which side of a midnight a timestamp falls on, and
@@ -125,5 +125,25 @@ describe("clockTime", () => {
 
   it("answers nothing for a stamp it cannot read", () => {
     expect(clockTime("half past nine")).toBeNull();
+  });
+});
+
+/// `basename` names a project row, and Rust's own copy in `projects.rs` names the
+/// cached label — so the two must agree about the root, which is the one path with
+/// no last segment to find. Pinned here because a wrong answer draws a row with no
+/// name rather than failing anything.
+describe("basename", () => {
+  it("names a project by its last segment", () => {
+    expect(basename("/Users/me/Downloads")).toBe("Downloads");
+    expect(basename("/Users/me/Downloads/")).toBe("Downloads");
+  });
+
+  it("keeps the root as itself", () => {
+    expect(basename("/")).toBe("/");
+  });
+
+  it("reads through Windows' verbatim prefix", () => {
+    expect(basename("\\\\?\\C:\\Users\\me\\Downloads")).toBe("Downloads");
+    expect(basename("\\\\?\\UNC\\server\\share\\proj")).toBe("proj");
   });
 });

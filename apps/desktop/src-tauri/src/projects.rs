@@ -307,7 +307,15 @@ mod containment_tests {
 /// split on that alone handed the whole string back — and a project's row drew
 /// `\\?\C:\Users\Dashi\Downloads…` where its folder name belongs.
 fn basename(path: &str) -> String {
-    let trimmed = strip_verbatim(path).trim_end_matches(['/', '\\']);
+    let clean = strip_verbatim(path);
+    let trimmed = clean.trim_end_matches(['/', '\\']);
+    // Nothing but separators — the root, which is the one path this could attach
+    // that has no last segment to find. A name where the empty string is a row
+    // with no label at all, and a root *is* attachable: it is where a reader who
+    // works across drives ends up.
+    if trimmed.is_empty() {
+        return clean.to_string();
+    }
     trimmed
         .rsplit(['/', '\\'])
         .next()

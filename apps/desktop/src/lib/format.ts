@@ -107,7 +107,12 @@ export function truncate(s: string, max: number): string {
 /// drew `\\?\C:\Users\Dashi\Downloads…` where its folder name belongs. The
 /// Rust side states the same rule in `projects::basename`, and the two agree.
 export function basename(path: string): string {
-  const trimmed = stripVerbatim(path).replace(/[/\\]+$/, "");
+  const clean = stripVerbatim(path);
+  const trimmed = clean.replace(/[/\\]+$/, "");
+  // The root has no last segment to find, and it is the one such path that can
+  // be attached as a project — so it answers with itself rather than with a name
+  // no row can draw. Mirrors `basename` in `projects.rs`; change them together.
+  if (!trimmed) return clean;
   const parts = trimmed.split(/[/\\]/);
   return parts[parts.length - 1] || trimmed;
 }
