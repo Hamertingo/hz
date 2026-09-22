@@ -16,7 +16,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { prUnavailableText } from "@/components/PrsView";
+import { prUnavailableText } from "@/lib/unavailable";
 import { runKey, type useWorkflowRuns, type RunRow } from "@/hooks/useWorkflowRuns";
 import { formatDuration, formatElapsed, relativeTime } from "@/lib/format";
 import {

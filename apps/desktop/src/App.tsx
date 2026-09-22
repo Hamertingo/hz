@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -12,30 +12,26 @@ import ChangesView from "@/components/changes/ChangesView";
 import SecondOpinionAction from "@/components/changes/SecondOpinionAction";
 import FilesView from "@/components/files/FilesView";
 import ChatInput from "@/components/ChatInput";
-import CommandPalette from "@/components/CommandPalette";
 import DiffWorkerPool from "@/components/DiffWorkerPool";
 import DocsPanel from "@/components/DocsPanel";
 import NoticeStack from "@/components/NoticeStack";
 import LinkDialog from "@/components/chat/LinkDialog";
 import QuitDialog from "@/components/QuitDialog";
 import RenderErrorBoundary from "@/components/RenderErrorBoundary";
+import type { SettingsTab } from "@/components/SettingsDialog";
+
+// **Not lazy, unlike its neighbours below.** These are three small buttons the
+// window needs the moment it draws — on Windows they are the only way to close
+// it — and a chunk that has not arrived yet is a window with no controls. The
+// lazy list is for surfaces that can afford a frame of nothing.
 import { WindowControls } from "@/components/WindowControls";
-import SettingsDialog, { type SettingsTab } from "@/components/SettingsDialog";
 import SlowRequestToast from "@/components/SlowRequestToast";
 import WorktreeDialog, { type WorktreePrompt } from "@/components/WorktreeDialog";
 import InboxTabs, { type InboxPage } from "@/components/InboxTabs";
 import { prefetchPrList } from "@/hooks/usePrList";
 import type { RunRow } from "@/hooks/useWorkflowRuns";
 import { useInbox } from "@/hooks/useInbox";
-import InboxView from "@/components/InboxView";
 import IssuePanel from "@/components/IssuePanel";
-import IssuesView from "@/components/IssuesView";
-import PluginsView, { SkillDetail as PluginSkillDetail } from "@/components/PluginsView";
-import RunDetail from "@/components/RunDetail";
-import AgentForm from "@/components/plugins/AgentForm";
-import McpForm from "@/components/plugins/McpForm";
-import PrsView, { PrDetail, PrTabs } from "@/components/PrsView";
-import SearchView from "@/components/SearchView";
 import { prKey, type PrRow } from "@/hooks/usePrList";
 import PrPanel from "@/components/PrPanel";
 import BrowserPane from "@/components/browser/BrowserPane";
@@ -168,6 +164,31 @@ import { resetUiScale, zoomBy } from "@/hooks/useUiScale";
 import { cn } from "@/lib/utils";
 
 const PANE_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+
+// Surfaces that only exist while the reader is acting on them — a dialog, the
+// palette, a main-column page — load on first open instead of parsing at
+// startup. Everything on the first-paint path stays static. A module's named
+// exports ride the same chunk as its default, so opening one page pulls one
+// file; they are separately `lazy` so each call site can suspend alone.
+const CommandPalette = lazy(() => import("@/components/CommandPalette"));
+const SettingsDialog = lazy(() => import("@/components/SettingsDialog"));
+const SearchView = lazy(() => import("@/components/SearchView"));
+const PrsView = lazy(() => import("@/components/PrsView"));
+const PrDetail = lazy(() =>
+  import("@/components/PrsView").then((m) => ({ default: m.PrDetail })),
+);
+const PrTabs = lazy(() =>
+  import("@/components/PrsView").then((m) => ({ default: m.PrTabs })),
+);
+const IssuesView = lazy(() => import("@/components/IssuesView"));
+const InboxView = lazy(() => import("@/components/InboxView"));
+const PluginsView = lazy(() => import("@/components/PluginsView"));
+const PluginSkillDetail = lazy(() =>
+  import("@/components/PluginsView").then((m) => ({ default: m.SkillDetail })),
+);
+const RunDetail = lazy(() => import("@/components/RunDetail"));
+const AgentForm = lazy(() => import("@/components/plugins/AgentForm"));
+const McpForm = lazy(() => import("@/components/plugins/McpForm"));
 
 /// The events of no session, for the composer's context panel while there is
 /// none. Module-level rather than a fresh `[]` per render: it is a prop, and a
@@ -449,6 +470,16 @@ function App() {
   const searchPageOpen = page === "search";
   const prsOpen = page === "prs";
   const pluginsOpen = page === "plugins";
+
+  /// Pages are lazy chunks, so a page mounts on its first open and then stays
+  /// mounted — the same hidden-not-unmounted bargain its `TabBody` makes.
+  /// Before the first open there is no state to keep, so not mounting it is
+  /// the same behavior at none of the parse cost.
+  const [seenPages, setSeenPages] = useState<MainPage[]>([]);
+  useEffect(() => {
+    if (page !== "none") setSeenPages((prev) => (prev.includes(page) ? prev : [...prev, page]));
+  }, [page]);
+  const pageSeen = (p: MainPage) => seenPages.includes(p);
   /// What the Plugins page is listing, and what its pane is showing with it.
   ///
   /// **One value for both**, because the pane draws the thing its own section
@@ -2610,30 +2641,32 @@ function App() {
             onTabChange={() => {}}
           >
             <TabBody active>
-              {pluginsTab.section === "skills" ? (
-                <PluginSkillDetail skill={pickedSkillOf(pluginsTab)} />
-              ) : pluginsTab.section === "mcp" ? (
-                <McpForm
-                  pick={mcpPickOf(pluginsTab)}
-                  onClose={() => setPluginsTab(sectionTab("mcp"))}
-                  // A new server has no row to have been picked, so the pane moves
-                  // onto what was just created rather than staying on a blank form.
-                  onSaved={(name) =>
-                    setPluginsTab({ section: "mcp", pick: { mode: "server", name } })
-                  }
-                />
-              ) : (
-                <AgentForm
-                  pick={agentPickOf(pluginsTab)}
-                  onClose={() => setPluginsTab(sectionTab("agents"))}
-                  // The same bargain the server form makes: creation has no row to
-                  // have been picked, so the pane moves onto what was just written.
-                  onSaved={(name) =>
-                    setPluginsTab({ section: "agents", pick: { mode: "agent", name } })
-                  }
-                  onChat={chatWithAgent}
-                />
-              )}
+              <Suspense fallback={null}>
+                  {pluginsTab.section === "skills" ? (
+                    <PluginSkillDetail skill={pickedSkillOf(pluginsTab)} />
+                  ) : pluginsTab.section === "mcp" ? (
+                    <McpForm
+                      pick={mcpPickOf(pluginsTab)}
+                      onClose={() => setPluginsTab(sectionTab("mcp"))}
+                      // A new server has no row to have been picked, so the pane moves
+                      // onto what was just created rather than staying on a blank form.
+                      onSaved={(name) =>
+                        setPluginsTab({ section: "mcp", pick: { mode: "server", name } })
+                      }
+                    />
+                  ) : (
+                    <AgentForm
+                      pick={agentPickOf(pluginsTab)}
+                      onClose={() => setPluginsTab(sectionTab("agents"))}
+                      // The same bargain the server form makes: creation has no row to
+                      // have been picked, so the pane moves onto what was just written.
+                      onSaved={(name) =>
+                        setPluginsTab({ section: "agents", pick: { mode: "agent", name } })
+                      }
+                      onChat={chatWithAgent}
+                    />
+                  )}
+              </Suspense>
             </TabBody>
           </RightPanel>
         ) : prsOpen && pickedRun ? (
@@ -2653,17 +2686,19 @@ function App() {
             refresh={{ onRefresh: () => prsRefreshRef.current?.(), loading: false }}
           >
             <TabBody active>
-              <RunDetail
-                // Keyed on the run, so the pick resets a read, a scroll and an
-                // open error rather than carrying them onto the next one.
-                key={`${pickedRun.cwd}#${pickedRun.id}`}
-                run={pickedRun}
-                active={prsOpen}
-                // The page re-reads: a re-run changes the row's state, and a
-                // list still calling it failed would be this pane contradicted
-                // two inches away.
-                onChanged={() => prsRefreshRef.current?.()}
-              />
+              <Suspense fallback={null}>
+                <RunDetail
+                  // Keyed on the run, so the pick resets a read, a scroll and an
+                  // open error rather than carrying them onto the next one.
+                  key={`${pickedRun.cwd}#${pickedRun.id}`}
+                  run={pickedRun}
+                  active={prsOpen}
+                  // The page re-reads: a re-run changes the row's state, and a
+                  // list still calling it failed would be this pane contradicted
+                  // two inches away.
+                  onChanged={() => prsRefreshRef.current?.()}
+                />
+              </Suspense>
             </TabBody>
           </RightPanel>
         ) : prsOpen ? (
@@ -2673,12 +2708,14 @@ function App() {
             // session's views, so the page brings the strip and the frame keeps
             // everything around it — see `RightPanel`'s `tabs`.
             tabs={
-              <PrTabs
-                open={openedPrs}
-                active={activePrKey}
-                onActivate={openPr}
-                onClose={(pr) => closePr(prKey(pr))}
-              />
+              <Suspense fallback={null}>
+                <PrTabs
+                  open={openedPrs}
+                  active={activePrKey}
+                  onActivate={openPr}
+                  onClose={(pr) => closePr(prKey(pr))}
+                />
+              </Suspense>
             }
             tab="pr"
             onTabChange={() => {}}
@@ -2700,14 +2737,16 @@ function App() {
                 positions rather than ten calls a second. */}
             {openedPrs.map((pr) => (
               <TabBody key={prKey(pr)} active={prKey(pr) === activePrKey}>
-                <PrDetail
-                  picked={pr}
-                  active={prsOpen && prKey(pr) === activePrKey}
-                  onChanged={() => {
-                    prMarks.refresh();
-                    prsRefreshRef.current?.();
-                  }}
-                />
+                <Suspense fallback={null}>
+                  <PrDetail
+                    picked={pr}
+                    active={prsOpen && prKey(pr) === activePrKey}
+                    onChanged={() => {
+                      prMarks.refresh();
+                      prsRefreshRef.current?.();
+                    }}
+                  />
+                </Suspense>
               </TabBody>
             ))}
           </RightPanel>
@@ -3077,86 +3116,106 @@ function App() {
       {/* Hidden rather than unmounted, like everything else in this column:
           the list, its filters and its scroll survive a trip into a session and
           back, which is the trip this page exists to make. */}
+      {pageSeen("search") && (
       <TabBody active={searchPageOpen}>
-        <SearchView
-          active={searchPageOpen}
-          sessions={visibleSessions}
-          // The selected session's own checkout, since a hit opens there.
-          cwd={selectedSession?.cwd ?? null}
-          onClose={() => setPage("none")}
-          // A row is somewhere to go, and every route there closes the page: a
-          // session or a message opens that session, a file or a line opens in the
-          // one already on screen — which needs the page out of the way to be seen.
-          onOpen={(hit) => {
-            if (hit.kind === "session" || hit.kind === "message") {
-              goToSession(() => void handleSelectSessionIndexItem(hit.sessionId));
-              return;
-            }
-            goToSession(() => openInFiles(selectedSessionId, hit.path, hit.kind === "code" ? hit.line : undefined));
-          }}
-        />
+        <Suspense fallback={null}>
+          <SearchView
+            active={searchPageOpen}
+            sessions={visibleSessions}
+            // The selected session's own checkout, since a hit opens there.
+            cwd={selectedSession?.cwd ?? null}
+            onClose={() => setPage("none")}
+            // A row is somewhere to go, and every route there closes the page: a
+            // session or a message opens that session, a file or a line opens in the
+            // one already on screen — which needs the page out of the way to be seen.
+            onOpen={(hit) => {
+              if (hit.kind === "session" || hit.kind === "message") {
+                goToSession(() => void handleSelectSessionIndexItem(hit.sessionId));
+                return;
+              }
+              goToSession(() => openInFiles(selectedSessionId, hit.path, hit.kind === "code" ? hit.line : undefined));
+            }}
+          />
+        </Suspense>
       </TabBody>
+      )}
 
+      {pageSeen("prs") && (
       <TabBody active={prsOpen}>
-        <PrsView
-          tabs={<InboxTabs current="prs" counts={inbox.counts} onSelect={selectInboxPage} />}
-          cwds={prsCwds}
-          active={prsOpen}
-          picked={activePr}
-          onPick={openPr}
-          onClose={() => setPage("none")}
-          refreshRef={prsRefreshRef}
-          pickedRun={pickedRun}
-          onPickRun={setPickedRun}
-        />
+        <Suspense fallback={null}>
+          <PrsView
+            tabs={<InboxTabs current="prs" counts={inbox.counts} onSelect={selectInboxPage} />}
+            cwds={prsCwds}
+            active={prsOpen}
+            picked={activePr}
+            onPick={openPr}
+            onClose={() => setPage("none")}
+            refreshRef={prsRefreshRef}
+            pickedRun={pickedRun}
+            onPickRun={setPickedRun}
+          />
+        </Suspense>
       </TabBody>
+      )}
 
+      {pageSeen("issues") && (
       <TabBody active={issuesOpen}>
-        <IssuesView
-          tabs={<InboxTabs current="issues" counts={inbox.counts} onSelect={selectInboxPage} />}
-          active={issuesOpen}
-          picked={pickedIssue?.identifier ?? null}
-          onPick={setPickedIssue}
-          onWorkOn={workOnIssue}
-          refreshRef={issuesRefreshRef}
-          connected={issuesConnected}
-          onConnect={integrations.connect}
-          connecting={integrations.busy}
-          connectError={integrations.error}
-        />
+        <Suspense fallback={null}>
+          <IssuesView
+            tabs={<InboxTabs current="issues" counts={inbox.counts} onSelect={selectInboxPage} />}
+            active={issuesOpen}
+            picked={pickedIssue?.identifier ?? null}
+            onPick={setPickedIssue}
+            onWorkOn={workOnIssue}
+            refreshRef={issuesRefreshRef}
+            connected={issuesConnected}
+            onConnect={integrations.connect}
+            connecting={integrations.busy}
+            connectError={integrations.error}
+          />
+        </Suspense>
       </TabBody>
+      )}
 
       {/* Ahead of the two it draws from: it is the question neither of them can
           answer alone, and a row click goes to whichever owns the item. */}
+      {pageSeen("inbox") && (
       <TabBody active={inboxOpen}>
-        <InboxView
-          tabs={<InboxTabs current="inbox" counts={inbox.counts} onSelect={selectInboxPage} />}
-          items={inbox.items}
-          notes={inbox.notes}
-          reading={inbox.reading}
-          multiRepo={inbox.multiRepo}
-          refreshing={inbox.refreshing}
-          onRefresh={inbox.refresh}
-          // A row click goes to whichever page owns the item, with it open: this
-          // list reads both trackers, and neither of the two can be acted on from
-          // here. The tab row above is how the reader comes back.
-          onOpen={(item) =>
-            item.kind === "pr"
-              ? (setPage("prs"), openPr(item.row))
-              : (setPage("issues"), setPickedIssue(item.row))
-          }
-        />
+        <Suspense fallback={null}>
+          <InboxView
+            tabs={<InboxTabs current="inbox" counts={inbox.counts} onSelect={selectInboxPage} />}
+            items={inbox.items}
+            notes={inbox.notes}
+            reading={inbox.reading}
+            multiRepo={inbox.multiRepo}
+            refreshing={inbox.refreshing}
+            onRefresh={inbox.refresh}
+            // A row click goes to whichever page owns the item, with it open: this
+            // list reads both trackers, and neither of the two can be acted on from
+            // here. The tab row above is how the reader comes back.
+            onOpen={(item) =>
+              item.kind === "pr"
+                ? (setPage("prs"), openPr(item.row))
+                : (setPage("issues"), setPickedIssue(item.row))
+            }
+          />
+        </Suspense>
       </TabBody>
+      )}
 
+      {pageSeen("plugins") && (
       <TabBody active={pluginsOpen}>
-        <PluginsView
-          active={pluginsOpen}
-          tab={pluginsTab}
-          onTab={setPluginsTab}
-          onClose={() => setPage("none")}
-          refreshRef={pluginsRefreshRef}
-        />
+        <Suspense fallback={null}>
+          <PluginsView
+            active={pluginsOpen}
+            tab={pluginsTab}
+            onTab={setPluginsTab}
+            onClose={() => setPage("none")}
+            refreshRef={pluginsRefreshRef}
+          />
+        </Suspense>
       </TabBody>
+      )}
 
       {/* Hidden rather than unmounted, the same bargain the right panel's tabs
           make: the transcript keeps its scroll position and its highlighted
@@ -3275,62 +3334,70 @@ function App() {
       onDeleteWorktree={(id) => removeWorktree(id)}
     />
     <SlowRequestToast />
-    <CommandPalette
-      open={paletteOpen}
-      onOpenChange={(open) => {
-        setPaletteOpen(open);
-        // The box is a fresh question every time — the palette clears its own
-        // copy on the way in, and this one has to go with it or the next open
-        // searches words the reader has already forgotten typing.
-        if (!open) setPaletteQuery("");
-      }}
-      items={paletteItems}
-      onQueryChange={setPaletteQuery}
-    />
+    {paletteOpen && (
+    <Suspense fallback={null}>
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={(open) => {
+          setPaletteOpen(open);
+          // The box is a fresh question every time — the palette clears its own
+          // copy on the way in, and this one has to go with it or the next open
+          // searches words the reader has already forgotten typing.
+          if (!open) setPaletteQuery("");
+        }}
+        items={paletteItems}
+        onQueryChange={setPaletteQuery}
+      />
+    </Suspense>
+    )}
     <DragGhost />
     <QuitDialog />
     <LinkDialog />
+    <WindowControls />
     {/* Mounted here rather than in the sidebar, which unmounts whole when it
         collapses and would take ⌘, with it. */}
-    <WindowControls />
-    <SettingsDialog
-      open={settingsOpen}
-      onOpenChange={(next) => {
-        setSettingsOpen(next);
-        if (!next) {
-          setSettingsTab("appearance");
-          setNamingSpace(false);
-        }
-      }}
-      initialTab={settingsTab}
-      // Every project, not the active space's: this is where a project is filed
-      // into one, and a list narrowed by the space would hide exactly the rows
-      // somebody opens it to move.
-      projects={projects}
-      spaces={spaces}
-      startNamingSpace={namingSpace}
-      onSetProjectSpace={setProjectSpace}
-      onRemoveProject={handleRemoveProject}
-      onCreateSpace={createSpace}
-      onRenameSpace={renameSpace}
-      onRemoveSpace={removeSpace}
-      onMoveSpace={moveSpaceBy}
-      integrations={integrations}
-      updateStatus={updateStatus}
-      updateManual={updateManual}
-      updateBlocked={anyRunning}
-      onCheckUpdates={checkForUpdates}
-      onInstallUpdate={installUpdate}
-      updateChannel={updateChannel}
-      onUpdateChannelChange={setUpdateChannel}
-      // A provider changed, so the picker's list is stale — the agent is what
-      // answers it, and it just answered something else. The settings screen's
-      // model switches are drawn from that same list, which is why it is handed
-      // down rather than read again there.
-      models={models}
-      loadingModels={loadingModels}
-      onProvidersChanged={() => void refreshModels()}
-    />
+    {settingsOpen && (
+    <Suspense fallback={null}>
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={(next) => {
+          setSettingsOpen(next);
+          if (!next) {
+            setSettingsTab("appearance");
+            setNamingSpace(false);
+          }
+        }}
+        initialTab={settingsTab}
+        // Every project, not the active space's: this is where a project is filed
+        // into one, and a list narrowed by the space would hide exactly the rows
+        // somebody opens it to move.
+        projects={projects}
+        spaces={spaces}
+        startNamingSpace={namingSpace}
+        onSetProjectSpace={setProjectSpace}
+        onRemoveProject={handleRemoveProject}
+        onCreateSpace={createSpace}
+        onRenameSpace={renameSpace}
+        onRemoveSpace={removeSpace}
+        onMoveSpace={moveSpaceBy}
+        integrations={integrations}
+        updateStatus={updateStatus}
+        updateManual={updateManual}
+        updateBlocked={anyRunning}
+        onCheckUpdates={checkForUpdates}
+        onInstallUpdate={installUpdate}
+        updateChannel={updateChannel}
+        onUpdateChannelChange={setUpdateChannel}
+        // A provider changed, so the picker's list is stale — the agent is what
+        // answers it, and it just answered something else. The settings screen's
+        // model switches are drawn from that same list, which is why it is handed
+        // down rather than read again there.
+        models={models}
+        loadingModels={loadingModels}
+        onProvidersChanged={() => void refreshModels()}
+      />
+    </Suspense>
+    )}
     <WorktreeDialog
       prompt={worktreePrompt}
       onConfirm={(sessionId) => removeWorktree(sessionId)}
