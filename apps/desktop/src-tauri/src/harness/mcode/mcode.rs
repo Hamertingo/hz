@@ -1294,17 +1294,27 @@ const COALESCE: Duration = Duration::from_millis(16);
 /// of the transcript — 203 of them for one answer.
 ///
 /// Only text deltas of the *same* block merge. Anything else — a `block_start`, a
-/// `block_stop`, a usage update, a tool call — flushes what is held first, so the
-/// preview never arrives after the committed row it belongs to, and a merge never
-/// puts one block's words under another's heading. The merged event keeps the
-/// first one's `id` and `seq`, so the ordering key only ever moves forward, and
-/// takes the newest `ts`.
+/// `block_stop`, a tool call — flushes what is held first, so the preview never
+/// arrives after the committed row it belongs to, and a merge never puts one
+/// block's words under another's heading. The merged event keeps the first one's
+/// `id` and `seq`, so the ordering key only ever moves forward, and takes the
+/// newest `ts`.
+///
+/// A usage update is held rather than flushed: a turn carries dozens and only
+/// the newest of a frame can ever be seen, so all but it are dropped here rather
+/// than serialized across the bridge. It is a running counter, never a
+/// persistence or ordering concern — [`crate::session::ingest`] drops it too.
 ///
 /// Not persisted either way: [`crate::session::ingest`] drops deltas from the
 /// retained copies, since the committed `assistant_text`/`reasoning` repeats the
 /// whole block at its close.
 struct Coalescer {
     held: Option<AgentEvent>,
+    /// The newest usage update not yet sent. Held on the same frame the text
+    /// hold runs on, and the anchor below is shared — usage arriving alone
+    /// starts one, so a long tool call's periodic usage still draws on its own
+    /// frame instead of waiting for the next non-usage event.
+    usage: Option<AgentEvent>,
     /// When the current hold began. **The timer is anchored to the first delta of
     /// the run**, not to the read that just arrived: a model streaming steadily
     /// would otherwise push the deadline ahead of itself on every line and never
@@ -1316,6 +1326,7 @@ impl Coalescer {
     fn new() -> Self {
         Self {
             held: None,
+            usage: None,
             // Meaningless until a hold starts, which is the only moment it is
             // read.
             since: tokio::time::Instant::now(),
@@ -1324,6 +1335,14 @@ impl Coalescer {
 
     /// Folds `event` in and hands back whatever is ready, oldest first.
     fn push(&mut self, event: AgentEvent) -> Vec<AgentEvent> {
+        if matches!(event.payload, AgentEventPayload::UsageUpdate(_)) {
+            if self.usage.is_none() && self.held.is_none() {
+                self.since = tokio::time::Instant::now();
+            }
+            self.usage = Some(event);
+            return Vec::new();
+        }
+
         let Some((block, text)) = text_delta(&event.payload) else {
             return self.flush_before(event);
         };
@@ -1353,22 +1372,26 @@ impl Coalescer {
 
     /// Hands back anything held, then `event` — for an event that cannot merge.
     fn flush_before(&mut self, event: AgentEvent) -> Vec<AgentEvent> {
-        self.held
-            .take()
-            .into_iter()
-            .chain(std::iter::once(event))
-            .collect()
+        let mut ready = self.flush();
+        ready.push(event);
+        ready
     }
 
-    /// The held delta, for the reader that has run out of lines to read.
-    fn flush(&mut self) -> Option<AgentEvent> {
-        self.held.take()
+    /// Everything held, in `seq` order — for the reader that has run out of
+    /// lines, or whose frame boundary came due. `seq` order, because a usage
+    /// update and a delta can be held at once and both consumers read the wire
+    /// in sequence.
+    fn flush(&mut self) -> Vec<AgentEvent> {
+        let mut ready: Vec<AgentEvent> =
+            self.held.take().into_iter().chain(self.usage.take()).collect();
+        ready.sort_by_key(|event| event.seq);
+        ready
     }
 
-    /// When the held delta is due, or `None` while nothing is held — so the read
+    /// When the oldest hold is due, or `None` while nothing is held — so the read
     /// loop only wakes on a timer when there is actually something to draw.
     fn deadline(&self) -> Option<tokio::time::Instant> {
-        self.held.is_some().then(|| self.since + COALESCE)
+        (self.held.is_some() || self.usage.is_some()).then(|| self.since + COALESCE)
     }
 
     /// Whether the hold has had its frame. The reader gates its flush on this:
@@ -1481,7 +1504,7 @@ async fn read_stdout(
         // every chunk one pass late and merged nothing at all.
         if coalescer.due() {
             if let Some(transport) = transport.as_ref() {
-                if let Some(event) = coalescer.flush() {
+                for event in coalescer.flush() {
                     sink.send(transport, event).await;
                 }
             }
@@ -1521,14 +1544,25 @@ async fn read_stdout(
         // response the first call had already settled: `settle` removes the
         // waiter, so the second look finds none and files a legitimate reply as
         // a stray. The match below already takes a matched response and drops it.
+        // The parse lives here for the same reason: while a prompt is open —
+        // the whole turn — every line paid one full parse in `prompt_answer`
+        // and a second in `accept`, so the parsed value is what both now take.
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(_) => {
+                record_failure(Mcode, &handles.session_id, "parse", "not a JSON-RPC message", &line)
+                    .await;
+                continue;
+            }
+        };
         let mut event: Option<parser::McodeEvent> = None;
         if let Some(Transport::Acp(session)) = transport.as_ref() {
-            event = prompt_answer(session, &line);
+            event = prompt_answer(session, &value);
         }
 
         let event = match event {
             Some(event) => event,
-            None => match handles.client.accept(&line).await {
+            None => match handles.client.accept_value(value).await {
                 Incoming::Notification { method, params } => {
                     // **One of the agent's own extensions, sorted before the
                     // parser is asked anything.** These ride beside ACP's as
@@ -1694,7 +1728,7 @@ async fn read_stdout(
     // follows it: the reader watched that text arrive and it must not vanish
     // because the child died a frame later.
     if let Some(transport) = transport.as_ref() {
-        if let Some(event) = coalescer.flush() {
+        for event in coalescer.flush() {
             sink.send(transport, event).await;
         }
     }
@@ -1755,12 +1789,14 @@ fn note_update(session: &McodeSession, update: &parser::SessionUpdate) {
 }
 
 /// The prompt's own response, picked off the line by the id it was sent under.
-fn prompt_answer(session: &McodeSession, line: &str) -> Option<parser::McodeEvent> {
+///
+/// Takes the already-parsed line — the read loop parsed it once for this demux
+/// and `accept` reuses the same value, so no line is parsed twice.
+fn prompt_answer(session: &McodeSession, value: &Value) -> Option<parser::McodeEvent> {
     let prompt_id = {
         let guard = session.prompt_id.lock().expect("mcode prompt id poisoned");
         (*guard)?
     };
-    let value: Value = serde_json::from_str(line).ok()?;
     if value.get("id").and_then(Value::as_i64) != Some(prompt_id) {
         return None;
     }
@@ -1900,7 +1936,7 @@ async fn raise_question(
 #[cfg(test)]
 mod coalesce_tests {
     use super::*;
-    use crate::events::{BlockType, DeltaEvent};
+    use crate::events::{BlockType, DeltaEvent, Usage};
 
     fn event(seq: u64, payload: AgentEventPayload) -> AgentEvent {
         AgentEvent {
@@ -1943,6 +1979,10 @@ mod coalesce_tests {
         })
     }
 
+    fn usage(seq: u64) -> AgentEvent {
+        event(seq, AgentEventPayload::UsageUpdate(Usage::default()))
+    }
+
     fn text_of(event: &AgentEvent) -> &str {
         text_delta(&event.payload).expect("a text delta").1
     }
@@ -1957,11 +1997,11 @@ mod coalesce_tests {
         assert!(c.push(event(2, text(0, "Hel"))).is_empty());
         assert!(c.push(event(3, text(0, "lo"))).is_empty());
 
-        let held = c.flush().expect("three chunks are in there");
+        let held = &c.flush()[0];
         assert_eq!(held.seq, 2, "the first delta's own");
         assert_eq!(held.id, "e2");
         assert_eq!(held.ts, "t3", "the newest stamp, which is when it went out");
-        assert_eq!(text_of(&held), "Hello");
+        assert_eq!(text_of(held), "Hello");
     }
 
     /// A boundary cannot overtake the text it closes: it goes out behind it, in
@@ -1987,7 +2027,7 @@ mod coalesce_tests {
         let ready = c.push(event(2, text(1, "answer")));
         assert_eq!(ready.len(), 1);
         assert_eq!(text_of(&ready[0]), "thinking");
-        assert_eq!(text_of(&c.flush().expect("the new one is held")), "answer");
+        assert_eq!(text_of(&c.flush()[0]), "answer");
     }
 
     /// The deadline is anchored to the first chunk of the run, not to the read
@@ -2022,6 +2062,54 @@ mod coalesce_tests {
 
         std::thread::sleep(COALESCE + Duration::from_millis(5));
         assert!(c.due(), "and it has had its frame by now");
+    }
+
+    /// A turn carries dozens of usage updates and only the newest of a frame
+    /// can be seen, so the earlier ones are dropped here rather than serialized
+    /// across the bridge one IPC message each.
+    #[test]
+    fn usage_updates_of_a_frame_leave_as_the_newest_one() {
+        let mut c = Coalescer::new();
+
+        assert!(c.push(usage(1)).is_empty());
+        assert!(c.push(usage(2)).is_empty());
+        assert!(c.push(usage(3)).is_empty(), "still holding, none sent");
+
+        let ready = c.flush();
+        assert_eq!(ready.len(), 1, "the two older ones were dropped");
+        assert_eq!(ready[0].seq, 3);
+    }
+
+    /// Usage arriving alone still draws: a long tool call streams usage with
+    /// nothing else on the wire, so the hold must carry its own frame deadline
+    /// instead of waiting for the next non-usage event.
+    #[test]
+    fn a_usage_hold_is_due_on_its_own_frame() {
+        let mut c = Coalescer::new();
+        assert!(c.deadline().is_none(), "nothing held, no timer");
+
+        c.push(usage(1));
+        assert!(c.deadline().is_some(), "the hold runs its own timer");
+
+        std::thread::sleep(COALESCE + Duration::from_millis(5));
+        assert!(c.due());
+    }
+
+    /// A boundary cannot be overtaken by usage, and text and usage held
+    /// together leave in `seq` order — the transcript sorts on it.
+    #[test]
+    fn a_boundary_flushes_held_usage_and_text_in_seq_order() {
+        let mut c = Coalescer::new();
+        c.push(event(1, text(0, "hello")));
+        c.push(usage(2));
+
+        let ready = c.push(event(3, stop(0)));
+        assert_eq!(ready.len(), 3);
+        assert_eq!(
+            (ready[0].seq, ready[1].seq, ready[2].seq),
+            (1, 2, 3),
+            "text, then the usage held beside it, then the boundary"
+        );
     }
 }
 

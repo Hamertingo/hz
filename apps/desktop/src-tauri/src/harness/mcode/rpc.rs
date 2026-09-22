@@ -175,10 +175,17 @@ impl RpcClient {
     /// [`Incoming::Response`] so the caller can file a stray one; everything
     /// else is handed back for the parser to type.
     pub async fn accept(&self, line: &str) -> Incoming {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            return Incoming::Malformed;
-        };
+        match serde_json::from_str::<Value>(line) {
+            Ok(value) => self.accept_value(value).await,
+            Err(_) => Incoming::Malformed,
+        }
+    }
 
+    /// [`Self::accept`] over an already-parsed line. The session read loop
+    /// parses every line once for the prompt demux before asking here, and a
+    /// second full parse of 200+ lines a turn is the hottest avoidable cost on
+    /// the wire.
+    pub async fn accept_value(&self, value: Value) -> Incoming {
         let method = value.get("method").and_then(Value::as_str);
         // Absent and null are both "no id" here. Only an integer id can be
         // ours: the counter above mints nothing else.
