@@ -19,7 +19,6 @@ use rubato::{
 };
 use serde::Serialize;
 use ts_rs::TS;
-use crate::proc::HideConsole as _;
 
 /// What the models take. Not negotiable — a model fed 48kHz transcribes it as
 /// speech at three times the speed and answers with nonsense rather than an
@@ -172,6 +171,14 @@ fn parse_muted(answer: &str) -> Option<bool> {
 /// a property write per channel for the same answer.
 #[cfg(target_os = "macos")]
 fn osascript(lines: &[&str]) -> Result<String> {
+    // **The trait is imported here, not at module scope, and that is the whole
+    // point of the line.** This is the only call in the file and the function is
+    // compiled out on Windows, so an import at module scope has no user there —
+    // and `-D warnings` fails the build over it. `use Trait as _` does *not*
+    // excuse that, which is how the mistake got into this tree in the first
+    // place: measured, the lint reports it on Windows and nothing local says so.
+    use crate::proc::HideConsole as _;
+
     let mut command = std::process::Command::new("/usr/bin/osascript").hide_console();
     for line in lines {
         command.arg("-e").arg(line);
