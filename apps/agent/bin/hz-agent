@@ -34,12 +34,29 @@ if [ -r "$HERE/.node-runtime" ]; then
 fi
 [ -n "$node_bin" ] || node_bin=node
 
+# **The compile cache, which pays for itself on the second launch.** Node parses
+# the bundle on every boot — 57MB across 98 files — and this is the only lever on
+# that cost outside shipping less code: measured, a quarter off `initialize`.
+# The directory is stable on purpose; a temp one would cache nothing.
+if [ -z "${HZ_COMPILE_CACHE:-}" ]; then
+  cache_home="${HZAGENT_DATA_DIR:-${MINIMAX_DATA_DIR:-$HOME/.hz/agent}}"
+  [ -w "$(dirname -- "$cache_home")" ] 2>/dev/null && HZ_COMPILE_CACHE="$cache_home/compile-cache"
+  export HZ_COMPILE_CACHE
+fi
+
 if [ -d "$HERE/node_modules" ] && [ -f "$HERE/dist/cli.js" ]; then
+  if [ -f "$HERE/bin/compile-cache.mjs" ]; then
+    exec "$node_bin" --import "$HERE/bin/compile-cache.mjs" "$HERE/dist/cli.js" "$@"
+  fi
   exec "$node_bin" "$HERE/dist/cli.js" "$@"
 fi
 
 if [ -x "$STAGED" ]; then
   exec "$STAGED" "$@"
+fi
+
+if [ -f "$HERE/bin/compile-cache.mjs" ]; then
+  exec node --import "$HERE/bin/compile-cache.mjs" "$HERE/dist/cli.js" "$@"
 fi
 
 exec node "$HERE/dist/cli.js" "$@"
