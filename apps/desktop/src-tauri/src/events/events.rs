@@ -427,8 +427,16 @@ pub enum AgentEventPayload {
     /// Measured from here to the first `content_block_start`: ~1s for a text
     /// block, a 3s median (1.7–7.5s) for a thinking one.
     ModelRequestStarted,
-    /// A compaction is under way. Drives a live indicator and nothing else —
-    /// the counts only exist once it finishes.
+    /// A compaction is under way. **Read from a log, never produced.** The
+    /// harnesses that emitted it are gone — Claude Code, Codex, omp and pi each
+    /// had a mapper that built this from their own stream — and the one this app
+    /// runs now has no such line: mcode's ACP vocabulary is twelve
+    /// `sessionUpdate` kinds and a compaction is not among them. It stays
+    /// because a session some older build wrote still reads, and dropping the
+    /// variant would fail that line.
+    ///
+    /// The live indicator is driven from the prompt instead —
+    /// `compactingOf` in the frontend, which is where that rule lives.
     ContextCompactionStarted,
     /// A model request failed and is being tried again. Drives a live
     /// indicator, in the same slot and for the same reason a compaction does:
@@ -452,6 +460,14 @@ pub enum AgentEventPayload {
     /// A compaction finished, and the transcript before it no longer reaches the
     /// model. Both counts are optional so an unfamiliar wire shape still closes
     /// the indicator; the UI drops the saving rather than reporting a wrong one.
+    ///
+    /// **Read from a log, never produced**, for the reason its sibling above
+    /// gives. Its two jobs survive it: the transcript row still draws for an old
+    /// session, and the context meter still settles on `post_tokens` there,
+    /// which is what keeps a replayed conversation's ring honest. On a live
+    /// mcode session the count is corrected by the `usage_update` the runtime
+    /// sends once a compaction finishes, and the numbers the reader wants are in
+    /// the CLI's own answer to `/compact`.
     ContextCompacted {
         /// `manual` or `auto`.
         trigger: Option<String>,
