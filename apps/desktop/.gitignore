@@ -1,6 +1,7 @@
 
 # The vendored CLI: staged build output, not source — see scripts/vendor-mcode.sh.
 src-tauri/resources/agent/
+src-tauri/resources/agent
 
 # The agent's own install, when somebody has built against the source.
 apps/agent/node_modules/
