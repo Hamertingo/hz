@@ -34,6 +34,14 @@ second description of it. GitHub's generated commit list is appended below it.
 
 ### Fixed
 
+- **The macOS build links again, and the floor is honest.** The app declared
+  macOS 11 while the CEF build it ships is built for 12, so the linker asked for
+  `___isPlatformVersionAtLeast` and found nothing to provide it — three releases
+  in a row failed on `aarch64-apple-universal` with `Undefined symbols`. The
+  deployment target is now 12.0, which is what the browser has been requiring
+  anyway: an app that cannot start on 11 should not say it can.
+
+
 - **A model's window is the model's, not the gateway's guess.** A reseller
   serving `deepseek-v4.1-flash` under a provider id of its own had no catalog
   entry, so a session compacted at 200k while the model runs at a million — and
