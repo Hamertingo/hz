@@ -48,6 +48,14 @@ pub const QUIT_REQUESTED: &str = "quit_requested";
 /// webview no ⌘C/⌘V at all.
 #[cfg(target_os = "macos")]
 pub fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+    // **Windows gets no menu bar.** Tauri draws one in-window there (macOS has the
+    // system's), and it reads as the system's chrome under a title bar this app
+    // no longer has. Every chord lives in `useHotkey`, and the window's own close
+    // button is what raises the quit dialog below.
+    #[cfg(windows)]
+    {
+        return Menu::new(app);
+    }
     let quit = MenuItem::with_id(app, QUIT_ID, "Quit Hyze Code", true, Some("CmdOrCtrl+Q"))?;
 
     // No accelerator: it is reached rarely and on purpose, and every key this
