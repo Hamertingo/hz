@@ -58,6 +58,7 @@
       "packages/local-runtime-v2/src/service/model-system/management/service-input.test.ts",
       "packages/local-runtime-v2/src/service/model-system/management/service.test.ts",
       "packages/local-runtime-v2/src/service/model-system/resolution/local-model-resolver.test.ts",
+      "packages/local-runtime-v2/src/service/model-system/resolution/model-catalog.test.ts",
       "packages/local-runtime-v2/src/service/model-system/resolution/model-ref.test.ts",
       "packages/local-runtime-v2/src/service/model-system/resolution/model-resolver-byok.test.ts",
       "packages/local-runtime/test/unit/child-bash-lifecycle.test.ts",
