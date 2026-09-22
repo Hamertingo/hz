@@ -286,7 +286,7 @@ pub async fn prepare(
             at,
         })
     };
-    if let Some(previous) = previous {
+    if let Some(mut previous) = previous {
         let _ = previous.session.kill().await;
     }
 
@@ -303,7 +303,7 @@ pub async fn prepare(
                 None
             }
         };
-        if let Some(expired) = expired {
+        if let Some(mut expired) = expired {
             let _ = expired.session.kill().await;
         }
     });
