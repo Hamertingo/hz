@@ -125,7 +125,15 @@ function nameInRef(ref: string): string {
   const head = marker === -1 ? rest : rest.slice(0, marker);
   const separator = head.indexOf(":");
 
-  return (separator === -1 ? head : head.slice(separator + 1)).replace(/%3A/gi, ":");
+  // **And the model's own name carries escapes of its own**, which is why this
+  // is a decode and not a `replace` for the one escape somebody met first. A
+  // gateway names its catalog `publisher/model` — `deepseek/deepseek-v4.1` —
+  // and the `/` reaches the wire as `%2F`, so a row drawn by swapping `%3A`
+  // alone reads `DeepSeek%2Fdeepseek V4.1`. Worse than ugly: `publisherless`
+  // then finds no slash to cut at, so the brand table keys off nothing and the
+  // row loses its mark. Presentation only — `Model.id` and `Model.arg` are
+  // what a pick sends, and neither passes through here.
+  return decodeEscapes(separator === -1 ? head : head.slice(separator + 1));
 }
 
 /// Words, capitalised — the first letter only. `MiniMax-M3` is already spelled
@@ -192,6 +200,18 @@ export function modelSlug(raw: string): string {
 /// The **last** segment and not the first, since a catalog is free to nest one —
 /// `accounts/fireworks/models/llama-v3`. A name with no slash is its own answer,
 /// which is the whole of what a gateway that serves its own models states.
+/// A name with its percent-escapes resolved, and never at the cost of the name.
+///
+/// `decodeURIComponent` throws on a stray `%`, and a row that will not draw is
+/// worse than one that draws with a `%` in it.
+function decodeEscapes(name: string): string {
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
 function publisherless(name: string): string {
   return name.slice(name.lastIndexOf("/") + 1);
 }
