@@ -4,6 +4,8 @@ import {
   FILE_LINK_CLASS,
   FILE_PATH_CLASS,
   REHYPE_PLUGINS,
+  PR_REF_CLASS,
+  REHYPE_PLUGINS_WITH_SESSION_REFS,
   TABLE_CELL_CLASS,
   walk,
   wrapCells,
@@ -33,6 +35,18 @@ function runHarden(tree: Hast) {
 function text(tree: Hast): string {
   if (tree.type === "text") return tree.value ?? "";
   return (tree.children ?? []).map(text).join("");
+}
+
+/// Every element a marking pass left anywhere in the tree.
+///
+/// Recurses into a marked element as well as returning it: a table cell's own
+/// wrapper carries a class, and the reference inside it is one level further
+/// down — stopping at the first marked node would never find it.
+function marked(node: Hast): Hast[] {
+  return (node.children ?? []).flatMap((child) => [
+    ...(child.properties?.className ? [child] : []),
+    ...marked(child),
+  ]);
 }
 
 function link(href: string, children: Hast[]): Hast {
@@ -77,12 +91,6 @@ describe("rehypeFilePaths", () => {
     type: "root",
     children: [{ type: "element", tagName: "p", properties: {}, children }],
   });
-
-  /// Every element the walk marked, wherever it ended up in the tree.
-  const marked = (node: Hast): Hast[] =>
-    (node.children ?? []).flatMap((child) =>
-      child.properties?.className ? [child] : marked(child),
-    );
 
   it("splits a path out of a sentence and marks it", () => {
     const tree = paragraph([{ type: "text", value: "I changed /a/b/Footer.js today" }]);
@@ -292,6 +300,84 @@ describe("rehypeFilePaths", () => {
     walk(tree);
 
     expect(tree.children![0].children).toBe(before);
+  });
+});
+
+/// The passes the assistant's own prose runs, driven from the list that ships
+/// rather than from copies — the order in that list is the contract, and a pass
+/// inserted between two others is a pass this has to run in its place.
+///
+/// `raw` and `sanitize` are skipped: both want a real unified pipeline around
+/// them. `HARDEN` is a tuple and is skipped too — it has its own describe.
+function runSessionRefs(tree: Hast) {
+  for (const entry of (REHYPE_PLUGINS_WITH_SESSION_REFS as unknown as unknown[]).slice(2)) {
+    if (typeof entry !== "function") continue;
+    (entry as (o?: unknown) => (t: Hast) => void)(undefined)(tree);
+  }
+  return tree;
+}
+
+describe("REHYPE_PLUGINS_WITH_SESSION_REFS", () => {
+  const table = (cells: Hast[]): Hast => ({
+    type: "root",
+    children: [
+      {
+        type: "element",
+        tagName: "table",
+        properties: {},
+        children: [
+          {
+            type: "element",
+            tagName: "tbody",
+            properties: {},
+            children: [{ type: "element", tagName: "tr", properties: {}, children: cells }],
+          },
+        ],
+      },
+    ],
+  });
+
+  /// The shape this was found missing in: a table whose first column is a list
+  /// of pull requests. `rehypeTableCells` has already wrapped each cell's text
+  /// by the time the reference pass runs, so there is one more element to
+  /// descend through than prose has — and a pass that only walked `p` would
+  /// leave every one of these plain.
+  it("marks a reference inside a table cell", () => {
+    const tree = table([
+      { type: "element", tagName: "td", properties: {}, children: [{ type: "text", value: "#8" }] },
+    ]);
+    runSessionRefs(tree);
+
+    // The cell's own wrapper carries a class too, so the one under test is
+    // picked by the class rather than by being the first marked element.
+    const refs = marked(tree).filter((node) =>
+      (node.properties?.className as string[] | undefined)?.includes(PR_REF_CLASS),
+    );
+    expect(refs).toHaveLength(1);
+    expect(refs[0]).toMatchObject({
+      tagName: "span",
+      properties: { className: [PR_REF_CLASS], dataPr: "8" },
+    });
+    expect(refs[0].children).toEqual([{ type: "text", value: "#8" }]);
+  });
+
+  it("marks a reference in prose and a path in the same message", () => {
+    const tree: Hast = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          properties: {},
+          children: [{ type: "text", value: "merged #7, see /a/b.ts" }],
+        },
+      ],
+    };
+    runSessionRefs(tree);
+
+    const classes = marked(tree).flatMap((node) => node.properties?.className as string[]);
+    expect(classes).toContain(PR_REF_CLASS);
+    expect(classes).toContain(FILE_PATH_CLASS);
   });
 });
 

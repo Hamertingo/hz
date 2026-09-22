@@ -625,8 +625,15 @@ export default function Chat({
   // `null` for both is the resting state, so the no-session fallback is the
   // context's own.
   const chatSession = useMemo(
-    () => ({ cwd: session?.cwd ?? null, sessionId: session?.sessionId ?? null }),
-    [session?.cwd, session?.sessionId],
+    () => ({
+      cwd: session?.cwd ?? null,
+      sessionId: session?.sessionId ?? null,
+      // The repository, for the one reader that has to tell it from the
+      // checkout: a `#7` is looked up by the repository, and `cwd` is a worktree
+      // for a worktree session.
+      projectPath: session?.projectPath ?? null,
+    }),
+    [session?.cwd, session?.sessionId, session?.projectPath],
   );
 
   // With no session there is no transcript to draw; AppShell centers the

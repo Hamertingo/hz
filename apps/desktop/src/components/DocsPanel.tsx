@@ -428,7 +428,7 @@ function Rendered({ text }: { text: string }) {
         // another — without this every heading after the first would sit flush
         // against the paragraph above it.
         <div key={i} className={i > 0 ? "mt-4" : undefined}>
-          {/* `linkFilePaths` stays off. It is on for the assistant's own
+          {/* `sessionRefs` stays off. It is on for the assistant's own
               messages alone, and a doc's relative links are markdown the author
               wrote — Streamdown's business, not this app's. */}
           <Markdown>{section}</Markdown>

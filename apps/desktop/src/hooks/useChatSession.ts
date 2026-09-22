@@ -18,7 +18,14 @@ import { createContext, useContext } from "react";
 export const ChatSessionContext = createContext<{
   cwd: string | null;
   sessionId: string | null;
-}>({ cwd: null, sessionId: null });
+  /// The repository the session belongs to — the project root, where `cwd` is
+  /// the checkout the agent runs in and is a worktree for a worktree session.
+  ///
+  /// A third field rather than something a leaf derives, because the one reader
+  /// that needs it cannot: a pull request is looked up by the repository, and the
+  /// difference between the two paths is invisible from the checkout alone.
+  projectPath: string | null;
+}>({ cwd: null, sessionId: null, projectPath: null });
 
 export function useChatSession() {
   return useContext(ChatSessionContext);

@@ -3,6 +3,7 @@ import { Streamdown, type Components, type ThemeInput } from "streamdown";
 
 import FileLink from "@/components/chat/FileLink";
 import { MarkdownTable } from "@/components/chat/MarkdownTable";
+import { PrRefChip } from "@/components/chat/PrRef";
 import { useCodeTheme } from "@/hooks/useCodeTheme";
 import { createSharedCodePlugin } from "@/lib/codePlugin";
 import type { CodeThemePair } from "@/lib/codeTheme";
@@ -13,8 +14,9 @@ import { openLink } from "@/lib/openLink";
 import {
   FILE_LINK_CLASS,
   FILE_PATH_CLASS,
+  PR_REF_CLASS,
   REHYPE_PLUGINS,
-  REHYPE_PLUGINS_WITH_FILE_PATHS,
+  REHYPE_PLUGINS_WITH_SESSION_REFS,
 } from "@/lib/markdownPlugins";
 import { cn } from "@/lib/utils";
 
@@ -27,13 +29,15 @@ type MarkdownProps = {
   /// renderer cannot resolve on its own — an issue description, whose images
   /// and files sit behind the tracker's auth and have to be fetched with a key.
   components?: Components;
-  /// Draw an absolute path in the prose as something that opens.
+  /// Draw the references in this prose as something that opens: a path that
+  /// names a file on this machine, and a `#7` that names a pull request in this
+  /// repository.
   ///
   /// Off by default and on for the assistant's own messages alone. Everywhere
   /// else this renders — an issue description, a PR review comment — the paths
-  /// come from somebody else's checkout, so a link there would offer to open a
-  /// file the reader has not got.
-  linkFilePaths?: boolean;
+  /// come from somebody else's checkout and the numbers belong to a repository
+  /// this surface has no session for.
+  sessionRefs?: boolean;
   className?: string;
 };
 
@@ -84,7 +88,7 @@ function MarkdownImpl({
   children,
   streaming = false,
   components,
-  linkFilePaths = false,
+  sessionRefs = false,
   className,
 }: MarkdownProps) {
   // Shiki takes a [light, dark] pair and picks by the `.dark` class our theme
@@ -102,10 +106,10 @@ function MarkdownImpl({
     () => ({
       table: MarkdownTable,
       a: Anchor,
-      ...(linkFilePaths ? { span: FilePathSpan } : null),
+      ...(sessionRefs ? { span: MarkedSpan } : null),
       ...components,
     }),
-    [linkFilePaths, components],
+    [sessionRefs, components],
   );
 
   return (
@@ -115,7 +119,7 @@ function MarkdownImpl({
       plugins={plugins}
       components={overrides}
       controls={CONTROLS}
-      rehypePlugins={linkFilePaths ? REHYPE_PLUGINS_WITH_FILE_PATHS : REHYPE_PLUGINS}
+      rehypePlugins={sessionRefs ? REHYPE_PLUGINS_WITH_SESSION_REFS : REHYPE_PLUGINS}
       shikiTheme={shikiTheme}
       lineNumbers={false}
       className={cn(
@@ -214,27 +218,35 @@ function MarkdownImpl({
   );
 }
 
-/// Every `span` in the rendered markdown, passed through untouched unless
-/// `rehypeFilePaths` marked it.
+/// Every `span` in the rendered markdown, passed through untouched unless one of
+/// the two session passes marked it.
 ///
 /// A pass-through rather than a narrow override, because `span` is an ordinary
 /// element in markdown output and taking it over wholesale would swallow
 /// whatever else put one there.
-function FilePathSpan({
+function MarkedSpan({
   className,
   title,
   children,
   "data-line": dataLine,
+  "data-pr": dataPr,
   ...props
-}: React.ComponentProps<"span"> & { "data-line"?: string }) {
-  // The path rides `title`, since a converted markdown link's text is its own
-  // label rather than the path. Re-checked here rather than trusted: the class
-  // is a plain attribute, and raw HTML in agent output can carry one.
+}: React.ComponentProps<"span"> & { "data-line"?: string; "data-pr"?: string }) {
+  // The marks are plain attributes, so raw HTML in agent output can carry one —
+  // which is why each is re-checked here rather than trusted, and why the
+  // number is read as a number.
   const classes = className?.split(" ") ?? [];
-  // A relative path resolves against the session's own working directory, the
-  // one thing the prose does not carry; inert without one, since a path
-  // resolved against wherever the app happens to run opens the wrong file.
+  const number = Number(dataPr);
+  // Read above both branches: a relative path resolves against the session's own
+  // working directory, the one thing the prose does not carry, and a chip needs
+  // the session to open anything. Inert without one, since a path resolved
+  // against wherever the app happens to run opens the wrong file.
   const { cwd } = useChatSession();
+
+  if (classes.includes(PR_REF_CLASS) && Number.isInteger(number) && number > 0) {
+    return <PrRefChip number={number} label={textOf(children) ?? `#${number}`} />;
+  }
+
   if (classes.includes(FILE_PATH_CLASS) && title && (isFilePath(title) || isRelativePath(title))) {
     const path = absolutePath(title, cwd);
     const line = Number(dataLine);
