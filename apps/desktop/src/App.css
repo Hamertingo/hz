@@ -1428,3 +1428,17 @@ body.session-drag * {
     opacity: 0;
   }
 }
+
+/* **Windows draws no window of its own, so the app does.**
+   `decorations: false` takes the system title bar away, which leaves the corners
+   square and the three controls missing — so the radius is here and the controls
+   are a component. Every drag region reserves their width, or the far end of a
+   titlebar row (the panel's expand button, the composer's) sits under them. */
+[data-platform="windows"] body {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+[data-platform="windows"] [data-tauri-drag-region] {
+  padding-right: calc(138px + 0.75rem);
+}

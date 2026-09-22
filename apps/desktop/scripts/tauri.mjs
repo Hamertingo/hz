@@ -51,6 +51,8 @@ if (args[0] === "dev" && !args.some((a) => a === "-c" || a === "--config")) {
   // Merged in order, so the port lands over whatever the dev flavour says.
   args.push("--config", "src-tauri/tauri.dev.conf.json");
   args.push("--config", JSON.stringify({ build: { devUrl: `http://localhost:${port}` } }));
+  // Devtools are behind a cargo feature the release build does not carry.
+  args.push("--features", "devtools");
 }
 
 const child = spawn(process.execPath, [cli, ...args], { stdio: "inherit", env });
