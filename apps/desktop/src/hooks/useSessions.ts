@@ -30,7 +30,7 @@ import { tracked } from "@/lib/slow";
 import { playNotification } from "@/lib/sound";
 import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/space";
 import type { QuestionAnswer } from "@/lib/questionnaire";
-import { pendingAsksOf } from "@/lib/transcript";
+import { pendingAsksOf, prependOlderPage } from "@/lib/transcript";
 import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
 import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
 
@@ -1060,6 +1060,7 @@ const handleSendMsg = async (
       threadId: null,
       issues: [],
       parentSessionId: null,
+      hasOlder: false,
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
       archived: false,
@@ -2380,6 +2381,56 @@ const ensureLoaded = async (sessionId: string) => {
   }
 };
 
+/// Sessions with an older page already being fetched. The transcript guards its
+/// own trigger, but two panes can hold one session — this is the guard that
+/// survives that.
+const loadingOlderRef = useRef(new Set<string>());
+
+/// Fetches the page of a session's events older than what it has loaded, and
+/// prepends it. Selection loads only the newest tail (`get_session_by_id`
+/// without `beforeSeq`), so this is how the transcript keeps going backwards:
+/// the reader reads up to the top of what is mounted and asks for more.
+///
+/// The page rides the same command the selection does, bounded by the oldest
+/// seq already held — a bound, not a partition: a legacy log's restarted
+/// subagent sequences can put an event already on screen inside the page, and
+/// the prepend deduplicates by id. `hasOlder` comes back with it, and a false
+/// one is what turns every later request into a no-op — the top of the log has
+/// been reached.
+const loadOlderEvents = async (sessionId: string) => {
+  const fail = failUnlessLeft();
+  const session = sessionsRef.current.find((s) => s.sessionId === sessionId);
+  const oldestSeq = session?.hasOlder ? session.events[0]?.seq : undefined;
+  if (oldestSeq === undefined || loadingOlderRef.current.has(sessionId)) return;
+
+  loadingOlderRef.current.add(sessionId);
+  try {
+    const page = await invoke<SessionSnapshot | null>("get_session_by_id", {
+      sessionId,
+      beforeSeq: oldestSeq,
+    });
+    if (!page) return;
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.sessionId === sessionId
+          ? {
+              ...s,
+              // A page is bounded by seq, and a legacy log's restarted subagent
+              // sequences make that bound an overlap, not a partition — the
+              // match is by id, not by seq.
+              events: prependOlderPage(s.events, page.events),
+              hasOlder: page.hasOlder,
+            }
+          : s,
+      ),
+    );
+  } catch (e) {
+    fail(e);
+  } finally {
+    loadingOlderRef.current.delete(sessionId);
+  }
+};
+
 // When each loaded transcript was last on screen. Stamped on arrival and on
 // leaving, so the idle clock starts the moment the reader looks away.
 const lastViewedRef = useRef(new Map<string, number>());
@@ -2910,6 +2961,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
 
 }
