@@ -14,7 +14,7 @@ import {
   type MiniMaxM3ThinkingMode,
 } from '../contracts.js';
 import { CUSTOM_PROVIDER_ID_PREFIX } from '../identity.js';
-import { lookupLocalCatalogModel } from './model-catalog.js';
+import { lookupLocalCatalogModel, patchedModelLimits } from './model-catalog.js';
 import {
   OPENPLATFORM_THINKING_VARIANTS_CAPABILITY,
   type OpenPlatformThinkingVariants,
@@ -93,7 +93,7 @@ export function modelRefForModel(
       provider,
       model_id: modelId,
       capabilities: capabilitiesFromModelConfig(modelConfig, { provider, modelId }),
-      ...modelLimitsFromConfig(modelConfig),
+      ...modelLimitsFromConfig(modelConfig, modelId),
       ...resolveManagedParameters(modelConfig, options),
     };
   }
@@ -115,7 +115,7 @@ export function modelRefForModel(
     model_id: modelId,
     thinking_level: thinkingLevel,
     capabilities,
-    ...modelLimitsFromConfig(modelConfig),
+    ...modelLimitsFromConfig(modelConfig, modelId),
   };
 }
 
@@ -542,16 +542,24 @@ export function supportsJsonObjectOutput(modelRef: IModelRef): boolean {
   return capabilities?.[SUPPORT_JSON_OBJECT_OUTPUT_CAPABILITY] === true;
 }
 
+/// The window a model ref carries, which is the provider's own unless we have
+/// stated a better one.
+///
+/// **This is where a wrong figure would otherwise be laundered into the truth.**
+/// A gateway answers 200,000 for a model that runs at a million, the config
+/// keeps it, this stamps it into the ref, and the resolver believes the ref over
+/// the catalog — so the wrong number comes back around and the catalog is never
+/// asked. A model id is what lets `patchedModelLimits` break that loop.
 export function modelLimitsFromConfig(
   modelConfig: LocalModelConfig | undefined,
+  modelId?: string,
 ): Pick<IModelRef, 'context_window' | 'max_tokens'> {
+  const patched = modelId === undefined ? undefined : patchedModelLimits(modelId);
+  const context = patched?.contextWindow ?? modelConfig?.limit?.context;
+  const output = patched?.maxTokens ?? modelConfig?.limit?.output;
   return {
-    ...(typeof modelConfig?.limit?.context === 'number'
-      ? { context_window: modelConfig.limit.context }
-      : {}),
-    ...(typeof modelConfig?.limit?.output === 'number'
-      ? { max_tokens: modelConfig.limit.output }
-      : {}),
+    ...(typeof context === 'number' ? { context_window: context } : {}),
+    ...(typeof output === 'number' ? { max_tokens: output } : {}),
   };
 }
 
