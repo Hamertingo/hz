@@ -96,15 +96,6 @@ fs.rmSync(DEST, { recursive: true, force: true });
 fs.mkdirSync(path.join(DEST, 'bin'), { recursive: true });
 fs.mkdirSync(path.join(DEST, 'app'), { recursive: true });
 
-// The source, less everything already built. The `pnpm install --prod` below is
-// what keeps the bundle from carrying TypeScript, Vitest and Esbuild — the
-// toolchain that built the agent is not the agent.
-const SKIP = new Set(['node_modules', 'dist', '.git']);
-fs.cpSync(AGENT, path.join(DEST, 'app'), {
-  recursive: true,
-  filter: (src) => !SKIP.has(path.basename(src)),
-});
-
 // **The node that installed the source tree installs the copy too.** A native
 // module is built for exactly one Node ABI, and both installs have to agree on
 // it or the staged tree carries a `better_sqlite3.node` the staged runtime
@@ -123,24 +114,14 @@ if (!installNode) {
   throw new Error(`no node to stage (looked at ${pinned || 'nothing'})`);
 }
 
-// `onlyBuiltDependencies` in the tree's own package.json is what lets the two
-// native modules build; nothing here needs to override it.
-run('pnpm', ['install', '--prod', '--frozen-lockfile'], {
-  cwd: path.join(DEST, 'app'),
-  env: { ...process.env, PATH: `${path.dirname(installNode)}${path.delimiter}${process.env.PATH}` },
-});
-
-// The built JS is not a dependency, so it comes over after the install decides
-// what the production tree is.
+// **The built JS, then the packages the bundle cannot carry.** `dist/` already
+// has every JavaScript dependency inlined; what it cannot hold is a native
+// module, whose `.node` is a binary and not a module. Both come from the same
+// script the macOS launcher calls, because until it did the Windows bundle was
+// staged by `pnpm install --prod`: 32,000 files and 524MB for a runtime that
+// reads `dist/`, extracted one file at a time by NSIS while the reader watched.
 fs.cpSync(path.join(AGENT, 'dist'), path.join(DEST, 'app', 'dist'), { recursive: true });
-
-// **The source was scaffolding and goes.** `pnpm install` needed the workspace
-// manifests to resolve the tree; the runtime needs `dist/`, which the build
-// bundled, and the packages npm still owns. The licences stay — what is
-// redistributed still has to carry them.
-for (const dir of ['packages', 'third_party', 'scripts', 'test', 'docs', 'examples']) {
-  fs.rmSync(path.join(DEST, 'app', dir), { recursive: true, force: true });
-}
+run(installNode, [path.join(ROOT, 'scripts', 'stage-agent-externals.mjs'), AGENT, path.join(DEST, 'app')]);
 
 // The launcher, built rather than copied: on Windows it is the only shape a
 // spawn can start, and on any platform it is the one that knows where the node

@@ -86,73 +86,10 @@ INSTALL_NODE="$(cat "$AGENT/.node-runtime" 2>/dev/null || command -v node)"
 # what tells node the chunks are ESM.
 cp -R "$AGENT/dist" "$DEST/app/dist"
 
-"$INSTALL_NODE" - "$AGENT" "$DEST/app" <<'STAGE_EXTERNALS'
-const fs = require('node:fs');
-const path = require('node:path');
-
-const [agent, app] = process.argv.slice(2);
-const meta = JSON.parse(fs.readFileSync(path.join(agent, 'dist/metafile.json'), 'utf8'));
-
-// esbuild lists node's own modules as external too; only npm packages can be
-// missing from a bundle, and only those need a directory beside it.
-const builtin = /^(node:)?(fs|path|os|util|crypto|stream|events|buffer|net|http|http2|https|tls|zlib|url|assert|child_process|worker_threads|perf_hooks|async_hooks|module|process|readline|string_decoder|tty|dns|dgram|vm|v8|inspector|constants|timers|querystring|punycode|sys|domain|repl|cluster|trace_events|diagnostics_channel|wasi|sea|sqlite|console)(\/.*)?$/;
-
-const roots = new Set();
-for (const output of Object.values(meta.outputs ?? {})) {
-  for (const imported of output.imports ?? []) {
-    if (imported.external && !builtin.test(imported.path)) {
-      // `@scope/name/sub` and `name/sub` both name the package.
-      const parts = imported.path.split('/');
-      roots.add(imported.path.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]);
-    }
-  }
-}
-
-// A package's own dependencies are not bundled either, and nothing in the
-// metafile says so — `bindings` is what resolves `better_sqlite3.node`, and it
-// arrives as a dependency of a package that was marked external. So the walk
-// follows each manifest, which is the only statement of who needs whom.
-//
-// **A package for another platform is skipped**, which is the statement its own
-// manifest makes: `clipboard` installs ten variants and a bundle needs the one
-// the runner is on. `os`/`cpu` are the two fields that carry it.
-const copied = new Set();
-const copy = (name) => {
-  if (copied.has(name)) return;
-  copied.add(name);
-  const from = path.join(agent, 'node_modules', name);
-  if (!fs.existsSync(from)) return; // an optional dependency this platform did not install
-  const manifest = path.join(from, 'package.json');
-  if (!fs.existsSync(manifest)) return;
-  const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-  const oneOf = (field, value) => !pkg[field] || [].concat(pkg[field]).includes(value);
-  if (!oneOf('os', process.platform) || !oneOf('cpu', process.arch)) {
-    copied.delete(name); // not for this runner, and its dependents still are
-    return;
-  }
-
-  const to = path.join(app, 'node_modules', name);
-  fs.mkdirSync(path.dirname(to), { recursive: true });
-  fs.cpSync(from, to, { recursive: true, dereference: true });
-
-  for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) copy(dep);
-};
-
-for (const name of roots) copy(name);
-
-// The platform halves of a package installed as one-of-many — `clipboard` ships
-// a `-darwin-arm64` beside it — are chosen by the install, so whatever is on
-// disk here is what belongs on disk there.
-for (const entry of fs.readdirSync(path.join(agent, 'node_modules')).filter((n) => n.startsWith('@'))) {
-  for (const sub of fs.readdirSync(path.join(agent, 'node_modules', entry))) {
-    if (roots.has(`${entry}/${sub}`)) continue;
-    if (![...roots].some((r) => `${entry}/${sub}`.startsWith(`${r}-`))) continue;
-    copy(`${entry}/${sub}`);
-  }
-}
-
-console.log(`staged ${copied.size} package(s): ${[...copied].sort().join(', ')}`);
-STAGE_EXTERNALS
+# The packages the bundle cannot carry, staged by the same script the Windows
+# launcher calls — one implementation, because there were two and only one of
+# them was fixed.
+"$INSTALL_NODE" "$ROOT/scripts/stage-agent-externals.mjs" "$AGENT" "$DEST/app"
 
 # **The runtime ships with the agent, and it has to.** Two reasons, and the
 # second is what made this a bug rather than a preference:
