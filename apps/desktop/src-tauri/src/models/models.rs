@@ -176,6 +176,13 @@ pub struct Model {
     /// where the wire format is: `:v:` is ACP's, not the picker's.
     #[serde(default)]
     pub base_id: String,
+    /// The window the agent states for this model, and the budget it may reply
+    /// with — `None` where the agent said nothing, which is what a row draws as
+    /// its fallback rather than as a fact.
+    #[serde(default)]
+    pub context_window: Option<u64>,
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
     /// The variant's own name (`thinking`, `fast`), or empty where the id names
     /// none. Drawn as the row's second control rather than glued to the model's
     /// name — which is what `label` used to carry.
@@ -242,6 +249,10 @@ impl Model {
             // no variant for a control to pick between.
             base_id: String::new(),
             variant: String::new(),
+            // A row this app writes itself: no agent spoke about it, so nothing
+            // is claimed about its window.
+            context_window: None,
+            max_tokens: None,
             accepts_images: true,
             secondary: false,
             supports_fast: false,

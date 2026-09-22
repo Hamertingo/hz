@@ -153,6 +153,10 @@ pub fn from_configs(configs: &ConfigOptions) -> Vec<Model> {
                 None => String::new(),
             };
 
+            // The agent's own statement of the window, and the only source a
+            // model screen has — see `ConfigChoiceMeta`.
+            let meta = choice.meta.as_ref();
+
             let named = if choice.name.is_empty() {
                 choice.value.clone()
             } else {
@@ -172,6 +176,10 @@ pub fn from_configs(configs: &ConfigOptions) -> Vec<Model> {
                 },
                 base_id,
                 variant,
+                // Stated by the agent, and `None` where it stated nothing —
+                // a screen then draws its fallback rather than a fact.
+                context_window: meta.and_then(|m| m.context_window),
+                max_tokens: meta.and_then(|m| m.max_tokens),
                 efforts: if running {
                     active_efforts.clone()
                 } else {

@@ -654,6 +654,20 @@ pub struct ConfigOption {
     pub options: Vec<ConfigChoice>,
 }
 
+/// What a choice says about itself beyond its label.
+///
+/// **It is the only place a client can learn a model's window.** A window is
+/// otherwise only ever stated on a usage update, which needs a session already
+/// running that model — so a model screen with no other source draws its own
+/// fallback and a row reads `200k` for a model that runs at a million.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct ConfigChoiceMeta {
+    #[serde(default, rename = "contextWindow")]
+    pub context_window: Option<u64>,
+    #[serde(default, rename = "maxTokens")]
+    pub max_tokens: Option<u64>,
+}
+
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct ConfigChoice {
     #[serde(default)]
@@ -663,6 +677,10 @@ pub struct ConfigChoice {
     /// the CLI knows which variants a given model has.
     #[serde(default)]
     pub name: String,
+    /// Absent for every harness that states none, and for the choices of an
+    /// option that is not a model list.
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<ConfigChoiceMeta>,
 }
 
 impl ConfigOptions {
