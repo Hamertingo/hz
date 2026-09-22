@@ -17,6 +17,7 @@ import { clearFanOut, fanOutModels } from "@/hooks/useModelFanOut";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import { canFanOut, fanOutPlan } from "@/lib/fanOut";
 import { changeRange } from "@/lib/changes";
+import { compactingOf } from "@/lib/compaction";
 import { modelsWaiting } from "@/lib/modelRead";
 import { fastFor, fastNotice } from "@/lib/fastMode";
 import { lastTurn, secondOpinionPrompt } from "@/lib/secondOpinion";
@@ -152,20 +153,6 @@ export type PaneState = {
   apiRetry: ApiRetryState | null;
   queuedMessages: QueuedPrompt[];
 };
-
-// Two events with nothing between them, so whichever came last says whether a
-// compaction is still running. Gated on `busy` for the same reason as the task
-// set: a `started` with no `completed` after it is the shape a killed session
-// leaves in the log forever.
-function compactingOf(session: SessionSnapshot | null, busy: boolean): boolean {
-  if (!busy || !session) return false;
-  for (let i = session.events.length - 1; i >= 0; i--) {
-    const p = session.events[i].payload;
-    if (p.type === "context_compacted") return false;
-    if (p.type === "context_compaction_started") return true;
-  }
-  return false;
-}
 
 // The retry in flight, if the last thing that happened was one. Derived by
 // walking back rather than tracked, for the reason `compactingOf` is: the event
