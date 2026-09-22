@@ -27,6 +27,9 @@
           m === "dark" ||
           (m === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
         var el = document.documentElement;
+        // Windows draws no window of its own, so the app does: the corners come
+        // from CSS and the three controls are a component. Both keyed off this.
+        if (/Windows/.test(navigator.userAgent)) el.dataset.platform = "windows";
         el.dataset.theme = t;
         el.dataset.mode = dark ? "dark" : "light";
         el.classList.toggle("dark", dark);
