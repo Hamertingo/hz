@@ -40,7 +40,7 @@ use std::{
 use tauri::{AppHandle, Emitter};
 use tokio::{
     process::Child,
-    sync::Mutex,
+    sync::{Mutex, OwnedMutexGuard},
 };
 
 /// Emitted as `session_status` when a session's status changes, so the sidebar
@@ -390,7 +390,15 @@ pub async fn publish_status(session_id: &str, status: SessionStatus, app: &AppHa
 
 #[derive(Debug)]
 pub struct SessionManager {
-    pub sessions: Mutex<HashMap<String, Session>>,
+    /// Live sessions. **The lock guards the map's shape only** — get, insert,
+    /// remove — never a session's work: the value is an `Arc`, so a command
+    /// clones it out and drops this guard before touching the session. Holding
+    /// it across a spawn used to put every other session's Stop, permission
+    /// answer and prompt behind one cold boot.
+    ///
+    /// Lock order, everywhere: this map, then a session, then that session's
+    /// `status`/`queued` locks. The map guard never sees an await.
+    pub sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
     /// Sends that have begun and not yet handed their session over, and whether
     /// the reader asked to stop one while it ran.
     ///
@@ -406,6 +414,14 @@ pub struct SessionManager {
     /// is what takes an id back out and `Drop` cannot await. Nothing is held
     /// across an await — the map is read, written and released.
     starts: std::sync::Mutex<HashMap<String, bool>>,
+    /// One gate per session id, held for the whole of a `send_msg` — the barrier
+    /// the map lock used to be by accident, now that the spawn runs outside it.
+    /// Without it two sends naming one dead session could both spawn a child,
+    /// and the second insert would orphan the first.
+    ///
+    /// Never locked while a session lock is held, so no ordering with the locks
+    /// above is possible.
+    send_gates: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl Default for SessionManager {
@@ -413,6 +429,7 @@ impl Default for SessionManager {
         Self {
             sessions: Mutex::new(HashMap::new()),
             starts: std::sync::Mutex::new(HashMap::new()),
+            send_gates: std::sync::Mutex::new(HashMap::new()),
         }
     }
 }
@@ -438,7 +455,47 @@ impl Drop for Starting<'_> {
     }
 }
 
+/// The send gate one [`send_msg`](SessionManager::send_msg) holds for its whole
+/// body, and the map entry it takes back out when no later send is waiting on
+/// the same gate.
+struct SendGate<'a> {
+    manager: &'a SessionManager,
+    session_id: String,
+    /// Counted at drop: the map entry, this field and the owned guard below are
+    /// the only certain holders, and every waiter cloned the gate once more to
+    /// take its lock.
+    gate: Arc<Mutex<()>>,
+    /// An owned guard because it and `gate` live in one struct, and a borrowed
+    /// one would borrow from a field of that same struct.
+    _held: OwnedMutexGuard<()>,
+}
+
+impl Drop for SendGate<'_> {
+    fn drop(&mut self) {
+        // Removing with a waiter outstanding would let the send after it mint a
+        // fresh gate and run beside a send still booting, so the entry goes only
+        // when the count says nobody is behind this one.
+        if Arc::strong_count(&self.gate) <= 3 {
+            self.manager
+                .send_gates
+                .lock()
+                .expect("gate map poisoned")
+                .remove(&self.session_id);
+        }
+    }
+}
+
 impl SessionManager {
+    /// This send's gate, creating the entry if no send for the id is in flight.
+    fn send_gate(&self, session_id: &str) -> Arc<Mutex<()>> {
+        self.send_gates
+            .lock()
+            .expect("gate map poisoned")
+            .entry(session_id.to_string())
+            .or_default()
+            .clone()
+    }
+
     /// Records a send in flight, taking the id back out when it ends.
     fn starting(&self, session_id: &str) -> Starting<'_> {
         self.starts
@@ -581,6 +638,19 @@ impl SessionManager {
             from,
             sent_at,
         } = request;
+
+        // Two sends naming one session serialize on this gate — the barrier the
+        // map lock used to be by accident, gone now that the spawn runs outside
+        // it. Taken **before** `starting`, so a send queued behind an identical
+        // id records its start only once it is the one running, and Stop lands
+        // on the send that is actually in flight.
+        let gate = self.send_gate(session_id);
+        let _gate = SendGate {
+            manager: self,
+            session_id: session_id.to_string(),
+            _held: Arc::clone(&gate).lock_owned().await,
+            gate,
+        };
 
         // For the whole of this call, and taken back out however it leaves. The
         // live path below holds its session in `sessions` already, so this
@@ -914,7 +984,7 @@ impl SessionManager {
             self.sessions
                 .lock()
                 .await
-                .insert(session_id.to_string(), session);
+                .insert(session_id.to_string(), Arc::new(Mutex::new(session)));
 
             // Returned so the frontend learns the resolved worktree name and
             // the backend-truncated title rather than guessing either.
@@ -928,28 +998,30 @@ impl SessionManager {
             });
         }
 
-        let mut sessions_guard = self.sessions.lock().await;
+        // Cloned out and the map guard dropped before anything awaits: from
+        // here every lock taken is the session's own, which is what still
+        // serializes a send against the same session's Stop, steer and delete.
+        let existing = self.sessions.lock().await.get(session_id).cloned();
 
         // Decided here rather than by the caller: the frontend's own `busy` is
-        // optimistic, and this is the only reading taken on the same lock the
-        // write goes out under.
+        // optimistic, and this is the reading the send below acts on.
         // Three readings, not one, because the questions below differ: whether
         // anything is working at all decides that the child must not be
         // replaced, while only an open model call means this prompt has a turn
         // to be folded into.
-        let (busy, turn_in_flight, tool_in_flight, auth_failed) =
-            match sessions_guard.get(session_id) {
-                Some(s) => {
-                    let tracker = s.status.lock().await;
-                    (
-                        tracker.has_outstanding_work(),
-                        tracker.turn_in_flight(),
-                        tracker.tool_in_flight(),
-                        tracker.auth_failed(),
-                    )
-                }
-                None => (false, false, false, false),
-            };
+        let (busy, turn_in_flight, tool_in_flight, auth_failed) = match &existing {
+            Some(s) => {
+                let s = s.lock().await;
+                let tracker = s.status.lock().await;
+                (
+                    tracker.has_outstanding_work(),
+                    tracker.turn_in_flight(),
+                    tracker.tool_in_flight(),
+                    tracker.auth_failed(),
+                )
+            }
+            None => (false, false, false, false),
+        };
 
         // Effort is fixed at spawn — the CLI has no `set_effort` control request
         // — so changing it means replacing the child. Resuming by id keeps the
@@ -972,26 +1044,35 @@ impl SessionManager {
         //
         // A login that ran out is the other reason, and it is not a setting at
         // all — see [`respawn_needed`], which is where the two part company.
-        let settings_changed = sessions_guard.get(session_id).is_some_and(|s| {
-            let caps = s.harness.caps();
+        let settings_changed = match &existing {
+            Some(s) => {
+                let s = s.lock().await;
+                let caps = s.harness.caps();
 
-            (s.effort != effort && !caps.applies_effort_in_place)
-                || (s.model != model && !caps.applies_model_in_place)
-                || (s.permission_mode != permission_mode && !caps.applies_permission_in_place)
-                // Only the harness whose fast mode rides the spawn. `InPlace`
-                // is applied below without replacing anything, and `AtCreation`
-                // is fx — where a respawn would *not* move it, since a resumed
-                // fx session carries the stamp it was created with, so killing
-                // the child would cost the reader a running conversation and
-                // change nothing at all.
-                || (s.fast != fast && caps.fast_mode == FastMode::OnSpawn)
-        });
-
-        if respawn_needed(auth_failed, turn_in_flight, busy, settings_changed) {
-            if let Some(s) = sessions_guard.remove(session_id) {
-                s.kill().await?;
+                (s.effort != effort && !caps.applies_effort_in_place)
+                    || (s.model != model && !caps.applies_model_in_place)
+                    || (s.permission_mode != permission_mode && !caps.applies_permission_in_place)
+                    // Only the harness whose fast mode rides the spawn. `InPlace`
+                    // is applied below without replacing anything, and `AtCreation`
+                    // is fx — where a respawn would *not* move it, since a resumed
+                    // fx session carries the stamp it was created with, so killing
+                    // the child would cost the reader a running conversation and
+                    // change nothing at all.
+                    || (s.fast != fast && caps.fast_mode == FastMode::OnSpawn)
             }
-        }
+            None => false,
+        };
+
+        // The respawn removes the session, and the send continues on the resume
+        // path below — the replacement child is what that path spawns.
+        let live = if respawn_needed(auth_failed, turn_in_flight, busy, settings_changed) {
+            if let Some(s) = self.sessions.lock().await.remove(session_id) {
+                s.lock().await.kill().await?;
+            }
+            None
+        } else {
+            existing
+        };
 
         // The caller's `cwd` is a hint for a new session only. From here on the
         // recorded one wins: with a project picker the two can disagree, and
@@ -1026,7 +1107,8 @@ impl SessionManager {
             }
         }
 
-        if let Some(s) = sessions_guard.get_mut(session_id) {
+        if let Some(s) = live {
+            let mut s = s.lock().await;
             // Before the send, so the index reflects intent even if writing to
             // the child fails — the prompt event is persisted ahead of stdin too.
             touch_session_index_item(session_id, model.clone(), effort, permission_mode, fast).await?;
@@ -1328,7 +1410,10 @@ impl SessionManager {
             let _ = session.kill().await;
             return Err(error);
         }
-        sessions_guard.insert(session_id.to_string(), session);
+        self.sessions
+            .lock()
+            .await
+            .insert(session_id.to_string(), Arc::new(Mutex::new(session)));
         Ok(SendOutcome {
             issues: linked,
             ..Default::default()
@@ -1387,8 +1472,8 @@ impl SessionManager {
             );
         }
 
-        if let Some(s) = self.sessions.lock().await.get(session_id) {
-            if s.status.lock().await.turn_in_flight() {
+        if let Some(s) = self.sessions.lock().await.get(session_id).cloned() {
+            if s.lock().await.status.lock().await.turn_in_flight() {
                 bail!("wait for the turn to finish before forking it");
             }
         }
@@ -1456,8 +1541,7 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Option<ContextSnapshot>, String> {
-        let sessions = self.sessions.lock().await;
-        let Some(session) = sessions.get(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             // The panel draws the last reading off the index, so this is not
             // "nothing to show" — it is why the *refresh* it just offered did
             // nothing, and it says so rather than repeating the agent's own
@@ -1465,6 +1549,7 @@ impl SessionManager {
             // child.
             return Err("This session's agent is not running — a reading is taken while it is.".into());
         };
+        let session = session.lock().await;
 
         // Refused rather than queued: the agent answers a second prompt with an
         // error, and a reading taken mid-turn would be of a run in progress
@@ -1507,12 +1592,12 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Vec<mcode::delegation::DelegatedMember>, String> {
-        let sessions = self.sessions.lock().await;
-        let Some(session) = sessions.get(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             return Err(
                 "This session's agent is not running — its subagents are read while it is.".into(),
             );
         };
+        let session = session.lock().await;
         let Transport::Acp(child) = &session.stdin;
         mcode::delegation::snapshot(child)
             .await
@@ -1528,10 +1613,10 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<mcode::delegation::DelegationStop, String> {
-        let sessions = self.sessions.lock().await;
-        let Some(session) = sessions.get(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             return Err("This session's agent is not running, so there is nothing to stop.".into());
         };
+        let session = session.lock().await;
         let Transport::Acp(child) = &session.stdin;
         mcode::delegation::stop(child)
             .await
@@ -1552,13 +1637,13 @@ impl SessionManager {
         member_session_id: &str,
         limit: Option<u64>,
     ) -> Result<Vec<crate::events::AgentEvent>, String> {
-        let sessions = self.sessions.lock().await;
-        let Some(session) = sessions.get(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             return Err(
                 "This session's agent is not running — a subagent's work is read while it is."
                     .into(),
             );
         };
+        let session = session.lock().await;
         let Transport::Acp(child) = &session.stdin;
         mcode::delegation::transcript(child, member_session_id, limit)
             .await
@@ -1566,14 +1651,13 @@ impl SessionManager {
     }
 
     pub async fn interrupt(&self, session_id: &str, _app: &AppHandle) -> Result<()> {
-        let mut sessions_guard = self.sessions.lock().await;
-        if let Some(session) = sessions_guard.get_mut(session_id) {
-            return session.interrupt().await;
+        // Cloned out before the session is locked: the map guard never sees an
+        // await, and the session's own lock is what orders this against its
+        // send.
+        let session = self.sessions.lock().await.get(session_id).cloned();
+        if let Some(session) = session {
+            return session.lock().await.interrupt().await;
         }
-        // The second lock is taken with the first released: nothing here holds
-        // both, and holding them in a different order somewhere else is how a
-        // deadlock is built.
-        drop(sessions_guard);
 
         // **A session that is still starting has no turn to cancel, and a reader
         // who presses Stop on one means "never mind".** Recorded rather than
@@ -1591,11 +1675,11 @@ impl SessionManager {
     /// See [`Session::steer_queued`]: this is the reader's own alternative to
     /// interrupting a turn just to release a sentence they have already written.
     pub async fn steer_queued(&self, session_id: &str, app: &AppHandle) -> Result<usize> {
-        let mut sessions_guard = self.sessions.lock().await;
-        let Some(session) = sessions_guard.get_mut(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             bail!("no running session {session_id}");
         };
 
+        let mut session = session.lock().await;
         session.steer_queued(app).await
     }
 
@@ -1606,8 +1690,8 @@ impl SessionManager {
     /// queue died with the process, which is the same "nothing to take back"
     /// the frontend already handles.
     pub async fn cancel_queued(&self, session_id: &str) -> Option<QueuedMessage> {
-        let sessions_guard = self.sessions.lock().await;
-        let session = sessions_guard.get(session_id)?;
+        let session = self.sessions.lock().await.get(session_id).cloned()?;
+        let session = session.lock().await;
         session.cancel_queued().await
     }
 
@@ -1620,10 +1704,10 @@ impl SessionManager {
         option_id: &str,
         app: &AppHandle,
     ) -> Result<()> {
-        let mut sessions_guard = self.sessions.lock().await;
-        let Some(session) = sessions_guard.get_mut(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             bail!("no running session {session_id}");
         };
+        let mut session = session.lock().await;
         session.respond_permission(request_id, option_id, app).await
     }
 
@@ -1637,10 +1721,10 @@ impl SessionManager {
         answers: Vec<mcode::elicitation::QuestionAnswer>,
         app: &AppHandle,
     ) -> Result<()> {
-        let mut sessions_guard = self.sessions.lock().await;
-        let Some(session) = sessions_guard.get_mut(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             bail!("no running session {session_id}");
         };
+        let mut session = session.lock().await;
         session.answer_questions(request_id, answers, app).await
     }
 
@@ -1652,10 +1736,10 @@ impl SessionManager {
         request_id: &str,
         app: &AppHandle,
     ) -> Result<()> {
-        let mut sessions_guard = self.sessions.lock().await;
-        let Some(session) = sessions_guard.get_mut(session_id) else {
+        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
             bail!("no running session {session_id}");
         };
+        let mut session = session.lock().await;
         session.cancel_question(request_id, app).await
     }
 
@@ -1682,7 +1766,7 @@ impl SessionManager {
         }
 
         if let Some(session) = self.sessions.lock().await.remove(session_id) {
-            session.kill().await?;
+            session.lock().await.kill().await?;
         }
 
         let existed = remove_session_worktree(&item).await?;
@@ -1708,7 +1792,9 @@ impl SessionManager {
     /// The agent process's pid, for finding what it started (a dev server is a
     /// descendant). `None` while no child is running.
     pub async fn child_pid(&self, session_id: &str) -> Option<u32> {
-        self.sessions.lock().await.get(session_id).and_then(|s| s.child.id())
+        let session = self.sessions.lock().await.get(session_id).cloned()?;
+        let session = session.lock().await;
+        session.child.id()
     }
 
     /// The child goes first and its lock is released before the disk work, so a
@@ -1716,7 +1802,7 @@ impl SessionManager {
     pub async fn delete(&self, session_id: &str) -> Result<bool> {
         let running = self.sessions.lock().await.remove(session_id);
         if let Some(session) = running {
-            session.kill().await?;
+            session.lock().await.kill().await?;
         }
         #[cfg(all(feature = "cef", target_os = "macos"))]
         crate::cef::close_session(session_id);
@@ -1775,16 +1861,14 @@ impl SessionManager {
     /// The live tracker is updated first so the in-memory machine agrees with
     /// the index; a session with no live process falls back to the index alone.
     pub async fn mark_idle(&self, session_id: &str) -> Result<Option<SessionStatus>> {
-        let sessions_guard = self.sessions.lock().await;
-
-        if let Some(session) = sessions_guard.get(session_id) {
+        if let Some(session) = self.sessions.lock().await.get(session_id).cloned() {
+            let session = session.lock().await;
             let Some(next) = session.status.lock().await.mark_seen() else {
                 return Ok(None);
             };
             set_session_status(session_id, next).await?;
             return Ok(Some(next));
         }
-        drop(sessions_guard);
 
         match get_session_index_item(session_id).await? {
             Some(item) if item.status == SessionStatus::Completed => {
@@ -2364,8 +2448,9 @@ impl Session {
         Ok(())
     }
 
-    /// Ends the child process. Takes `self` by value — a stopped session can't
-    /// be reused.
+    /// Ends the child process. The caller has already taken the session out of
+    /// the map — that removal, not `self` by value, is what stops a stopped
+    /// session being reused.
     ///
     /// pi is asked to exit rather than killed, and that is not politeness: it
     /// holds `~/.pi/agent/auth.json.lock` while it runs and a `SIGKILL`ed one
@@ -2373,7 +2458,7 @@ impl Session {
     /// waits that stale lock out for ~30s before answering anything. Every
     /// caller here is one where another pi follows — a respawn for an effort
     /// change, an update install, a delete and retry.
-    pub async fn kill(mut self) -> Result<()> {
+    pub async fn kill(&mut self) -> Result<()> {
         // The session is closed and the pipe handed an EOF before the process
         // is touched: mcode runs its own teardown on a clean exit and a
         // `SIGKILL` would leave that half-written. `shutdown` waits for it, then
@@ -3148,5 +3233,48 @@ mod tests {
         assert!(manager.cancel_start("a"));
         assert!(manager.start_cancelled("a"));
         assert!(!manager.start_cancelled("b"));
+    }
+
+    /// The gate is what two sends naming one session serialize on, so a send
+    /// still holding one must be handed the same gate — and a gate with no send
+    /// behind it must not outlive the send that took it, or the next send joins
+    /// a lock nobody holds.
+    #[tokio::test]
+    async fn a_send_gate_is_shared_while_held_and_replaced_once_dropped() {
+        let manager = SessionManager::default();
+
+        let gate = manager.send_gate("s1");
+        let held_lock = Arc::clone(&gate).lock_owned().await;
+        let held = SendGate {
+            manager: &manager,
+            session_id: "s1".to_string(),
+            gate,
+            _held: held_lock,
+        };
+
+        let waiting = manager.send_gate("s1");
+        assert!(
+            Arc::ptr_eq(&held.gate, &waiting),
+            "a queued send joins the held gate"
+        );
+        drop(waiting);
+        drop(held);
+
+        assert!(
+            manager
+                .send_gates
+                .lock()
+                .expect("gate map poisoned")
+                .is_empty(),
+            "the entry is gone once no send is behind it"
+        );
+        let next = manager.send_gate("s1");
+        assert_eq!(
+            manager.send_gates.lock().expect("gate map poisoned").len(),
+            1,
+            "and a fresh send mints a fresh entry"
+        );
+        assert!(Arc::strong_count(&next) == 2);
+        let _ = next;
     }
 }
