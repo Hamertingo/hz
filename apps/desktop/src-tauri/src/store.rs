@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -141,6 +142,24 @@ pub struct SessionIndexItem {
     /// not spawn more.
     #[serde(default)]
     pub parent_session_id: Option<String>,
+    /// The highest `seq` this session's log holds, as of the last append.
+    ///
+    /// Resume used to learn this by reading and JSON-parsing the whole `.jsonl`
+    /// on every spawn; this is that answer carried where it is cheap to read.
+    /// Written by [`append_session_event`] before the line lands, so a crash can
+    /// only ever leave it *ahead* of the log — the direction `max_seq`'s doc
+    /// calls harmless, since over-counting costs a gap and under-counting hands
+    /// a live `seq` out twice.
+    ///
+    /// `skip_serializing_if` keeps every entry this build has not appended to
+    /// byte-identical to what shipped, and `serde(default)` is the rule the
+    /// whole struct follows: the index parses as one `Vec`, so a field an older
+    /// entry lacks failing to parse is every session gone. `ts(skip)` because
+    /// nothing above the file boundary reads it — the log's own events carry
+    /// their seq.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub last_seq: Option<u64>,
     /// The newest context reading the agent has given for this session, with the
     /// moment it was taken.
     ///
@@ -199,6 +218,12 @@ pub struct SessionSnapshot {
     #[ts(flatten)]
     pub index_item: SessionIndexItem,
     pub events: Vec<AgentEvent>,
+    /// Whether `events` is the whole log. `false` on every whole-log read — a
+    /// new session's snapshot, a fork's copy — and on `true` the log holds
+    /// events older than the first one here, which the transcript fetches by
+    /// page once the reader reads back past this tail.
+    #[serde(default)]
+    pub has_older: bool,
 }
 
 static INDEX_LOCK: Mutex<()> = Mutex::const_new(());
@@ -539,6 +564,8 @@ impl SessionIndexItem {
             issues: Vec::new(),
             fork_from: None,
             parent_session_id: parent_session_id.map(str::to_string),
+            // Nothing appended yet; the first event writes it.
+            last_seq: None,
             // Nothing has asked the agent yet.
             context_reading: None,
             created: now.clone(),
@@ -620,6 +647,10 @@ impl SessionIndexItem {
             // not — a depth cap a copy could walk around. Detach is the way out
             // for anyone who wants the fork standing on its own.
             parent_session_id: self.parent_session_id.clone(),
+            // The copy *is* the parent's log at fork time, but the seq cursor
+            // still starts empty here: `Session::fork` stamps the copied
+            // events' max onto the entry it appends, where that list is in hand.
+            last_seq: None,
             // Deliberately not inherited, unlike the fields around it. A reading
             // counts one runtime's own state, and the fork's is a different
             // session id, its own memory and its own first turn — the parent's
@@ -1096,6 +1127,8 @@ pub async fn delete_session(session_id: &str) -> Result<bool> {
     };
 
     let path = get_session_path(session_id).await?;
+    // Before the unlink, since the handle is the thing being orphaned by it.
+    forget_append_handle(session_id).await;
     match fs::remove_file(&path).await {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -1411,15 +1444,90 @@ pub async fn get_session_index_item(session_id: &str) -> Result<Option<SessionIn
 /// `None` means the id isn't in the index. An indexed session with no log yet
 /// is normal — it was written before its process spawned — and yields empty
 /// `events` rather than `None`.
+///
+/// `before_seq` pages: `None` answers the newest [`TAIL_EVENTS`] events, and
+/// `Some(s)` the newest [`TAIL_EVENTS`] with `seq < s`, with `has_older` saying
+/// whether the log still holds older ones. Absent, the whole log goes over the
+/// bridge and lands in the webview whole — which is what a long session costs
+/// on every selection.
 #[tauri::command]
-pub async fn get_session_by_id(session_id: &str) -> Result<Option<SessionSnapshot>, Fail> {
+pub async fn get_session_by_id(
+    session_id: &str,
+    before_seq: Option<u64>,
+) -> Result<Option<SessionSnapshot>, Fail> {
     let Some(index_item) = get_session_index_item(session_id).await? else {
         return Ok(None);
     };
 
-    let events = list_session_events(session_id).await?;
+    let (events, has_older) = tail_session_events(session_id, before_seq).await?;
 
-    Ok(Some(SessionSnapshot { index_item, events }))
+    Ok(Some(SessionSnapshot {
+        index_item,
+        events,
+        has_older,
+    }))
+}
+
+/// How many of a log's newest events a plain read answers.
+///
+/// The transcript's first paint mounts eight turns (`FIRST_MOUNT` in
+/// `src/lib/turnWindow.ts`) and backfills the rest in steps, and a turn is
+/// ten-odd persisted events — so this is several panes' worth of scroll before
+/// the first page fetch, and one short enough that loading it is not the cost
+/// being avoided.
+const TAIL_EVENTS: usize = 400;
+
+/// Reads one slice of a session's `.jsonl` log: the newest [`TAIL_EVENTS`]
+/// events with `seq < before_seq` (`None` = no bound), plus whether older ones
+/// remain. Missing file reads as no events, not an error.
+///
+/// The file is still read whole — the win is parse, IPC and render, not the
+/// bytes: only the slice's lines are JSON-parsed into [`AgentEvent`], and only
+/// they cross the bridge. The lines walked past cost a peek at their `seq`
+/// alone, the same cheap struct [`max_seq`] reads with. Scanning continues past
+/// non-matching lines until the page fills, so `has_older` is exact even for a
+/// legacy log whose subagent lines restart their own sequence at 0.
+async fn tail_session_events(
+    session_id: &str,
+    before_seq: Option<u64>,
+) -> Result<(Vec<AgentEvent>, bool)> {
+    let path = get_session_path(session_id).await?;
+
+    let buffer = match fs::read_to_string(&path).await {
+        Ok(buf) => buf,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), false)),
+        Err(e) => return Err(e).context("could not open session file"),
+    };
+
+    tail_from_buffer(&buffer, before_seq, TAIL_EVENTS)
+}
+
+/// The slice `tail_session_events` answers with, split from the file read so it
+/// can be tested without a `~/.hz` to read out of.
+fn tail_from_buffer(
+    buffer: &str,
+    before_seq: Option<u64>,
+    cap: usize,
+) -> Result<(Vec<AgentEvent>, bool)> {
+    let mut page = Vec::new();
+    for line in buffer.lines().rev() {
+        // Skip only under a bound: a line's seq at or above it (or unreadable)
+        // is not part of the page. Unbounded, the full parse below is the only
+        // test a line gets.
+        if before_seq.is_some_and(|s| line_seq(line).is_none_or(|seq| seq >= s)) {
+            continue;
+        }
+        if page.len() == cap {
+            page.reverse();
+            return Ok((page, true));
+        }
+        page.push(
+            serde_json::from_str::<AgentEvent>(line).context("malformed session file")?,
+        );
+    }
+
+    page.reverse();
+    Ok((page, false))
 }
 
 /// Replays a session's `.jsonl` log into its full event list. Missing file
@@ -1482,6 +1590,8 @@ pub async fn copy_session_log(from: &str, to: &str, from_cwd: &str) -> Result<Ve
     // Written whole rather than appended to, so a fork onto an id that somehow
     // already has a log replaces it instead of interleaving two conversations.
     fs::write(get_session_path(to).await?, body).await?;
+    // The rewrite replaced the file a cached handle would append to.
+    forget_append_handle(to).await;
 
     Ok(events)
 }
@@ -1564,20 +1674,84 @@ pub async fn clear_fork_from(session_id: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// Appends one event as a line to the session's `.jsonl` log.
-pub async fn append_session_event(session_id: &str, event: AgentEvent) -> Result<()> {
-    let path = get_session_path(session_id).await?;
+/// One open append handle per session, kept so an event costs a write and not
+/// an open. `O_APPEND` is what keeps the cache legal: every write lands at the
+/// file's current end whatever the handle read when it was opened, so one line
+/// per write is atomic without any per-session bookkeeping. The inner mutex
+/// serializes a session's own writes; different sessions never share a file.
+///
+/// Handles accumulate one per session ever appended to — an fd and an arc each,
+/// no buffer, so the residency is the OS's — and are dropped only where the
+/// file they name goes away or is rewritten: [`delete_session`] and
+/// [`copy_session_log`]. A handle left cached past an unlink would keep
+/// appending to the orphaned inode.
+static APPEND_HANDLES: LazyLock<Mutex<std::collections::HashMap<String, Arc<Mutex<fs::File>>>>> =
+    LazyLock::new(|| Mutex::const_new(std::collections::HashMap::new()));
 
-    let mut file = fs::OpenOptions::new()
+/// The cached append handle for a session, opening one first if needed.
+async fn append_handle(session_id: &str) -> Result<Arc<Mutex<fs::File>>> {
+    let mut handles = APPEND_HANDLES.lock().await;
+    if let Some(file) = handles.get(session_id) {
+        return Ok(file.clone());
+    }
+
+    let path = get_session_path(session_id).await?;
+    let file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .await
         .context("failed to open session file")?;
+    let file = Arc::new(Mutex::new(file));
+    handles.insert(session_id.to_string(), file.clone());
 
+    Ok(file)
+}
+
+/// Drops a session's cached append handle, for the paths that delete or rewrite
+/// its log. Best-effort by nature: there is nothing to do about a session that
+/// never had one.
+pub async fn forget_append_handle(session_id: &str) {
+    APPEND_HANDLES.lock().await.remove(session_id);
+}
+
+/// Advances the session's persisted seq cursor to `seq`, never backwards.
+///
+/// Called on every append, which is a read-modify-write of the whole index per
+/// event — measured against what it buys: `next_seq_by_session_id` answering
+/// from one record instead of a whole-log scan on every resume. A session the
+/// index no longer names (deleted while its child streamed) has nothing to
+/// record on, and the append below still lands.
+async fn record_last_seq(session_id: &str, seq: u64) -> Result<()> {
+    let _guard = INDEX_LOCK.lock().await;
+
+    let mut sessions = read_index().await?;
+    let Some(item) = sessions.iter_mut().find(|i| i.session_id == session_id) else {
+        return Ok(());
+    };
+
+    if item.last_seq.is_some_and(|last| last >= seq) {
+        return Ok(());
+    }
+    item.last_seq = Some(seq);
+    write_session_index(&sessions).await
+}
+
+/// Appends one event as a line to the session's `.jsonl` log.
+pub async fn append_session_event(session_id: &str, event: AgentEvent) -> Result<()> {
+    // Cursor first, line second: a crash between the two leaves the index
+    // *ahead* of the log, and a gap is the direction `max_seq`'s doc says to be
+    // wrong in — the reverse would hand a live seq out twice on resume.
+    record_last_seq(session_id, event.seq).await?;
+
+    let file = append_handle(session_id).await?;
     let line = format!("{}\n", serde_json::to_string(&event)?);
 
-    file.write_all(line.as_bytes()).await?;
+    file.lock()
+        .await
+        .write_all(line.as_bytes())
+        .await
+        .context("failed to append session event")?;
 
     Ok(())
 }
@@ -1642,7 +1816,17 @@ pub async fn record_parse_failure(
 }
 
 /// Reads the log's highest `seq` to continue its counter on resume.
+///
+/// The cursor rides the index entry (`last_seq`), so this is one small record
+/// for any session this build has appended to. The scan below is only for a log
+/// written before the field existed — and it heals the entry on its way out, so
+/// the next resume pays one index read too.
 pub async fn next_seq_by_session_id(session_id: &str) -> Result<u64> {
+    let item = get_session_index_item(session_id).await?;
+    if let Some(last) = item.and_then(|i| i.last_seq) {
+        return Ok(last + 1);
+    }
+
     let path = get_session_path(session_id).await?;
 
     let buf = match fs::read_to_string(&path).await {
@@ -1651,7 +1835,17 @@ pub async fn next_seq_by_session_id(session_id: &str) -> Result<u64> {
         Err(e) => return Err(e).context("could not read session file"),
     };
 
-    Ok(max_seq(&buf).map_or(0, |seq| seq + 1))
+    let next = max_seq(&buf).map_or(0, |seq| seq + 1);
+
+    // Not recorded for an empty log: `Some(0)` would read back as "start at 1"
+    // and skip the first seq a fresh conversation takes. The scan already
+    // answered, so a failed heal only costs this session the same read next
+    // time — best-effort on purpose.
+    if next > 0 {
+        let _ = record_last_seq(session_id, next - 1).await;
+    }
+
+    Ok(next)
 }
 
 /// The highest `seq`, never the last line's: a Claude Code subagent's events
@@ -1666,15 +1860,18 @@ pub async fn next_seq_by_session_id(session_id: &str) -> Result<u64> {
 /// that will not parse is skipped, since refusing to resume over one is worse
 /// than the gap.
 fn max_seq(buf: &str) -> Option<u64> {
+    buf.lines().filter_map(line_seq).max()
+}
+
+/// One line's `seq`, for a walk that must not pay a full event parse per line.
+/// `None` where the line carries none.
+fn line_seq(line: &str) -> Option<u64> {
     #[derive(Deserialize)]
     struct SeqLine {
         seq: u64,
     }
 
-    buf.lines()
-        .filter_map(|line| serde_json::from_str::<SeqLine>(line).ok())
-        .map(|line| line.seq)
-        .max()
+    serde_json::from_str::<SeqLine>(line).ok().map(|l| l.seq)
 }
 
 /// Path to a session's `.jsonl` log under the sessions dir.
@@ -2382,6 +2579,97 @@ mod tests {
         assert_eq!(fork_title("short"), "short (fork)");
     }
 
+    /// A log line with only its `seq` filled in — the tail walk reads the seq
+    /// off every line it passes, and the payload only has to deserialize.
+    fn seq_line(seq: u64) -> String {
+        format!(
+            r#"{{"id":"e{seq}","sessionId":"s","harness":"mcode","seq":{seq},"ts":"t","subagent":null,"payload":{{"type":"turn_completed","status":"success"}}}}"#
+        )
+    }
+
+    /// The ordinary read is the newest lines, oldest first, and `has_older`
+    /// says exactly whether lines were left above the window.
+    #[test]
+    fn a_tail_answers_the_newest_lines_oldest_first() {
+        let log: String = (0..6)
+            .map(seq_line)
+            .map(|l| format!("{l}\n"))
+            .collect();
+
+        let (page, has_older) = tail_from_buffer(&log, None, 4).unwrap();
+        assert!(has_older, "two lines sit above the window");
+        assert_eq!(
+            page.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![2, 3, 4, 5],
+            "newest four, in log order"
+        );
+
+        let (page, has_older) = tail_from_buffer(&log, None, 10).unwrap();
+        assert!(!has_older);
+        assert_eq!(page.len(), 6);
+    }
+
+    /// A bound asks for what sits below it, and the page after it starts where
+    /// this one ends — the pagination contract the transcript's backfill walks.
+    #[test]
+    fn a_page_bound_answers_what_is_below_it() {
+        let log: String = (0..6)
+            .map(seq_line)
+            .map(|l| format!("{l}\n"))
+            .collect();
+
+        let (page, has_older) = tail_from_buffer(&log, Some(2), 4).unwrap();
+        assert!(!has_older, "nothing older than the bound remains");
+        assert_eq!(page.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![0, 1]);
+
+        let (page, has_older) = tail_from_buffer(&log, Some(2), 1).unwrap();
+        assert!(has_older, "one line was left above the window");
+        assert_eq!(page.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1]);
+    }
+
+    /// Subagent lines carry their own sequence restarting at 0 (see
+    /// `max_seq`), so matching lines are not always contiguous with the tail.
+    /// The walk keeps scanning past non-matching lines until the window fills,
+    /// which is what keeps `has_older` honest there.
+    #[test]
+    fn has_older_survives_a_subagent_restart_in_the_window() {
+        let log = format!(
+            "{}\n{}\n{}\n",
+            seq_line(41),
+            r#"{"id":"e0","sessionId":"s","harness":"mcode","seq":0,"ts":"t","subagent":{"id":"t1"},"payload":{"type":"turn_completed","status":"success"}}"#,
+            seq_line(42),
+        );
+
+        // Bound at the main line the window sits below: the subagent line at 0
+        // matches it too, so it belongs to this page rather than being skipped.
+        // Both come back in *log* order — the restarted seq does not sort the
+        // subagent line below the main one it arrived after.
+        let (page, has_older) = tail_from_buffer(&log, Some(42), 2).unwrap();
+        assert!(!has_older);
+        assert_eq!(page.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![41, 0]);
+
+        // A full window with any line left above it says so, whatever the
+        // restarts in between look like.
+        let (_, has_older) = tail_from_buffer(&log, Some(42), 1).unwrap();
+        assert!(has_older);
+    }
+
+    /// The tail read keeps the whole-log contract it narrowed: a line that will
+    /// not parse fails the read, and a line without a `seq` cannot match a
+    /// bound to sneak past one.
+    #[test]
+    fn a_malformed_line_still_fails_the_tail() {
+        let log = format!("{}\nnot json\n", seq_line(1));
+
+        assert!(tail_from_buffer(&log, None, 10).is_err());
+        assert!(tail_from_buffer(&log, Some(0), 10).is_ok(), "the bound puts every real line above it");
+
+        let no_seq = r#"{"id":"e","sessionId":"s","harness":"mcode","ts":"t"}"#;
+        let log = format!("{}\n{no_seq}\n", seq_line(1));
+        let (page, _) = tail_from_buffer(&log, Some(2), 10).unwrap();
+        assert_eq!(page.len(), 1, "the seq-less line never matched the bound");
+    }
+
     /// Forking a fork must not stack the mark — nothing here tracks lineage, so
     /// counting generations in the title would promise more than the feature
     /// keeps.
@@ -2766,12 +3054,14 @@ mod tests {
         let json = serde_json::to_value(SessionSnapshot {
             index_item: item,
             events: vec![],
+            has_older: false,
         })
         .unwrap();
 
         assert_eq!(json["sessionId"], "a");
         assert_eq!(json["status"], "idle");
         assert!(json["events"].is_array());
+        assert_eq!(json["hasOlder"], false);
         assert!(
             json.get("indexItem").is_none(),
             "must stay flat for the generated TS type"

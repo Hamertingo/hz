@@ -2358,7 +2358,14 @@ export type SessionInfo = { cwd: string | null, model: string | null, harnessVer
  * replayed event log. Distinct from [`crate::session::Session`], which owns a
  * child process and cannot be serialized.
  */
-export type SessionSnapshot = { events: Array<AgentEvent>, sessionId: string, harness: Harness, 
+export type SessionSnapshot = { events: Array<AgentEvent>, 
+/**
+ * Whether `events` is the whole log. `false` on every whole-log read — a
+ * new session's snapshot, a fork's copy — and on `true` the log holds
+ * events older than the first one here, which the transcript fetches by
+ * page once the reader reads back past this tail.
+ */
+hasOlder: boolean, sessionId: string, harness: Harness, 
 /**
  * Where the agent actually runs. Equals `project_path` for a normal
  * session; points inside `.claude/worktrees/<name>` for a worktree one.

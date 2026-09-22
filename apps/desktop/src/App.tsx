@@ -302,6 +302,7 @@ function App() {
     deleteSession,
     removeWorktree,
     ensureLoaded,
+    loadOlderEvents,
     setOnScreen,
     paneState,
     indexSide,
@@ -3217,6 +3218,7 @@ function App() {
             onRespondPermission: handleRespondPermission,
             onAnswerQuestions: handleAnswerQuestions,
             onCancelQuestion: handleCancelQuestion,
+            onLoadOlder: (id) => loadOlderEvents(id),
           }}
         />
       ) : (
@@ -3244,6 +3246,7 @@ function App() {
         apiRetry={apiRetry}
         queuedMessages={queuedMessages}
         onSendNow={handleSendNow}
+        onLoadOlder={loadOlderEvents}
         working={working}
         crowded={!collapsed && (panelShown || (pageOpen && !!pickedIssue))}
         active={chatShown && subagentView === null}

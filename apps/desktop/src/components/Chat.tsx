@@ -94,6 +94,11 @@ type ChatProps = {
   /// unmounts when a page is opened over it, so ⌘↓ has to be told to stop
   /// listening — otherwise it scrolls a pane nobody can see.
   active?: boolean;
+  /// Fetches the page of events older than the loaded tail, once the reader has
+  /// read back to the top of it. Optional where there is nothing to page: a
+  /// subagent view draws events its parent already holds whole, and absence is
+  /// what makes the top of the loaded window the end.
+  onLoadOlder?: (sessionId: string) => Promise<void>;
 };
 
 /// How far below the top of the pane a turn has to start before it stops being
@@ -152,6 +157,7 @@ export default function Chat({
   crowded = false,
   rail = true,
   active = true,
+  onLoadOlder,
 }: ChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -392,6 +398,60 @@ export default function Chat({
     }
   }, [mounted]);
 
+  // Where the oldest mounted turn sat before a fetched page lands above it, so
+  // the prepend can move the view by exactly what it moved. Separate from the
+  // backfill's anchor so the two can never consume each other's capture — a
+  // live event landing between a page fetch and its commit would otherwise eat
+  // the anchor the step effect was still owed.
+  const anchorBeforePage = useRef<{ key: string; top: number } | null>(null);
+
+  // Whether an older page is already being fetched. `useSessions` guards the
+  // write; this guards the churn — a wheel-up during the await would otherwise
+  // re-capture the anchor while the session's `hasOlder` is still stale.
+  const loadingOlderRef = useRef(false);
+
+  // Asks for the page older than the loaded tail. Three gates: something to
+  // fetch (`hasOlder`), a caller to fetch it with — a subagent view loads no
+  // pages — and the reader actually at the top. That last one is what makes
+  // this a scroll seam and not a second backfill: the backfill mounts what is
+  // loaded whether the reader follows it or not, while a page fetch costs an
+  // IPC round trip and is only worth paying when more content above is
+  // reachable. At the top a scroll can no longer announce itself (there is
+  // nothing left to scroll), so the wheel-up is the trigger and the at-top
+  // scroll is the catch for trackpad inertia arriving after the fetch landed.
+  const requestOlder = () => {
+    if (loadingOlderRef.current || !session?.hasOlder || !onLoadOlder) return;
+    const el = scrollRef.current;
+    if (!el || el.scrollTop > 0) return;
+
+    loadingOlderRef.current = true;
+    const oldest = contentRef.current?.querySelector<HTMLElement>("[data-turn]");
+    anchorBeforePage.current =
+      oldest?.dataset.turn && !followRef.current
+        ? { key: oldest.dataset.turn, top: oldest.getBoundingClientRect().top }
+        : null;
+    onLoadOlder(session.sessionId).finally(() => {
+      loadingOlderRef.current = false;
+    });
+  };
+
+  // A fetched page prepends turns above everything mounted, which shoves what
+  // the reader is looking at down by the page's height — the same shape a
+  // backfill step has. Pinned, the prepend cannot happen (the fetch was gated
+  // on being at the top); unpinned, the view is moved by exactly what the
+  // anchor moved.
+  useLayoutEffect(() => {
+    const anchor = anchorBeforePage.current;
+    if (!anchor) return;
+    anchorBeforePage.current = null;
+    const el = scrollRef.current;
+    if (!el || followRef.current) return;
+    const node = contentRef.current?.querySelector<HTMLElement>(
+      `[data-turn="${anchor.key}"]`,
+    );
+    if (node) el.scrollTop += node.getBoundingClientRect().top - anchor.top;
+  }, [events.length]);
+
   // Which turn the rail marks. Measured from the DOM rather than tracked as
   // state per turn: heights move constantly here — Shiki lands async, a turn
   // collapses, a diff expands — so anything cached from a previous layout is
@@ -509,7 +569,12 @@ export default function Chat({
   // position alone re-confirms the pin — but a wheel-up during streaming must
   // win instantly, before the next delta's pin can yank the view back down.
   const onWheel = (e: React.WheelEvent) => {
-    if (e.deltaY < 0) followRef.current = false;
+    if (e.deltaY < 0) {
+      followRef.current = false;
+      // Fires even when nothing scrolls — at the top there is nothing to scroll
+      // — which is exactly the position the page fetch waits at.
+      requestOlder();
+    }
   };
 
   const onScroll = () => {
@@ -518,6 +583,7 @@ export default function Chat({
     followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
     setAtBottom(followRef.current);
     syncActive();
+    if (el.scrollTop <= 0) requestOlder();
   };
 
   // Re-arms the pin as well as scrolling: pressing this is the reader saying they

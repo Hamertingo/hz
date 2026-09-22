@@ -830,3 +830,16 @@ export function buildTranscript(
     pendingAsks,
   };
 }
+
+/// Merges a fetched page of older log under what a session already holds.
+///
+/// Pure because the ordering rule is the load-bearing part: the page arrives in
+/// log order and goes in front of what is held, untouched. A seq below the
+/// bound the page was fetched with is not trusted as a de-duplication key — a
+/// legacy log's subagent lines restart their own sequence at 0 (see `max_seq`
+/// in store.rs), so an event already held can sit below the bound and come
+/// back inside the page. Matched by id, which is exact where a seq is not.
+export function prependOlderPage(held: readonly AgentEvent[], page: readonly AgentEvent[]): AgentEvent[] {
+  const seen = new Set(held.map((e) => e.id));
+  return [...page.filter((e) => !seen.has(e.id)), ...held];
+}

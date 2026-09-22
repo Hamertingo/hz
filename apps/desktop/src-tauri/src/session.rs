@@ -923,6 +923,9 @@ impl SessionManager {
                 snapshot: Some(SessionSnapshot {
                     index_item: item,
                     events,
+                    // A new session's log is the prompt that made it — the one
+                    // read that is always whole.
+                    has_older: false,
                 }),
                 queued: None,
             });
@@ -1422,12 +1425,17 @@ impl SessionManager {
         // hold its parent's conversation, and the entry has not been written yet,
         // so failing here leaves nothing behind.
         //
-        let item = parent.fork(fork_id, worktree_name.as_deref());
+        let mut item = parent.fork(fork_id, worktree_name.as_deref());
+        // The copy is the parent's log, so the cursor starts where it ends —
+        // the only place the copied seqs are in hand.
+        item.last_seq = events.iter().map(|e| e.seq).max();
         append_session_index_item(item.clone()).await?;
 
         Ok(SessionSnapshot {
             index_item: item,
             events,
+            // A fork replays the whole copied log.
+            has_older: false,
         })
     }
 
