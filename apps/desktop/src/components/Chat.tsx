@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 
 import AssistantMessage from "@/components/chat/AssistantMessage";
@@ -25,6 +25,7 @@ import { addCitation } from "@/hooks/useCitations";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import type { ApiRetryState, QueuedPrompt, StreamingBlock, Working } from "@/hooks/useSessions";
+import { useStableCallback } from "@/hooks/useStableCallback";
 import type { QuestionAnswer } from "@/lib/questionnaire";
 import { toolArgument } from "@/lib/tools";
 import { buildTranscript } from "@/lib/transcript";
@@ -114,24 +115,6 @@ const RAIL_MIN = 2;
 /// cannot appear while the transcript is still following its own bottom.
 const AT_BOTTOM_PX = 40;
 
-/// A callback prop with an identity that outlives the render that made it.
-///
-/// `App` hands this pane its openers as arrows written inline in JSX, so their
-/// identity changes on every one of its renders — and a streaming turn renders
-/// `App` once per delta. Passed straight down they are what stops `memo` on a
-/// row from ever hitting: a row's other props are stable, its two callbacks are
-/// not, and that is the whole shallow compare failed two hundred times over a
-/// small turn. The wrapper is created once and reads the newest callback
-/// through a ref — the same bargain `useHotkey` makes with its handler — so the
-/// row keeps one identity while still calling what the parent last rendered
-/// with. The tidier fix is `useCallback` where the arrows are written, which is
-/// `App` and out of this pane's hands.
-function useStableCallback<A extends unknown[]>(fn: (...args: A) => void) {
-  const latest = useRef(fn);
-  latest.current = fn;
-  return useCallback((...args: A) => latest.current(...args), []);
-}
-
 export default function Chat({
   session,
   streamingBlock,
@@ -159,15 +142,43 @@ export default function Chat({
   // reading back through a transcript isn't yanked forward by incoming deltas.
   const followRef = useRef(true);
 
+  // The frame a pin write is scheduled in, if one is. Both write sites below —
+  // the per-delta layout effect and the resize observer — used to write
+  // `scrollTop` synchronously, so a delta paid two forced layouts; a coalesced
+  // burst only needs the last position, so one write per frame serves it.
+  const pinFrame = useRef(0);
+
   // The same fact as the pin, but as state because the button renders from it.
   // Written from a scroll, a resize and a session switch alike: the transcript
   // growing under a reader who sat still fires no scroll event, and that is
   // exactly when there is newly something below to go to.
   const [atBottom, setAtBottom] = useState(true);
   const syncAtBottom = () => {
+    // A pin write is in flight to the bottom: measuring now would read the
+    // pre-write position and flash the jump button for the frame the write is
+    // answering. The rAF's own measurement covers it.
+    if (pinFrame.current) return;
     const el = scrollRef.current;
     if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX);
   };
+
+  // Schedules the pin write; a no-op when unpinned or one is already waiting.
+  // The check on `followRef` happens twice on purpose — here, so an unpinned
+  // pane never leaves `syncAtBottom` silenced against a write that never comes,
+  // and in the frame, because the pin can be dropped between scheduling and
+  // rendering (a wheel-up must win instantly) and skipping is what honours it.
+  const pinToBottom = () => {
+    if (!followRef.current || pinFrame.current) return;
+    pinFrame.current = requestAnimationFrame(() => {
+      pinFrame.current = 0;
+      const el = scrollRef.current;
+      if (el && followRef.current) {
+        el.scrollTop = el.scrollHeight;
+        syncAtBottom();
+      }
+    });
+  };
+  useEffect(() => () => cancelAnimationFrame(pinFrame.current), []);
 
   // The walk is keyed on the session's own event array, and a delta never
   // touches it: deltas go to the preview block, and `useSessions` only rebuilds
@@ -315,8 +326,7 @@ export default function Chat({
   // Keyed on the session too: switching between transcripts with equal event
   // counts must still land at the bottom.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+    pinToBottom();
     syncAtBottom();
     syncActive();
   }, [session?.sessionId, events.length, streamingAny]);
@@ -493,7 +503,7 @@ export default function Chat({
     const content = contentRef.current;
     if (!scroller || !content) return;
     const ro = new ResizeObserver(() => {
-      if (followRef.current) scroller.scrollTop = scroller.scrollHeight;
+      pinToBottom();
       syncAtBottom();
       // A turn that grew or collapsed moves every turn under it, with no scroll
       // event to notice it by.

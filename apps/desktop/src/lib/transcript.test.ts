@@ -758,3 +758,45 @@ describe("a delegated child's session", () => {
     expect(kinds).not.toContain("assistant_text");
   });
 });
+
+/// The transcript is built twice per render pass — by `App` for the strip and
+/// header, and by the pane's own `Chat` — off the same events array. The cache
+/// is what makes the second call free, so it has to hold while the inputs are
+/// the same and break when any of them is not.
+describe("the transcript cache", () => {
+  it("answers the same array with the same object", () => {
+    const events = [prompt(0, "go", false), completed(1)];
+
+    const first = buildTranscript(events, false);
+    const second = buildTranscript(events, false);
+
+    expect(second).toBe(first);
+  });
+
+  it("recomputes when the task set changes under the same array", () => {
+    const events = [prompt(0, "go", false), callStarted(1, "c1"), completed(2)];
+    const tasks = new Set(["t1"]);
+
+    const first = buildTranscript(events, false);
+    const second = buildTranscript(events, false, tasks);
+
+    expect(second).not.toBe(first);
+  });
+
+  it("recomputes when a committed event replaces the array", () => {
+    const events = [prompt(0, "go", false)];
+    const first = buildTranscript(events, false);
+
+    const appended = [...events, completed(1)];
+    const second = buildTranscript(appended, false);
+
+    expect(second).not.toBe(first);
+    expect(second.turns[0]!.completed).not.toBeNull();
+  });
+
+  it("caches pendingAsksOf on the array too", () => {
+    const events = [prompt(0, "go", false)];
+
+    expect(pendingAsksOf(events)).toBe(pendingAsksOf(events));
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import Chat from "@/components/Chat";
@@ -46,10 +46,23 @@ type SplitViewProps = {
 /// How many panes ⌘-digit reaches: `pane.1` through `pane.9` in the registry.
 const PANE_CHORDS = 9;
 
+/// One pane's transcript, memoized. `App` renders once per coalesced delta, and
+/// `paneState` builds a fresh object per call — which is why the fields arrive
+/// spread rather than as that one object: the object would never compare equal,
+/// where a delta then re-renders only the pane that is streaming and its
+/// neighbours' transcripts keep their memo.
+const PaneChat = memo(function PaneChat(
+  props: PaneState &
+    SplitViewProps["chat"] &
+    Pick<React.ComponentProps<typeof Chat>, "crowded" | "rail" | "active">,
+) {
+  return <Chat {...props} />;
+});
+
 /// Any number of transcripts in columns. One composer serves the focused pane —
 /// the selected session — so a click anywhere in a pane focuses it, and the
 /// pane header is what says which one that is.
-export default function SplitView({
+function SplitView({
   columns,
   focusedId,
   paneState,
@@ -142,7 +155,7 @@ export default function SplitView({
                     composing && !focused && "opacity-35",
                   )}
                 >
-                  <Chat
+                  <PaneChat
                     {...paneState(item.sessionId)}
                     {...chat}
                     // Narrowest the transcript gets, so the rail always gives way.
@@ -165,6 +178,12 @@ export default function SplitView({
     </div>
   );
 }
+
+/// Memoized: `App` renders once per coalesced delta, and every prop here is
+/// either memoized state or a stable callback — `paneState` included, whose
+/// identity moves only when one of the per-pane inputs does. A delta then
+/// re-renders the panes, and [`PaneChat`] narrows that to the streaming one.
+export default memo(SplitView);
 
 /// The dragged row's title, following the pointer.
 export function DragGhost() {

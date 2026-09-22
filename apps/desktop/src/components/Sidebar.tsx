@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
 
@@ -896,7 +896,7 @@ function DevBadge() {
   );
 }
 
-export default function Sidebar({
+function Sidebar({
   items,
   onOpenSearch,
   statusBySession,
@@ -977,6 +977,15 @@ export default function Sidebar({
   /// differs from one conversation to the next, so keeping it across runs would
   /// be remembering a preference nobody expressed.
   const [foldedSubagents, setFoldedSubagents] = useState<Record<string, boolean>>({});
+
+  // One identity for every row's fold, so a delta render cannot hand a row a
+  // fresh arrow and defeat its memo. `folded` rides the call rather than the
+  // closure, because each row knows its own reading of the fold.
+  const toggleFold = useCallback(
+    (sessionId: string, folded: boolean) =>
+      setFoldedSubagents((prev) => ({ ...prev, [sessionId]: !folded })),
+    [],
+  );
 
   // No split runs in the settled list, for the reason it draws no Pinned group.
   //
@@ -1308,7 +1317,8 @@ export default function Sidebar({
                         active={
                           openSubagentKey === `${item.sessionId}:${member.sessionId}`
                         }
-                        onOpen={() => onOpenSubagent(item.sessionId, member.sessionId)}
+                        parentSessionId={item.sessionId}
+                        onOpenSubagent={onOpenSubagent}
                       />
                     );
                   }
@@ -1354,30 +1364,14 @@ export default function Sidebar({
                       inheritsPin={
                         group.kind === "pinned" && depth > 0 && !item.pinned
                       }
-                      subagents={
-                        members.length > 0
-                          ? {
-                              count: members.length,
-                              folded,
-                              // The inverse of what is *drawn*, which is the
-                              // automatic reading until the reader says
-                              // otherwise — so the first click pins the group
-                              // the way it already looks, rather than flipping it
-                              // out from under them.
-                              onToggle: () =>
-                                setFoldedSubagents((prev) => ({
-                                  ...prev,
-                                  [item.sessionId]: !folded,
-                                })),
-                            }
-                          : undefined
-                      }
+                      subagentCount={members.length}
+                      subagentsFolded={folded}
+                      onToggleFold={toggleFold}
                       onSelect={onSelect}
-                      onDragStart={
-                        onDropSession && !showArchived
-                          ? (e) => startSessionDrag(e, item.sessionId, item.title, onDropSession)
-                          : undefined
-                      }
+                      // The drag arrow is built inside the row: one per row per
+                      // render here is what would keep its memo from ever hitting.
+                      draggable={!!onDropSession && !showArchived}
+                      onDropSession={onDropSession}
                       onSetFlags={onSetFlags}
                       onFork={onFork}
                       onDelete={onDelete}
@@ -1420,6 +1414,12 @@ export default function Sidebar({
     </aside>
   );
 }
+
+/// Memoized: `App` renders once per coalesced delta during a turn, and every
+/// prop this takes is either state it has already seen or a stable callback —
+/// so a delta costs the sidebar nothing. The rows are memoized too, for the
+/// renders that do land.
+export default memo(Sidebar);
 
 /// The ⌘⇧↑/↓ hint, laid out on the session rows' own edges so it reads as the
 /// last row rather than as a caption under the list.
@@ -2083,7 +2083,11 @@ function NestRails({
   );
 }
 
-function SessionRow({
+/// One row, memoized. Every prop arrives as a stable identity when nothing
+/// changed about it — the callbacks because `App` and this file stabilize them,
+/// the arrows the row itself needs because they are built here rather than by
+/// the caller — so a render that touched another row stops here.
+const SessionRow = memo(function SessionRow({
   item,
   depth,
   guides,
@@ -2095,10 +2099,13 @@ function SessionRow({
   faded = false,
   marksLive = true,
   onSelect,
-  onDragStart,
+  draggable = false,
+  onDropSession,
   nested = false,
   inheritsPin = false,
-  subagents,
+  subagentCount,
+  subagentsFolded = false,
+  onToggleFold,
   onSetFlags,
   onFork,
   onDelete,
@@ -2122,8 +2129,11 @@ function SessionRow({
   /// which asks for no repos — see the call site.
   marksLive?: boolean;
   onSelect: (sessionId: string) => void;
-  /// Wires the row for dragging onto the transcript column. See `startSessionDrag`.
-  onDragStart?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  /// Wires the row for dragging onto the transcript column, landing on
+  /// `onDropSession`. Built into `onDragStart` here: an arrow per row per
+  /// render at the call site is exactly what this memo cannot survive.
+  draggable?: boolean;
+  onDropSession?: (target: DropTarget, dropped: string) => void;
   /// This row has a parent in the same list, so 'Detach from parent' is a real
   /// offer. Kept apart from `depth` only because a cyclic index draws a row at
   /// the top level that still has a link worth cutting.
@@ -2135,13 +2145,16 @@ function SessionRow({
   /// its own pin keeps the action whatever its ancestor does: that flag is the
   /// one thing there the reader can still be surprised by later.
   inheritsPin?: boolean;
-  /// This row's delegated subagents, where it has any: how many, whether their
-  /// rows are folded away, and the control that changes it.
-  ///
-  /// Absent on a session with none, so nothing is drawn that would open onto
-  /// nothing — and the row's head stays exactly as it was for every session that
-  /// never delegated.
-  subagents?: { count: number; folded: boolean; onToggle: () => void };
+  /// How many delegated subagents hang off this row, and whether the reader has
+  /// folded them away. Zero draws nothing — a session that never delegated
+  /// keeps the row head it always had.
+  subagentCount: number;
+  subagentsFolded?: boolean;
+  /// Toggles one session's fold. Takes the current reading rather than closing
+  /// over it: the inverse of what is *drawn* is the automatic reading until the
+  /// reader says otherwise, so the first click pins the group the way it
+  /// already looks rather than flipping it out from under them.
+  onToggleFold: (sessionId: string, folded: boolean) => void;
   onSetFlags: (
     sessionId: string,
     flags: { archived?: boolean; pinned?: boolean },
@@ -2156,6 +2169,12 @@ function SessionRow({
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
+
+  const onDragStart =
+    draggable && onDropSession
+      ? (e: React.PointerEvent<HTMLDivElement>) =>
+          startSessionDrag(e, item.sessionId, item.title, onDropSession)
+      : undefined;
 
   return (
     <RowMenu
@@ -2279,7 +2298,13 @@ function SessionRow({
         {/* The fold for this row's subagents, ahead of everything else the row
             carries: it is the one control here that decides what is *below* the
             row rather than describing the row itself. */}
-        {subagents && <SubagentFold {...subagents} />}
+        {subagentCount > 0 && (
+          <SubagentFold
+            count={subagentCount}
+            folded={subagentsFolded}
+            onToggle={() => onToggleFold(item.sessionId, subagentsFolded)}
+          />
+        )}
 
         {pr && (
           <span
@@ -2406,7 +2431,7 @@ function SessionRow({
       </div>
     </RowMenu>
   );
-}
+});
 
 /// One delegated subagent, drawn under the session whose agent spawned it.
 ///
@@ -2420,22 +2445,32 @@ function SessionRow({
 /// sessions around it at a glance, and it carries the two facts the row would
 /// otherwise need a second line for: which agent this is, and whether it is still
 /// going.
-function SidebarSubagentRow({
+///
+/// Memoized like [`SessionRow`], and for the same reason the open arrow is built
+/// here from the two ids rather than handed in: a fresh arrow per render is what
+/// the memo cannot survive.
+const SidebarSubagentRow = memo(function SidebarSubagentRow({
   member,
+  parentSessionId,
   depth,
   guides,
   active,
-  onOpen,
+  onOpenSubagent,
 }: {
   member: DelegatedMember;
+  /// The session whose agent spawned this one — `onOpenSubagent` needs both,
+  /// since the roster that read the child belongs to the parent.
+  parentSessionId: string;
   /// Levels below the top, one deeper than the session it hangs off. See
   /// [`sessionRows`] — the geometry comes out of the same walk that ordered the
   /// list, so a rail cannot point at a row that is not this one's parent.
   depth: number;
   guides: boolean[];
   active: boolean;
-  onOpen: () => void;
+  onOpenSubagent: (sessionId: string, memberSessionId: string) => void;
 }) {
+  const onOpen = () => onOpenSubagent(parentSessionId, member.sessionId);
+
   const title = memberTitle(member);
   const live = isActive(member);
   const failed = member.status === "failed";
@@ -2505,4 +2540,4 @@ function SidebarSubagentRow({
       )}
     </div>
   );
-}
+});
