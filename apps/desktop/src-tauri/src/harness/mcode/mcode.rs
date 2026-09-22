@@ -30,6 +30,7 @@ pub mod commands;
 pub mod context;
 pub mod delegation;
 pub mod elicitation;
+pub mod goal;
 pub mod mapper;
 pub mod mcp;
 pub mod models;
@@ -759,12 +760,12 @@ async fn open_session(
                     // and its siblings answer whether or not this is here, but
                     // `mcode/session/delegation_update` is only sent to a client
                     // that says it speaks them — see `supportsTuiAcpExtensionNotifications`.
-                    // Stated with `notifications: true` because the delegation
-                    // snapshot is the one this build consumes; the goal, queue and
-                    // current-session pushes that ride the same flag arrive as
-                    // methods `parser::parse_notification` does not model and are
-                    // dropped, which is the ordinary path for a method we have no
-                    // use for.
+                    // Stated with `notifications: true` because two of these
+                    // pushes have a screen behind them: the delegation roster and
+                    // the goal. The queue, plan and current-session pushes that
+                    // ride the same flag arrive as methods `parse_notification`
+                    // does not model and are dropped, which is the ordinary path
+                    // for a method we have no use for.
                     "_meta": {
                         "minimax-code/extensions": {"version": 1, "notifications": true}
                     },
@@ -1575,6 +1576,18 @@ async fn read_stdout(
                         let roster = delegation::event_of(&params, &handles.session_id);
                         if let Err(err) = handles.app.emit(delegation::EVENT, &roster) {
                             eprintln!("[delegation emit err] {err}");
+                        }
+                        continue;
+                    }
+                    // The goal rides the same flag and is emitted for the same
+                    // reason — and here the push is not a convenience but the
+                    // only account: the runtime pauses and completes goals on
+                    // its own, so a client that had to ask would draw an
+                    // objective the agent had already moved past.
+                    if method == goal::NOTIFICATION {
+                        let event = goal::event_of(&params, &handles.session_id);
+                        if let Err(err) = handles.app.emit(goal::EVENT, &event) {
+                            eprintln!("[goal emit err] {err}");
                         }
                         continue;
                     }

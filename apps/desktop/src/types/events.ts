@@ -916,6 +916,46 @@ scopes: Array<string>,
 error: string | null, };
 
 /**
+ * A goal, as the agent states one.
+ *
+ * **`status` is a `String` and not an enum**, the bargain every other reader here
+ * makes: the agent's vocabulary is `active`, `paused`, `blocked`, `complete` and
+ * `budget_limited` today, and a word added after this build must draw as itself
+ * rather than fail the line that carried it. What this app *sends* is a closed set
+ * — see [`GoalMove`] — because that half is this app's to shape.
+ */
+export type Goal = { goalId: string, objective: string, status: string, 
+/**
+ * Why the status is what it is, where the agent said so — its own sentence,
+ * drawn as written.
+ */
+statusReason: string | null, tokensUsed: number, turnsUsed: number, 
+/**
+ * Absent where the goal was set without one, which is a goal that runs until
+ * somebody stops it rather than forever.
+ */
+tokenBudget: number | null, };
+
+/**
+ * The pushed goal, shaped for the webview.
+ *
+ * Carries *this* app's session id rather than the wire's, so the frontend routes
+ * it into the session it already holds — mcode's own id lives on the index entry
+ * and nowhere the listener reads.
+ */
+export type GoalEvent = { sessionId: string, goal: Goal | null, };
+
+/**
+ * What a control can ask a goal to do.
+ *
+ * **Two of the agent's five, and the split is who decides.** `blocked`,
+ * `complete` and `budget_limited` are the agent's own verdicts on work it is
+ * doing; a button for `complete` would let a reader tell the agent that a job it
+ * is still on is finished, which is the one thing a goal exists to keep honest.
+ */
+export type GoalMove = "active" | "paused";
+
+/**
  * Which agent runs a session.
  *
  * **Unknown spellings are kept, not refused.** `index.json` is a shared store

@@ -85,6 +85,10 @@ type ChatInputProps = {
   /// pickers: both are about *how this runs* rather than what it is, and the row
   /// under the text is where the composer's least-touched answers go.
   permission?: ReactNode;
+  /// What this session is working towards, drawn ahead of the other two — a goal
+  /// is the widest statement of the three and the one a reader scans for. Set
+  /// through the agent's own Goal object, so the count beside it moves on its own.
+  goal?: ReactNode;
   /// What the session has spent of its window, drawn on the row under the text —
   /// where a reading about this turn belongs, and the one place in both states that
   /// is always below the input. The empty composer puts it on the send hint's own
@@ -188,14 +192,16 @@ const NEW_TASK_MAX_ROWS = 20;
 // and is applied at both call sites alongside this.
 const TEXT_BOX = "py-1 text-composer";
 
-// The app's mark: the hz cat, drawn by `public/assets/hz-logo.svg`. An <img>
-// paints the file's own fill, and this has to take the page's text color — so
-// it is a mask over a `currentColor` background: the SVG supplies the shape,
-// the CSS supplies the ink. Prefixed as well as not, for the older WebKit a
-// Linux build runs on.
+// The app's mark: the hz cat, drawn by `public/assets/hz-cat-mono.svg` — the
+// one-brand-colour cut of the same art, and the only one that works here. The
+// watermark is `text-foreground/10` over the empty composer, so the mark has to
+// take the page's text color rather than paint its own: it is a mask over a
+// `currentColor` background, the SVG supplying the shape and the CSS the ink.
+// The full-colour `hz-cat.svg` at a tenth of its opacity would read as a bruise.
+// Prefixed as well as not, for the older WebKit a Linux build runs on.
 const WORDMARK_MASK = {
-  maskImage: "url(/assets/hz-logo.svg)",
-  WebkitMaskImage: "url(/assets/hz-logo.svg)",
+  maskImage: "url(/assets/hz-cat-mono.svg)",
+  WebkitMaskImage: "url(/assets/hz-cat-mono.svg)",
   maskSize: "contain",
   WebkitMaskSize: "contain",
   maskRepeat: "no-repeat",
@@ -225,6 +231,7 @@ export default function ChatInput({
   queuedCount = 0,
   meter,
   permission,
+  goal,
   toolbar,
   dictation,
   dictating = false,
@@ -1257,10 +1264,19 @@ export default function ChatInput({
             </div>
           )}
 
-          {/* Both at the far end, in the order they are read: what the agent may
-              do, then what it has spent doing it. */}
-          {permission && <span className="ml-auto shrink-0">{permission}</span>}
-          {meter && <span className={cn("shrink-0", !permission && "ml-auto")}>{meter}</span>}
+          {/* All three at the far end, in the order they are read: what this is
+              for, what the agent may do, then what it has spent doing it. The
+              first one present takes the push, so the row stays flush right
+              whichever of them exist. */}
+          {goal && (
+            <span className={cn("shrink-0", !permission && !meter && "ml-auto")}>{goal}</span>
+          )}
+          {permission && (
+            <span className={cn("shrink-0", !goal && "ml-auto")}>{permission}</span>
+          )}
+          {meter && (
+            <span className={cn("shrink-0", !goal && !permission && "ml-auto")}>{meter}</span>
+          )}
         </div>
 
         {runnerLive && (
