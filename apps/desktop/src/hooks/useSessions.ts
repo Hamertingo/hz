@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { restoreAttachments } from "@/hooks/useAttachments";
 import { useComposerPrefs, type EffortByModel } from "@/hooks/useComposerPrefs";
 import { useDockBadge } from "@/hooks/useDockBadge";
-import { readLocalStorage } from "@/hooks/useLocalStorage";
+import { readLocalStorage, writeLocalStorage } from "@/hooks/useLocalStorage";
 import {
   ANSWERED_BY_OPENING,
   dismissNotice,
@@ -32,7 +32,7 @@ import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/sp
 import type { QuestionAnswer } from "@/lib/questionnaire";
 import { pendingAsksOf, prependOlderPage } from "@/lib/transcript";
 import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
-import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
+import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, Goal, GoalEvent, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
 
 const DEFAULT_EFFORT: Effort = "high";
 
@@ -138,6 +138,23 @@ const NO_TASKS: ReadonlySet<string> = new Set();
 /// One shared empty queue, for the same reason: a pane with nothing held used
 /// to draw a fresh `[]` per render, and that identity is what its memo compares.
 const NO_QUEUED: QueuedPrompt[] = [];
+
+/// Where each session's goal is kept, for the reason above and a stronger one:
+/// **only a live child can be asked for a goal**, so without this a session
+/// reopened after a restart would draw no goal at all until its first send — and
+/// the goal it had is the one thing about that session nothing else on disk
+/// records.
+///
+/// **A kept goal cannot be stale in a way that matters.** The runtime moves a goal
+/// only while a child is alive, and a live child pushes every move, so the one
+/// moment the stored copy is all there is happens to be the one moment nothing can
+/// have changed it.
+///
+/// Capped by nothing, unlike the command list: one can only exist for a session
+/// somebody gave a goal to, so this map is as long as the reader's own handful of
+/// objectives rather than as long as their session history.
+const SESSION_GOALS_KEY = "hz.sessionGoals";
+
 
 /// What a transcript pane draws for one session. The selected session's fields
 /// on the hook's return are this, spread.
@@ -350,6 +367,17 @@ export function useSessions() {
     const [slashCommandsBySession, setSlashCommandsBySession] = useState<
       Record<string, SlashCommand[]>
     >({});
+    // sessionId → the goal the agent is chasing, as it last stated one.
+    //
+    // **Absent is "no goal", and that is the whole of it** — unlike the command
+    // list above there is no "the child has not said yet" to tell apart from it,
+    // because a goal that is cleared arrives as a push saying so rather than as
+    // silence. The agent also moves a goal on its own (a budget run out, a job the
+    // agent says it finished), which is why this is a store a push fills rather
+    // than something the frontend keeps in step by hand.
+    const [goalsBySession, setGoalsBySession] = useState<Record<string, Goal>>(() =>
+      readLocalStorage<Record<string, Goal>>(SESSION_GOALS_KEY, {}),
+    );
     const [error, setError] = useState<string | null>(null);
     // Bumped by every navigation, so an action started before it and rejecting
     // after it can be told from one the reader is still standing next to.
@@ -1827,6 +1855,7 @@ const deleteSession = async (sessionId: string) => {
   setTasksBySession(({ [sessionId]: _, ...rest }) => rest);
   setQueuedBySession(({ [sessionId]: _, ...rest }) => rest);
   setSlashCommandsBySession(({ [sessionId]: _, ...rest }) => rest);
+  setGoalsBySession(({ [sessionId]: _, ...rest }) => rest);
 
   if (selectedSessionId === sessionId) {
     handleNewSession();
@@ -2702,6 +2731,61 @@ useEffect(() => {
   };
 }, []);
 
+// Written whole rather than capped, unlike the command list next door: a goal only
+// exists for a session somebody gave one to, so this map is as long as the reader's
+// own handful of objectives rather than as long as their session history.
+useEffect(() => {
+  writeLocalStorage(SESSION_GOALS_KEY, goalsBySession);
+}, [goalsBySession]);
+
+// The agent's own goal for a session, pushed whenever it moves.
+//
+// **A push and not a poll, because the agent moves a goal on its own** — the
+// runtime pauses one whose budget ran out and completes one the agent reports
+// finished — so a client that only read on demand would draw an objective the
+// agent had already left behind. A cleared goal arrives the same way, as `null`,
+// which is what takes the entry out rather than leaving the last one drawn.
+useEffect(() => {
+  const listenerPromise = listen<GoalEvent>("session_goal", (event) => {
+    const { sessionId, goal } = event.payload;
+    setGoalsBySession((prev) => {
+      const next = { ...prev };
+      if (goal) next[sessionId] = goal;
+      else delete next[sessionId];
+      return next;
+    });
+  });
+
+  return () => {
+    listenerPromise.then((unlisten) => unlisten());
+  };
+}, []);
+
+// A goal read off the child, for the one case the push cannot cover.
+//
+// **A push says what changed; it cannot say what was already true.** A goal set
+// before this app connected — from the CLI's own TUI, or by a build sharing
+// `~/.hz/agent` — has moved no goal since, so nothing announced it, and the
+// composer would offer to *set* a goal the agent is already working towards.
+// Asked once per session, on the session becoming selected, and only while
+// nothing is known: a session whose goal has been pushed needs no read, and a
+// session with no child yet fails it harmlessly (the next selection asks again).
+const askedGoal = useRef<Set<string>>(new Set());
+useEffect(() => {
+  if (!selectedSessionId || goalsBySession[selectedSessionId]) return;
+  if (askedGoal.current.has(selectedSessionId)) return;
+
+  void invoke<Goal | null>("session_goal", { sessionId: selectedSessionId })
+    .then((goal) => {
+      askedGoal.current.add(selectedSessionId);
+      // Not stored when there is none: the composer already reads absent as
+      // "no goal", and an entry saying so would have to be kept in step with a
+      // push that clears one.
+      if (goal) setGoalsBySession((prev) => ({ ...prev, [selectedSessionId]: goal }));
+    })
+    .catch(() => {});
+}, [selectedSessionId, goalsBySession]);
+
 // The agent's roster of what it delegated, pushed whenever it moves. **Live and
 // unpersisted**, like the slash commands above: a member names a child Session
 // no restart survives, so replaying one would draw subagents nothing is running.
@@ -3014,6 +3098,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, goalsBySession, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, failUnlessLeft, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
 
 }

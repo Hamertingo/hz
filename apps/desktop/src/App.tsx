@@ -100,6 +100,7 @@ import AppShell from "@/components/layout/AppShell";
 import SessionHeader from "@/components/layout/SessionHeader";
 import BloubAvatar from "@/components/BloubAvatar";
 import { nextEffort } from "@/components/composer/ModelSelector";
+import GoalControl from "@/components/composer/GoalControl";
 import { cycledModels, rowModel } from "@/lib/modelVisibility";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { pickAttachments } from "@/hooks/useAttachments";
@@ -255,6 +256,7 @@ function App() {
     sessionIndexItems,
     statusBySession,
     slashCommands: slashCommandsForSession,
+    goalsBySession,
     askingSessions,
     showArchived,
     setShowArchived,
@@ -293,6 +295,7 @@ function App() {
     contextUsage,
     error,
     setError,
+    failUnlessLeft,
     handleModelChange,
     setPermissionMode,
     handleAttachProject,
@@ -3094,6 +3097,18 @@ function App() {
                 onOpenSettings={openProviderSettings}
               />
             ) : null
+          }
+          // **Set through the agent's own Goal object**, so the count beside it
+          // moves without anybody pressing anything: the runtime pauses a goal
+          // whose budget ran out and completes one the agent reports finished,
+          // and both arrive as a push. See `useSessions`.
+          goal={
+            <GoalControl
+              key={selectedSessionId ?? "new"}
+              sessionId={selectedSessionId}
+              goal={selectedSessionId ? (goalsBySession[selectedSessionId] ?? null) : null}
+              onError={failUnlessLeft}
+            />
           }
           permission={
             offersPermissionModes(harness) ? (

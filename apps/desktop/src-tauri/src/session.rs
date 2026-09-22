@@ -1658,6 +1658,89 @@ impl SessionManager {
             .map_err(|e| format!("{e:#}"))
     }
 
+    /// The session's own child, or the sentence saying why there is none.
+    ///
+    /// The four goal calls each need a **clone** and not a borrow: they hold the
+    /// child for as long as their request runs, and the `Session` guard that
+    /// produced it cannot be handed back alongside a reference into itself.
+    /// `McodeSession` is an `Arc` of a client and a few shared cells, so the clone
+    /// is what the caller would have held anyway.
+    ///
+    /// The child rather than the control one: a goal belongs to the session, and
+    /// the agent resolves it from the id it is asked about.
+    async fn goal_child(&self, session_id: &str, what: &str) -> Result<mcode::McodeSession, String> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(session_id)
+            .cloned()
+            // The reader's sentence and not an internal one: this is a control in
+            // the composer, and the only way it is drawn over a child that is gone
+            // is a session that ended between the render and the press.
+            .ok_or_else(|| {
+                format!("This session's agent is not running, so its goal cannot be {what}.")
+            })?;
+        drop(sessions);
+
+        // A single-armed enum, so this is a destructuring rather than a match —
+        // and the one arm is the whole reason a session always has a way to write.
+        let session = session.lock().await;
+        let Transport::Acp(child) = &session.stdin;
+        Ok(child.clone())
+    }
+
+    /// The goal this session is chasing, or `None` where it has none.
+    ///
+    /// Read on demand for the one case the push cannot cover: a goal set before
+    /// this app connected, which is what a goal set from the CLI's own TUI is.
+    pub async fn goal(&self, session_id: &str) -> Result<Option<mcode::goal::Goal>, String> {
+        let child = self.goal_child(session_id, "read").await?;
+        mcode::goal::get(&child).await.map_err(format_goal_error)
+    }
+
+    /// Starts a goal on this session.
+    pub async fn create_goal(
+        &self,
+        session_id: &str,
+        objective: &str,
+        token_budget: Option<u64>,
+    ) -> Result<Option<mcode::goal::Goal>, String> {
+        let child = self.goal_child(session_id, "set").await?;
+        mcode::goal::create(&child, objective, token_budget)
+            .await
+            .map_err(format_goal_error)
+    }
+
+    /// Pauses or resumes this session's goal.
+    pub async fn move_goal(
+        &self,
+        session_id: &str,
+        move_: mcode::goal::GoalMove,
+    ) -> Result<Option<mcode::goal::Goal>, String> {
+        let child = self.goal_child(session_id, "moved").await?;
+        mcode::goal::move_goal(&child, move_)
+            .await
+            .map_err(format_goal_error)
+    }
+
+    /// Rewrites this session's goal — its objective and its budget together.
+    pub async fn edit_goal(
+        &self,
+        session_id: &str,
+        objective: &str,
+        token_budget: Option<u64>,
+    ) -> Result<Option<mcode::goal::Goal>, String> {
+        let child = self.goal_child(session_id, "changed").await?;
+        mcode::goal::edit(&child, objective, token_budget)
+            .await
+            .map_err(format_goal_error)
+    }
+
+    /// Drops this session's goal.
+    pub async fn clear_goal(&self, session_id: &str) -> Result<(), String> {
+        let child = self.goal_child(session_id, "cleared").await?;
+        mcode::goal::clear(&child).await.map_err(format_goal_error)
+    }
+
     pub async fn interrupt(&self, session_id: &str, _app: &AppHandle) -> Result<()> {
         // Cloned out before the session is locked: the map guard never sees an
         // await, and the session's own lock is what orders this against its
@@ -2815,6 +2898,18 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
 // second struct, and a struct-of-handles that only ever has one literal built
 // at its call site is the list with more ceremony. What would earn one is a
 // *request*: `SendRequest` has three callers building it from three places.
+/// What a goal call's failure says to the reader.
+///
+/// The wire's own error carries a code the runtime decides on, and the sentence
+/// beside it is the one worth reading — the CLI writes it for the person who
+/// pressed the button, and it is the only thing that says *why* (a budget out of
+/// range, no child to reach). `{:#}` and not `to_string`, or a context chain
+/// prints its outermost frame alone and every failure reads as the bare words
+/// that introduced it.
+fn format_goal_error(err: anyhow::Error) -> String {
+    format!("{err:#}")
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn flush_queued(
     session_id: &str,

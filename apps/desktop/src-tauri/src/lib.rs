@@ -716,6 +716,68 @@ async fn session_delegation_messages(
         .await
 }
 
+/// The goal this session is chasing, or `None` where it has none.
+///
+/// **Read on demand for the one case the push cannot cover** — a goal set before
+/// this app connected, which is what one set from the CLI's own TUI is. Every
+/// other move arrives as `session_goal`, because the runtime pauses and completes
+/// goals on its own and a client that had to ask would draw an objective the agent
+/// had already moved past.
+#[tauri::command]
+async fn session_goal(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
+    manager.goal(&session_id).await
+}
+
+/// Starts a goal on this session, with a token budget where the reader set one.
+#[tauri::command]
+async fn create_session_goal(
+    session_id: String,
+    objective: String,
+    token_budget: Option<u64>,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
+    manager
+        .create_goal(&session_id, &objective, token_budget)
+        .await
+}
+
+/// Pauses or resumes this session's goal. The two moves a control offers; the
+/// other three statuses are the agent's own verdicts and are not sendable.
+#[tauri::command]
+async fn move_session_goal(
+    session_id: String,
+    move_: crate::harness::mcode::goal::GoalMove,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
+    manager.move_goal(&session_id, move_).await
+}
+
+/// Rewrites this session's goal — its objective and its budget together, which is
+/// what the dialog that edits one owns.
+#[tauri::command]
+async fn edit_session_goal(
+    session_id: String,
+    objective: String,
+    token_budget: Option<u64>,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
+    manager
+        .edit_goal(&session_id, &objective, token_budget)
+        .await
+}
+
+/// Drops this session's goal.
+#[tauri::command]
+async fn clear_session_goal(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), String> {
+    manager.clear_goal(&session_id).await
+}
+
 /// Every Skill the agent holds, the switched-off ones included.
 ///
 /// **A management read, not the runtime one.** The list the *model* is told about
@@ -1162,6 +1224,11 @@ pub fn run() {
             session_delegations,
             stop_session_delegations,
             session_delegation_messages,
+            session_goal,
+            create_session_goal,
+            move_session_goal,
+            edit_session_goal,
+            clear_session_goal,
             list_plugin_skills,
             set_plugin_skill_enabled,
             read_plugin_skill,
