@@ -59,6 +59,18 @@ export function lookupLocalCatalogModel(provider: string, modelId: string): Mode
   return undefined;
 }
 
+/// The stated window for a model, where one has been stated.
+///
+/// Exported beside the lookup because this is not only a catalog question: the
+/// same figure has to be applied where a **provider's own** limit is read into a
+/// model ref — see `modelLimitsFromConfig` — or the number travels around a loop
+/// (gateway → config → ref → resolver) and the catalog below is never asked.
+export function patchedModelLimits(
+  modelId: string,
+): { readonly contextWindow: number; readonly maxTokens: number } | undefined {
+  return MODEL_LIMITS_PATCH[patchKey(modelId)];
+}
+
 export function lookupLocalModelLimits(
   provider: string,
   modelId: string,
