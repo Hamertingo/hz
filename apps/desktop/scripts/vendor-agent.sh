@@ -220,6 +220,12 @@ if ! (cd "$DEST/app" && "$DEST/bin/node" -e "new (require('better-sqlite3'))(':m
   exit 1
 fi
 
+# The compile cache's preload, which the launcher passes with `--import`. It has
+# to be a file beside the launcher rather than a line inside the CLI: the cache
+# only covers modules loaded *after* it is enabled, and the bundle is the first
+# thing this process parses.
+cp "$AGENT/bin/compile-cache.mjs" "$DEST/bin/compile-cache.mjs"
+
 cat > "$DEST/bin/hz-agent" <<'LAUNCHER'
 #!/bin/sh
 # The agent, as this bundle ships it.
@@ -237,6 +243,24 @@ node_bin="$root/bin/node"
   echo "hz could not find the node its agent runs on." >&2
   exit 1
 }
+
+# **The compile cache, which pays for itself on the second launch.** Node parses
+# this bundle on every boot — 57MB across 98 files — and this is the only lever on
+# that cost short of shipping less code: measured, a quarter off `initialize`.
+# A stable directory on purpose; a temp one would cache nothing.
+if [ -z "${HZ_COMPILE_CACHE:-}" ]; then
+  cache_home="${HZAGENT_DATA_DIR:-${MINIMAX_DATA_DIR:-$HOME/.hz/agent}}"
+  HZ_COMPILE_CACHE="$cache_home/compile-cache"
+  export HZ_COMPILE_CACHE
+fi
+
+# **Guarded, and quoted.** A `--import` naming a file that is not there is fatal
+# — the agent would not start at all — and this path contains a space in every
+# real install (`/Applications/Hyze Code.app`), so the flag cannot be assembled
+# by word splitting.
+if [ -f "$root/bin/compile-cache.mjs" ]; then
+  exec "$node_bin" --import "$root/bin/compile-cache.mjs" "$root/app/dist/cli.js" "$@"
+fi
 
 exec "$node_bin" "$root/app/dist/cli.js" "$@"
 LAUNCHER
