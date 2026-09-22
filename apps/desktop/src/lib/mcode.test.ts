@@ -12,7 +12,7 @@ import type {
 
 import { fastFor, fastNotice, FAST_MODE_BY_HARNESS, offersFast } from "./fastMode";
 import type { FastModeSupport } from "./fastMode";
-import { DEFAULT_MODEL_FOR, modelLabel, usableEffort, usableModel } from "./model";
+import { DEFAULT_MODEL_FOR, modelLabel, modelSlug, usableEffort, usableModel } from "./model";
 import { honoursMode, stanceFor } from "./permission";
 import {
   byBase,
@@ -153,6 +153,27 @@ describe("the model a session opens on", () => {
     expect(usableModel([], "m:minimax:MiniMax-M3:v:" as ModelId, MCODE)).toBe(
       "m:minimax:MiniMax-M3:v:",
     );
+  });
+});
+
+describe("the name a model is drawn with", () => {
+  it("resolves the escapes a gateway's own path arrives with", () => {
+    // A reseller names its catalog `publisher/model`, and the slash is escaped
+    // on the wire — so the name a reader sees is the last segment, not a path
+    // with a `%2F` in the middle of it.
+    expect(modelLabel("m:custom_provider:deepseek%2Fdeepseek-v4.1")).toBe("Deepseek V4.1");
+    expect(modelSlug("m:custom_provider:deepseek%2Fdeepseek-v4.1")).toBe("deepseek-v4.1");
+  });
+
+  it("splits on the wire's own separator, never on a decoded one", () => {
+    // The provider's half can carry the separator itself, escaped. The split
+    // has to happen before the decode — decode first and the model's name
+    // becomes `b:model`, which is the provider's tail wearing the model's name.
+    expect(modelSlug("m:a%3Ab:model")).toBe("model");
+  });
+
+  it("draws a name with a stray percent rather than refusing it", () => {
+    expect(modelSlug("m:p:100%-sure")).toBe("100%-sure");
   });
 });
 
