@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
+import { channel } from "@/lib/channel";
 import { tracked } from "@/lib/slow";
 import type { PrListItem, PrListState, PrUnavailable } from "@/types/events";
 
@@ -45,8 +46,18 @@ const latest = new Map<string, number>();
 /// wrong as a stale listing, and more confusing.
 const failed = new Map<string, unknown>();
 
+/// Told when a listing lands, so what a repository is *known to have* can be
+/// drawn the moment that changes rather than at the next render of the page.
+/// Nothing draws it but a message's chip — see `useKnownPr`.
+const listings = channel<void>();
+
+/// The separator between a repository and the rest of a cache key, in one place
+/// because two things read the front half: the lookups, and the scan that asks
+/// what a repository holds.
+const repoPrefix = (cwd: string) => `${cwd}\0`;
+
 const pageKey = (cwd: string, state: PrListState, query: string) =>
-  `${cwd}\0${state}\0${query.trim()}`;
+  `${repoPrefix(cwd)}${state}\0${query.trim()}`;
 
 type State = {
   items: PrRow[];
@@ -113,6 +124,7 @@ export function usePrList(
             // is stale by construction — the search box types faster than `gh`.
             if (latest.get(page) !== seq) return;
             cache.set(page, { ...answer, at: Date.now() });
+            listings.emit();
             // **A failure is let go the moment a read succeeds.** Kept, it
             // outlives the blip that caused it, and `merged` checks failures
             // *before* the cache — so a repository that answered a second ago
@@ -199,6 +211,7 @@ export async function prefetchPrList(cwds: string[]): Promise<void> {
         // by construction — the same guard the page's own read makes.
         if (latest.get(key) !== seq) return;
         cache.set(key, { ...answer, at: Date.now() });
+        listings.emit();
         failed.delete(key);
       } catch (e) {
         if (latest.get(key) !== seq) return;
@@ -207,6 +220,60 @@ export async function prefetchPrList(cwds: string[]): Promise<void> {
         failed.set(key, e);
       }
     }),
+  );
+}
+
+/// What the cache says about a repository: `true` where it holds this number,
+/// `false` where it answered without it, and **`null` where it has not answered
+/// at all**.
+///
+/// That last one is the whole reason this is three-valued, and it was learned
+/// the hard way: read as `false`, a repository that had not answered refused
+/// every reference in the transcript — which is a whole session with no chips
+/// in it, and the reader has no way to tell that from a pull request that does
+/// not exist. `store.rs` states the same rule for a cache: an answer nobody has
+/// is not an answer of "no".
+///
+/// Exported because the three answers *are* the rule, and what separates the
+/// last two is exactly what a plausible bug gets wrong.
+export function knownPr(
+  listings: Iterable<[string, { items: { number: number }[] }]>,
+  cwd: string,
+  number: number,
+): boolean | null {
+  const prefix = repoPrefix(cwd);
+  let heard = false;
+
+  for (const [key, page] of listings) {
+    if (!key.startsWith(prefix)) continue;
+    // Any state counts — open, merged or closed. A message reporting a merge
+    // names a number the open listing has already dropped.
+    heard = true;
+    if (page.items.some((item) => item.number === number)) return true;
+  }
+
+  return heard ? false : null;
+}
+
+/// Whether a repository is known to have this pull request.
+///
+/// **The gate on the chip a message wears**, and the whole reason a bare `#1`
+/// can be a reference at all: a number in a sentence is the same shape whether
+/// it names a pull request or a priority, and GitHub resolves that the only way
+/// it can be resolved — by asking. This asks the listing the app has already
+/// read, so it costs nothing, and `#1 priority` in a repository that has
+/// answered without a #1 stays the words it was written as. [issue.ts](../lib/issue.ts)
+/// states the same rule for a tag whose issue never resolved: a button that
+/// opens nothing is worse than a word that was never one.
+///
+/// A repository that has **not** answered is the other side of that rule, and
+/// it is the one this errs on: nothing is known, so the chip is offered. Read
+/// the other way round it is silent — no chips anywhere in a session whose
+/// listing has not landed, failed, or been dropped by a hot reload, with
+/// nothing on screen to say why.
+export function useKnownPr(cwd: string | null, number: number) {
+  return useSyncExternalStore(listings.subscribe, () =>
+    cwd ? knownPr(cache, cwd, number) : null,
   );
 }
 

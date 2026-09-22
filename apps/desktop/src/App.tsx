@@ -124,6 +124,7 @@ import type {
   AgentEvent,
   ContentMatches,
   Issue,
+  PrListItem,
   SessionIndexItem,
   TranscriptMatch,
   WorktreeDisposition,
@@ -139,6 +140,7 @@ import { focusComposer } from "@/lib/composerFocus";
 import { changeRange, turnChangedTree } from "@/lib/changes";
 import { agentPickOf, hasPick, mcpPickOf, pickedSkillOf, sectionTab, type PluginsTab } from "@/lib/plugins";
 import { prBadgeCount, sessionBranch } from "@/lib/pr";
+import { setPrRefOpener } from "@/lib/prRef";
 import { playCelebration } from "@/lib/sound";
 import {
   activeSpace,
@@ -293,6 +295,7 @@ function App() {
     contextUsage,
     error,
     setError,
+    failUnlessLeft,
     handleModelChange,
     setPermissionMode,
     handleAttachProject,
@@ -595,6 +598,54 @@ function App() {
     const neighbour = next[at - 1] ?? next[at] ?? null;
     setActivePrKey(neighbour ? prKey(neighbour) : null);
   };
+
+  /// Opens the pull request a message named. What a chip in the prose does.
+  ///
+  /// **The page comes forward first and the read follows it.** The press is
+  /// then instant and the pane fills when `gh` answers, rather than the reader
+  /// watching nothing happen for half a second and then a page arrive.
+  ///
+  /// **By number, not by looking in the listing the page already holds.** A
+  /// merged pull request is not in the open listing and a message naming one is
+  /// ordinary — "merged #7" — so a lookup would work everywhere except the case
+  /// that sends the reader here.
+  const openPrRef = useCallback(
+    async ({ sessionId, number }: { sessionId: string | null; number: number }) => {
+      // The session the message was written in is the repository; the number is
+      // all the prose itself carries. An id that is not in the index is a
+      // delegated run's view, which has no repository of its own and is read
+      // from the session it was opened beside — so the selected one is what it
+      // falls back to.
+      const cwd =
+        sessionIndexItems.find((item) => item.sessionId === sessionId)?.projectPath ??
+        sessions.find((s) => s.sessionId === sessionId)?.projectPath ??
+        selectedSession?.projectPath ??
+        null;
+
+      const fail = failUnlessLeft();
+      setPage("prs");
+      if (!cwd) {
+        fail("That message names a pull request, and this session is not in a repository.");
+        return;
+      }
+
+      try {
+        const item = await invoke<PrListItem>("pull_request_by_number", { cwd, number });
+        openPr({ ...item, cwd, repo: basename(cwd) });
+      } catch (e) {
+        fail(e);
+      }
+    },
+    [sessionIndexItems, sessions, selectedSession, failUnlessLeft, openPr],
+  );
+
+  // The chip is drawn inside a message's markdown, four components below
+  // anything that could hold a callback. Registered once, for `openLink`'s
+  // reason — see `lib/prRef`.
+  useEffect(() => {
+    setPrRefOpener((ref) => void openPrRef(ref));
+    return () => setPrRefOpener(null);
+  }, [openPrRef]);
   /// The page's own refresh, so ⌘R and a write made in the pane beside it can
   /// reach the listing. A ref rather than state, for `issuesRefreshRef`'s reason:
   /// the page owns the read and re-rendering the app per keystroke in its search
