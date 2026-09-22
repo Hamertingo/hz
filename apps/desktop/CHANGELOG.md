@@ -5,7 +5,7 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
-## 0.20.10
+## 0.20.11
 
 ### Changed
 
@@ -14,14 +14,45 @@ second description of it. GitHub's generated commit list is appended below it.
   moves), the corners are rounded by CSS from the app's own radius, and the three
   window controls are the app's — which is not decoration: with no system chrome
   they are the only way to minimise, maximise or close. Every drag region
-  reserves their width, or the far end of a titlebar row sits under them. The
-  default menu bar Tauri draws in-window goes with it; every chord lives in
-  `useHotkey` already, and the close button raises the same quit dialog the
-  system's used to.
+  reserves their width. The default menu bar Tauri draws in-window goes with it.
+  *This shipped as 0.20.10, whose release never published.*
 
-  Cost, stated plainly: this is the one change here that cannot be looked at from
-  macOS. `decorations: false` is one line to take back out, and the overlay file
-  means a Windows-only mistake cannot reach the Mac build.
+- **The agent's boot is cached, and a quarter to a half of it is gone.**
+  `initialize` was 1.6s cold and 2.0–2.6s on repeated children, all of it V8
+  parsing the bundle. `NODE_COMPILE_CACHE` writes nothing for this tree; the API
+  that works runs as a `--import` preload, and it is only written on a clean
+  exit — which is why an earlier measurement of this found zero bytes. Measured
+  through the launcher the bundle ships: **1.59s → 0.82s**, and 1.34s → 0.96s on
+  a repeat.
+
+- **A quarter off per-turn work.** One lock per session instead of one global map
+  lock; each agent line parsed once, with usage updates held for the frame; the
+  transcript loads its newest turns first and pages backwards; the sidebar, split
+  view and panels are memoized against per-delta renders; dialogs, pages and pane
+  bodies load as chunks (2,436 kB → 2,268 kB); the release profile gets thin LTO,
+  one codegen unit and strip, with devtools dev-only.
+
+### Fixed
+
+- **A model's window is the model's, not the gateway's guess.** A reseller
+  serving `deepseek-v4.1-flash` under a provider id of its own had no catalog
+  entry, so a session compacted at 200k while the model runs at a million — and
+  the settings row drew `200k default` because the window is only ever stated on
+  a usage update, which needs a session already running the model. The agent now
+  states it on the model itself (ACP `_meta`), the app reads it onto `Model`, and
+  a stated figure also overrides what the gateway claims when a model ref is
+  stamped.
+
+- **A model's name is decoded.** A gateway that names its catalog
+  `publisher/model` reaches the wire as `deepseek%2Fdeepseek-v4.1`, and the name
+  drew with the escape in it — worse, the brand table then keyed off no vendor at
+  all. The split still happens on the wire's own separator, which has its own
+  test: decoding first would hand the model a name that is the provider's tail.
+
+- **No more console windows flashing on Windows.** A console program started by
+  an app that has no console gets a new console allocated, and that console is a
+  window for as long as the child runs — so `git`, `gh` and the agent each
+  flashed one, and attaching a project was a screenful.
 
 ## 0.20.9
 
