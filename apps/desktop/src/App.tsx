@@ -19,6 +19,7 @@ import NoticeStack from "@/components/NoticeStack";
 import LinkDialog from "@/components/chat/LinkDialog";
 import QuitDialog from "@/components/QuitDialog";
 import RenderErrorBoundary from "@/components/RenderErrorBoundary";
+import { WindowControls } from "@/components/WindowControls";
 import SettingsDialog, { type SettingsTab } from "@/components/SettingsDialog";
 import SlowRequestToast from "@/components/SlowRequestToast";
 import WorktreeDialog, { type WorktreePrompt } from "@/components/WorktreeDialog";
@@ -3334,6 +3335,7 @@ function App() {
     <LinkDialog />
     {/* Mounted here rather than in the sidebar, which unmounts whole when it
         collapses and would take ⌘, with it. */}
+    <WindowControls />
     <SettingsDialog
       open={settingsOpen}
       onOpenChange={(next) => {
