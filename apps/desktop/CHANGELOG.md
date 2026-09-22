@@ -5,6 +5,17 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.12
+
+### Fixed
+
+- **The Windows installer stages what the macOS one stages.** It was extracting
+  32,000 files and 524MB — `node_modules\json-schema…` under NSIS's progress bar
+  — because the two launchers were two copies of one staging rule and only the
+  shell script had been fixed. The rule lives in one script both call now, and
+  the tree it produces is 1,286 files and 89MB. **0.20.11 installs correctly and
+  slowly; this one installs correctly.**
+
 ## 0.20.11
 
 ### Fixed
@@ -15,6 +26,8 @@ second description of it. GitHub's generated commit list is appended below it.
   shell script had been fixed. The rule lives in one script both call now, and
   the tree it produces is 1,286 files and 89MB. **0.20.11 installs correctly and
   slowly; this one installs correctly.**
+
+### Changed
 
 ### Changed
 
