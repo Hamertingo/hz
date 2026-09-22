@@ -188,14 +188,16 @@ const NEW_TASK_MAX_ROWS = 20;
 // and is applied at both call sites alongside this.
 const TEXT_BOX = "py-1 text-composer";
 
-// The app's mark: the hz cat, drawn by `public/assets/hz-logo.svg`. An <img>
-// paints the file's own fill, and this has to take the page's text color — so
-// it is a mask over a `currentColor` background: the SVG supplies the shape,
-// the CSS supplies the ink. Prefixed as well as not, for the older WebKit a
-// Linux build runs on.
+// The app's mark: the hz cat, drawn by `public/assets/hz-cat-mono.svg` — the
+// one-brand-colour cut of the same art, and the only one that works here. The
+// watermark is `text-foreground/10` over the empty composer, so the mark has to
+// take the page's text color rather than paint its own: it is a mask over a
+// `currentColor` background, the SVG supplying the shape and the CSS the ink.
+// The full-colour `hz-cat.svg` at a tenth of its opacity would read as a bruise.
+// Prefixed as well as not, for the older WebKit a Linux build runs on.
 const WORDMARK_MASK = {
-  maskImage: "url(/assets/hz-logo.svg)",
-  WebkitMaskImage: "url(/assets/hz-logo.svg)",
+  maskImage: "url(/assets/hz-cat-mono.svg)",
+  WebkitMaskImage: "url(/assets/hz-cat-mono.svg)",
   maskSize: "contain",
   WebkitMaskSize: "contain",
   maskRepeat: "no-repeat",
