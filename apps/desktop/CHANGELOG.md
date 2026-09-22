@@ -5,6 +5,25 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.13
+
+### Fixed
+
+- **The update installs itself on Windows.** `plugins.updater` named no
+  `installMode`, so the plugin took its default there — the one that opens the
+  NSIS installer and waits for somebody — and the app drew "downloading" for as
+  long as the reader was willing to watch. `passive` installs with a progress
+  bar, asks nothing, and the app comes back through `relaunch`.
+- **A project is named after its folder, on Windows too.** `basename` split on
+  `/` alone and a canonicalized Windows path is `\\?\C:\Users\me\Downloads`,
+  which holds no forward slash at all — so the row drew the whole path. Fixed
+  where the rule is stated (Rust for the cached label, TypeScript for the
+  header), and a cached name that is still its path is repaired as it is read.
+- **The spaces switcher has room for its name again.** The rule that reserves
+  space for the window controls matched every drag region, including the
+  sidebar's strip — at the left edge, where no control is drawn — so it paid
+  138px for nothing and the label truncated to `A…`.
+
 ## 0.20.12
 
 ### Fixed
