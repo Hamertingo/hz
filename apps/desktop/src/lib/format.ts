@@ -101,9 +101,20 @@ export function truncate(s: string, max: number): string {
 }
 
 /// Trailing path segment, for showing a project as its folder name.
+/// **Windows canonicalizes with `\\` and a `\\?\\` prefix, and neither is a
+/// path a reader wrote.** `\\?\C:\Users\me\Downloads` holds no `/` at all, so
+/// splitting on that alone returned the whole string — and a project's header
+/// drew `\\?\C:\Users\Dashi\Downloads…` where its folder name belongs. The
+/// Rust side states the same rule in `projects::basename`, and the two agree.
 export function basename(path: string): string {
-  const parts = path.replace(/\/+$/, "").split("/");
-  return parts[parts.length - 1] || path;
+  const trimmed = stripVerbatim(path).replace(/[/\\]+$/, "");
+  const parts = trimmed.split(/[/\\]/);
+  return parts[parts.length - 1] || trimmed;
+}
+
+/// Windows' verbatim path prefix, which names no folder and hides the ones after it.
+function stripVerbatim(path: string): string {
+  return path.replace(/^\\\\\?\\UNC\\/i, "").replace(/^\\\\\?\\/, "");
 }
 
 /// How long a turn took, for the line under it.
