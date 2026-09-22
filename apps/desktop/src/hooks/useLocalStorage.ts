@@ -19,10 +19,13 @@
 /// The others *are* the window: `hz.sidebarCollapsed`, `hz.sidebarWidth`,
 /// `hz.rightPanelWidth`, `hz.splitGroups`, `hz.splitLearned`, `hz.filesListSide`,
 /// `hz.filesListWidth`, `hz.filesListShown`, `hz.projectFilter`, `hz.diffStyle`,
-/// `hz.codeTheme`, `hz.recentCommands`. Which panel is folded, how wide it is,
-/// what a diff looks like — they are not facts about the reader, and their
-/// shapes are per-session, so a second build reading the first one's
-/// arrangement is not something anybody asked for.
+/// `hz.codeTheme`, `hz.recentCommands`, `hz.slashCommands`. Which panel is
+/// folded, how wide it is, what a diff looks like — they are not facts about the
+/// reader, and their shapes are per-session, so a second build reading the first
+/// one's arrangement is not something anybody asked for. The command list is the
+/// one that is not about layout and is here anyway: it is the agent's answer for
+/// one session of one project on one build of the agent, and it exists so a
+/// reopened session has a menu at all — see `useSessions`.
 ///
 /// Everything below owns that second store. The two readers a plain module uses
 /// — `readLocalStorage` and `writeLocalStorage` — answer a moved key from the

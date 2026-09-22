@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { restoreAttachments } from "@/hooks/useAttachments";
 import { useComposerPrefs, type EffortByModel } from "@/hooks/useComposerPrefs";
 import { useDockBadge } from "@/hooks/useDockBadge";
-import { readLocalStorage } from "@/hooks/useLocalStorage";
+import { readLocalStorage, writeLocalStorage } from "@/hooks/useLocalStorage";
 import {
   ANSWERED_BY_OPENING,
   dismissNotice,
@@ -139,6 +139,35 @@ const NO_TASKS: ReadonlySet<string> = new Set();
 /// One shared empty queue, for the same reason: a pane with nothing held used
 /// to draw a fresh `[]` per render, and that identity is what its memo compares.
 const NO_QUEUED: QueuedPrompt[] = [];
+
+/// Where each session's last command list is kept between runs. In the
+/// webview's own store rather than in the durable preferences, for the split
+/// [useLocalStorage] states: a command set describes one session of one project
+/// on one build of the agent, and a second build reading the first one's is not
+/// something anybody asked for.
+const SLASH_COMMANDS_KEY = "hz.slashCommands";
+
+/// How many sessions' command lists survive. A session id is minted per session and
+/// nothing else bounds them, so a store that kept every one would grow for as long
+/// as the app is used — ten commands with descriptions is about 1.2KB a session.
+/// Falling off costs the behaviour this had before it was kept: a menu that does
+/// not open until the session's child has spoken.
+const KEPT_COMMAND_LISTS = 40;
+
+/// Writes a session-keyed map back, keeping the newest few.
+///
+/// A `Record` keeps insertion order, so dropping the front is dropping the entries
+/// seen longest ago — the sessions the reader is least likely to come back to.
+function persistSessionMap<T>(key: string, map: Record<string, T>): void {
+  const ids = Object.keys(map);
+  writeLocalStorage(
+    key,
+    ids.length > KEPT_COMMAND_LISTS
+      ? Object.fromEntries(ids.slice(-KEPT_COMMAND_LISTS).map((id) => [id, map[id]]))
+      : map,
+  );
+}
+
 
 /// What a transcript pane draws for one session. The selected session's fields
 /// on the hook's return are this, spread.
@@ -332,11 +361,25 @@ export function useSessions() {
     // *only* copy: mcode pushes the list when a session opens and again when it
     // changes, so this is what arrived rather than anything this app composed —
     // and an absent entry is "the child has not said yet", never "it has none".
-    // Live and unpersisted, like the rest: a replayed session has no child to
-    // have published one.
+    //
+    // **Persisted, and that is a reversal.** The list belongs to a child, and a
+    // replayed session has none — which was reason enough to keep it live-only
+    // until the cost showed up: the reader who reopens a session is the one who
+    // wants this menu, and without a list it does not open at all. With `[]`,
+    // `groupCommands` resolves every stored recents name through the list and
+    // drops it, so the picker comes out empty, `rowCount` is zero and nothing
+    // draws — not even the sentence for an agent that published none, which is
+    // only true once something has answered. The last answer is kept instead,
+    // and the child's own push replaces it the moment it speaks, which is the
+    // bargain `hz.recentCommands` already makes with the names alone.
+    //
+    // What a stale list can cost is stated: a command the agent has since
+    // dropped is offered, picked, sent as text, and refused by the CLI in the
+    // transcript. Nothing here pretends to be current — `useRecentCommands`
+    // ranks what is in hand, and the push corrects it.
     const [slashCommandsBySession, setSlashCommandsBySession] = useState<
       Record<string, SlashCommand[]>
-    >({});
+    >(() => readLocalStorage<Record<string, SlashCommand[]>>(SLASH_COMMANDS_KEY, {}));
     const [error, setError] = useState<string | null>(null);
     // Bumped by every navigation, so an action started before it and rejecting
     // after it can be told from one the reader is still standing next to.
@@ -2689,8 +2732,16 @@ useEffect(() => {
   };
 }, []);
 
+// Written wherever it changes, which covers both directions: a push fills a
+// session's entry, and a deleted session's entry is dropped with it. An effect
+// rather than a write inside the updater above — an updater is called during a
+// render and may be called twice, and this reaches outside React.
+useEffect(() => {
+  persistSessionMap(SLASH_COMMANDS_KEY, slashCommandsBySession);
+}, [slashCommandsBySession]);
+
 // The agent's roster of what it delegated, pushed whenever it moves. **Live and
-// unpersisted**, like the slash commands above: a member names a child Session
+// unpersisted**, unlike the command list above: a member names a child Session
 // no restart survives, so replaying one would draw subagents nothing is running.
 useEffect(() => {
   const listenerPromise = listen<DelegationEvent>("subagent_delegations", (event) => {
