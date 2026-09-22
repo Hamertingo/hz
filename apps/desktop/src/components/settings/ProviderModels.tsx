@@ -197,8 +197,14 @@ function ModelSwitchRow({
   const label = model.label;
   const name = modelDisplayName(label);
   const slug = modelSlug(label);
-  const window = limitLabel(entry?.contextLimit, BYOK_FALLBACK_CONTEXT);
-  const output = limitLabel(entry?.maxOutputTokens, BYOK_FALLBACK_OUTPUT);
+  // **The agent's own row first, because it is the only source that knows.**
+  // The provider listing has no limits at all (`{modelId, displayName, selected}`),
+  // which is why this row used to draw the fallback for every model it had — a
+  // `200k default` on one that runs at a million. The agent states the window on
+  // the model itself now, patch and gateway settled there, so the fallback is
+  // what is left for a model nobody has spoken about.
+  const window = limitLabel(model.contextWindow ?? entry?.contextLimit, BYOK_FALLBACK_CONTEXT);
+  const output = limitLabel(model.maxTokens ?? entry?.maxOutputTokens, BYOK_FALLBACK_OUTPUT);
   // **The row is one model and the wire lists it per variant**, so the ladder and
   // the variant names are read off whichever variant carries them: the agent
   // states a ladder for the one it is running and leaves the others empty, and a

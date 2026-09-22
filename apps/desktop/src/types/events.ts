@@ -1265,6 +1265,12 @@ efforts: Array<Effort>, defaultEffort: Effort | null,
  */
 baseId: string, 
 /**
+ * The window the agent states for this model, and the budget it may reply
+ * with — `None` where the agent said nothing, which is what a row draws as
+ * its fallback rather than as a fact.
+ */
+contextWindow: number | null, maxTokens: number | null, 
+/**
  * The variant's own name (`thinking`, `fast`), or empty where the id names
  * none. Drawn as the row's second control rather than glued to the model's
  * name — which is what `label` used to carry.

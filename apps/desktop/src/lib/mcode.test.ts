@@ -74,6 +74,10 @@ function model(id: string, overrides: Partial<Model> = {}): Model {
     acceptsImages: false,
     secondary: false,
     supportsFast: false,
+    // A row nobody has stated a window for; a case that needs one passes it
+    // through `overrides` like anything else here.
+    contextWindow: null,
+    maxTokens: null,
     ...overrides,
   };
 }

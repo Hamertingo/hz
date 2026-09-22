@@ -23,6 +23,10 @@ function model(name: string, variant = "thinking"): Model {
     supportsFast: false,
     baseId: `m:custom_provider:opencode-go:${name}`,
     variant,
+    // A discovered row: the agent states a window, and nothing here reads it, so
+    // null is the honest spelling of "this fixture does not speak about it".
+    contextWindow: null,
+    maxTokens: null,
   };
 }
 

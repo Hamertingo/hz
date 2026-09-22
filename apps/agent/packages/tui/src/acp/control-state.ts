@@ -176,9 +176,19 @@ function sessionModelOption(
     description: 'Selects the model used by subsequent turns in this Session.',
     category: 'model',
     currentValue: modelConfigValue(selected),
-    options: values.map(({ selection, name }) => ({
+    // **The limits ride along, because nothing else can tell the client what
+    // they are.** A client's model screen knows an id and a name and nothing
+    // more — the window is only ever stated on a usage update, which needs a
+    // session already running the model — so an app with no other source draws
+    // its own fallback and a row reads `200k` for a model that runs at a
+    // million. `_meta` is the protocol's own room for that.
+    options: values.map(({ selection, name, contextLimit, maxOutputTokens }) => ({
       value: modelConfigValue(selection),
       name,
+      ...(contextLimit === undefined && maxOutputTokens === undefined
+        ? {}
+        : { _meta: { ...(contextLimit !== undefined ? { contextWindow: contextLimit } : {}),
+                     ...(maxOutputTokens !== undefined ? { maxTokens: maxOutputTokens } : {}) } }),
     })),
   };
 }
@@ -222,6 +232,8 @@ function uniqueModelValues(models: readonly TuiModel[]): Array<{
     readonly variant?: string;
   };
   readonly name: string;
+  readonly contextLimit?: number;
+  readonly maxOutputTokens?: number;
 }> {
   const seen = new Set<string>();
   const values = [];
@@ -244,6 +256,10 @@ function uniqueModelValues(models: readonly TuiModel[]): Array<{
       values.push({
         selection,
         name: `${model.displayName ?? model.modelId}${selection.variant ? ` · ${selection.variant}` : ''}`,
+        ...(typeof model.contextLimit === 'number' ? { contextLimit: model.contextLimit } : {}),
+        ...(typeof model.maxOutputTokens === 'number'
+          ? { maxOutputTokens: model.maxOutputTokens }
+          : {}),
       });
     }
   }
