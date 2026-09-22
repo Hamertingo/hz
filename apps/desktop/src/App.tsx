@@ -19,6 +19,12 @@ import LinkDialog from "@/components/chat/LinkDialog";
 import QuitDialog from "@/components/QuitDialog";
 import RenderErrorBoundary from "@/components/RenderErrorBoundary";
 import type { SettingsTab } from "@/components/SettingsDialog";
+
+// **Not lazy, unlike its neighbours below.** These are three small buttons the
+// window needs the moment it draws — on Windows they are the only way to close
+// it — and a chunk that has not arrived yet is a window with no controls. The
+// lazy list is for surfaces that can afford a frame of nothing.
+import { WindowControls } from "@/components/WindowControls";
 import SlowRequestToast from "@/components/SlowRequestToast";
 import WorktreeDialog, { type WorktreePrompt } from "@/components/WorktreeDialog";
 import InboxTabs, { type InboxPage } from "@/components/InboxTabs";
@@ -3344,6 +3350,7 @@ function App() {
     <DragGhost />
     <QuitDialog />
     <LinkDialog />
+    <WindowControls />
     {/* Mounted here rather than in the sidebar, which unmounts whole when it
         collapses and would take ⌘, with it. */}
     {settingsOpen && (

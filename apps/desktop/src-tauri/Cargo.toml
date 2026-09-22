@@ -21,7 +21,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools", "macos-private-api", "protocol-asset"] }
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -99,6 +99,9 @@ transcribe-cpp = { version = "0.2", default-features = false }
 # something `cargo check` should need. See cef/cef.rs.
 [features]
 default = []
+# Webview devtools. Release builds ship without it; the `tauri dev` shim passes
+# `--features devtools` so only dev pays the size and the attack surface.
+devtools = ["tauri/devtools"]
 cef = ["dep:cef", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [target.'cfg(target_os = "macos")'.dependencies.cef]
@@ -129,3 +132,13 @@ required-features = ["cef"]
 [dev-dependencies]
 # Paused-clock tests for the engine's idle unload; a real ten-minute sleep is untestable.
 tokio = { version = "1", features = ["test-util"] }
+
+# Release defaults leave codegen-units at 16 and no LTO; thin LTO and one unit
+# buy ~10-20% on the serde paths that carry every streamed event. debuginfo is
+# stripped from the shipped binary but symbols stay, so crash reports still
+# name frames. `panic = "abort"` is deliberately not set: a panic inside a
+# tokio task today ends that task, and abort would turn it into a dead app.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
