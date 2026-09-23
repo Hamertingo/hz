@@ -656,14 +656,22 @@ function App() {
   /// there on its own.
   const startGoal = useCallback(
     async (objective: string, tokenBudget: number | null) => {
-      const sessionId = selectedSessionId;
-      if (!sessionId) return;
-      // Queued before the send, so the effect above cannot miss the turn it is
-      // meant to wait for — however fast that turn is.
-      pendingGoal.current = { sessionId, objective, tokenBudget };
-      await handleSendMsg(objective);
+      const fail = failUnlessLeft();
+      if (!selectedSessionId) return;
+      // Sent first and the goal made on it, in that order and without waiting:
+      // see the note above for why the second half must not be delayed.
+      void handleSendMsg(objective);
+      try {
+        await invoke("create_session_goal", {
+          sessionId: selectedSessionId,
+          objective,
+          tokenBudget,
+        });
+      } catch (e) {
+        fail(e);
+      }
     },
-    [selectedSessionId, handleSendMsg],
+    [selectedSessionId, handleSendMsg, failUnlessLeft],
   );
 
   // The chip is drawn inside a message's markdown, four components below
@@ -1549,34 +1557,18 @@ function App() {
     prMarks.refresh();
   }, [selectedSessionId, busy, pullRequests.refresh, prMarks.refresh]);
 
-  /// A goal waiting for the turn its objective opened to end.
+  /// **Beside the prompt, and that ordering is the whole of the wait.** The
+  /// runtime's `create` starts a kickoff turn of its own — that is the extra
+  /// `1 turn · 2.1k tokens` a reader can see on the band after their own turn
+  /// has already finished, and it is the runtime evaluating the objective
+  /// rather than an app that hung.
   ///
-  /// **The create waits, and that is the whole of the lag it used to have.** Made
-  /// beside the prompt, the runtime only reaches the objective when that turn
-  /// ends — so the chat showed the work finished and the band went on saying
-  /// `Active` for seconds afterwards. Made *after* it, the runtime evaluates the
-  /// objective there and then: the goal lands on `complete` in the same breath as
-  /// the turn, or stays `active` because there is genuinely more to do.
-  ///
-  /// It waits on the *session's* status rather than on `busy`, which is only ever
-  /// the selected session's: a reader who starts a goal and switches away would
-  /// otherwise leave a prompt sent and no goal over it.
-  const pendingGoal = useRef<{
-    sessionId: string;
-    objective: string;
-    tokenBudget: number | null;
-  } | null>(null);
-  useEffect(() => {
-    const waiting = pendingGoal.current;
-    if (!waiting) return;
-    if (statusBySession[waiting.sessionId] === "in_progress") return;
-    pendingGoal.current = null;
-    void invoke("create_session_goal", {
-      sessionId: waiting.sessionId,
-      objective: waiting.objective,
-      tokenBudget: waiting.tokenBudget,
-    }).catch((e: unknown) => failUnlessLeft()(e));
-  }, [statusBySession, failUnlessLeft]);
+  /// Made while the reader's turn is still running, that kickoff is *queued*
+  /// behind it and starts the instant the turn ends; made after, it starts from
+  /// cold seconds later. Neither removes it: `create` always kicks off, and the
+  /// one way to suppress the work is to pause the goal at once — which leaves a
+  /// goal that never reaches `complete` on its own, a worse trade than a few
+  /// seconds and a couple of thousand tokens.
 
   // A doc arriving on screen is re-read, because the watcher behind `DocsPanel`
   // only ever holds the *selected* session's files: anything written while the
