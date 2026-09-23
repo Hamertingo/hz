@@ -62,6 +62,8 @@ export default function GoalControl({
   // before a session exists — and a new-task composer draws none of this.
   if (!sessionId) return null;
 
+  const move = moveFor(goal?.status ?? "");
+
   const open = (editing: Goal | undefined) => {
     setObjective(editing?.objective ?? "");
     setBudget(editing?.tokenBudget ? String(editing.tokenBudget) : "");
@@ -94,7 +96,7 @@ export default function GoalControl({
   // The value is the agent's own word for it — the status a goal is moved *to*,
   // not the verb a button is labelled with. `active` is also what a goal is
   // created as, which is why resuming is not a third status.
-  const move = async (m: GoalMove) => {
+  const moveGoal = async (m: GoalMove) => {
     const fail = onError();
     try {
       await invoke("move_session_goal", { sessionId, move: m });
@@ -148,19 +150,15 @@ export default function GoalControl({
               {goal.objective}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {/* **Only the move that applies, and none at all where this build
-                cannot know one.** A finished goal has nothing to pause, and an
-                unfamiliar status could mean either direction — so those offer the
-                two things that always make sense, Edit and Clear, rather than a
-                button whose press the agent would refuse. */}
-            {goal.status === "paused" && (
-              <DropdownMenuItem onSelect={() => void move("active")}>
-                <Play /> Resume
-              </DropdownMenuItem>
-            )}
-            {goal.status === "active" && (
-              <DropdownMenuItem onSelect={() => void move("paused")}>
-                <Pause /> Pause
+            {/* **The move that applies, by the agent's own table.** See
+                `moveFor`: `active` pauses, everything the runtime can still be
+                nudged forward resumes, and a finished or budget-limited goal
+                offers neither — those get the two things that always make sense,
+                Edit and Clear, rather than a press the runtime would refuse. */}
+            {move && (
+              <DropdownMenuItem onSelect={() => void moveGoal(move)}>
+                {move === "active" ? <Play /> : <Pause />}
+                {move === "active" ? "Resume" : "Pause"}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={() => open(goal)}>
@@ -232,6 +230,26 @@ export default function GoalControl({
       </Dialog>
     </>
   );
+}
+
+/// Which move the menu offers, where either applies.
+///
+/// **Read off the agent's own table rather than invented here.** Its `actionHint`
+/// offers pause on `active`; resume on `paused`; and — this is the arm that
+/// matters — **resume on every status it does not name**, `blocked` among them,
+/// which is a goal waiting on the reader rather than one that is over. `complete`
+/// and `budget_limited` are the two that offer neither: a finished goal has
+/// nothing to pause, and a budget-limited one is refused a resume outright
+/// ("This Goal exhausted its execution budget. Clear it, then start a new Goal"),
+/// so raising the budget through Edit is the way on.
+///
+/// An unknown status therefore reads as resumable, which is upstream's own
+/// fallback and the safe direction: a press the runtime refuses is a sentence,
+/// where a missing button is a goal nothing in this app can move.
+function moveFor(status: string): GoalMove | null {
+  if (status === "active") return "paused";
+  if (status === "complete" || status === "budget_limited") return null;
+  return "active";
 }
 
 /// What the row says in the space of a few words.
