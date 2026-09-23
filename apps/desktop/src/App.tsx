@@ -658,9 +658,15 @@ function App() {
     async (objective: string, tokenBudget: number | null) => {
       const fail = failUnlessLeft();
       if (!selectedSessionId) return;
-      // Sent first and the goal made on it, in that order and without waiting:
-      // see the note above for why the second half must not be delayed.
-      void handleSendMsg(objective);
+      // **Awaited, and this is not "waiting for the turn".** `handleSendMsg`
+      // resolves when the prompt has been *written* — the turn itself is
+      // detached — and that is exactly the gap the create must not fall into:
+      // fired beside an unwritten prompt, the goal's kickoff takes the session
+      // first and the reader's own prompt is refused, in the field as
+      // `-32603 Session already has an active Turn`. Awaiting it still lands the
+      // create while the turn runs, which is what queues the kickoff behind it
+      // rather than after it.
+      await handleSendMsg(objective);
       try {
         await invoke("create_session_goal", {
           sessionId: selectedSessionId,
