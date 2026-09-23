@@ -1,6 +1,7 @@
 import { memo } from "react";
 
 import AssistantMessage from "@/components/chat/AssistantMessage";
+import GoalReceipt from "@/components/chat/GoalReceipt";
 import Reasoning from "@/components/chat/Reasoning";
 import ToolCall from "@/components/chat/ToolCall";
 import UserMessage from "@/components/chat/UserMessage";
@@ -90,6 +91,18 @@ function EventRow({
 
     case "assistant_text":
       return <AssistantMessage text={payload.text} />;
+
+    // The one row this app writes for the goal itself: the runtime's autonomous
+    // turns carry no content, so the goal's own record is what draws.
+    case "goal_receipt":
+      return (
+        <GoalReceipt
+          objective={payload.objective}
+          tokensUsed={payload.tokensUsed}
+          turnsUsed={payload.turnsUsed}
+          timeUsedSeconds={payload.timeUsedSeconds}
+        />
+      );
 
     case "reasoning":
       return <Reasoning text={payload.text} encrypted={payload.encrypted} />;

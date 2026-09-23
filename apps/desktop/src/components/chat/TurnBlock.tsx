@@ -139,6 +139,20 @@ function TurnBlock({
   // mentions, paths and markdown on every pass.
   const promptProps = useMemo(() => userProps(turn), [turn]);
 
+  // **A turn with no prompt and nothing but a receipt is drawn as the receipt.**
+  // The walk gives an event with nothing in front of it a turn of its own, which
+  // is what puts a goal's completion line where it happened rather than at the
+  // end — and a whole turn frame around it (a summary line counting one row, a
+  // toggle that reveals nothing) would be furniture around a single sentence.
+  const only = turn.work.length === 1 ? turn.work[0] : null;
+  if (turn.prompt === null && only !== null && !isToolGroup(only) && only.payload.type === "goal_receipt") {
+    return (
+      <div className="flex flex-col gap-3">
+        {renderItem(only, subagentById, resultByCallId, editsByCallId, todosByCallId, onOpenSubagent, onOpenSession)}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {turn.prompt && <UserMessage {...promptProps} onOpenSession={onOpenSession} />}

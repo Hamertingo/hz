@@ -438,6 +438,30 @@ pub enum AgentEventPayload {
     /// The live indicator is driven from the prompt instead —
     /// `compactingOf` in the frontend, which is where that rule lives.
     ContextCompactionStarted,
+    /// A goal finished, and this is the line the reader gets for it.
+    ///
+    /// **Written by this app, from the runtime's own account.** The autonomous
+    /// turns a goal runs put *no* message or tool content on ACP — measured
+    /// against 0.4.12: a goal that wrote a file and reached `complete` sent
+    /// `goal_update`, `usage_update` and `session_info_update` and nothing else —
+    /// so the work itself is invisible to a client, and the one thing that can be
+    /// drawn is the goal's own record. The vendor's own TUI writes this same line
+    /// into its transcript, for the same reason.
+    ///
+    /// Persisted, unlike the goal pushes beside it: a receipt is part of the
+    /// conversation's record, and one that vanished on restart would leave the
+    /// goal's whole life represented by nothing.
+    GoalReceipt {
+        /// What was pursued, so the line names the work rather than a count.
+        #[serde(default)]
+        objective: String,
+        #[serde(default)]
+        tokens_used: u64,
+        #[serde(default)]
+        turns_used: u64,
+        #[serde(default)]
+        time_used_seconds: u64,
+    },
     /// A model request failed and is being tried again. Drives a live
     /// indicator, in the same slot and for the same reason a compaction does:
     /// the turn is genuinely open and drawing nothing, and without this the

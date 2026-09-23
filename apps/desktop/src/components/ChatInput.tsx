@@ -85,10 +85,15 @@ type ChatInputProps = {
   /// pickers: both are about *how this runs* rather than what it is, and the row
   /// under the text is where the composer's least-touched answers go.
   permission?: ReactNode;
-  /// What this session is working towards, drawn ahead of the other two — a goal
-  /// is the widest statement of the three and the one a reader scans for. Set
-  /// through the agent's own Goal object, so the count beside it moves on its own.
+  /// The button that starts a goal, in the composer's row — drawn only where
+  /// there is no goal to show. Set through the agent's own Goal object, so what
+  /// it draws moves on its own.
   goal?: ReactNode;
+  /// The live goal, above the card. A band rather than a row's worth of chip
+  /// because what it carries is state in motion: a status word, an elapsed count
+  /// and a token share, none of which fit a chip that has to share the row with
+  /// two other controls.
+  goalBand?: ReactNode;
   /// What the session has spent of its window, drawn on the row under the text —
   /// where a reading about this turn belongs, and the one place in both states that
   /// is always below the input. The empty composer puts it on the send hint's own
@@ -232,6 +237,7 @@ export default function ChatInput({
   meter,
   permission,
   goal,
+  goalBand,
   toolbar,
   dictation,
   dictating = false,
@@ -908,6 +914,11 @@ export default function ChatInput({
             same band, and this one only reads as *tucked behind* the composer
             when the composer is what it tucks behind. A 4px slice of button top
             above a strip is neither, and reads as debris stuck to it. */}
+        {/* Above the handoff peek, which sits against the card's top edge: the
+            band is the topmost thing in the column, as it is in the vendor's own
+            TUI, and the peek keeps its place when there is no goal to draw. */}
+        {!isNewTask && goalBand && <div className="pb-1.5">{goalBand}</div>}
+
         {!isNewTask && handoff}
 
         {!isNewTask && followup}
@@ -1271,7 +1282,9 @@ export default function ChatInput({
           )}
 
           {/* All three at the far end, in the order they are read: what this is
-              for, what the agent may do, then what it has spent doing it.
+              for, what the agent may do, then what it has spent doing it. The
+              first is the *start* button for a goal — a goal already running is
+              the band's, above the card.
 
               **The first one present takes the push, and it takes it
               unconditionally** — it is the leading edge of the group, so its own

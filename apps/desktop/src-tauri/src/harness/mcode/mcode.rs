@@ -50,7 +50,7 @@ use crate::store::{self, next_seq_by_session_id};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::process::Stdio;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
@@ -102,6 +102,10 @@ pub struct McodeSession {
     model: Arc<Mutex<Option<String>>>,
     /// The mode the session is in — ACP's `default` or `plan`.
     mode: Arc<Mutex<Option<String>>>,
+    /// The status of the last goal push this session saw, so the next one reads
+    /// as a *change* rather than as a state. `None` covers "no goal yet" and
+    /// "the goal was cleared" alike, which are the same thing to the transition.
+    goal_status: Arc<Mutex<Option<String>>>,
     /// A `/context` probe in flight, if one is.
     ///
     /// The agent answers that command **locally** — the turn ends in about a
@@ -134,6 +138,19 @@ impl McodeSession {
     /// The mode the session is in, as ACP spells it.
     pub fn mode(&self) -> Option<String> {
         self.mode.lock().expect("mcode mode poisoned").clone()
+    }
+
+    /// Records the goal a push carried, and answers the one that just finished.
+    ///
+    /// **The transition is the whole of it**, which is what [`goal::completion_of`]
+    /// holds: the runtime re-pushes a goal whenever anything in it moves, so the
+    /// status alone would write a receipt on every push. Called on every push, so
+    /// the memory is the last status and not the last receipt.
+    pub fn note_goal(&self, next: Option<&goal::Goal>) -> Option<goal::Goal> {
+        let mut last = self.goal_status.lock().expect("mcode goal poisoned");
+        let finished = goal::completion_of(last.as_deref(), next).cloned();
+        *last = next.map(|goal| goal.status.clone());
+        finished
     }
 
     fn configs(&self, configs: &parser::ConfigOptions) {
@@ -636,6 +653,7 @@ async fn start_session(
         efforts: Arc::new(Mutex::new(None)),
         model: Arc::new(Mutex::new(None)),
         mode: Arc::new(Mutex::new(None)),
+        goal_status: Arc::new(Mutex::new(None)),
         probe: Arc::new(Mutex::new(None)),
     };
     let _ = config;
@@ -1198,6 +1216,7 @@ pub async fn open_control() -> Result<Control> {
             efforts: Arc::new(Mutex::new(None)),
             model: Arc::new(Mutex::new(None)),
             mode: Arc::new(Mutex::new(None)),
+            goal_status: Arc::new(Mutex::new(None)),
             probe: Arc::new(Mutex::new(None)),
         },
         asked_at: Instant::now(),
@@ -1586,6 +1605,30 @@ async fn read_stdout(
                     // objective the agent had already moved past.
                     if method == goal::NOTIFICATION {
                         let event = goal::event_of(&params, &handles.session_id);
+                        // **The moment a goal finishes becomes a line in the
+                        // conversation**, because nothing else about its work ever
+                        // reaches this wire: the runtime runs those turns inside
+                        // itself and publishes only status. Minted here, through
+                        // the same sink every mapped event takes, so it is
+                        // numbered, emitted and persisted like one of them.
+                        if let Some(Transport::Acp(session)) = transport.as_ref() {
+                            if let Some(finished) = session.note_goal(event.goal.as_ref()) {
+                                let receipt = AgentEvent::mint(
+                                    handles.session_id.clone(),
+                                    Mcode,
+                                    seq.fetch_add(1, Ordering::Relaxed),
+                                    None,
+                                    None,
+                                    crate::events::AgentEventPayload::GoalReceipt {
+                                        objective: finished.objective,
+                                        tokens_used: finished.tokens_used,
+                                        turns_used: finished.turns_used,
+                                        time_used_seconds: finished.time_used_seconds,
+                                    },
+                                );
+                                sink.send(transport.as_ref().expect("checked above"), receipt).await;
+                            }
+                        }
                         if let Err(err) = handles.app.emit(goal::EVENT, &event) {
                             eprintln!("[goal emit err] {err}");
                         }

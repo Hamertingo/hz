@@ -236,6 +236,9 @@ const RENDERS = new Set([
   "context_compacted",
   "rate_limited",
   "permission_denied",
+  // A line the goal's own life wrote: it draws a row and nothing else, and the
+  // turn it lands in is the bare one the walk gives an event with no prompt.
+  "goal_receipt",
 ]);
 
 /// Whether an item draws a row. A group always does — it is built from tool

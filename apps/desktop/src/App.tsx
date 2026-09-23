@@ -3161,9 +3161,24 @@ function App() {
           goal={
             selectedSessionId ? (
               <GoalControl
-                key={selectedSessionId}
+                key={`row-${selectedSessionId}`}
                 sessionId={selectedSessionId}
                 goal={goalsBySession[selectedSessionId] ?? null}
+                variant="row"
+                onError={failUnlessLeft}
+              />
+            ) : null
+          }
+          // The live goal, above the card — the status word, its elapsed, what it
+          // has cost, and the moves. Keyed by session, or a reading belonging to
+          // the session the reader just left would be drawn as the new one's.
+          goalBand={
+            selectedSessionId ? (
+              <GoalControl
+                key={`band-${selectedSessionId}`}
+                sessionId={selectedSessionId}
+                goal={goalsBySession[selectedSessionId] ?? null}
+                variant="band"
                 onError={failUnlessLeft}
               />
             ) : null

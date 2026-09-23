@@ -290,7 +290,11 @@ label: string,
  * True when the app answered on its own — an unsupported request
  * subtype, or a shutdown clearing what it could not ask about.
  */
-automatic: boolean, } | { "type": "permission_denied", toolName: string, toolUseId: string, message: string, } | { "type": "fast_mode_notice", text: string, } | { "type": "hook", name: string, event: string, phase: HookPhase, exitCode: number | null, outcome: string | null, } | { "type": "model_request_started" } | { "type": "context_compaction_started" } | { "type": "api_retry", attempt: number, maxRetries: number, 
+automatic: boolean, } | { "type": "permission_denied", toolName: string, toolUseId: string, message: string, } | { "type": "fast_mode_notice", text: string, } | { "type": "hook", name: string, event: string, phase: HookPhase, exitCode: number | null, outcome: string | null, } | { "type": "model_request_started" } | { "type": "context_compaction_started" } | { "type": "goal_receipt", 
+/**
+ * What was pursued, so the line names the work rather than a count.
+ */
+objective: string, tokensUsed: number, turnsUsed: number, timeUsedSeconds: number, } | { "type": "api_retry", attempt: number, maxRetries: number, 
 /**
  * HTTP status, where the harness knew one. 529 (overloaded) and 500
  * are the only two observed.
@@ -813,6 +817,23 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type ErrorSource = "harness" | "parser" | "process";
 
 /**
+ * What an `active` goal is waiting on.
+ *
+ * **The status stays `active` while this is set**, which is the vendor's own
+ * rule: a wait is an execution detail inside a running goal, not a lifecycle
+ * state. The band draws the wait's phrase where the status word would go.
+ */
+export type ExecutionWait = { 
+/**
+ * The runtime's vocabulary: `questionnaire`, `permission`, `plan`,
+ * `required_background`, `automation_owner_conflict`,
+ * `dependency_unavailable`, `verification`, `unknown`. A `String` for the
+ * reason every other reader here gives — a reason added after this build
+ * must draw as itself rather than fail the line that carried it.
+ */
+reason: string, };
+
+/**
  * An installed app a path can be handed to.
  */
 export type ExternalApp = { 
@@ -934,7 +955,24 @@ statusReason: string | null, tokensUsed: number, turnsUsed: number,
  * Absent where the goal was set without one, which is a goal that runs until
  * somebody stops it rather than forever.
  */
-tokenBudget: number | null, };
+tokenBudget: number | null, 
+/**
+ * Wall-clock seconds the runtime has spent on it, which is the number a
+ * reader watching a long goal actually feels. Ticks on its own, so the band
+ * adds its own second-resolution counter while the goal is `active` rather
+ * than repainting on a push that never comes.
+ */
+timeUsedSeconds: number, 
+/**
+ * What an `active` goal is parked on, where it is parked. `None` is the
+ * ordinary "it is working" case.
+ */
+executionWait: ExecutionWait | null, 
+/**
+ * The last verifier's verdict, where the runtime keeps one — the only place
+ * the *why* of a goal that has not finished lives.
+ */
+lastVerification: Verification | null, };
 
 /**
  * The pushed goal, shaped for the webview.
@@ -2917,6 +2955,20 @@ reasoningTokens: number | null, totalTokens: number | null, costUsd: number | nu
  * and every event that doesn't report one. See [`ModelUsage`].
  */
 perModel: Array<ModelUsage>, };
+
+/**
+ * The last verifier's verdict on a goal.
+ */
+export type Verification = { 
+/**
+ * `met`, `not_met`, `impossible`, `inconclusive` — the vendor's words,
+ * drawn as written for `status`'s reason.
+ */
+verdict: string, notMetStreak: number, 
+/**
+ * What the verifier says is missing, where it says so.
+ */
+missing: Array<string>, };
 
 /**
  * What the composer's action row needs to decide which buttons it has, in one

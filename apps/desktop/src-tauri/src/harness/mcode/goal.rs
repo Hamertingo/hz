@@ -69,6 +69,69 @@ pub struct Goal {
     /// somebody stops it rather than forever.
     #[serde(default)]
     pub token_budget: Option<u64>,
+    /// Wall-clock seconds the runtime has spent on it, which is the number a
+    /// reader watching a long goal actually feels. Ticks on its own, so the band
+    /// adds its own second-resolution counter while the goal is `active` rather
+    /// than repainting on a push that never comes.
+    #[serde(default)]
+    pub time_used_seconds: u64,
+    /// What an `active` goal is parked on, where it is parked. `None` is the
+    /// ordinary "it is working" case.
+    #[serde(default)]
+    pub execution_wait: Option<ExecutionWait>,
+    /// The last verifier's verdict, where the runtime keeps one — the only place
+    /// the *why* of a goal that has not finished lives.
+    #[serde(default)]
+    pub last_verification: Option<Verification>,
+}
+
+/// What an `active` goal is waiting on.
+///
+/// **The status stays `active` while this is set**, which is the vendor's own
+/// rule: a wait is an execution detail inside a running goal, not a lifecycle
+/// state. The band draws the wait's phrase where the status word would go.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionWait {
+    /// The runtime's vocabulary: `questionnaire`, `permission`, `plan`,
+    /// `required_background`, `automation_owner_conflict`,
+    /// `dependency_unavailable`, `verification`, `unknown`. A `String` for the
+    /// reason every other reader here gives — a reason added after this build
+    /// must draw as itself rather than fail the line that carried it.
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// The last verifier's verdict on a goal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct Verification {
+    /// `met`, `not_met`, `impossible`, `inconclusive` — the vendor's words,
+    /// drawn as written for `status`'s reason.
+    #[serde(default)]
+    pub verdict: String,
+    #[serde(default)]
+    pub not_met_streak: u64,
+    /// What the verifier says is missing, where it says so.
+    #[serde(default)]
+    pub missing: Vec<String>,
+}
+
+/// The goal that just finished, where this push is the moment it did.
+///
+/// **The transition, not the state.** The runtime re-pushes a goal whenever
+/// anything in it moves — a token count, a wait starting, a status reason — so a
+/// rule that read "the status is `complete`" would write a receipt on every push
+/// for as long as the goal existed. What makes a moment is that the status
+/// *changed* into `complete`.
+pub fn completion_of<'a>(previous: Option<&str>, next: Option<&'a Goal>) -> Option<&'a Goal> {
+    let goal = next?;
+    if goal.status != "complete" || previous == Some("complete") {
+        return None;
+    }
+    Some(goal)
 }
 
 /// What a control can ask a goal to do.
@@ -304,5 +367,26 @@ mod tests {
 
         assert_eq!(event.session_id, "hz-session");
         assert!(event.goal.is_some());
+    }
+
+    /// Only the change into `complete` is a moment. The state alone repeats.
+    #[test]
+    fn only_the_transition_into_complete_is_a_receipt() {
+        let mut goal = Goal {
+            status: "active".into(),
+            ..Default::default()
+        };
+        assert!(completion_of(None, Some(&goal)).is_none());
+        assert!(completion_of(Some("active"), Some(&goal)).is_none());
+        assert!(completion_of(None, None).is_none());
+
+        goal.status = "complete".into();
+        assert!(completion_of(Some("active"), Some(&goal)).is_some());
+        assert!(completion_of(Some("blocked"), Some(&goal)).is_some());
+        assert!(completion_of(None, Some(&goal)).is_some());
+        // The push that repeats it is not a second receipt.
+        assert!(completion_of(Some("complete"), Some(&goal)).is_none());
+        // And a goal resumed and finished again is a new one.
+        assert!(completion_of(Some("active"), Some(&goal)).is_some());
     }
 }
