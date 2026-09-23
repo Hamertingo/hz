@@ -75,6 +75,51 @@ boot; with a shared child the boot is paid once and stays paid, so the park
 matters only for the very first session. Keep it, and keep its single slot — the
 memory argument for one slot does not change.
 
+## How, in the order it has to happen
+
+**One consequence the design above does not cover, and it changes the shape:**
+`HZ_SESSION_ID` is an environment variable, fixed **at spawn**, and the `hz` CLI
+reads it as the session a call defaults to (`hz issue link` with no id, most of
+all). A child serving five sessions has one environment, so four of those five
+lose the default — an agent in session B filing a link against session A, or
+against nothing. That is a wrong write that answers `ok`, which is the failure
+class this repository keeps paying for. Two ways out, and the second is better:
+
+1. Give the shared child the **project** as its identity (`HZ_SESSION_ID` empty,
+   `hz` refusing to default) — honest, and every caller passes an id.
+2. Move the default out of the environment: `hz` resolves it from its parent
+   process or from an explicit `--session`, so a child's identity stops being
+   what a *session* is identified by. This is the one that removes the coupling
+   rather than documenting it.
+
+Until that is settled, sharing a child is not ready, whatever the routing does.
+
+Then, in this order, each step landing on its own and compiling:
+
+1. **`SessionHandles`**, extracted from `Session`: `events`, `status`, `queued`,
+   `seq`, `session_cwd`, and the transport. No behaviour change — `Session` owns
+   one and its methods read through it. `cargo test` is the gate.
+2. **The registry**, `Mutex<HashMap<String, SessionHandles>>` keyed by the
+   agent's session id, filled where the handshake hands a session over. Still
+   one child per session, still one handle set in it. `cargo test`.
+3. **`read_stdout` routes by the event's session id**: `params.sessionId` for a
+   `session/update`, the same field the goal and delegation notifications carry.
+   With the registry holding one entry this is a lookup that always answers the
+   same thing — which is what makes it verifiable *before* anything shares a
+   child. `cargo test`, and the app behaving identically in one session.
+4. **The unknown-id drop**: a notification for a session this process does not
+   hold is dropped, not panicked on. Tested by feeding `read_stdout` a line for a
+   stranger, which is the shape a session from a previous run leaves.
+5. **The registry keys by project**, and `send_msg` asks it for a child before
+   spawning one. This is the step that changes behaviour, and the live checklist
+   below is its gate.
+6. **The park follows**: it stays single-slot, but it now hands its child to the
+   project's registry rather than to one session.
+
+Steps 1–4 are invisible and provable here. Step 5 is the one that needs the app
+running, and it is deliberately last so that everything before it can be trusted
+first.
+
 ## What has to be verified, and cannot be from here
 
 The failure this can introduce is **silent**: two sessions' events crossing in
@@ -84,7 +129,7 @@ proves the *agent* serves many sessions, which is already true and already
 measured; the routing is hz's, and it is only exercised by the app with two
 concurrent sessions.
 
-So the verification is:
+So the verification is (with the `HZ_SESSION_ID` question above settled first, or a prompt in the second session is where it will show):
 
 1. `pnpm tauri dev`, two sessions in one project, prompts in both, and both
    transcripts read correctly — interleaved turns included.
