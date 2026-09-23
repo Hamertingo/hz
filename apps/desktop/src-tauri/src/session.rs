@@ -639,6 +639,23 @@ impl SessionManager {
             sent_at,
         } = request;
 
+        // **A prompt needs something to say, and this is the one place that can
+        // tell every caller at once.** The composer refuses an empty one itself —
+        // Enter is its own path into the send, and without the check a second
+        // press on a box that had just been cleared went out as a prompt with no
+        // text and no attachment. What the runtime answers that with is
+        // "Local message content or attachments are required", which the
+        // transcript draws as an internal error and leaves the reader to work out
+        // which press produced it. A relayed `hz send` has no composer in front of
+        // it, so the refusal belongs here as well, beside the other send it is
+        // meant for.
+        //
+        // An attachment on its own is a real prompt — the composer's own rule —
+        // so this asks for text *or* an attachment, never both.
+        if prompt.trim().is_empty() && attachment_paths.is_empty() {
+            bail!("Nothing to send: a prompt needs text or an attachment.");
+        }
+
         // Two sends naming one session serialize on this gate — the barrier the
         // map lock used to be by accident, gone now that the spawn runs outside
         // it. Taken **before** `starting`, so a send queued behind an identical

@@ -740,10 +740,16 @@ export default function ChatInput({
   );
 
   const submit = () => {
-    // Enter has its own path into here, so the disabled button is not the
-    // guard — without this, the one route that never touches the button still
-    // sends.
-    if (notice || tooLong) return;
+    // **`canSend` is the guard, not the disabled button.** Enter has its own path
+    // into here, so nothing about the button protects this — and an empty send is
+    // not "an empty prompt" to the agent, it is a *refused* one: the runtime
+    // answers "Local message content or attachments are required", which the
+    // transcript draws as an internal error, leaving the reader to guess which of
+    // their two presses produced it.
+    //
+    // `canSend` already carries the notice, so this is one question: is there
+    // anything to send.
+    if (!canSend || tooLong) return;
 
     const trimmed = message.trim();
     // An attachment on its own is a real prompt — dropping a screenshot and
