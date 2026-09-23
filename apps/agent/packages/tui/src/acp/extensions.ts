@@ -11,6 +11,29 @@ import { projectDelegationTurns } from './updates.js';
 
 export const TUI_ACP_EXTENSION_VERSION = 1;
 
+export const TUI_ACP_USAGE_RECORDS_NOTIFICATION = 'mcode/session/usage_records' as const;
+
+export interface TuiAcpUsageRecord {
+  id?: number;
+  sessionId?: string;
+  agentName?: string;
+  frameworkType?: string;
+  turnId?: string;
+  model?: string;
+  ts?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
+}
+
+export interface TuiAcpUsageRecordsNotification {
+  sessionId: string;
+  rows: TuiAcpUsageRecord[];
+}
+
 const TUI_ACP_GOAL_METHODS = [
   'mcode/session/goal/get',
   'mcode/session/goal/create',
@@ -63,6 +86,8 @@ export const TUI_ACP_EXTENSION_NOTIFICATIONS = [
   'mcode/session/queue_update',
   'mcode/session/goal_update',
   'mcode/session/delegation_update',
+  'mcode/session/api_retry',
+  TUI_ACP_USAGE_RECORDS_NOTIFICATION,
 ] as const;
 
 export function tuiAcpExtensionCapabilities(runtime: Pick<TuiAcpRuntime, 'isGoalEnabled'>): {

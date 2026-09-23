@@ -926,9 +926,16 @@ fn is_session_id(value: &str) -> bool {
         && value.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// Which session is making this call, if one is. Injected into every agent hz
-/// spawns; absent when a person runs this in their own terminal, which is
-/// ordinary rather than an error.
+/// Which session is making this call, if one is.
+///
+/// **Injected into every tool child the agent spawns**, as the agent's own name
+/// for the session it is serving — see `apps/agent`'s bash spawn hook. That the
+/// value is the agent's id rather than this app's is the app's problem to
+/// resolve, not the CLI's: it is opaque here, and either spelling reaches a
+/// session.
+///
+/// Absent when a person runs this in their own terminal, which is ordinary
+/// rather than an error.
 fn parent_session_id() -> Option<String> {
     std::env::var("HZ_SESSION_ID")
         .ok()

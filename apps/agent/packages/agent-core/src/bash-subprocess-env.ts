@@ -187,9 +187,28 @@ export function resolveBashEnvPolicy(
   };
 }
 
+/**
+ * The variable the hz app's own CLI reads to learn which session called it
+ * (`apps/cli`, and the app resolves what it names back to a session).
+ */
+const HZ_SESSION_ID = 'HZ_SESSION_ID';
+
 export function sanitizeBashSubprocessEnv(
   env: NodeJS.ProcessEnv,
   policy: BashEnvPolicy,
+  /**
+   * The session whose turn is spawning this child, where one is known.
+   *
+   * Exported into the child as `HZ_SESSION_ID`. A parameter rather than a field
+   * on the policy because the policy is bound once per runtime while the session
+   * changes per turn — and one agent process serves several sessions, so only
+   * the turn can say which one is running.
+   *
+   * **Added after the strip below, never before it.** A boundary list that
+   * later grows to include this name would then delete the one value the app
+   * needs, and it would do it silently.
+   */
+  sessionId?: string,
 ): BashEnvSanitizeResult {
   policy.spawnPreflight?.();
   const out: NodeJS.ProcessEnv = { ...env };
@@ -219,6 +238,9 @@ export function sanitizeBashSubprocessEnv(
 
   removed.sort();
   applyPathPrefix(out, policy.prependPath);
+
+  if (sessionId) out[HZ_SESSION_ID] = sessionId;
+
   return { env: out, removed };
 }
 
@@ -265,9 +287,11 @@ export interface BashSpawnContextLike {
 export function createBashEnvSpawnHook(
   policy: BashEnvPolicy,
   onSanitized?: (removed: string[]) => void,
+  /** See [`sanitizeBashSubprocessEnv`]: whose turn this spawn belongs to. */
+  sessionId?: string,
 ): <T extends BashSpawnContextLike>(ctx: T) => T {
   return (ctx) => {
-    const { env, removed } = sanitizeBashSubprocessEnv(ctx.env, policy);
+    const { env, removed } = sanitizeBashSubprocessEnv(ctx.env, policy, sessionId);
     onSanitized?.(removed);
     return { ...ctx, env };
   };

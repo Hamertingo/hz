@@ -1,9 +1,12 @@
 //! MiniMax Code, spoken over `mcode acp`.
 //!
-//! One child per session and a JSON-RPC peer, like every ACP harness: the
-//! framing is [`rpc`](self::rpc), the vocabulary is [`parser`](self::parser),
-//! and what the model says becomes hz events through [`mapper`](self::mapper).
-//! Four things are this CLI's own:
+//! **One child per project, carrying every conversation of it**, and a JSON-RPC
+//! peer, like every ACP harness: the framing is [`rpc`](self::rpc), the
+//! vocabulary is [`parser`](self::parser), and what the model says becomes hz
+//! events through [`mapper`](self::mapper). The sharing is [`Agent`]'s: a boot is
+//! ~6.5s and ~400MB, while `session/new` on a child already up is 0.02s, so a
+//! second session in a project opens a conversation instead of a process. Four
+//! things are this CLI's own:
 //!
 //! - **A prompt is a request that blocks for the whole turn.** `session/prompt`
 //!   answers with a stop reason once the model is done, so the turn's end
@@ -41,14 +44,13 @@ pub mod rpc;
 pub mod skills;
 
 use crate::events::{AgentEvent, AgentEventPayload, ApprovalPolicy, BlockRef, DeltaEvent};
-use crate::harness::permissions::PendingPermissions;
-use crate::harness::questions::PendingQuestions;
 use crate::harness::{read_stderr, record_failure, Harness::Mcode};
 use crate::models::{Effort, Model, ModelId};
-use crate::session::{QueuedMessages, Session, StatusTracker, Transport};
+use crate::session::{Session, SessionHandles, StatusTracker, Transport};
 use crate::store::{self, next_seq_by_session_id};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -274,17 +276,38 @@ pub async fn prepare(
     // writes one at the send, and this session may never be sent at all. The id
     // the agent minted is carried on the session itself and recorded by
     // whichever send adopts it.
-    let session = start_session(
-        session_id,
-        model,
-        effort,
-        permission_mode,
-        cwd,
-        cwd,
-        true,
-        None,
-        false,
-        agent_name,
+    // Nothing to park where the project already has a child: the boot this exists
+    // to hide has been paid, and the send that follows would open its conversation
+    // on that one anyway.
+    if agent_for(cwd).await.is_some() {
+        return Ok(());
+    }
+
+    let handles = SessionHandles {
+        session_id: session_id.to_string(),
+        session_cwd: cwd.to_string(),
+        events: Arc::new(AsyncMutex::new(Vec::new())),
+        seq: Arc::new(AtomicU64::new(0)),
+        status: Arc::new(AsyncMutex::new(StatusTracker::default())),
+        queued: Arc::new(AsyncMutex::new(Vec::new())),
+        pending: Default::default(),
+        pending_questions: Default::default(),
+    };
+
+    let session = spawn_agent(
+        Opening {
+            project: cwd,
+            session_id,
+            session_cwd: cwd,
+            handles,
+            model,
+            effort,
+            permission_mode,
+            is_new_session: true,
+            fork_from: None,
+            agent_name,
+            record_thread: false,
+        },
         app,
     )
     .await?;
@@ -393,8 +416,8 @@ fn park_matches(
 /// [`init`] would: an env or an argument that differs between them is a parked
 /// child that behaves differently from a spawned one, which is the kind of
 /// difference nobody would find until it mattered.
-async fn spawn_child(session_id: &str, cwd: &str) -> Result<Child> {
-    child_command(session_id, cwd)
+async fn spawn_child(cwd: &str) -> Result<Child> {
+    child_command(cwd)
         .await
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -410,7 +433,14 @@ async fn spawn_child(session_id: &str, cwd: &str) -> Result<Child> {
 /// it — still launches exactly what a session launches. Two spawn sites drifting
 /// apart is how a child that behaves differently from a spawned one happens,
 /// which is the kind of difference nobody would find until it mattered.
-async fn child_command(session_id: &str, cwd: &str) -> Command {
+///
+/// **No session is named in its environment**, and that is the sharing step's
+/// consequence: one child carries several conversations, so there is no single
+/// session a `HZ_SESSION_ID` could name — and a wrong one is worse than none,
+/// since the `hz` CLI defaults to it. The agent names the session per turn
+/// instead, in the environment of each tool child it spawns, which is the only
+/// place that knows which conversation is running.
+async fn child_command(cwd: &str) -> Command {
     let bin = crate::binpath::mcode().await;
     let mut command = Command::new(&bin).hide_console();
 
@@ -422,12 +452,12 @@ async fn child_command(session_id: &str, cwd: &str) -> Command {
 
     crate::harness::agent_env(&mut command, &bin).await;
 
-    command.current_dir(cwd).env("HZ_SESSION_ID", session_id);
+    command.current_dir(cwd);
     command
 }
 
-/// Spawns a session's `mcode acp`, handshakes it and opens or resumes its
-/// session — or adopts the one [`prepare`] already did all of that for.
+/// Opens a session's conversation — on the project's child where one is up, on a
+/// child of its own where none is — or adopts the one [`prepare`] already opened.
 #[allow(clippy::too_many_arguments)]
 pub async fn init(
     session_id: &str,
@@ -503,22 +533,57 @@ pub async fn init(
         return Ok(session);
     }
 
-    start_session(
+    // Everything about the session and nothing about the child: which child this
+    // conversation lands on is the registry's answer, and both paths below open
+    // the same conversation.
+    //
+    // Ahead of the spawn, and infallible from here on: everything between the
+    // spawn and the kill-wrapped `open_session` has to be, or a `?` returns
+    // leaving a child nothing can reach.
+    let seq_start = if is_new_session {
+        0
+    } else {
+        next_seq_by_session_id(session_id).await?
+    };
+
+    let handles = SessionHandles {
+        session_id: session_id.to_string(),
+        session_cwd: session_cwd.to_string(),
+        events: Arc::new(AsyncMutex::new(Vec::new())),
+        seq: Arc::new(AtomicU64::new(seq_start)),
+        status: Arc::new(AsyncMutex::new(StatusTracker::default())),
+        queued: Arc::new(AsyncMutex::new(Vec::new())),
+        pending: Default::default(),
+        pending_questions: Default::default(),
+    };
+
+    let opening = Opening {
+        project: cwd,
         session_id,
+        session_cwd,
+        handles,
         model,
         effort,
         permission_mode,
-        cwd,
-        session_cwd,
         is_new_session,
         fork_from,
-        true,
         agent_name,
-        app,
-    )
-    .await
+        record_thread: true,
+    };
+
+    // **The project's child, if it has one.** This is the whole of the sharing
+    // step: a second session in a project opens a conversation on the child that
+    // is already up — measured at 0.02s, against a boot of ~6.5s and ~400MB for a
+    // child of its own.
+    match agent_for(cwd).await {
+        Some(agent) => open_conversation(&agent, opening, None, app).await,
+        None => spawn_agent(opening, app).await,
+    }
 }
 
+/// Records the agent's own session id on the index entry, for the two paths that
+/// mint a new one. A resume answers with the id it was given, so there is
+/// nothing to write.
 /// Records the agent's own session id on the index entry, for the two paths that
 /// mint a new one. A resume answers with the id it was given, so there is
 /// nothing to write.
@@ -536,37 +601,33 @@ async fn record_thread_id(
     store::set_session_thread_id(session_id, &opened.id).await
 }
 
-/// Spawns, handshakes and configures one session.
-///
-/// `record_thread` is the whole difference between the two callers: a send has
-/// an index entry to write the agent's id onto, and a park does not — its
-/// session may never be sent, so the write would either fail or leave an entry
-/// pointing at a conversation nobody started.
-#[allow(clippy::too_many_arguments)]
-async fn start_session(
-    session_id: &str,
-    model: Option<&Model>,
+/// What opening one conversation needs: everything about the session, and
+/// nothing about the child it lands on.
+struct Opening<'a> {
+    /// The directory the child runs in — the registry's key — and the cwd a
+    /// *new* conversation is opened with. A worktree session's own tree is
+    /// `session_cwd`.
+    project: &'a str,
+    session_id: &'a str,
+    session_cwd: &'a str,
+    handles: SessionHandles,
+    model: Option<&'a Model>,
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
-    cwd: &str,
-    session_cwd: &str,
     is_new_session: bool,
-    fork_from: Option<&str>,
+    fork_from: Option<&'a str>,
+    agent_name: Option<&'a str>,
+    /// Whether the agent's id is written onto the index entry. A send has an entry
+    /// to write onto and a park does not: its session may never be sent, so the
+    /// write would either fail or leave an entry pointing at a conversation nobody
+    /// started.
     record_thread: bool,
-    agent_name: Option<&str>,
-    app: &AppHandle,
-) -> Result<Session> {
-    // Ahead of the spawn: everything between the spawn and the kill-wrapped
-    // `open_session` below has to be infallible, or a `?` returns leaving a
-    // child nothing can reach.
-    let seq_start = if is_new_session {
-        0
-    } else {
-        next_seq_by_session_id(session_id).await?
-    };
+}
 
+/// Spawns a child for a project and opens its first conversation on it.
+async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
     let boot = Instant::now();
-    let mut child = spawn_child(session_id, cwd).await?;
+    let mut child = spawn_child(opening.project).await?;
     let spawned = boot.elapsed();
 
     let stdin = child.stdin.take().context("failed to take stdin")?;
@@ -574,40 +635,30 @@ async fn start_session(
     let stderr = child.stderr.take().context("failed to take stderr")?;
 
     let client = RpcClient::new(stdin);
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-    let pending: PendingPermissions = Default::default();
-    // The question side of the same arrangement: the read loop registers from
-    // its own task, the session answers from the caller's.
-    let pending_questions: PendingQuestions = Default::default();
     let stderr_tail: StderrTail = Default::default();
 
-    let reader = ReaderHandles {
-        client: client.clone(),
-        session_id: session_id.to_string(),
-        session_cwd: session_cwd.to_string(),
-        pending: pending.clone(),
-        pending_questions: pending_questions.clone(),
-        stderr_tail: stderr_tail.clone(),
-        app: app.clone(),
-    };
+    let ours = Arc::new(Agent {
+        project: opening.project.to_string(),
+        process: AsyncMutex::new(Some(child)),
+        client,
+        live: AsyncMutex::new(HashMap::new()),
+    });
 
-    let seq = Arc::new(AtomicU64::new(seq_start));
-    // The async lock, for the three the whole session shares: the read loop
-    // takes them from its own task while a send takes them from the caller's.
-    // The session's own fields use the synchronous one — see [`McodeSession`].
-    let events: Arc<AsyncMutex<Vec<AgentEvent>>> = Arc::new(AsyncMutex::new(Vec::new()));
-    let status: Arc<AsyncMutex<StatusTracker>> = Arc::new(AsyncMutex::new(StatusTracker::default()));
-    let queued: QueuedMessages = Arc::new(AsyncMutex::new(Vec::new()));
-
+    // **The read loop first, and that ordering is load-bearing**: the handshake
+    // below is a request whose reply only this loop can settle, so a handshake
+    // awaited before it starts is a handshake that times out with the answer
+    // sitting in the pipe. One loop per child, outliving every conversation it
+    // will carry, and it is handed the first conversation's handles — what a line
+    // naming no session at all is filed against.
     tokio::spawn({
-        let events = events.clone();
-        let status = status.clone();
-        let queued = queued.clone();
-        let seq = seq.clone();
+        let reader = ReaderHandles {
+            agent: ours.clone(),
+            own: opening.handles.clone(),
+            stderr_tail: stderr_tail.clone(),
+            app: app.clone(),
+        };
         async move {
-            if let Err(error) =
-                read_stdout(stdout, reader, ready_rx, events, status, queued, seq).await
-            {
+            if let Err(error) = read_stdout(stdout, reader).await {
                 eprintln!("Failed to read mcode stdout: {error}");
             }
         }
@@ -619,9 +670,70 @@ async fn start_session(
         }
     });
 
-    let opening = Instant::now();
+    // **On the table, unless somebody else got there first.** Two sends racing a
+    // cold project are both told there is no child and both spawn one; the table
+    // keeps the first, and a conversation on the other would be unroutable —
+    // every line is filed by the id the table holds it under. So the loser's
+    // child goes and this opening uses the winner's.
+    let agent = register(opening.project, ours.clone()).await;
+    if !Arc::ptr_eq(&agent, &ours) {
+        // Another send won the race, so this child has nothing to serve: it is
+        // not the table's, and a conversation on it could never be routed.
+        if let Some(mut child) = ours.process.lock().await.take() {
+            let _ = child.kill().await;
+        }
+    }
+
+    // The handshake, once per child and before any conversation exists: it is the
+    // connection every conversation on it will be spoken over.
+    let handshaking = Instant::now();
+    if let Err(error) = handshake(&agent.client).await {
+        // Post-spawn, so the child is running with nobody left to talk to it. A
+        // `Child` is not reaped on drop, and nothing is registered as a
+        // conversation yet, so this is the one path that ends the child itself.
+        if let Some(mut child) = retract(&agent.project, &agent).await {
+            let _ = child.kill().await;
+        }
+        return Err(error);
+    }
+    let handshaken = handshaking.elapsed();
+
+    open_conversation(&agent, opening, Some((spawned, handshaken)), app).await
+}
+
+/// Opens one conversation on a child that is already up, and hands back the
+/// session carrying it.
+///
+/// **No spawn and no handshake**, which is the whole of what the registry buys:
+/// `session/new` measured at 0.02s on a warm child, against ~1.7s for a child's
+/// first one and ~3s for the `initialize` in front of it.
+///
+/// A failure here gives up the conversation and **not** the child, unless this was
+/// its only one — see [`abandon`]: the other sessions on a shared child are
+/// nobody's to lose because one opening went wrong.
+async fn open_conversation(
+    agent: &Arc<Agent>,
+    opening: Opening<'_>,
+    boot: Option<(Duration, Duration)>,
+    app: &AppHandle,
+) -> Result<Session> {
+    let Opening {
+        session_id,
+        session_cwd,
+        handles,
+        model,
+        effort,
+        permission_mode,
+        is_new_session,
+        fork_from,
+        record_thread,
+        agent_name,
+        ..
+    } = opening;
+
+    let opening_at = Instant::now();
     let (mcode_id, config) = match open_session(
-        &client,
+        &agent.client,
         session_id,
         session_cwd,
         is_new_session,
@@ -631,23 +743,20 @@ async fn start_session(
     .await
     {
         Ok(opened) => opened,
-        Err(error) => {
-            // Post-spawn, so the child is running with nobody left to talk
-            // to it. A `Child` is not reaped on drop.
-            let _ = child.kill().await;
-            return Err(error);
-        }
+        Err(error) => return Err(abandon(agent, error).await),
     };
-    let opened = opening.elapsed();
+    let opened = opening_at.elapsed();
 
     // Written before the first prompt, so a child dying mid-turn still leaves a
     // session to resume rather than one that silently starts over.
     if record_thread && (is_new_session || fork_from.is_some()) {
-        store::set_session_thread_id(session_id, &mcode_id).await?;
+        if let Err(error) = store::set_session_thread_id(session_id, &mcode_id).await {
+            return Err(abandon(agent, error).await);
+        }
     }
 
     let session = McodeSession {
-        client,
+        client: agent.client.clone(),
         id: mcode_id,
         prompt_id: Arc::new(Mutex::new(None)),
         efforts: Arc::new(Mutex::new(None)),
@@ -656,7 +765,6 @@ async fn start_session(
         goal_status: Arc::new(Mutex::new(None)),
         probe: Arc::new(Mutex::new(None)),
     };
-    let _ = config;
 
     // **Taken, though the settings around it are not.** This is the composer's
     // park as often as it is a send — the handshake runs the moment a project is
@@ -671,25 +779,24 @@ async fn start_session(
     // only moment any of them can be, since none rides the spawn.
     //
     // **The model first, and that ordering is load-bearing rather than
-    // incidental**: a ladder is per model, so an effort sent first is asked of
-    // the model mcode opened on rather than the one the reader picked, and a
-    // rung the new model does not have is refused for the old one's sake. The
-    // reply to the model call is also what teaches the session the new model's
-    // ladder, which is what the effort below is judged against.
+    // incidental**: a ladder is per model, so an effort sent first is asked of the
+    // model mcode opened on rather than the one the reader picked, and a rung the
+    // new model does not have is refused for the old one's sake. The reply to the
+    // model call is also what teaches the session the new model's ladder, which is
+    // what the effort below is judged against.
     if let Some(model) = model {
         if let Err(error) = set_model(&session, model, app).await {
-            let _ = child.kill().await;
-            return Err(error);
+            return Err(abandon(agent, error).await);
         }
     }
 
-    // A refused effort is **not** fatal, where a refused stance is. mcode
-    // declines one on a model that does no reasoning, and killing the child over
-    // that means a session whose recorded level its model has since stopped
-    // taking cannot be resumed at all. So the level is dropped, the session runs
-    // on mcode's own default, and the transcript says so — the same answer the
-    // in-place path in [`crate::session`] gives, by design, since the reader
-    // cannot tell the two moments apart.
+    // A refused effort is **not** fatal, where a refused stance is. mcode declines
+    // one on a model that does no reasoning, and killing the child over that means
+    // a session whose recorded level its model has since stopped taking cannot be
+    // resumed at all. So the level is dropped, the session runs on mcode's own
+    // default, and the transcript says so — the same answer the in-place path in
+    // [`crate::session`] gives, by design, since the reader cannot tell the two
+    // moments apart.
     if let Some(effort) = effort {
         if let Err(error) = set_effort(&session, effort).await {
             note_effort(effort, &error.to_string());
@@ -700,28 +807,47 @@ async fn start_session(
     // setting reached two ways, and `default` is where the plan branch has to
     // start from.
     if let Err(error) = set_mode(&session, permission_mode).await {
-        let _ = child.kill().await;
-        return Err(error);
+        return Err(abandon(agent, error).await);
     }
 
-    // **One line per session start, and the outlier is what it is for.**
-    // `session/new` has been measured at 1.07s, 1.76s, 3.65s and **12.71s** on
-    // the same kind of child, and nothing in the app could say which phase the
-    // twelve seconds were in — the transcript just looked slow. A park prints its
-    // own line instead, so an adopted send is visibly free.
-    eprintln!(
-        "[mcode timings] spawn {:.2}s open {:.2}s settings {:.2}s{}",
-        spawned.as_secs_f64(),
-        opened.as_secs_f64(),
-        settings.elapsed().as_secs_f64(),
-        if record_thread { "" } else { " (parked)" },
+    // **One line per conversation start, and the outlier is what it is for.**
+    // `session/new` has been measured at 1.07s, 1.76s, 3.65s and **12.71s** on the
+    // same kind of child, and nothing in the app could say which phase the twelve
+    // seconds were in — the transcript just looked slow. A conversation opened on
+    // a child that is already up prints its own line instead, which is the sharing
+    // step's win stated as a number.
+    match boot {
+        Some((spawned, handshaken)) => eprintln!(
+            "[mcode timings] spawn {:.2}s handshake {:.2}s open {:.2}s settings {:.2}s",
+            spawned.as_secs_f64(),
+            handshaken.as_secs_f64(),
+            opened.as_secs_f64(),
+            settings.elapsed().as_secs_f64(),
+        ),
+        None => eprintln!(
+            "[mcode timings] on a live child: open {:.2}s settings {:.2}s",
+            opened.as_secs_f64(),
+            settings.elapsed().as_secs_f64(),
+        ),
+    }
+
+    // **On the table before the session is handed over**, so the first line the
+    // loop has to file lands on an entry. What goes in is the read loop's own
+    // per-conversation state: the mapper that numbers this conversation's events
+    // and remembers its subagents, and the coalescer that holds one of its blocks.
+    agent.live.lock().await.insert(
+        session.id.clone(),
+        Live {
+            handles: handles.clone(),
+            session: session.clone(),
+            mapper: mapper::Mapper::new(handles.session_id.clone(), handles.seq.clone()),
+            coalescer: Coalescer::new(),
+        },
     );
 
-    let _ = ready_tx.send(session.clone());
-
     Ok(Session {
-        id: session_id.to_string(),
-        child,
+        handles,
+        agent: agent.clone(),
         stdin: Transport::Acp(session),
         harness: Mcode,
         model: model
@@ -732,27 +858,60 @@ async fn start_session(
         // mcode has no fast mode at all, so there is nothing to have told the
         // child and nothing that can drift.
         fast: false,
-        events,
-        seq,
-        status,
-        pending_permissions: pending,
-        pending_questions,
-        queued,
     })
 }
 
-/// Handshakes the child and opens, resumes or forks its session.
+/// Gives up a conversation that could not be opened, taking the child with it
+/// where nothing else is on it.
 ///
-/// Returns mcode's own session id — which for a resume is the recorded one,
-/// since that reply carries none — and the settings that came back with it.
-async fn open_session(
-    client: &RpcClient,
-    session_id: &str,
-    session_cwd: &str,
-    is_new_session: bool,
-    fork_from: Option<&str>,
-    agent_name: Option<&str>,
-) -> Result<(String, parser::ConfigOptions)> {
+/// The child is what makes this more than bookkeeping: a private one that failed
+/// its first conversation has nothing left to serve and a `Child` is not reaped on
+/// drop — while a shared one has other sessions on it, which this must not take
+/// down over a model that was refused.
+async fn abandon(agent: &Arc<Agent>, error: anyhow::Error) -> anyhow::Error {
+    let alone = agent.live.lock().await.is_empty();
+    if alone {
+        if let Some(mut child) = retract(&agent.project, agent).await {
+            let _ = child.kill().await;
+        }
+    }
+
+    error
+}
+
+/// Ends one conversation, and the child with it where nothing else is on it.
+///
+/// `session/close` first, so the agent runs its own teardown for that
+/// conversation, and the process is then given the grace every other child here is
+/// given and killed if it is still there. Killing it is the one thing that takes
+/// the other conversations with it, which is why it happens exactly where the
+/// count reaches zero.
+pub async fn close(agent: &Arc<Agent>, session: &McodeSession) {
+    let last = {
+        let mut live = agent.live.lock().await;
+        live.remove(&session.id);
+        live.is_empty()
+    };
+
+    if !last {
+        // Best effort: a refusal here is the agent's own record of a conversation
+        // this app has already stopped routing to.
+        let _ = session
+            .client
+            .request("session/close", json!({"sessionId": session.id}))
+            .await;
+        return;
+    }
+
+    if let Some(mut child) = retract(&agent.project, agent).await {
+        shutdown(&mut child, session).await;
+    }
+}
+
+/// The child's side of the handshake, once per process rather than once per
+/// conversation: what it answers is the *connection's* capabilities, and every
+/// conversation on this child is spoken over the same one.
+async fn handshake(client: &RpcClient) -> Result<()> {
     let init = client
         .request(
             "initialize",
@@ -793,6 +952,22 @@ async fn open_session(
         )
         .await?;
     parser::InitializeResult::of(&init);
+
+    Ok(())
+}
+
+/// Handshakes the child and opens, resumes or forks its session.
+///
+/// Returns mcode's own session id — which for a resume is the recorded one,
+/// since that reply carries none — and the settings that came back with it.
+async fn open_session(
+    client: &RpcClient,
+    session_id: &str,
+    session_cwd: &str,
+    is_new_session: bool,
+    fork_from: Option<&str>,
+    agent_name: Option<&str>,
+) -> Result<(String, parser::ConfigOptions)> {
 
     // mcode keeps its own MCP configuration and manages it from its own TUI
     // (`mcode mcp`), so this list is empty on every path: the servers a session
@@ -1140,15 +1315,15 @@ pub async fn open_control() -> Result<Control> {
     let _ = std::fs::create_dir_all(&scratch);
     let scratch_cwd = scratch.to_string_lossy().to_string();
 
-    // The child's own name for `HZ_SESSION_ID`, which the hz CLI defaults to.
-    // A control child runs no command that reads it, but it is named rather than
-    // left empty: an empty one falls back to whatever the environment held last.
+    // No id, for the reason a shared child has none either: this one carries a
+    // single scratch conversation that no `hz` call could be about, and the agent
+    // names the session per turn for anything it spawns.
     let control_id = format!("hz-control-{}", std::process::id());
 
     // `kill_on_drop` where a session's child has it not: this one is owned by no
     // session and outlives no app, so a quit that dropped it must take the
     // process with it rather than leave an agent nobody can see or reach.
-    let mut child = child_command(&control_id, &scratch_cwd)
+    let mut child = child_command(&scratch_cwd)
         .await
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -1225,19 +1400,241 @@ pub async fn open_control() -> Result<Control> {
     })
 }
 
-struct ReaderHandles {
+/// A live child, and every conversation open on it.
+///
+/// **One child per project, and that is where this app's cost is.** A cold child
+/// is ~6.5s to its first token and ~400MB resident — V8 parsing the bundle,
+/// measured — while every `session/new` after the first on that same child is
+/// **0.02s warm**. So a child is held for a *project* rather than for a session,
+/// and the consequence is that no session owns it: this table does, a session
+/// holds a reference so it can open and close its own conversation, and the child
+/// dies with whichever close leaves it carrying none.
+///
+/// Nothing about a session stops being per-session because of it. A model, an
+/// effort and a stance are ACP *session* settings — `session/set_config_option`
+/// takes an id — so one child carries conversations on different models, which is
+/// also why moving any of them never respawned anything.
+pub struct Agent {
+    /// The directory the child was spawned in, which is the table's key. The
+    /// sessions it carries may each be in another one: `session/new` names the
+    /// cwd per conversation, and a worktree session names its own tree.
+    pub project: String,
+    /// The process, taken out by whoever tears it down. `None` afterwards, so a
+    /// second teardown finds nothing rather than signalling a pid the OS has since
+    /// handed to something else.
+    process: AsyncMutex<Option<Child>>,
+    /// The pipe every conversation writes on: a line is addressed to the session
+    /// id it names, and this end is shared. The read loop holds the other.
     client: RpcClient,
-    session_id: String,
-    session_cwd: String,
-    pending: PendingPermissions,
-    /// Questions the agent is waiting on an answer to. Cloned from the session
-    /// like `pending` above, for the same reason: only the reader sees the
-    /// request, and only the session can be told to answer it.
-    pending_questions: PendingQuestions,
-    /// The child's most recent stderr, for the turn it dies in. See
+    /// The conversations open on it, by the id the agent minted for each.
+    live: AsyncMutex<HashMap<String, Live>>,
+}
+
+impl std::fmt::Debug for Agent {
+    /// Only what identifies it. A child is a process and a set of conversations,
+    /// and neither belongs in a log line: this exists because the session that
+    /// holds one derives `Debug`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Agent")
+            .field("project", &self.project)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Agent {
+    /// The process's pid, or `None` once it has been torn down.
+    ///
+    /// **`None` while the child carries more than one conversation**, which is
+    /// the one thing a shared child breaks about it: its descendants are every
+    /// session's, so a caller asking "what did *this* session start" would be
+    /// handed another session's dev server and told it was theirs. Callers that
+    /// need an answer per session use the checkout instead — see
+    /// [`crate::local_servers`], where the tree test is the signal that survives
+    /// sharing and this one is the tie-breaker.
+    pub async fn pid(&self) -> Option<u32> {
+        let mut process = self.process.lock().await;
+        let child = process.as_mut()?;
+
+        (self.live.lock().await.len() < 2).then(|| child.id()).flatten()
+    }
+
+    /// Whether the shared process can still accept a conversation.
+    async fn running(&self) -> bool {
+        let mut process = self.process.lock().await;
+        match process.as_mut() {
+            Some(child) => matches!(child.try_wait(), Ok(None)),
+            None => true,
+        }
+    }
+}
+
+/// One conversation, as the read loop reaches it.
+///
+/// Per conversation rather than per child, and these four are exactly what cannot
+/// be shared between two of them: the mapper numbers *these* events and remembers
+/// *this* conversation's subagents, the coalescer holds one block's text, the
+/// handles are this session's own log, queue and status, and the `McodeSession`
+/// is what says which turn is running.
+struct Live {
+    handles: SessionHandles,
+    session: McodeSession,
+    mapper: mapper::Mapper,
+    coalescer: Coalescer,
+}
+
+/// Every child this process is running, by project.
+static AGENTS: LazyLock<AsyncMutex<HashMap<String, Arc<Agent>>>> =
+    LazyLock::new(|| AsyncMutex::new(HashMap::new()));
+
+/// The child a project is already running, if one is.
+///
+/// This is what makes a second session in a project cost two hundredths of a
+/// second rather than a boot: the caller opens a conversation on the child it
+/// finds here instead of spawning one.
+pub async fn agent_for(project: &str) -> Option<Arc<Agent>> {
+    AGENTS.lock().await.get(project).cloned()
+}
+
+/// The child a project can still send to, dropping a process that exited before
+/// the read loop got around to retracting it.
+pub async fn live_agent_for(project: &str) -> Option<Arc<Agent>> {
+    let agent = agent_for(project).await?;
+    if agent.running().await {
+        Some(agent)
+    } else {
+        retract(project, &agent).await;
+        None
+    }
+}
+
+/// Puts a child on the table under the project it serves, unless one is there,
+/// and answers with the child the table holds.
+///
+/// **The first one wins**, because two children under one key would leave the
+/// loser's conversations unroutable — every line is filed by the id the table
+/// holds it under — and two sends racing a cold project is exactly how that
+/// happens. So a caller that finds somebody else's entry adopts it and drops its
+/// own.
+pub async fn register(project: &str, agent: Arc<Agent>) -> Arc<Agent> {
+    let mut agents = AGENTS.lock().await;
+    let held = agents.entry(project.to_string()).or_insert(agent);
+
+    held.clone()
+}
+
+/// Takes a child off the table and hands back its process, for the one caller
+/// that closed the last conversation on it.
+///
+/// **Identity-checked**, and for the reason the per-session registry was: a
+/// project can have two children in flight for a moment — a replaced one still
+/// draining its stdout while its replacement is already registered — and removing
+/// by key alone would take the live child's entry with the dead one's, after which
+/// every line of that project is dropped in silence.
+async fn retract(project: &str, agent: &Arc<Agent>) -> Option<Child> {
+    let mut agents = AGENTS.lock().await;
+    if !agents.get(project).is_some_and(|held| Arc::ptr_eq(held, agent)) {
+        return None;
+    }
+    agents.remove(project);
+    drop(agents);
+
+    agent.process.lock().await.take()
+}
+
+/// What one read loop owns.
+///
+/// The child, and the conversation the loop was started for. `own` is not the
+/// conversation the loop *is* — a child carries several — it is the one that was
+/// open first, which is what a line naming no session at all can still be
+/// attributed to.
+struct ReaderHandles {
+    agent: Arc<Agent>,
+    own: SessionHandles,
+    /// The child's most recent stderr, for a turn that dies. See
     /// [`stderr_tail_note`].
     stderr_tail: StderrTail,
     app: AppHandle,
+}
+
+/// How long a line this child carries no conversation for is given before the
+/// loop gives up on it.
+///
+/// **The window is a registration in flight, and it is microseconds wide.** The
+/// agent pushes a session's settings and command list on the heels of
+/// `session/new`, so the loop can read one before the app has the id to file it
+/// under — the race the composer's command menu was lost to once already. Nothing
+/// re-orders those two, so the loop waits a beat for the entry rather than
+/// dropping the one push the menu lives on.
+const CLAIM_GRACE: Duration = Duration::from_millis(200);
+
+/// How often it looks while waiting.
+const CLAIM_BEAT: Duration = Duration::from_millis(10);
+
+/// Whether a line the loop cannot file yet is worth waiting for.
+///
+/// **The only thing worth waiting for is a registration in flight**, and the only
+/// sign of one is that the child carries nothing at all yet: the first session on
+/// a child is opened by the handshake that is already running. A line naming an
+/// id while the child carries conversations is therefore a stranger — a session
+/// from an hz that has since quit, or one deleted while its turn ran — and waiting
+/// for it costs the loop a beat per line for nothing.
+///
+/// Free so the judgement is testable on three facts rather than through a child.
+fn wait_for_registration(named: Option<&str>, carried: bool, any_live: bool) -> bool {
+    named.is_some() && !carried && !any_live
+}
+
+/// The session a payload names, where it names one.
+///
+/// `params.sessionId` is the field ACP puts it on, for every session-scoped
+/// notification and for both of the agent's requests — measured: 261 of the 262
+/// inbound lines of one small turn carry it, and so do the goal and delegation
+/// pushes, which is what leaves the routing rule one field wide.
+fn line_session(params: &Value) -> Option<&str> {
+    params.get("sessionId").and_then(Value::as_str)
+}
+
+impl ReaderHandles {
+    /// Where a line goes: the id of a conversation this child carries, or `None`
+    /// when nothing here can be it.
+    async fn route(&self, params: &Value) -> Option<String> {
+        let named = line_session(params).map(str::to_string);
+        let give_up = tokio::time::Instant::now() + CLAIM_GRACE;
+
+        loop {
+            let (carried, any_live) = {
+                let live = self.agent.live.lock().await;
+
+                // A line that names no session can only be attributed by a child
+                // carrying one conversation, and the loop's own is the first.
+                if named.is_none() {
+                    return live
+                        .iter()
+                        .find(|(_, entry)| Arc::ptr_eq(&entry.handles.seq, &self.own.seq))
+                        .map(|(id, _)| id.clone());
+                }
+
+                let id = named.as_deref().expect("checked just above");
+                if live.contains_key(id) {
+                    return Some(id.to_string());
+                }
+
+                (false, !live.is_empty())
+            };
+
+            if !wait_for_registration(named.as_deref(), carried, any_live)
+                || tokio::time::Instant::now() >= give_up
+            {
+                eprintln!(
+                    "[mcode route] dropped a line for {}, which this child does not carry",
+                    named.as_deref().unwrap_or("no session at all")
+                );
+                return None;
+            }
+
+            tokio::time::sleep(CLAIM_BEAT).await;
+        }
+    }
 }
 
 /// How many of the child's last stderr lines are kept for a turn that fails.
@@ -1438,99 +1835,184 @@ fn text_delta_mut(payload: &mut AgentEventPayload) -> Option<(&BlockRef, &mut St
     }
 }
 
-/// Hands a mapped event to the session.
+/// Hands a mapped event to the conversation it belongs to.
 ///
 /// One place rather than three, because a frame boundary can fall in three of
 /// them — behind the line just read, on the timer with no line behind it, and at
-/// stdout's end — and a second copy of these nine fields is a second thing to
-/// keep in step.
-struct Sink<'a> {
-    session_id: &'a str,
-    session_cwd: &'a str,
-    events: &'a Arc<AsyncMutex<Vec<AgentEvent>>>,
-    status: &'a Arc<AsyncMutex<StatusTracker>>,
-    queued: &'a QueuedMessages,
-    seq: &'a Arc<AtomicU64>,
-    app: &'a AppHandle,
-}
-
-impl Sink<'_> {
-    async fn send(&self, transport: &Transport, event: AgentEvent) {
-        let ingest = crate::session::Ingest {
-            session_id: self.session_id,
-            harness: Mcode,
-            session_cwd: self.session_cwd,
-            events: self.events,
-            status: self.status,
-            queued: self.queued,
-            flush_seq: self.seq,
-            flush_events: self.events,
-            flush_transport: transport,
-        };
-        crate::session::ingest(&ingest, event, self.app).await;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn read_stdout(
-    stdout: ChildStdout,
-    handles: ReaderHandles,
-    ready: tokio::sync::oneshot::Receiver<McodeSession>,
-    events: Arc<AsyncMutex<Vec<AgentEvent>>>,
-    status: Arc<AsyncMutex<StatusTracker>>,
-    queued: QueuedMessages,
-    seq: Arc<AtomicU64>,
-) -> Result<()> {
-    let mut lines = BufReader::new(stdout).lines();
-    let mut mapper = mapper::Mapper::new(handles.session_id.clone(), seq.clone());
-
-    // Held until the session exists. Lines before it are routed — the
-    // handshake's answers have to reach their waiters — but mapped to nothing.
-    let mut ready = Some(ready);
-    let mut transport: Option<Transport> = None;
-    let mut coalescer = Coalescer::new();
-    let sink = Sink {
-        session_id: &handles.session_id,
-        session_cwd: &handles.session_cwd,
-        events: &events,
-        status: &status,
-        queued: &queued,
-        seq: &seq,
-        app: &handles.app,
+/// stdout's end — and a second copy of what it takes is a second thing to keep in
+/// step. The conversation is an argument rather than a field because it is the
+/// half that moves: a line is filed against the id it carries, so which
+/// conversation this is changes from one line to the next.
+async fn send(handles: &SessionHandles, session: &McodeSession, app: &AppHandle, event: AgentEvent) {
+    // The transport a queued prompt is flushed over, which is this conversation's
+    // own: two conversations on one child take turns independently.
+    let transport = Transport::Acp(session.clone());
+    let ingest = crate::session::Ingest {
+        handles,
+        harness: Mcode,
+        transport: &transport,
     };
+    crate::session::ingest(&ingest, event, app).await;
+}
 
-    loop {
-        if transport.is_none() {
-            if let Some(rx) = &mut ready {
-                match rx.try_recv() {
-                    Ok(session) => {
-                        transport = Some(Transport::Acp(session));
-                        ready = None;
-                    }
-                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => ready = None,
-                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
-                }
+/// One conversation's handles and session, cloned out of the registry.
+///
+/// Cloned rather than borrowed because everything a line does with them awaits —
+/// the log write, the status publish, a queued flush — and holding the registry
+/// across that would stop a second conversation from opening for the length of
+/// this one's turn.
+async fn conversation(
+    reader: &ReaderHandles,
+    agent_id: &str,
+) -> Option<(SessionHandles, McodeSession)> {
+    let live = reader.agent.live.lock().await;
+    let entry = live.get(agent_id)?;
+
+    Some((entry.handles.clone(), entry.session.clone()))
+}
+
+/// The next moment the loop has something to do with no line behind it: the
+/// earliest coalescer frame, per conversation.
+async fn next_wakeup(agent: &Agent) -> Option<tokio::time::Instant> {
+    let live = agent.live.lock().await;
+
+    live.values().filter_map(|entry| entry.coalescer.deadline()).min()
+}
+
+/// Hands back what the coalescers are holding, for every conversation whose hold
+/// has had its frame.
+async fn flush_due(reader: &ReaderHandles) {
+    let ready = {
+        let mut live = reader.agent.live.lock().await;
+        let mut ready = Vec::new();
+
+        for entry in live.values_mut() {
+            if !entry.coalescer.due() {
+                continue;
+            }
+            let handles = entry.handles.clone();
+            let session = entry.session.clone();
+            for event in entry.coalescer.flush() {
+                ready.push((handles.clone(), session.clone(), event));
             }
         }
 
+        ready
+    };
+
+    for (handles, session, event) in ready {
+        send(&handles, &session, &reader.app, event).await;
+    }
+}
+
+/// Maps one event into its conversation, or collects it instead when that
+/// conversation is probing.
+///
+/// The lock is taken and released around synchronous work only: mapping and
+/// coalescing never await, and what does — `send` — happens after it.
+async fn fold(
+    reader: &ReaderHandles,
+    agent_id: &str,
+    handles: &SessionHandles,
+    session: &McodeSession,
+    event: parser::McodeEvent,
+) {
+    let ready = {
+        let mut live = reader.agent.live.lock().await;
+        let Some(entry) = live.get_mut(agent_id) else {
+            return;
+        };
+
+        // **A probe's turn is read, not lived.** The agent answers `/context`
+        // itself, so its turn costs no model time and must cost nothing on screen
+        // either: every mapped event is dropped while a probe is set, and the text
+        // deltas are what the caller gets back.
+        let mut probe = session.probe.lock().expect("mcode probe poisoned");
+        if probe.is_some() {
+            for agent_event in entry.mapper.map(event) {
+                if let AgentEventPayload::Delta(DeltaEvent::TextDelta { text, .. }) =
+                    &agent_event.payload
+                {
+                    if let Some(held) = probe.as_mut() {
+                        held.text.push_str(text.as_str());
+                    }
+                }
+            }
+            return;
+        }
+        drop(probe);
+
+        // Whatever the coalescer hands back is ready to go out now — either the
+        // event itself, or a held delta flushed ahead of a boundary.
+        let mut ready = Vec::new();
+        for mapped in entry.mapper.map(event) {
+            ready.extend(entry.coalescer.push(mapped));
+        }
+        ready
+    };
+
+    for event in ready {
+        send(handles, session, &reader.app, event).await;
+    }
+}
+
+/// Empties the registry, handing back every conversation it was carrying — for
+/// the child whose stdout has just ended.
+///
+/// What each coalescer was still holding goes out first: the reader watched that
+/// text arrive, and it must not vanish because the child died a frame later.
+async fn close_everything(reader: &ReaderHandles) -> Vec<(SessionHandles, McodeSession)> {
+    let (orphaned, flushed) = {
+        let mut live = reader.agent.live.lock().await;
+        let mut orphaned = Vec::new();
+        let mut flushed = Vec::new();
+
+        for (_, entry) in live.drain() {
+            let handles = entry.handles.clone();
+            let session = entry.session.clone();
+            let mut coalescer = entry.coalescer;
+
+            for event in coalescer.flush() {
+                flushed.push((handles.clone(), session.clone(), event));
+            }
+            orphaned.push((handles, session));
+        }
+
+        (orphaned, flushed)
+    };
+
+    for (handles, session, event) in flushed {
+        send(&handles, &session, &reader.app, event).await;
+    }
+
+    orphaned
+}
+
+/// Reads the child's stdout for as long as it lives, filing every line against
+/// the conversation it belongs to.
+///
+/// **The routing is the whole of what one child serving several sessions costs.**
+/// A line names its session (`params.sessionId`), the registry holds a
+/// conversation per session, and everything a line implies — the mapper numbering
+/// it, the coalescer holding its text, the log it is appended to, the status it
+/// moves, the queue it flushes — is looked up from that id rather than assumed.
+/// Nothing about the loop is per-session: it reads one pipe.
+async fn read_stdout(stdout: ChildStdout, reader: ReaderHandles) -> Result<()> {
+    let mut lines = BufReader::new(stdout).lines();
+
+    loop {
         // A frame boundary with **no line behind it**: what is held goes out now,
         // or the preview freezes for as long as the model keeps streaming — the
         // whole point of holding is that the next line may be a merge rather than
         // a boundary, and a burst of chunks carries no boundary at all.
         //
         // **Gated on `due`, and that gate is the whole mechanism.** Flushing on
-        // every pass looked equivalent and was not: the hold is taken here and
-        // the next push happens *after* it, so an unconditional flush emitted
-        // every chunk one pass late and merged nothing at all.
-        if coalescer.due() {
-            if let Some(transport) = transport.as_ref() {
-                for event in coalescer.flush() {
-                    sink.send(transport, event).await;
-                }
-            }
-        }
+        // every pass looked equivalent and was not: the hold is taken here and the
+        // next push happens *after* it, so an unconditional flush emitted every
+        // chunk one pass late and merged nothing at all.
+        flush_due(&reader).await;
 
-        let line = match coalescer.deadline() {
+        let line = match next_wakeup(&reader.agent).await {
             // Something is held, so the read is capped by the frame the hold
             // started on. `next_line` is cancellation safe, so the line that
             // arrives as the timer fires is not the one that gets lost.
@@ -1556,277 +2038,265 @@ async fn read_stdout(
             continue;
         }
 
-        // The prompt's own answer, read ahead of the demux: nothing waits on
-        // it, so `accept` would file it as stray.
-        //
-        // **One demux for the line, never two.** Calling `accept` here as well
-        // cost a second parse of every line and, worse, a second look at a
-        // response the first call had already settled: `settle` removes the
-        // waiter, so the second look finds none and files a legitimate reply as
-        // a stray. The match below already takes a matched response and drops it.
-        // The parse lives here for the same reason: while a prompt is open —
-        // the whole turn — every line paid one full parse in `prompt_answer`
-        // and a second in `accept`, so the parsed value is what both now take.
         let value: Value = match serde_json::from_str(&line) {
             Ok(value) => value,
             Err(_) => {
-                record_failure(Mcode, &handles.session_id, "parse", "not a JSON-RPC message", &line)
-                    .await;
+                record_failure(
+                    Mcode,
+                    &reader.own.session_id,
+                    "parse",
+                    "not a JSON-RPC message",
+                    &line,
+                )
+                .await;
                 continue;
             }
         };
-        let mut event: Option<parser::McodeEvent> = None;
-        if let Some(Transport::Acp(session)) = transport.as_ref() {
-            event = prompt_answer(session, &value);
-        }
 
-        let event = match event {
-            Some(event) => event,
-            None => match handles.client.accept_value(value).await {
-                Incoming::Notification { method, params } => {
-                    // **One of the agent's own extensions, sorted before the
-                    // parser is asked anything.** These ride beside ACP's as
-                    // top-level methods rather than as `session/update`
-                    // payloads, so `parse_notification` would answer `Ok(None)`
-                    // and a roster the reader is watching would be dropped in
-                    // silence. Emitted, never logged: a snapshot names children
-                    // no child survives a restart.
-                    if method == delegation::NOTIFICATION {
-                        let roster = delegation::event_of(&params, &handles.session_id);
-                        if let Err(err) = handles.app.emit(delegation::EVENT, &roster) {
-                            eprintln!("[delegation emit err] {err}");
-                        }
-                        continue;
-                    }
-                    // The goal rides the same flag and is emitted for the same
-                    // reason — and here the push is not a convenience but the
-                    // only account: the runtime pauses and completes goals on
-                    // its own, so a client that had to ask would draw an
-                    // objective the agent had already moved past.
-                    if method == goal::NOTIFICATION {
-                        let event = goal::event_of(&params, &handles.session_id);
-                        // **The moment a goal finishes becomes a line in the
-                        // conversation**, because nothing else about its work ever
-                        // reaches this wire: the runtime runs those turns inside
-                        // itself and publishes only status. Minted here, through
-                        // the same sink every mapped event takes, so it is
-                        // numbered, emitted and persisted like one of them.
-                        if let Some(Transport::Acp(session)) = transport.as_ref() {
-                            if let Some(finished) = session.note_goal(event.goal.as_ref()) {
-                                let receipt = AgentEvent::mint(
-                                    handles.session_id.clone(),
-                                    Mcode,
-                                    seq.fetch_add(1, Ordering::Relaxed),
-                                    None,
-                                    None,
-                                    crate::events::AgentEventPayload::GoalReceipt {
-                                        objective: finished.objective,
-                                        tokens_used: finished.tokens_used,
-                                        turns_used: finished.turns_used,
-                                        time_used_seconds: finished.time_used_seconds,
-                                    },
-                                );
-                                sink.send(transport.as_ref().expect("checked above"), receipt).await;
-                            }
-                        }
-                        if let Err(err) = handles.app.emit(goal::EVENT, &event) {
-                            eprintln!("[goal emit err] {err}");
-                        }
-                        continue;
-                    }
-                    match parser::parse_notification(&method, params) {
-                        // A method this build does not model is not a failure:
-                        // mcode's own extensions ride in camel case beside
-                        // ACP's, and dropping one costs nothing on screen.
-                        Ok(None) => continue,
-                        Ok(Some(update)) => {
-                            if let Some(Transport::Acp(session)) = transport.as_ref() {
-                                note_update(session, &update);
-                            }
-                            // **Outside that guard, and that is the point.** The
-                            // list arrives on the heels of `session/new`, and
-                            // this loop can see it before `init` has handed the
-                            // session over — the copy this used to keep on the
-                            // session was read by nothing, so in that race the
-                            // commands were simply lost and the composer's menu
-                            // stayed empty for the session's whole life.
-                            if let parser::SessionUpdate::AvailableCommandsUpdate {
-                                available_commands,
-                            } = &update
-                            {
-                                let event = commands::SlashCommandsEvent {
-                                    session_id: handles.session_id.clone(),
-                                    commands: commands::from_commands(available_commands),
-                                };
-                                if let Err(err) = handles.app.emit("slash_commands", &event) {
-                                    eprintln!("[slash commands emit err] {err}");
-                                }
-                            }
-                            parser::McodeEvent::Update(Box::new(update))
-                        }
-                        Err(err) => {
-                            record_failure(Mcode, &handles.session_id, "map", &err, &line).await;
-                            continue;
-                        }
-                    }
-                }
-
-                // Every agent request blocks the turn until it is answered, so
-                // silence stalls the session exactly as an unanswered
-                // `can_use_tool` does.
-                Incoming::Request { id, method, params } => {
-                    if method == "session/request_permission" {
-                        if let Err(err) = raise_permission(&handles, &mut mapper, id, params).await {
-                            record_failure(
-                                Mcode,
-                                &handles.session_id,
-                                "unsupported_request",
-                                &err.to_string(),
-                                &line,
-                            )
-                            .await;
-                            let _ = handles
-                                .client
-                                .respond(id, json!({"outcome": {"outcome": "cancelled"}}));
-                        }
-                    } else if method == "elicitation/create" {
-                        if let Err(err) = raise_question(&handles, &mut mapper, id, &line).await {
-                            record_failure(
-                                Mcode,
-                                &handles.session_id,
-                                "unsupported_request",
-                                &err.to_string(),
-                                &line,
-                            )
-                            .await;
-                            // Declined rather than left hanging: the agent reads
-                            // that as "no answer", where silence blocks the turn
-                            // exactly as an unanswered permission does.
-                            let _ = handles.client.respond(id, json!({"action": "decline"}));
-                        }
-                    } else {
-                        // `fs/*` and `terminal/*` were declined at the
-                        // handshake, so one arriving is mcode asking past the
-                        // capabilities it was given.
-                        record_failure(
-                            Mcode,
-                            &handles.session_id,
-                            "unsupported_request",
-                            &method,
-                            &line,
-                        )
-                        .await;
-                        let _ = handles.client.respond_err(
-                            id,
-                            -32601,
-                            "This client cannot answer that request yet.",
-                        );
-                    }
-                    continue;
-                }
-
-                Incoming::Response { id, matched: false } => {
-                    let detail = format!("no caller waiting on id {id}");
-                    record_failure(Mcode, &handles.session_id, "stray_response", &detail, &line)
-                        .await;
-                    continue;
-                }
-                Incoming::Response { .. } => continue,
-
-                Incoming::Malformed => {
-                    record_failure(Mcode, &handles.session_id, "parse", "not a JSON-RPC message", &line)
-                        .await;
-                    continue;
-                }
-            },
-        };
-
-        let Some(transport) = transport.as_ref() else {
-            continue;
-        };
-
-        // **A probe's turn is read, not lived.** The agent answers `/context`
-        // itself, so its turn costs no model time and must cost nothing on
-        // screen either: the transcript is the conversation, and a reading the
-        // reader asked the panel for is not a message in it. Every mapped event
-        // is dropped while a probe is set, and the text deltas are what the
-        // caller gets back.
-        // mcode's own transport is always ACP, so this is a destructure rather
-        // than a check.
-        {
-            let Transport::Acp(session) = transport;
-            let mut probe = session.probe.lock().expect("mcode probe poisoned");
-            if probe.is_some() {
-                for agent_event in mapper.map(event) {
-                    if let AgentEventPayload::Delta(DeltaEvent::TextDelta { text, .. }) =
-                        &agent_event.payload
-                    {
-                        if let Some(held) = probe.as_mut() {
-                            held.text.push_str(text);
-                        }
-                    }
-                }
-                continue;
-            }
-        }
-
-        for agent_event in mapper.map(event) {
-            // Whatever the coalescer hands back is ready to go out now — either
-            // the event itself, or a held delta flushed ahead of a boundary.
-            for ready in coalescer.push(agent_event) {
-                sink.send(transport, ready).await;
-            }
-        }
+        take_value(&line, value, &reader).await;
     }
 
-    // What the last frame was still holding. Emitted before the closing turn is
-    // synthesized, for the same reason every other flush sits ahead of what
-    // follows it: the reader watched that text arrive and it must not vanish
-    // because the child died a frame later.
-    if let Some(transport) = transport.as_ref() {
-        for event in coalescer.flush() {
-            sink.send(transport, event).await;
-        }
-    }
+    // Every conversation this child was carrying, each one's last held text
+    // already flushed. The registry entry goes **before** the closing turns, so
+    // nothing routes into it again — the child is gone.
+    let orphans = close_everything(&reader).await;
+    retract(&reader.agent.project, &reader.agent).await;
 
-    // The child's stdout has ended. If a prompt was still in flight its answer
-    // will never arrive, so close the turn as a failure — without which the
-    // session hangs `in_progress` forever, its queue with no boundary to drain
-    // at. The queue is stranded *first* (reported and cleared), so the closing
-    // turn's boundary flush finds nothing to hand the dead child.
-    if let Some(transport @ Transport::Acp(session)) = transport.as_ref() {
+    // A prompt still in flight will never be answered, so its turn is closed as a
+    // failure — without which the session hangs `in_progress` forever, its queue
+    // with no boundary to drain at. The queue is stranded *first* (reported and
+    // cleared), so the closing turn's boundary flush finds nothing to hand the
+    // dead child.
+    for (handles, session) in orphans {
         let outstanding = session
             .prompt_id
             .lock()
             .expect("mcode prompt id poisoned")
             .is_some();
-
-        if outstanding {
-            crate::session::strand_queue_on_exit(
-                &handles.session_id, Mcode, &queued, &seq, &events, &handles.app,
-            )
-            .await;
-            // The reason, carried where the failure is. A bundled app has no
-            // terminal to read the child's stack from, so without this the row
-            // says only that the agent exited — see [`stderr_tail_note`].
-            let detail = stderr_tail_note(&handles.stderr_tail);
-            let closed = mapper.synthesize(AgentEventPayload::TurnCompleted {
-                status: crate::events::TurnStatus::Error,
-                stop_reason: Some("mcode exited".to_string()),
-                auth_failed: false,
-                final_text: Some(match detail {
-                    Some(detail) => format!("mcode exited before the turn finished.\n\n{detail}"),
-                    None => "mcode exited before the turn finished.".to_string(),
-                }),
-                usage: None,
-                duration_ms: None,
-                head: None,
-            });
-            sink.send(transport, closed).await;
+        if !outstanding {
+            continue;
         }
+
+        crate::session::strand_queue_on_exit(&handles, Mcode, &reader.app).await;
+        // The reason, carried where the failure is. A bundled app has no terminal
+        // to read the child's stack from, so without this the row says only that
+        // the agent exited — see [`stderr_tail_note`].
+        let detail = stderr_tail_note(&reader.stderr_tail);
+        let mapper = mapper::Mapper::new(handles.session_id.clone(), handles.seq.clone());
+        let closed = mapper.synthesize(AgentEventPayload::TurnCompleted {
+            status: crate::events::TurnStatus::Error,
+            stop_reason: Some("mcode exited".to_string()),
+            auth_failed: false,
+            final_text: Some(match detail {
+                Some(detail) => format!("mcode exited before the turn finished.\n\n{detail}"),
+                None => "mcode exited before the turn finished.".to_string(),
+            }),
+            usage: None,
+            duration_ms: None,
+            head: None,
+        });
+        send(&handles, &session, &reader.app, closed).await;
     }
 
     Ok(())
+}
+
+/// Files one parsed line against the conversation it belongs to.
+///
+/// `line` is the raw bytes beside the parsed value, and it is not redundant: a
+/// form's steps are only in order in the bytes — see
+/// [`parser::ElicitationEnvelope`] — and a `Value`'s object has already sorted
+/// them.
+async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
+    // The prompt's own answer, read ahead of the demux: nothing waits on it, so
+    // `accept` would file it as a stray. **Every conversation on the child is
+    // asked**, because the turn in flight may belong to any of them — and the one
+    // that matches is the one whose id is cleared, so the answer arrives exactly
+    // once.
+    if let Some(rpc_id) = value.get("id").and_then(Value::as_i64) {
+        let settled = {
+            let live = reader.agent.live.lock().await;
+            live.iter()
+                .find(|(_, entry)| settles(&entry.session, rpc_id))
+                .map(|(id, entry)| (id.clone(), entry.handles.clone(), entry.session.clone()))
+        };
+
+        if let Some((id, handles, session)) = settled {
+            fold(reader, &id, &handles, &session, prompt_event(&value)).await;
+            return;
+        }
+    }
+
+    match reader.agent.client.accept_value(value).await {
+        Incoming::Notification { method, params } => {
+            let Some(agent_id) = reader.route(&params).await else {
+                return;
+            };
+            let Some((handles, session)) = conversation(reader, &agent_id).await else {
+                return;
+            };
+
+            // **One of the agent's own extensions, sorted before the parser is
+            // asked anything.** These ride beside ACP's as top-level methods rather
+            // than as `session/update` payloads, so `parse_notification` would
+            // answer `Ok(None)` and a roster the reader is watching would be
+            // dropped in silence. Emitted, never logged: a snapshot names children
+            // no child survives a restart.
+            if method == delegation::NOTIFICATION {
+                let roster = delegation::event_of(&params, &handles.session_id);
+                if let Err(err) = reader.app.emit(delegation::EVENT, &roster) {
+                    eprintln!("[delegation emit err] {err}");
+                }
+                return;
+            }
+            // The goal rides the same flag and is emitted for the same reason —
+            // and here the push is not a convenience but the only account: the
+            // runtime pauses and completes goals on its own, so a client that had
+            // to ask would draw an objective the agent had already moved past.
+            if method == goal::NOTIFICATION {
+                let event = goal::event_of(&params, &handles.session_id);
+                // **The moment a goal finishes becomes a line in the
+                // conversation**, because nothing else about its work ever reaches
+                // this wire: the runtime runs those turns inside itself and
+                // publishes only status. Minted here, through the same sink every
+                // mapped event takes, so it is numbered, emitted and persisted like
+                // one of them.
+                if let Some(finished) = session.note_goal(event.goal.as_ref()) {
+                    let receipt = AgentEvent::mint(
+                        handles.session_id.clone(),
+                        Mcode,
+                        handles.seq.fetch_add(1, Ordering::Relaxed),
+                        None,
+                        None,
+                        crate::events::AgentEventPayload::GoalReceipt {
+                            objective: finished.objective,
+                            tokens_used: finished.tokens_used,
+                            turns_used: finished.turns_used,
+                            time_used_seconds: finished.time_used_seconds,
+                        },
+                    );
+                    send(&handles, &session, &reader.app, receipt).await;
+                }
+                if let Err(err) = reader.app.emit(goal::EVENT, &event) {
+                    eprintln!("[goal emit err] {err}");
+                }
+                return;
+            }
+
+            match parser::parse_notification(&method, params) {
+                // A method this build does not model is not a failure: mcode's own
+                // extensions ride in camel case beside ACP's, and dropping one
+                // costs nothing on screen.
+                Ok(None) => {}
+                Ok(Some(update)) => {
+                    note_update(&session, &update);
+                    // **Outside any routing guard, and that is the point.** The
+                    // list arrives on the heels of `session/new`, and this loop can
+                    // see it before `init` has handed the session over — the copy
+                    // this used to keep on the session was read by nothing, so in
+                    // that race the commands were simply lost and the composer's
+                    // menu stayed empty for the session's whole life.
+                    if let parser::SessionUpdate::AvailableCommandsUpdate {
+                        available_commands,
+                    } = &update
+                    {
+                        let event = commands::SlashCommandsEvent {
+                            session_id: handles.session_id.clone(),
+                            commands: commands::from_commands(available_commands),
+                        };
+                        if let Err(err) = reader.app.emit("slash_commands", &event) {
+                            eprintln!("[slash commands emit err] {err}");
+                        }
+                    }
+                    fold(
+                        reader,
+                        &agent_id,
+                        &handles,
+                        &session,
+                        parser::McodeEvent::Update(Box::new(update)),
+                    )
+                    .await;
+                }
+                Err(err) => {
+                    record_failure(Mcode, &handles.session_id, "map", &err, line).await;
+                }
+            }
+        }
+
+        // Every agent request blocks the turn until it is answered, so silence
+        // stalls the session exactly as an unanswered `can_use_tool` does.
+        Incoming::Request { id, method, params } => {
+            let carried = reader.route(&params).await;
+            let conversation = match carried.as_deref() {
+                Some(agent_id) => conversation(reader, agent_id).await,
+                None => None,
+            };
+
+            let Some((handles, session)) = conversation else {
+                // **Refused rather than dropped**, because a request is the one
+                // line that must be answered either way: silence stalls the asking
+                // session's turn exactly as an unanswered permission stalls ours.
+                let _ = reader.agent.client.respond_err(
+                    id,
+                    -32601,
+                    "This client cannot answer that request yet.",
+                );
+                return;
+            };
+
+            if method == "session/request_permission" {
+                if let Err(err) = raise_permission(&handles, &reader.app, id, params).await {
+                    record_failure(
+                        Mcode,
+                        &handles.session_id,
+                        "unsupported_request",
+                        &err.to_string(),
+                        line,
+                    )
+                    .await;
+                    let _ = session
+                        .client
+                        .respond(id, json!({"outcome": {"outcome": "cancelled"}}));
+                }
+            } else if method == "elicitation/create" {
+                if let Err(err) = raise_question(&handles, &reader.app, id, line).await {
+                    record_failure(
+                        Mcode,
+                        &handles.session_id,
+                        "unsupported_request",
+                        &err.to_string(),
+                        line,
+                    )
+                    .await;
+                    // Declined rather than left hanging: the agent reads that as
+                    // "no answer", where silence blocks the turn exactly as an
+                    // unanswered permission does.
+                    let _ = session.client.respond(id, json!({"action": "decline"}));
+                }
+            } else {
+                // `fs/*` and `terminal/*` were declined at the handshake, so one
+                // arriving is mcode asking past the capabilities it was given.
+                record_failure(Mcode, &handles.session_id, "unsupported_request", &method, line)
+                    .await;
+                let _ = session.client.respond_err(
+                    id,
+                    -32601,
+                    "This client cannot answer that request yet.",
+                );
+            }
+        }
+
+        Incoming::Response { id, matched: false } => {
+            let detail = format!("no caller waiting on id {id}");
+            record_failure(Mcode, &reader.own.session_id, "stray_response", &detail, line).await;
+        }
+        Incoming::Response { .. } => {}
+
+        Incoming::Malformed => {
+            record_failure(Mcode, &reader.own.session_id, "parse", "not a JSON-RPC message", line)
+                .await;
+        }
+    }
 }
 
 /// Folds a control-only update into the session — the mode is a control state
@@ -1844,33 +2314,37 @@ fn note_update(session: &McodeSession, update: &parser::SessionUpdate) {
     }
 }
 
-/// The prompt's own response, picked off the line by the id it was sent under.
+/// Whether this conversation is the one a line settles.
 ///
-/// Takes the already-parsed line — the read loop parsed it once for this demux
-/// and `accept` reuses the same value, so no line is parsed twice.
-fn prompt_answer(session: &McodeSession, value: &Value) -> Option<parser::McodeEvent> {
-    let prompt_id = {
-        let guard = session.prompt_id.lock().expect("mcode prompt id poisoned");
-        (*guard)?
-    };
-    if value.get("id").and_then(Value::as_i64) != Some(prompt_id) {
-        return None;
+/// **Asked of every conversation on the child**, because the turn in flight may
+/// belong to any of them: `session/prompt` blocks for the whole turn, so its
+/// answer arrives as a response rather than a notification, and the request id
+/// alone says whose it is. Clearing the id here is what makes the match
+/// single-shot — a second conversation asked about the same line finds nothing.
+fn settles(session: &McodeSession, rpc_id: i64) -> bool {
+    let mut held = session.prompt_id.lock().expect("mcode prompt id poisoned");
+    if *held != Some(rpc_id) {
+        return false;
     }
+    *held = None;
 
-    *session.prompt_id.lock().expect("mcode prompt id poisoned") = None;
+    true
+}
 
+/// The turn's end, or the reason it failed, out of the response's own fields.
+fn prompt_event(value: &Value) -> parser::McodeEvent {
     if let Some(error) = value.get("error") {
         let message = error
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("mcode refused the prompt")
             .to_string();
-        return Some(parser::McodeEvent::PromptFailed { message });
+        return parser::McodeEvent::PromptFailed { message };
     }
 
     let response = serde_json::from_value(value.get("result").cloned().unwrap_or(Value::Null))
         .unwrap_or_default();
-    Some(parser::McodeEvent::PromptDone(response))
+    parser::McodeEvent::PromptDone(response)
 }
 
 /// Turns one permission request into the card that answers it.
@@ -1885,8 +2359,8 @@ fn prompt_answer(session: &McodeSession, value: &Value) -> Option<parser::McodeE
 /// which is why this goes straight to the frontend rather than through
 /// [`crate::session::ingest`].
 async fn raise_permission(
-    handles: &ReaderHandles,
-    mapper: &mut mapper::Mapper,
+    handles: &SessionHandles,
+    app: &AppHandle,
     rpc_id: i64,
     params: Value,
 ) -> Result<()> {
@@ -1909,7 +2383,16 @@ async fn raise_permission(
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    let event = mapper.synthesize(AgentEventPayload::PermissionRequested {
+    // Minted from the conversation's own counter rather than through a mapper:
+    // the loop holds one mapper per child, and this card belongs to one
+    // conversation of it.
+    let event = AgentEvent::mint(
+        handles.session_id.clone(),
+        Mcode,
+        handles.seq.fetch_add(1, Ordering::Relaxed),
+        None,
+        None,
+        AgentEventPayload::PermissionRequested {
         request_id,
         tool_use_id: request.tool_call.tool_call_id.clone(),
         tool_name: request
@@ -1930,11 +2413,12 @@ async fn raise_permission(
         // Main-thread only: mcode files a subagent's request through the same
         // channel with no field saying so, and a card that claimed to be a
         // child's would be the one thing worse than saying nothing.
-        agent_id: None,
-        options,
-    });
+            agent_id: None,
+            options,
+        },
+    );
 
-    handles.app.emit("agent_event", &event)?;
+    app.emit("agent_event", &event)?;
     Ok(())
 }
 
@@ -1951,8 +2435,8 @@ async fn raise_permission(
 /// form's steps are only in order in the bytes — see
 /// [`parser::ElicitationEnvelope`].
 async fn raise_question(
-    handles: &ReaderHandles,
-    mapper: &mut mapper::Mapper,
+    handles: &SessionHandles,
+    app: &AppHandle,
     rpc_id: i64,
     line: &str,
 ) -> Result<()> {
@@ -1976,16 +2460,23 @@ async fn raise_question(
         .expect("pending questions mutex poisoned")
         .insert(request_id.clone(), pending);
 
-    let event = mapper.synthesize(AgentEventPayload::QuestionsAsked {
-        request_id,
-        // No tool call behind it: mcode asks through its own extension rather
-        // than through a tool the transcript drew, so there is no row for the
-        // answers to be filed beside.
-        tool_use_id: String::new(),
-        questions,
-    });
+    let event = AgentEvent::mint(
+        handles.session_id.clone(),
+        Mcode,
+        handles.seq.fetch_add(1, Ordering::Relaxed),
+        None,
+        None,
+        AgentEventPayload::QuestionsAsked {
+            request_id,
+            // No tool call behind it: mcode asks through its own extension rather
+            // than through a tool the transcript drew, so there is no row for the
+            // answers to be filed beside.
+            tool_use_id: String::new(),
+            questions,
+        },
+    );
 
-    handles.app.emit("agent_event", &event)?;
+    app.emit("agent_event", &event)?;
     Ok(())
 }
 
@@ -2199,5 +2690,168 @@ mod parked_tests {
         assert!(!park_matches("s1", "/repo", Some("explore"), "s1", "/repo", None));
         assert!(!park_matches("s1", "/repo", None, "s1", "/repo", Some("explore")));
         assert!(!park_matches("s1", "/repo", Some("explore"), "s1", "/repo", Some("worker")));
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    // **Every test here names a project of its own, and that is not tidiness.**
+    // `AGENTS` is one table for the process, the harness runs tests in parallel,
+    // and a shared key would let one test's child answer another's lookup — which
+    // is exactly what happened: four of these were written against `/repo`, and
+    // `the_first_child_under_a_project_keeps_the_key` failed on every full-suite
+    // run because a sibling had got there first. The paths below are the keys, so
+    // a test that reuses one is a test that races.
+
+    /// A child with no process of its own: everything the registry does with one
+    /// — the key, the lookup, the identity check — needs only the client, and
+    /// `cat` is the cheapest honest way to have a pipe.
+    ///
+    /// The child is left running: `kill_on_drop` is not what this is testing, and
+    /// the test process ends with it.
+    async fn agent(project: &str) -> Arc<Agent> {
+        let mut child = tokio::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("a child to hold the pipe");
+        let stdin = child.stdin.take().expect("stdin");
+
+        Arc::new(Agent {
+            project: project.to_string(),
+            process: AsyncMutex::new(None),
+            client: RpcClient::new(stdin),
+            live: AsyncMutex::new(HashMap::new()),
+        })
+    }
+
+    fn named(id: &str) -> Value {
+        json!({ "sessionId": id, "update": {} })
+    }
+
+    /// The field the id is read off, pinned: ACP puts it on `params.sessionId`,
+    /// for every session-scoped line — including the goal and delegation pushes,
+    /// which is what makes the routing rule one field wide.
+    #[test]
+    fn a_line_names_its_session_on_the_wire_s_own_field() {
+        assert_eq!(line_session(&named("mvs_1")), Some("mvs_1"));
+        assert_eq!(line_session(&json!({ "update": {} })), None);
+    }
+
+    /// **The one judgement in routing**, and it is a judgement rather than a
+    /// lookup: a line this child carries nothing for is waited on exactly while a
+    /// registration could be in flight, and dropped otherwise.
+    ///
+    /// The second half is the half that matters: a line naming an id while the
+    /// child already carries conversations is a stranger — a session from an hz
+    /// that has quit, one deleted while its turn ran — and waiting for it would
+    /// cost the loop a beat per line for nothing.
+    #[test]
+    fn a_line_is_waited_for_only_while_a_registration_could_be_in_flight() {
+        // Nothing registered yet, and the line names a session: the handshake that
+        // is opening the first conversation may have it a beat from now.
+        assert!(wait_for_registration(Some("mvs_1"), false, false));
+
+        // The child carries something already, so nothing is in flight.
+        assert!(!wait_for_registration(Some("mvs_1"), false, true));
+
+        // Carried: nothing to wait for.
+        assert!(!wait_for_registration(Some("mvs_1"), true, true));
+
+        // A line naming no session never waits: it is either the loop's own
+        // conversation or one nothing can be.
+        assert!(!wait_for_registration(None, false, false));
+    }
+
+    /// The table is keyed by the project, and that is the whole of what makes a
+    /// second session in one cost `session/new` instead of a boot.
+    #[tokio::test]
+    async fn the_registry_answers_for_the_project_it_holds() {
+        let held = agent("/registry-answers").await;
+        register("/registry-answers", held.clone()).await;
+
+        assert!(agent_for("/registry-answers").await.is_some());
+        assert!(agent_for("/other").await.is_none());
+    }
+
+    /// **The first child under a key keeps it.** Two sends racing a cold project
+    /// are both told there is none and both spawn one, and the table cannot hold
+    /// two: a conversation on the loser would be unroutable, since every line is
+    /// filed by the id the table holds it under.
+    #[tokio::test]
+    async fn the_first_child_under_a_project_keeps_the_key() {
+        let first = agent("/first-child-wins").await;
+        let second = agent("/first-child-wins").await;
+
+        assert!(Arc::ptr_eq(
+            &register("/first-child-wins", first.clone()).await,
+            &first
+        ));
+        assert!(Arc::ptr_eq(
+            &register("/first-child-wins", second.clone()).await,
+            &first
+        ));
+
+        let held = agent_for("/first-child-wins").await.expect("the entry stands");
+        assert!(Arc::ptr_eq(&held, &first));
+
+        // And the loser cannot take it, which is what the identity is for.
+        assert!(retract("/first-child-wins", &second).await.is_none());
+        assert!(agent_for("/first-child-wins").await.is_some());
+
+        retract("/first-child-wins", &first).await;
+        assert!(agent_for("/first-child-wins").await.is_none());
+    }
+
+    /// **A child's own teardown must not take a newer child's entry.** A child
+    /// that dies is retracted by its own read loop, and that loop can arrive after
+    /// a replacement has registered — so the removal is checked against the entry,
+    /// not against the key.
+    #[tokio::test]
+    async fn a_stale_childs_teardown_leaves_a_newer_entry_standing() {
+        let stale = agent("/stale-teardown").await;
+        let live = agent("/stale-teardown").await;
+        register("/stale-teardown", live.clone()).await;
+
+        assert!(retract("/stale-teardown", &stale).await.is_none());
+
+        let held = agent_for("/stale-teardown").await.expect("the newer child stands");
+        assert!(Arc::ptr_eq(&held, &live));
+
+        retract("/stale-teardown", &live).await;
+    }
+
+    /// Retracting a child takes its process with it, which is what makes closing
+    /// the last conversation on one the end of the child.
+    ///
+    /// A pid is all this can honestly assert: the process is `cat`'s, and what
+    /// matters is that the entry stops answering *and* that the process is handed
+    /// to the caller rather than dropped — a `Child` that is dropped without
+    /// being waited for leaves a zombie behind.
+    #[tokio::test]
+    async fn retracting_a_child_hands_back_its_process() {
+        let mut cat = tokio::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("a child");
+        let stdin = cat.stdin.take().expect("stdin");
+
+        let held = Arc::new(Agent {
+            project: "/retract-hands-back".to_string(),
+            process: AsyncMutex::new(Some(cat)),
+            client: RpcClient::new(stdin),
+            live: AsyncMutex::new(HashMap::new()),
+        });
+        register("/retract-hands-back", held.clone()).await;
+
+        let process = retract("/retract-hands-back", &held).await.expect("the process comes back");
+        assert!(process.id().is_some());
+        assert!(agent_for("/retract-hands-back").await.is_none());
+
+        let mut process = process;
+        let _ = process.kill().await;
     }
 }

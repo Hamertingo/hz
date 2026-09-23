@@ -2,6 +2,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTuiAcpAgent } from '../../src/acp/agent.js';
+import type { TuiAcpUsageRecordsNotification } from '../../src/acp/extensions.js';
 import { projectDelegationTurns } from '../../src/acp/updates.js';
 import { TuiAcpPromptContinuation } from '../../src/acp/prompt-continuation.js';
 import type { TuiAcpRuntime } from '../../src/acp/runtime.js';
@@ -37,7 +38,9 @@ function createRuntime(
   } = {},
 ) {
   const queuedRuntimeEvents: TuiRuntimeEvent[] = [];
+  const queuedUsageCommits: string[] = [];
   let deliverRuntimeEvent: ((event: TuiRuntimeEvent | undefined) => void) | undefined;
+  let deliverUsageCommit: ((sessionId: string | undefined) => void) | undefined;
   let aborted = false;
   let releaseRun: (() => void) | undefined;
   const runGate =
@@ -53,6 +56,14 @@ function createRuntime(
       deliverRuntimeEvent = resolve;
       signal.addEventListener('abort', () => resolve(undefined), { once: true });
     });
+  };
+  const nextUsageCommit = (signal: AbortSignal): Promise<string | undefined> => {
+    const queued = queuedUsageCommits.shift();
+    if (queued) return Promise.resolve(queued);
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    deliverUsageCommit = resolve;
+    signal.addEventListener('abort', () => resolve(undefined), { once: true });
+    return promise;
   };
   const createSession = vi.fn(async ({ workspaceDir }: { workspaceDir: string }) => ({
     sessionId: 'session-1',
@@ -213,6 +224,15 @@ function createRuntime(
         }
       })(),
     ),
+    watchSessionUsageCommits: vi.fn((signal: AbortSignal) =>
+      (async function* usageCommits() {
+        while (!signal.aborted) {
+          const sessionId = await nextUsageCommit(signal);
+          if (!sessionId) return;
+          yield sessionId;
+        }
+      })(),
+    ),
     watchSessionTurn: vi.fn(() =>
       (async function* sessionEvents() {
         yield { type: 'session-status', status: 'finished' } as const;
@@ -258,6 +278,12 @@ function createRuntime(
     replyPermission: runtime.replyPermission,
     replyQuestionnaire: runtime.replyQuestionnaire,
     dismissQuestionnaire: runtime.dismissQuestionnaire,
+    emitUsageCommit(sessionId: string) {
+      const deliver = deliverUsageCommit;
+      deliverUsageCommit = undefined;
+      if (deliver) deliver(sessionId);
+      else queuedUsageCommits.push(sessionId);
+    },
     emitRuntimeEvent(event: TuiRuntimeEvent) {
       const deliver = deliverRuntimeEvent;
       deliverRuntimeEvent = undefined;
@@ -1054,6 +1080,8 @@ describe('Hz Agent ACP agent', () => {
               'mcode/session/queue_update',
               'mcode/session/goal_update',
               'mcode/session/delegation_update',
+              'mcode/session/api_retry',
+              'mcode/session/usage_records',
             ],
           },
         },
@@ -1103,6 +1131,81 @@ describe('Hz Agent ACP agent', () => {
         },
       },
     ]);
+  });
+
+  it('notifies each committed usage row once for an attached session', async () => {
+    const { runtime, getSessionUsage, emitUsageCommit } = createRuntime();
+    const firstRecord = {
+      id: 1,
+      sessionId: 'session-1',
+      agentName: 'mcode',
+      frameworkType: 'acp',
+      turnId: 'turn-1',
+      model: 'minimax/M3',
+      ts: 100,
+      inputTokens: 10,
+      outputTokens: 2,
+      reasoningTokens: 1,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 4,
+      costUsd: 0.01,
+    };
+    const firstRow = { ...firstRecord, rawJson: '{"internal":true}' };
+    const anonymousRecord = {
+      sessionId: 'session-1',
+      turnId: 'turn-2',
+      model: 'minimax/M3',
+      ts: 200,
+      inputTokens: 20,
+      outputTokens: 4,
+      reasoningTokens: 2,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 6,
+      costUsd: 0.02,
+    };
+    const anonymousRow = { ...anonymousRecord, rawJson: '{"internal":true}' };
+    const secondRecord = { ...firstRecord, id: 2, turnId: 'turn-3', ts: 300 };
+    const secondRow = { ...secondRecord, rawJson: '{"internal":true}' };
+    getSessionUsage.mockResolvedValueOnce({ rows: [firstRow, firstRow, anonymousRow] });
+    getSessionUsage.mockResolvedValueOnce({
+      rows: [firstRow, anonymousRow, secondRow, secondRow],
+    });
+    const notifications: TuiAcpUsageRecordsNotification[] = [];
+    const agent = createTuiAcpAgent({ runtime, version: '1.2.3' });
+    const client = acp.client({ name: 'test-client' }).onNotification(
+      'mcode/session/usage_records',
+      (value) => value as TuiAcpUsageRecordsNotification,
+      ({ params }) => notifications.push(params),
+    );
+
+    await client.connectWith(agent, async (connection) => {
+      await connection.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {
+          _meta: { 'minimax-code/extensions': { version: 1, notifications: true } },
+        },
+      });
+      await connection.request(acp.methods.agent.session.new, {
+        cwd: '/workspace',
+        mcpServers: [],
+      });
+
+      emitUsageCommit('session-1');
+      await vi.waitFor(() => expect(notifications).toHaveLength(1));
+      expect(notifications[0]).toEqual({
+        sessionId: 'session-1',
+        rows: [firstRecord, anonymousRecord],
+      });
+
+      emitUsageCommit('session-1');
+      await vi.waitFor(() => expect(notifications).toHaveLength(2));
+    });
+
+    expect(notifications[1]).toEqual({
+      sessionId: 'session-1',
+      rows: [secondRecord],
+    });
+    expect(getSessionUsage).toHaveBeenCalledTimes(2);
   });
 
   it('cleans up cancelled new Sessions and bounds stalled creation generations', async () => {
@@ -4487,6 +4590,7 @@ describe('Hz Agent ACP agent', () => {
     ]);
     const updates: acp.SessionNotification[] = [];
     const queueUpdates: unknown[] = [];
+    const apiRetryUpdates: unknown[] = [];
     const agent = createTuiAcpAgent({ runtime, version: '1.2.3' });
     const client = acp
       .client({ name: 'test-client' })
@@ -4500,6 +4604,11 @@ describe('Hz Agent ACP agent', () => {
         'mcode/session/queue_update',
         (value) => value as { sessionId: string; items: unknown[] },
         ({ params }) => queueUpdates.push(params),
+      )
+      .onNotification(
+        'mcode/session/api_retry',
+        (value) => value as { sessionId: string; attempt: number; maxRetries: number; reason?: string },
+        ({ params }) => apiRetryUpdates.push(params),
       )
       .onRequest(acp.methods.client.elicitation.create, () => ({ action: 'cancel' }));
 
@@ -4533,6 +4642,20 @@ describe('Hz Agent ACP agent', () => {
         queueItemIds: [],
       });
       emitRuntimeEvent({
+        type: 'session.llm_retry',
+        timestampMs: 1_725_000_000_001,
+        source: 'runtime',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        scope: 'model_request',
+        status: 'waiting',
+        retryAttempt: 1,
+        maxRetries: 3,
+        requestAttempt: 1,
+        error: { reason: 'rate_limited', code: 50111 },
+      });
+      emitRuntimeEvent({
         type: 'session.queue.updated',
         timestampMs: 1_725_000_000_002,
         source: 'runtime',
@@ -4561,7 +4684,6 @@ describe('Hz Agent ACP agent', () => {
           },
         },
       });
-
       await vi.waitFor(() => {
         expect(queueUpdates).toHaveLength(1);
         expect(updates).toContainEqual({
@@ -4575,6 +4697,12 @@ describe('Hz Agent ACP agent', () => {
         expect(updates).toContainEqual({
           sessionId: 'session-1',
           update: expect.objectContaining({ sessionUpdate: 'plan_update' }),
+        });
+        expect(apiRetryUpdates).toContainEqual({
+          sessionId: 'session-1',
+          attempt: 1,
+          maxRetries: 3,
+          reason: 'rate_limited',
         });
       });
     });

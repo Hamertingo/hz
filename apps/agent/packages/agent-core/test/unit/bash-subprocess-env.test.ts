@@ -17,6 +17,48 @@ const providerEnv = {
   NPM_TOKEN: 'synthetic-npm-value',
 };
 
+describe('the session a spawn belongs to', () => {
+  /**
+   * The hz app's CLI reads this to learn which session a command came from, and
+   * it is per turn rather than per process: one agent serves several sessions,
+   * so only the turn knows which one is running.
+   */
+  it('names the session in the child env', () => {
+    const { env } = sanitizeBashSubprocessEnv({ PATH: '/bin' }, { mode: 'off' }, 'mvs_abc');
+
+    expect(env.HZ_SESSION_ID).toBe('mvs_abc');
+  });
+
+  /**
+   * **Survives `strict`**, which is the mode that deletes anything looking like
+   * a credential: a session id is not one, and a strip that ate it would leave
+   * every command from an agent with no session to name — the failure this
+   * whole path exists to remove.
+   */
+  it('is not treated as a credential by the strict strip', () => {
+    const { env, removed } = sanitizeBashSubprocessEnv(
+      { PATH: '/bin', OTHER_TOKEN: 'synthetic' },
+      { mode: 'strict' },
+      'mvs_abc',
+    );
+
+    expect(env.HZ_SESSION_ID).toBe('mvs_abc');
+    expect(removed).toContain('OTHER_TOKEN');
+  });
+
+  it('invents nothing where no session is known', () => {
+    const plain = sanitizeBashSubprocessEnv({ PATH: '/bin' }, { mode: 'off' });
+    expect(plain.env).not.toHaveProperty('HZ_SESSION_ID');
+
+    const hooked = createBashEnvSpawnHook({ mode: 'off' })({
+      command: 'echo hi',
+      cwd: '.',
+      env: { PATH: '/bin' },
+    });
+    expect(hooked.env).not.toHaveProperty('HZ_SESSION_ID');
+  });
+});
+
 describe('bash subprocess default provider credentials', () => {
   it.each([{ CI: 'true' }, { GITHUB_ACTIONS: 'true' }, { MAVIS_BASH_ENV_SANITIZE: 'scrub' }])(
     'scrubs both provider key names using policy %j',

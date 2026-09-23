@@ -1,9 +1,10 @@
 # One child, many sessions
 
-**Status: measured and designed, not implemented.** The numbers below were taken
-on the shipped launcher, and the reason nothing was written yet is at the bottom
-— it is not a shortage of time, it is that the failure this change can introduce
-is one I cannot observe without the app running.
+**Status: landed in the tree, and unverified where it counts.** Steps 1–6 are
+written and the app's own suite is green (636 tests, clippy `-D warnings`); the
+checklist at the bottom is what has not run, and it is the only thing that can see
+the failure this change can introduce. The numbers below were taken on the shipped
+launcher.
 
 ## What it is worth
 
@@ -77,66 +78,114 @@ memory argument for one slot does not change.
 
 ## How, in the order it has to happen
 
-**One consequence the design above does not cover, and it changes the shape:**
-`HZ_SESSION_ID` is an environment variable, fixed **at spawn**, and the `hz` CLI
-reads it as the session a call defaults to (`hz issue link` with no id, most of
-all). A child serving five sessions has one environment, so four of those five
-lose the default — an agent in session B filing a link against session A, or
-against nothing. That is a wrong write that answers `ok`, which is the failure
-class this repository keeps paying for. Two ways out, and the second is better:
+### The identity question, settled by measurement
 
-1. Give the shared child the **project** as its identity (`HZ_SESSION_ID` empty,
-   `hz` refusing to default) — honest, and every caller passes an id.
-2. Move the default out of the environment: `hz` resolves it from its parent
-   process or from an explicit `--session`, so a child's identity stops being
-   what a *session* is identified by. This is the one that removes the coupling
-   rather than documenting it.
+**A shared child has one environment, so `HZ_SESSION_ID` cannot name five
+sessions — and the process tree cannot either**: two conversations on one child
+are both descendants of the same agent process. Probed against the shipped
+0.4.12, the field that *is* per-conversation is the agent's own id (`mvs_…`):
+ACP stamps it on every session-scoped line, including both of the agent's own
+pushes — measured, `mcode/session/goal_update` and
+`mcode/session/delegation_update` carry `params.sessionId`, so the read loop's
+routing rule is one field and needs no special cases.
 
-Until that is settled, sharing a child is not ready, whatever the routing does.
+So the identity travels with the *turn*, not with the process:
 
-Then, in this order, each step landing on its own and compiling:
+- **The agent exports `HZ_SESSION_ID` into every tool child.** The hook is
+  `@hz/agent-core`'s `sanitizeBashSubprocessEnv` — the one function all four bash
+  spawn sites already pass through (foreground `LocalBashTool`, its sandbox
+  variant, the background executor, the pi-turn-runner fallback) — and the value
+  comes from the turn's own context (`ctx.sessionId`, `input.identity.sessionId`),
+  which is the same string ACP returns as `sessionId`. `HZ_*` is on no strip
+  list, so layer A cannot eat it; `strict` mode does not match it as a
+  credential; both are pinned by test.
+- **The app resolves what it names.** `store::session_named` reads either
+  spelling off the pairing the index already carries (`thread_id`), and every
+  handler that takes a session address — create's parent, list's parent, send's
+  target and sender, link, browser — goes through one funnel in `orchestration`.
+  The CLI and the skill did not change.
 
-0. **The seam already exists, and it is `ReaderHandles`** (`mcode.rs:1228`) —
-   an owned struct the read loop is handed. Reading it changes the shape of the
-   three steps below, because it holds **two lifetimes of state in one struct**:
+### Landed
 
-   | per **child** (shared by every session it serves) | per **session** |
-   |---|---|
-   | `client`, `stderr_tail`, `app` | `session_id`, `session_cwd`, `pending`, `pending_questions` |
-   | | plus the four to add: `events`, `seq`, `status`, `queued` |
+- **1. `SessionHandles`** — one value for the per-session column (`session_id`,
+  `session_cwd`, `events`, `seq`, `status`, `queued`, `pending`,
+  `pending_questions`), held by the session, by the read loop and by the routing
+  table; `Ingest`, `flush_queued`/`flush_acp`/`deliver_batch`/`deliver_prompt`/
+  `report_*`/`strand_queue_on_exit` all take it rather than eight loose arguments.
+- **2–3. The registry and the routing** — a table keyed by the agent's session
+  id, filled at the handover and dropped when the child's stdout ends
+  (identity-checked, because a resume reuses the key a draining child still
+  holds), and a read loop that files every line by the id it carries.
+- **4. The drop** — a line naming a session this process does not hold is
+  dropped, not filed elsewhere; a *request* for one is refused rather than
+  dropped, since a request left unanswered stalls the asking turn.
+- **The agent patch and the app-side resolution** — as above, with the funnel's
+  own test in the agent's suite and `session_named`'s in the store's.
 
-   The transport reads and the stderr tail belong to the process; the queue, the
-   sequence, the retained events and the pending cards belong to a conversation.
-   The read loop needs the pair for one event, so the registry stores the second
-   column and the loop keeps the first.
+### Steps 5 and 6: landed
 
-1. **The four handles join `ReaderHandles`**, and `Session` holds the same value
-   rather than the four fields — one shape instead of two, which is the
-   unification `session.rs` already asked for in a comment about `Ingest`. The
-   edit is small and now measured: **twelve** `self.events`/`self.status`/
-   `self.queued`/`self.seq` sites in `session.rs` (2155–2559), and **nothing
-   else** — the hits at 274–329 are `StatusTracker`'s own fields and a blind
-   rename breaks them. `cargo test` is the gate.
-2. **The registry**, `Mutex<HashMap<String, SessionHandles>>` keyed by the
-   agent's session id, filled where the handshake hands a session over. Still
-   one child per session, still one handle set in it. `cargo test`.
-3. **`read_stdout` routes by the event's session id**: `params.sessionId` for a
-   `session/update`, the same field the goal and delegation notifications carry.
-   With the registry holding one entry this is a lookup that always answers the
-   same thing — which is what makes it verifiable *before* anything shares a
-   child. `cargo test`, and the app behaving identically in one session.
-4. **The unknown-id drop**: a notification for a session this process does not
-   hold is dropped, not panicked on. Tested by feeding `read_stdout` a line for a
-   stranger, which is the shape a session from a previous run leaves.
-5. **The registry keys by project**, and `send_msg` asks it for a child before
-   spawning one. This is the step that changes behaviour, and the live checklist
-   below is its gate.
-6. **The park follows**: it stays single-slot, but it now hands its child to the
-   project's registry rather than to one session.
+Coded, and the app's own suite is green (628 tests, clippy `-D warnings`). The
+shapes below are what shipped, with two additions the code forced:
 
-Steps 1–4 are invisible and provable here. Step 5 is the one that needs the app
-running, and it is deliberately last so that everything before it can be trusted
-first.
+- **The registry is keyed by the project root, and the child always spawns
+  there** — never in a session's tree. One child serves several trees
+  (`session/new` names the cwd per conversation), and the key has to be one
+  string for a create and a resume of the same project, which is what
+  `item.project_path` is. Both `Session::init` call sites now pass it.
+- **A session whose child has died is no longer live**, and `send_msg` falls
+  through to the resume path for it: the registry is the only thing that
+  notices a child dying, and re-opening the CLI's own session on a fresh child
+  is the recovery. Before this, a crashed child needed a settings change to
+  trigger one.
+- `child_pid` answers `None` for a child carrying more than one session, since
+  its descendants are then every session's; the browser's local-server list
+  keeps the checkout test as its signal and this one as the tie-breaker.
+
+### Step 5: the shapes, as built
+
+**`Agent` owns the process; a conversation is what a session holds.** The
+registry cannot key on the session any more, so:
+
+```rust
+pub struct Agent {                  // in mcode.rs, one per project
+    pub project: String,            // the table's key: the spawn directory
+    process: AsyncMutex<Option<Child>>,   // taken once, by whoever tears it down
+    client: RpcClient,              // the pipe every conversation writes on
+    live: AsyncMutex<HashMap<String, Live>>,   // by the agent's session id
+}
+
+struct Live {                       // per conversation, and nothing here can be
+    handles: SessionHandles,        // shared between two of them
+    session: McodeSession,
+    mapper: mapper::Mapper,         // numbers *these* events, remembers *these* subagents
+    coalescer: Coalescer,           // holds one block's text
+}
+```
+
+- `Session` loses `child` and gains `agent: Arc<Agent>`; `kill()` becomes
+  "close my conversation — `session/close` — and kill the process only where I
+  was the last one on it" (`retract` takes the process out of the registry by
+  identity, then `shutdown` gives it the grace it already gives).
+- `init` gains a branch: a live `agent_for(project)` means **open a conversation
+  on it** (handshake omitted, `session/new` at ~0.02s) rather than spawn. Since
+  the child is spawned at the project root and `session/new` names the cwd per
+  conversation, a worktree session shares its project's child and still runs in
+  its own tree.
+- The read loop loses `ready_rx` entirely (the registry is the hand-off), keeps
+  one `read_stdout` per child, and routes each line to a `Live` under a lock held
+  only for the synchronous part — mapping and coalescing — with the awaits (log,
+  status, flush) outside it.
+- **One race needs its own rule**: the agent pushes a session's settings and
+  command list on the heels of `session/new`, so the loop can read one before the
+  app has registered the id. That window is microseconds wide and the line is the
+  composer's command menu, so the loop waits `CLAIM_GRACE` (200ms, 10ms beats) for
+  the entry before giving up on the line.
+- The park becomes trivial: `spawn_agent` registers its child as it always
+  registers, so adoption is today's `adopt` plus "the table already holds it" —
+  and the parked child then serves every later session of that project.
+- `HZ_SESSION_ID` is no longer set at spawn (there is no single session to name);
+  the agent's per-turn injection is the only channel, and an older CLI in that
+  child refuses the default rather than naming the wrong session.
 
 ## What has to be verified, and cannot be from here
 
@@ -147,7 +196,9 @@ proves the *agent* serves many sessions, which is already true and already
 measured; the routing is hz's, and it is only exercised by the app with two
 concurrent sessions.
 
-So the verification is (with the `HZ_SESSION_ID` question above settled first, or a prompt in the second session is where it will show):
+So the verification is — and it needs the app running **as the reader's own
+user**, because the dev socket is `0600` and a root-run instance is not something
+a `hz` from this shell can reach:
 
 1. `pnpm tauri dev`, two sessions in one project, prompts in both, and both
    transcripts read correctly — interleaved turns included.
@@ -157,6 +208,6 @@ So the verification is (with the `HZ_SESSION_ID` question above settled first, o
 5. `cargo test` — including the fixture-based mapper tests, which is where a
    routing mistake shows up as the wrong session's event.
 
-Until those run, this stays a plan. It is a rewrite of the assumptions in a
-3,300-line file whose bugs are silent, and shipping it unverified would be the
-one thing worse than shipping it late.
+Until those run, this is not something to ship. It is a rewrite of the assumptions
+in a 3,300-line file whose bugs are silent, and shipping it unverified would be
+the one thing worse than shipping it late.

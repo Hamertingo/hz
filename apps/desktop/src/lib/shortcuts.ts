@@ -86,6 +86,7 @@ export const SHORTCUTS = [
   // `project.next`: two ids cannot share a default, and moving an unrelated chord
   // to free this one is a behaviour change nobody asked for.
   { id: "plugins.open", label: "Open plugins", group: "Panels and views", chord: k("u", { shift: true }) },
+  { id: "usage.open", label: "Open usage", group: "Panels and views", chord: k("u") },
   { id: "issues.search", label: "Search issues", group: "Panels and views", chord: k("f", { shift: true }) },
 
   { id: "dictate", label: "Dictate", group: "Composer", chord: k("d") },

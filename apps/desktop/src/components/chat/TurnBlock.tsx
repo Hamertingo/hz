@@ -11,7 +11,7 @@ import UserMessage from "@/components/chat/UserMessage";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { clockTime, formatDuration } from "@/lib/format";
-import { GROUP_MIN, isToolGroup, segmentWork, type SubagentRun, type Turn, type TurnSegment, type WorkItem } from "@/lib/transcript";
+import { GROUP_MIN, drawsFailure, isToolGroup, segmentWork, type SubagentRun, type Turn, type TurnSegment, type WorkItem } from "@/lib/transcript";
 import type { TodoTask } from "@/lib/todo";
 import type { AgentEvent, FileEdit, ToolResult } from "@/types/events";
 
@@ -118,6 +118,9 @@ function TurnBlock({
   const [openSegments, setOpenSegments] = useState<Record<number, boolean>>({});
 
   const running = turn.completed === null;
+  const failed =
+    turn.completed?.payload.type === "turn_completed" &&
+    drawsFailure(turn.completed.payload);
 
   // `finalText` duplicates the turn's last `assistant_text`, so the collapsed
   // view renders it in that message's place rather than alongside it. A running
@@ -236,7 +239,7 @@ function TurnBlock({
           work and leaves the ending exactly where the reader left it; the version
           that swallowed the answer into the trace left a finished turn with no
           end on screen. */}
-      {turn.finalText && <AssistantMessage text={turn.finalText} />}
+      {turn.finalText && !failed && <AssistantMessage text={turn.finalText} />}
 
       <TurnFooter
         prompt={turn.prompt}

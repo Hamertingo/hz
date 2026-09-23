@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
@@ -10,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     context::ContextReading,
-    events::{now_rfc3339, AgentEvent, AgentEventPayload, ApprovalPolicy},
+    events::{now_rfc3339, AgentEvent, AgentEventPayload, ApprovalPolicy, UsageRecord},
     issues::IssueRef,
     models::{Effort, ModelId},
     session::Harness,
@@ -426,6 +427,32 @@ pub async fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> Result<()>
     }
 
     Ok(())
+}
+
+/// The session a request's parent names, from the index it could be in.
+///
+/// **Two spellings, one address.** A `parent_session_id` reaching the app is a
+/// session id — the app's own uuid, which is what every other caller uses — and
+/// the agent's own name for the session it is serving, which is what the agent
+/// can actually put in a tool's environment: one process serves several
+/// sessions, so only the turn knows which one is running, and what it holds is
+/// the id it minted. The pairing the index already carries is `thread_id`.
+///
+/// Read off the passed list rather than a store call so the rule is testable
+/// without a `~/.hz` to write into, and so one read answers for a caller that
+/// may need the whole entry.
+///
+/// A session id wins where an id somehow matches both, since that is the
+/// spelling every other caller sends.
+pub fn session_named<'a>(items: &'a [SessionIndexItem], named: &str) -> Option<&'a str> {
+    if let Some(item) = items.iter().find(|item| item.session_id == named) {
+        return Some(item.session_id.as_str());
+    }
+
+    items
+        .iter()
+        .find(|item| item.thread_id.as_deref() == Some(named))
+        .map(|item| item.session_id.as_str())
 }
 
 /// The index filtered to one side of `archived` — the sidebar shows exactly one
@@ -1883,14 +1910,142 @@ pub async fn get_session_path(session_id: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Reads cumulative usage rows from every session log.
+///
+/// Session logs are append-only and a crash or an older build can leave a
+/// partial line. A line that cannot be deserialized is therefore skipped; one
+/// bad line must not hide every later usage record. Rows without a session id
+/// inherit the enclosing event's id, which is what lets the desktop deduplicate
+/// cumulative rows by session and record key.
+#[tauri::command]
+pub async fn usage_records() -> Result<Vec<UsageRecord>, Fail> {
+    let sessions = get_sessions_dir().await?;
+    let models: HashMap<String, String> = read_index()
+        .await?
+        .into_iter()
+        .map(|item| (item.session_id, item.model.as_str().to_string()))
+        .collect();
+    let mut entries = match fs::read_dir(&sessions).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(anyhow::Error::from(err).context("could not read sessions directory").into()),
+    };
+    let mut records = Vec::new();
+
+    while let Some(entry) = entries.next_entry().await.map_err(anyhow::Error::from)? {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let buffer = match fs::read_to_string(&path).await {
+            Ok(buffer) => buffer,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(anyhow::Error::from(err).context("could not read session usage log").into()),
+        };
+        records.extend(usage_records_from_buffer(&buffer, &models));
+    }
+
+    Ok(records)
+}
+
+fn usage_records_from_buffer(buffer: &str, models: &HashMap<String, String>) -> Vec<UsageRecord> {
+    let mut records = Vec::new();
+    for line in buffer.lines() {
+        let Ok(event) = serde_json::from_str::<AgentEvent>(line) else {
+            continue;
+        };
+        let AgentEventPayload::UsageRecords { rows } = event.payload else {
+            continue;
+        };
+        records.extend(rows.into_iter().map(|mut row| {
+            if row.model.is_none() {
+                row.model = models.get(&event.session_id).cloned();
+            }
+            if row.session_id.is_none() {
+                row.session_id = Some(event.session_id.clone());
+            }
+            row
+        }));
+    }
+    records
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_scan_skips_bad_lines_and_keeps_later_rows() {
+        let event = |session_id: &str, id: u64| {
+            format!(
+                r#"{{"id":"e{id}","sessionId":"{session_id}","harness":"mcode","seq":{id},"ts":"2026-01-01T00:00:00Z","payload":{{"type":"usage_records","rows":[{{"id":{id},"inputTokens":{id},"costUsd":0.01}}]}}}}"#
+            )
+        };
+        let old = r#"{"id":"old","sessionId":"s","harness":"mcode","seq":1,"ts":"2026-01-01T00:00:00Z","payload":{"type":"user_message","text":"hi"}}"#;
+        let buffer = format!(
+            "{}\nnot-json\n{}\n",
+            event("first", 1),
+            event("second", 2)
+        );
+
+        let records = usage_records_from_buffer(&buffer, &HashMap::new());
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, Some(1));
+        assert_eq!(records[0].session_id.as_deref(), Some("first"));
+        assert_eq!(records[1].id, Some(2));
+        assert!(usage_records_from_buffer(old, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn usage_scan_fills_a_missing_model_from_the_session_index() {
+        let buffer = r#"{"id":"e1","sessionId":"s1","harness":"mcode","seq":1,"ts":"2026-01-01T00:00:00Z","payload":{"type":"usage_records","rows":[{"id":1,"inputTokens":12}]}}"#;
+        let models = HashMap::from([("s1".to_string(), "m:deepseek-v4.1-flash".to_string())]);
+        let records = usage_records_from_buffer(buffer, &models);
+        assert_eq!(records[0].model.as_deref(), Some("m:deepseek-v4.1-flash"));
+    }
 
     /// A redraw loop runs inside one millisecond, where v7's counter bytes hold
     /// still — so the name must be drawn from the random tail, or every retry
     /// keeps the same adjective and colour. 16 draws over 1024 prefixes all
     /// agreeing by chance is 1024⁻¹⁵.
+    /// **A request names a session either way and lands on the same row.** The
+    /// agent's own id (`mvs_…`, minted by the runtime) arrives in
+    /// `parent_session_id` because that is what it can put in a tool's
+    /// environment; the app's uuid is what every other caller sends.
+    #[test]
+    fn a_parent_resolves_by_session_id_or_by_the_agent_s_own_name() {
+        let item = |session_id: &str, thread_id: Option<&str>| -> SessionIndexItem {
+            serde_json::from_value(serde_json::json!({
+                "sessionId": session_id,
+                "harness": "mcode",
+                "cwd": "/p",
+                "projectPath": "/p",
+                "branch": null,
+                "worktreeName": null,
+                "title": "t",
+                "created": "c",
+                "modified": "m",
+                "archived": false,
+                "pinned": false,
+                "threadId": thread_id,
+            }))
+            .expect("an index entry")
+        };
+        let items = vec![
+            item("hz-one", Some("mvs_aaa")),
+            item("hz-two", None),
+            // A session whose *own* id is what the first one's thread names, so
+            // a lookup by name has to prefer the session id and not the pairing.
+            item("mvs_bbb", Some("mvs_ccc")),
+        ];
+
+        assert_eq!(session_named(&items, "hz-one"), Some("hz-one"));
+        assert_eq!(session_named(&items, "mvs_bbb"), Some("mvs_bbb"));
+        assert_eq!(session_named(&items, "mvs_aaa"), Some("hz-one"));
+        assert_eq!(session_named(&items, "mvs_ccc"), Some("mvs_bbb"));
+        assert_eq!(session_named(&items, "hz-three"), None);
+    }
+
     #[test]
     fn fast_redraws_vary_every_word() {
         let prefixes: std::collections::HashSet<String> = (0..16)

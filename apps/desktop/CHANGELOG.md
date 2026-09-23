@@ -5,6 +5,89 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.14
+
+### Added
+
+- **A Usage page** — ⌘⇧U, or the row in the sidebar. What the agent has spent,
+  read back out of each session's log: the period's total and how it splits
+  between input, output, reasoning and cache, a day-by-day chart, the models with
+  the gateway each one came through, and the newest records. A period row and a
+  gateway row narrow all of it, and the gateway is read from the model's own wire
+  ref — `command-code` and `opencode-go` serving the same model name are two rows,
+  not one. **Nothing on it is a counter this app keeps**: it is the agent's own
+  accounting, so a session deleted from `~/.hz` takes its rows with it.
+
+- **A goal the agent owns.** The runtime's own objective object — its budget, its
+  turns, its status — drawn in the composer's row, with a receipt in the
+  transcript when the work lands. The objective goes out through the composer's
+  own path, so the reader's words and the agent's work arrive as an ordinary turn
+  and the runtime does not redo it.
+
+- **A retry is visible.** The harness now says when it is re-asking a model, and
+  the row and the working indicator built for it finally have something to draw.
+
+- **A new identity.** Four cuts of one artwork — tiled, plain, flat, mono —
+  replace the black cat on the dock and installer icons, the composer's
+  watermark, and the site's wordmark, favicon and OG card.
+
+### Changed
+
+- **One agent process serves every session in a project.** A second session in a
+  repo opens a conversation on the child that is already running instead of
+  paying the boot again — measured across five sessions, **−73% time and −77%
+  memory** — and the process count stops growing with the number of chats.
+  Stopping a session closes its conversation; the child goes when the last one
+  does. **The routing is the whole of what makes this safe**, and the plan note
+  that specified it required the app itself as the instrument, so that is how it
+  was checked: two sessions in one project, a prompt in each, each answer landing
+  in its own transcript — then the shared child killed with `-9`, after which
+  both sessions resumed on a fresh one.
+
+- **`HZ_SESSION_ID` travels with the turn rather than with the process.** A child
+  serving several sessions has one environment and could not name five sessions
+  with it, which is what `hz issue link` with no id defaults to. The agent exports
+  the id of the session a tool child belongs to, and the app resolves either
+  spelling — its own uuid or the agent's id — through one funnel, so the CLI and
+  the skill did not change.
+
+### Fixed
+
+- **A weekly usage limit is classified as one.** The provider's own words
+  ("you've reached your weekly usage limit for your plan") matched none of the
+  classifier's patterns, so the request was retried against a limit with hours to
+  go.
+- **The installer attached to a release is that version's.** The bundle directory
+  sits inside the cached `target/`, so an older version's installer was still
+  there and a glob uploaded it beside the right one — 0.20.8's 13MB setup was
+  attached to 0.20.9, 0.20.11 and 0.20.12 alike, and a reader picking the wrong
+  row installed a build from three releases ago.
+- **The slow-read line floats on the float veil.** It wore `--card`, which under
+  vibrancy is a 5.5% white veil with no blur, so session titles read straight
+  through its own words. It also moves to the top of the conversation column,
+  where it stops covering the sidebar it was never about.
+- **A `#7` the repository knows is a chip.** An agent that has just opened a pull
+  request says so in prose, and the number is now pressable — opening the PR pane
+  in the app rather than a browser. A number nothing holds stays the words it was
+  written as.
+- **A session's slash commands survive a restart.** The agent publishes them when
+  a session opens, so a reopened session had no child to have published anything
+  and the menu did not open at all. The last list is kept per session now.
+- **The wait a `/compact` takes is drawn.** The wire says nothing about a
+  compaction, so the indicator is derived from the prompt this app sent: the
+  newest prompt names the command and the turn is still open.
+- **A prompt with nothing in it is never sent**, and the composer's row keeps its
+  three nodes in place.
+- **A project attached at `/` has a name**, and a session's project is resolved
+  from the main worktree rather than from the tree the caller stood in — which is
+  what made a session created inside a linked worktree read a directory that does
+  not exist.
+- **macOS 12 is the floor the browser already required.** Three releases failed on
+  the universal build with `Undefined symbols: ___isPlatformVersionAtLeast`,
+  because the CEF objects are built for 12 while the app linked for 11 — and the
+  clang runtime the ggml objects ask for is linked explicitly now.
+- **Windows stages the agent the way macOS does.**
+
 ## 0.20.12
 
 ### Fixed

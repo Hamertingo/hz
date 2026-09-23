@@ -187,6 +187,7 @@ const PrTabs = lazy(() =>
 const IssuesView = lazy(() => import("@/components/IssuesView"));
 const InboxView = lazy(() => import("@/components/InboxView"));
 const PluginsView = lazy(() => import("@/components/PluginsView"));
+const UsageView = lazy(() => import("@/components/UsageView"));
 const PluginSkillDetail = lazy(() =>
   import("@/components/PluginsView").then((m) => ({ default: m.SkillDetail })),
 );
@@ -204,7 +205,7 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 /// **The set, so `none` is spelled once and every page is spelled once.** Reading
 /// a page off this is what stops a question about pages being answered by a list
 /// written out again at each site — see the state's own note.
-type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins" | "search";
+type MainPage = "none" | "inbox" | "issues" | "prs" | "plugins" | "search" | "usage";
 
 /// The one stop there is for delegated work, and it sits in the window header
 /// because the composer's own Stop is under a subagent view's feet — that view
@@ -476,6 +477,7 @@ function App() {
   const searchPageOpen = page === "search";
   const prsOpen = page === "prs";
   const pluginsOpen = page === "plugins";
+  const usageOpen = page === "usage";
 
   /// Pages are lazy chunks, so a page mounts on its first open and then stays
   /// mounted — the same hidden-not-unmounted bargain its `TabBody` makes.
@@ -1635,6 +1637,10 @@ function App() {
       else setPage("none");
       return true;
     }
+    if (usageOpen) {
+      setPage("none");
+      return true;
+    }
     return false;
   };
 
@@ -1869,6 +1875,9 @@ function App() {
   }, []);
   const openPlugins = useCallback(() => {
     setPage("plugins");
+  }, []);
+  const openUsage = useCallback(() => {
+    setPage("usage");
   }, []);
 
   /// One way to press any of the three, and drawn by all three surfaces.
@@ -2245,6 +2254,7 @@ function App() {
     // tabs are the reader's pull requests rather than a session's views, so no
     // other arm can see them — and every one of those needs a session, which
     // this does not.
+    if (usageOpen) return setPage("none");
     if (prsOpen && activePrKey) return closePr(activePrKey);
     if (!selectedSessionId) return;
     if (fileShown && activeFile) return closeFile(selectedSessionId, activeFile);
@@ -2256,6 +2266,7 @@ function App() {
   // the app never had.
   const hasCloseTarget =
     (prsOpen && !!activePrKey) ||
+    usageOpen ||
     fileShown ||
     (browserShown && (pendingBrowserTab || !!hasBrowserTabs)) ||
     gridShown;
@@ -2396,6 +2407,7 @@ function App() {
   // name and belongs to `project.next`, and the row this opens is the third of
   // the lists the reader leaves a session for.
   useHotkey("plugins.open", openPlugins);
+  useHotkey("usage.open", openUsage);
   // ⌘K, which nothing else here claims. A toggle, so the chord that opened the
   // box closes it — the same reasoning settings follows.
   useHotkey("palette.open", () => setPaletteOpen((open) => !open));
@@ -2495,6 +2507,7 @@ function App() {
       { id: "issues.open", label: "Open issues", run: openIssues },
       { id: "prs.open", label: "Open pull requests", run: openPrs },
       { id: "plugins.open", label: "Open plugins", run: openPlugins },
+      { id: "usage.open", label: "Open usage", run: openUsage },
       { id: "settings", label: "Settings", run: () => setSettingsOpen(true) },
     ];
 
@@ -2540,6 +2553,7 @@ function App() {
     openInbox,
     openIssues,
     openPrs,
+    openUsage,
     openPlugins,
     pageOpen,
     prsCwds,
@@ -2623,6 +2637,8 @@ function App() {
           onNewSessionInProject={newSessionInProject}
           onOpenPlugins={openPlugins}
           pluginsOpen={pluginsOpen}
+          onOpenUsage={openUsage}
+          usageOpen={usageOpen}
           onOpenInbox={openInbox}
           // All three: the inbox and the two pages it launches into are one
           // destination in this column, and the two have no row of their own.
@@ -2719,9 +2735,11 @@ function App() {
                     ? "Pull requests"
                     : pluginsOpen
                       ? "Plugins"
-                      : activeGroup
-                        ? groupName(activeGroup)
-                        : null
+                      : usageOpen
+                        ? "Usage"
+                        : activeGroup
+                          ? groupName(activeGroup)
+                          : null
               }
               className="flex-1"
             />
@@ -2950,7 +2968,8 @@ function App() {
               />
             </TabBody>
           </RightPanel>
-        ) : // Mounted whenever a session is, open or not — closing or switching
+        ) : usageOpen ? null
+        : // Mounted whenever a session is, open or not — closing or switching
         // tabs only hides, so reopening shows what was already there instead of
         // refetching and re-highlighting it. `active` is what stops the hidden
         // changes tab from snapshotting the working tree in the background.
@@ -3397,6 +3416,13 @@ function App() {
                 : (setPage("issues"), setPickedIssue(item.row))
             }
           />
+        </Suspense>
+      </TabBody>
+      )}
+      {pageSeen("usage") && (
+      <TabBody active={usageOpen}>
+        <Suspense fallback={null}>
+          <UsageView active={usageOpen} onClose={() => setPage("none")} />
         </Suspense>
       </TabBody>
       )}

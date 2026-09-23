@@ -356,6 +356,15 @@ export class LocalBashTool implements ToolImpl<
   private readonly envPolicy: BashEnvPolicy;
   /** Names stripped by the sanitizer at the most recent spawn (never values). */
   private lastEnvRemoved: string[] = [];
+  /**
+   * Whose turn the current spawn belongs to, for the hook below.
+   *
+   * Set in `execute`, because the hook is built once here and pi calls it with
+   * the command, the cwd and the env — nothing about the session. The instance
+   * is built per turn, so this is a value for the turn rather than shared state
+   * between sessions.
+   */
+  private sessionId: string | undefined;
   /** One-shot hint gate: report stripped names once per tool instance. */
   private envHintShown = false;
 
@@ -373,7 +382,11 @@ export class LocalBashTool implements ToolImpl<
     // hook — keep the three spawn sites in sync.
     this.tool = createBashTool(workspaceRoot, {
       spawnHook: (ctx) => {
-        const { env, removed } = sanitizeBashSubprocessEnv(ctx.env, this.envPolicy);
+        const { env, removed } = sanitizeBashSubprocessEnv(
+          ctx.env,
+          this.envPolicy,
+          this.sessionId,
+        );
         this.lastEnvRemoved = removed;
         return { ...ctx, env };
       },
@@ -386,6 +399,7 @@ export class LocalBashTool implements ToolImpl<
     signal?: AbortSignal,
   ): Promise<ToolResult> {
     if (signal?.aborted) throw new Error('Operation aborted');
+    this.sessionId = ctx.sessionId;
     if (input.run_in_background === true && ctx.canConsumeBackgroundBashOutput !== true) {
       return unavailableBackgroundBashOutputResult();
     }
@@ -486,7 +500,11 @@ export class LocalBashTool implements ToolImpl<
               workspaceRoot: this.workspaceRoot,
             }),
             spawnHook: (spawnContext) => {
-              const { env, removed } = sanitizeBashSubprocessEnv(spawnContext.env, this.envPolicy);
+              const { env, removed } = sanitizeBashSubprocessEnv(
+                spawnContext.env,
+                this.envPolicy,
+                ctx.sessionId,
+              );
               this.lastEnvRemoved = removed;
               return { ...spawnContext, env };
             },

@@ -59,7 +59,13 @@ export function newTools<TCtx extends ToolExecutionContext>(
       // becomes reachable with a dataDir, thread a policy in explicitly.
       out.push(
         withFallbackExecutionMode(
-          createBashTool(cwd, { spawnHook: createBashEnvSpawnHook(resolveBashEnvPolicy()) }),
+          createBashTool(cwd, {
+            spawnHook: createBashEnvSpawnHook(
+              resolveBashEnvPolicy(),
+              undefined,
+              ctx.sessionId,
+            ),
+          }),
           'sequential',
         ),
       );

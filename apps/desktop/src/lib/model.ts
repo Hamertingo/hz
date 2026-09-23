@@ -112,6 +112,27 @@ export function usableEffort(
 const WIRE_PREFIX = "m:";
 const VARIANT_MARKER = ":v:";
 
+/// The provider's own part of a wire ref: the prefix, the model and the variant
+/// taken off — the other half of [`nameInRef`], from the same parse.
+///
+/// `null` where the ref names no provider: a model reached without a route
+/// (`m:deepseek-v4.1-flash`) has none to read, and the caller falls back to
+/// whatever else it knows rather than to an invented name.
+///
+/// Exported because a usage record carries the ref and nothing else about the
+/// route — `agentName` on one names the *runtime* that reported the usage
+/// (`hyze-cloud`), which is a different fact from the gateway a key belongs to.
+/// One parse, so the two readers cannot disagree about where the provider ends.
+export function providerInRef(ref: string): string | null {
+  if (!ref.startsWith(WIRE_PREFIX)) return null;
+  const rest = ref.slice(WIRE_PREFIX.length);
+  const marker = rest.lastIndexOf(VARIANT_MARKER);
+  const head = marker === -1 ? rest : rest.slice(0, marker);
+  const separator = head.indexOf(":");
+  if (separator === -1) return null;
+  return decodeEscapes(head.slice(0, separator));
+}
+
 /// The model's own part of a wire ref: prefix, provider and variant taken off.
 ///
 /// Mirrors that same Rust parse, and has to: **a provider's own name can carry a

@@ -25,6 +25,7 @@
 //! silently, and this file is the only thing that stands between the child and
 //! a reader who never learns why a turn went quiet.
 
+use crate::events::UsageRecord;
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 use serde_json::Value;
@@ -119,6 +120,12 @@ pub enum SessionUpdate {
         #[serde(default)]
         cost: Option<Cost>,
     },
+    /// Cumulative per-turn usage rows published by the runtime outside ACP's
+    /// regular `session/update` envelope.
+    UsageRecords {
+        #[serde(default)]
+        rows: Vec<UsageRecord>,
+    },
     /// The CLI's own slash commands, sent once per session and again when they
     /// change.
     AvailableCommandsUpdate {
@@ -134,6 +141,16 @@ pub enum SessionUpdate {
     /// The prompt itself, echoed to every client in the session. Dropped by the
     /// mapper: the app writes the reader's own message at the send.
     UserMessageChunk,
+    /// A provider request is waiting to be retried.
+    ApiRetry {
+        attempt: u32,
+        #[serde(rename = "maxRetries")]
+        max_retries: u32,
+        #[serde(default)]
+        status: Option<u32>,
+        #[serde(default)]
+        reason: Option<String>,
+    },
     /// ACP's plan entries, which no capture of mcode carries yet.
     Plan,
     #[serde(other)]
@@ -148,11 +165,13 @@ impl SessionUpdate {
             SessionUpdate::AgentMessageChunk { .. } => "agent_message_chunk",
             SessionUpdate::AgentThoughtChunk { .. } => "agent_thought_chunk",
             SessionUpdate::ToolCall { .. } => "tool_call",
+            SessionUpdate::ApiRetry { .. } => "api_retry",
             SessionUpdate::ToolCallUpdate { .. } => "tool_call_update",
             SessionUpdate::SessionInfoUpdate { .. } => "session_info_update",
             SessionUpdate::UsageUpdate { .. } => "usage_update",
             SessionUpdate::AvailableCommandsUpdate { .. } => "available_commands_update",
             SessionUpdate::CurrentModeUpdate { .. } => "current_mode_update",
+            SessionUpdate::UsageRecords { .. } => "usage_records",
             SessionUpdate::UserMessageChunk => "user_message_chunk",
             SessionUpdate::Plan => "plan",
             SessionUpdate::Unknown => "unknown",
@@ -780,12 +799,44 @@ impl ModelRef {
 /// Types one notification off the connection. `Ok(None)` is a method this app
 /// has no use for, which is not the same as a line that failed to parse.
 pub fn parse_notification(method: &str, params: Value) -> Result<Option<SessionUpdate>, String> {
-    if method != "session/update" {
-        return Ok(None);
+    match method {
+        "session/update" => {
+            let update: UpdateNotification = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            Ok(Some(update.update))
+        }
+        "mcode/session/api_retry" => {
+            let retry: ApiRetryNotification = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            Ok(Some(SessionUpdate::ApiRetry {
+                attempt: retry.attempt,
+                max_retries: retry.max_retries,
+                status: retry.status,
+                reason: retry.reason,
+            }))
+        }
+        "mcode/session/usage_records" => {
+            let usage: UsageRecordsNotification =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
+            Ok(Some(SessionUpdate::UsageRecords { rows: usage.rows }))
+        }
+        _ => Ok(None),
     }
+}
 
-    let update: UpdateNotification = serde_json::from_value(params).map_err(|e| e.to_string())?;
-    Ok(Some(update.update))
+#[derive(Debug, Deserialize)]
+struct ApiRetryNotification {
+    attempt: u32,
+    #[serde(rename = "maxRetries")]
+    max_retries: u32,
+    #[serde(default)]
+    status: Option<u32>,
+    #[serde(default)]
+    reason: Option<String>,
+ }
+
+#[derive(Debug, Deserialize)]
+struct UsageRecordsNotification {
+    #[serde(default)]
+    rows: Vec<UsageRecord>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -829,6 +880,35 @@ pub(crate) mod tests {
             .find(|v| v.get("id").and_then(Value::as_u64) == Some(id))
             .and_then(|v| v.get("result").cloned())
             .expect("capture holds that reply")
+    }
+
+    #[test]
+    fn usage_records_notification_is_typed_and_preserves_rows() {
+        let update = parse_notification(
+            "mcode/session/usage_records",
+            serde_json::json!({
+                "sessionId": "mvs_1",
+                "rows": [{
+                    "id": 9,
+                    "model": "m:acme:sonnet:v:",
+                    "inputTokens": 10,
+                    "outputTokens": 4,
+                    "cacheReadTokens": 2,
+                    "costUsd": 0.25
+                }]
+            }),
+        )
+        .unwrap()
+        .expect("custom usage notification");
+
+        let SessionUpdate::UsageRecords { rows } = update else {
+            panic!("usage records update");
+        };
+        assert_eq!(rows[0].id, Some(9));
+        assert_eq!(rows[0].input_tokens, Some(10));
+        assert_eq!(rows[0].output_tokens, Some(4));
+        assert_eq!(rows[0].cache_read_tokens, Some(2));
+        assert_eq!(rows[0].cost_usd, Some(0.25));
     }
 
     const LIVE_TURN: &str = include_str!("fixtures/live_turn.jsonl");

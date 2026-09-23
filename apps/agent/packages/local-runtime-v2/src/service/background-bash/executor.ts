@@ -50,10 +50,14 @@ export function createLocalBackgroundBashExecutor(
       let envSanitized: string[] = [];
       const tool = createBashTool(input.workspaceRoot, {
         operations,
-        spawnHook: createBashEnvSpawnHook(envPolicy, (removed) => {
-          envSanitized = removed;
-          if (removed.length > 0) input.onDetails?.({ envSanitized: removed });
-        }),
+        spawnHook: createBashEnvSpawnHook(
+          envPolicy,
+          (removed) => {
+            envSanitized = removed;
+            if (removed.length > 0) input.onDetails?.({ envSanitized: removed });
+          },
+          input.identity.sessionId,
+        ),
       });
       let result;
       try {

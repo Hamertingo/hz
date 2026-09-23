@@ -389,6 +389,39 @@ describe("withLLMRetry", () => {
     },
   );
 
+  it("reports each weekly usage-limit retry before the final error", async () => {
+    let attempts = 0;
+    const observed: LLMRetryEvent[] = [];
+    const inner = (async () => {
+      attempts += 1;
+      return errorStream(
+        "[Error] 429 You've reached your weekly usage limit for your plan",
+      );
+    }) as StreamFn;
+    const wrapped = withLLMRetry(
+      inner,
+      retryOptions({
+        observer: (event) => observed.push(event),
+        sleep: vi.fn(async () => {}),
+      }),
+    );
+
+    const result = await wrapped(fakeModel("custom_provider:command-code"), CONTEXT, {});
+    await collectEvents(result);
+
+    expect(attempts).toBe(6);
+    expect(observed.filter((event) => event.status === "waiting")).toHaveLength(5);
+    expect(observed.filter((event) => event.status === "waiting").at(-1)).toMatchObject({
+      retryAttempt: 5,
+      maxRetries: 5,
+      error: { reason: "rate_limited" },
+    });
+    await expect(result.result()).resolves.toMatchObject({
+      errorMessage:
+        "[Error] 429 You've reached your weekly usage limit for your plan",
+    });
+  });
+
   it("does not report recovered when a retry ends in a non-retryable quota error", async () => {
     let attempts = 0;
     const observed: LLMRetryEvent[] = [];

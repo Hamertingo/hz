@@ -38,6 +38,15 @@ function Notice({
   );
 }
 
+function displayFailure(text: string): string {
+  return text
+    .replace(
+      /^Internal error: Hz Agent Runtime failed: BYOK provider \S+ upstream error:\s*/i,
+      "",
+    )
+    .trim();
+}
+
 /// The one place event payloads become UI. Every variant is handled; the default
 /// arm exists for a payload kind from a newer backend than this build.
 ///
@@ -171,9 +180,10 @@ function EventRow({
       // is the third thing on the row saying "this went wrong".
       return (
         <Notice tone="destructive" wrap>
-          {payload.finalText?.trim() || "Turn failed"}
+          {displayFailure(payload.finalText?.trim() || "Turn failed")}
         </Notice>
       );
+
 
     case "rate_limited": {
       // Only actionable reports reach here — the mapper drops the healthy ones

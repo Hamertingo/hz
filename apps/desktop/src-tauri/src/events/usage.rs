@@ -31,6 +31,31 @@ pub struct Usage {
     pub per_model: Vec<ModelUsage>,
 }
 
+/// One cumulative usage row emitted by an agent runtime.
+///
+/// Rows are optional at the wire boundary so a runtime can add fields without
+/// invalidating an older desktop. `session_id` is retained in the row when the
+/// runtime supplies it; the desktop fills it from the enclosing event while
+/// scanning older logs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct UsageRecord {
+    pub id: Option<u64>,
+    pub session_id: Option<String>,
+    pub agent_name: Option<String>,
+    pub framework_type: Option<String>,
+    pub turn_id: Option<String>,
+    pub model: Option<String>,
+    pub ts: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+}
+
 /// What one model has consumed **for the session so far** — cumulative and
 /// monotonic across turns, not a per-turn figure.
 ///

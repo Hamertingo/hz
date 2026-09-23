@@ -578,9 +578,13 @@ function failureResult(input: {
     ...(input.response ? { statusCode: input.response.status } : {}),
     explicitAbort: input.final?.stopReason === 'aborted',
   });
+  const metricKind = toLLMMetricErrorKind(normalized.facts);
   const decision =
     input.retryAllErrors && !normalized.facts.explicitAbort
-      ? { retryable: true, reason: 'network' as const }
+      ? {
+          retryable: true,
+          reason: metricKind === 'usage_limit' ? ('rate_limited' as const) : ('network' as const),
+        }
       : toLLMRetryDecision(normalized);
   if (!decision.retryable) {
     return {

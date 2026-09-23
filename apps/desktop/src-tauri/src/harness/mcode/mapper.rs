@@ -261,6 +261,22 @@ impl Mapper {
                 }))]
             }
 
+            SessionUpdate::UsageRecords { rows } => {
+                vec![self.event(AgentEventPayload::UsageRecords { rows })]
+            }
+
+            SessionUpdate::ApiRetry {
+                attempt,
+                max_retries,
+                status,
+                reason,
+            } => vec![self.event(AgentEventPayload::ApiRetry {
+                attempt,
+                max_retries,
+                status,
+                reason,
+            })],
+
             // Read by the read loop off the parsed update rather than mapped: a
             // title is a fact about the index row, and the mode is a control
             // state — neither is a transcript event. The command list is read by
@@ -954,5 +970,95 @@ mod tests {
             Some("call-1"),
             "the completion joins the run its own spawn opened"
         );
+    }
+
+    #[test]
+    fn a_waiting_api_retry_maps_without_changing_its_fields() {
+        let mut mapper = Mapper::new("s".to_string(), Arc::new(AtomicU64::new(0)));
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": "mcode/session/api_retry",
+            "params": {
+                "sessionId": "mvs_1",
+                "attempt": 2,
+                "maxRetries": 4,
+                "reason": "overloaded"
+            }
+        });
+        let update = super::super::parser::parse_notification(
+            notification["method"].as_str().unwrap(),
+            notification["params"].clone(),
+        )
+        .unwrap()
+        .unwrap();
+
+        let events = mapper.map(McodeEvent::Update(Box::new(update)));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].payload,
+            P::ApiRetry {
+                attempt: 2,
+                max_retries: 4,
+                status: None,
+                reason: Some(reason),
+            } if reason == "overloaded"
+        ));
+
+        let update = super::super::parser::parse_notification(
+            "mcode/session/api_retry",
+            json!({
+                "sessionId": "mvs_1",
+                "attempt": 1,
+                "maxRetries": 3
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        let events = mapper.map(McodeEvent::Update(Box::new(update)));
+        assert!(matches!(
+            &events[0].payload,
+            P::ApiRetry {
+                attempt: 1,
+                max_retries: 3,
+                status: None,
+                reason: None,
+            }
+        ));
+
+        let unknown = super::super::parser::parse_notification(
+            "session/update",
+            json!({
+                "sessionId": "mvs_1",
+                "update": { "sessionUpdate": "future_update" }
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(unknown, SessionUpdate::Unknown));
+        assert!(mapper
+            .map(McodeEvent::Update(Box::new(unknown)))
+            .is_empty());
+    }
+
+    #[test]
+    fn usage_records_map_to_one_retained_event() {
+        let mut mapper = Mapper::new("s".to_string(), Arc::new(AtomicU64::new(0)));
+        let update = super::super::parser::parse_notification(
+            "mcode/session/usage_records",
+            json!({
+                "sessionId": "mvs_1",
+                "rows": [{"id": 1, "inputTokens": 20, "costUsd": 0.5}]
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let events = mapper.map(McodeEvent::Update(Box::new(update)));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].payload,
+            P::UsageRecords { rows }
+                if rows[0].id == Some(1) && rows[0].input_tokens == Some(20)
+        ));
     }
 }

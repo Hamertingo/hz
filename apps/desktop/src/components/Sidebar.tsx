@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
+import { Activity, Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
 
 import BloubAvatar from "@/components/BloubAvatar";
@@ -105,6 +105,8 @@ type SidebarProps = {
   /// below: not a session, so the selection does not move and coming back lands
   /// on the session that was open before.
   onOpenPlugins: () => void;
+  onOpenUsage: () => void;
+  usageOpen: boolean;
   /// The one list across both trackers, and the only row the two pages that own
   /// an issue or a pull request have — they are reached from a row inside it,
   /// never from here. Not a session, so it does not move the selection: coming
@@ -915,6 +917,8 @@ function Sidebar({
   onNewSession,
   onOpenPlugins,
   pluginsOpen,
+  onOpenUsage,
+  usageOpen,
   onOpenInbox,
   inboxActive,
   onSetFlags,
@@ -1183,6 +1187,17 @@ function Sidebar({
           <Inbox />
           Inbox
           <ShortcutKeys ids={["inbox.open"]} className="ml-auto" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenUsage}
+          data-active={usageOpen || undefined}
+          className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground"
+        >
+          <Activity />
+          Usage
+          <ShortcutKeys ids={["usage.open"]} className="ml-auto" />
         </Button>
 
         {/* **The row opens the search view rather than becoming a field in

@@ -7,7 +7,7 @@ use crate::{
     },
     git,
     harness::{
-        mcode::{self, McodeSession},
+        mcode::{self, Agent, McodeSession},
         permissions::{PendingPermissions, Reply},
         questions::PendingQuestions,
         FastMode,
@@ -38,10 +38,7 @@ use std::{
     },
 };
 use tauri::{AppHandle, Emitter};
-use tokio::{
-    process::Child,
-    sync::{Mutex, OwnedMutexGuard},
-};
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 /// Emitted as `session_status` when a session's status changes, so the sidebar
 /// and composer update without a refetch. Like `SessionTitleEvent`, this is not
@@ -925,13 +922,18 @@ impl SessionManager {
                 _ => git::snapshot_tree(&session_cwd).await,
             };
 
-            // A tree we made is a directory that already exists and a checkout
-            // already on the right commit, so the child starts in it and is told
-            // nothing about worktrees at all. Every other creation spawns at the
-            // project root, because the directory `-w` is about to make cannot
-            // be `chdir`ed into before it exists.
+            // **The child runs at the project root, always**, and that is the
+            // sharing step's rule rather than a preference: one child serves
+            // every session of a project, so it cannot live in one session's
+            // tree — and it does not need to, since `session/new` names the cwd
+            // per conversation. It is also the registry's key, which has to be
+            // the same string on a create and on a resume of the same project.
+            //
+            // The tree is still what this session works in, and a harness that
+            // makes its own is still told to: `spawn_worktree` is that, and
+            // mcode answers `None` to it because hz made the tree already.
             let (spawn_cwd, spawn_worktree) = if owned_worktree {
-                (session_cwd.as_str(), None)
+                (cwd, None)
             } else {
                 (cwd, worktree_name.as_deref())
             };
@@ -1032,7 +1034,7 @@ impl SessionManager {
         let (busy, turn_in_flight, tool_in_flight, auth_failed) = match &existing {
             Some(s) => {
                 let s = s.lock().await;
-                let tracker = s.status.lock().await;
+                let tracker = s.handles.status.lock().await;
                 (
                     tracker.has_outstanding_work(),
                     tracker.turn_in_flight(),
@@ -1127,6 +1129,38 @@ impl SessionManager {
             }
         }
 
+        // **A session outlives its child**, and the registry is the only thing that
+        // says whether it still has one: a child that died took every conversation
+        // on it, so a send that followed would write into a pipe nothing reads. A
+        // dead child makes this session not-live, and the send falls through to the
+        // resume path below — which re-opens the CLI's own session on a child of
+        // this project. That is the only recovery a session has, since nothing else
+        // notices a child dying; it used to take a settings change to trigger one.
+        let live = match live {
+            Some(session) => {
+                // The index's own answer for where the project is, and the
+                // caller's where there is no entry to read one off.
+                let project = indexed
+                    .as_ref()
+                    .map(|item| item.project_path.as_str())
+                    .unwrap_or(cwd);
+
+                if let Some(agent) = mcode::live_agent_for(project).await {
+                    let same_agent = Arc::ptr_eq(&session.lock().await.agent, &agent);
+                    if same_agent {
+                        Some(session)
+                    } else {
+                        self.sessions.lock().await.remove(session_id);
+                        None
+                    }
+                } else {
+                    self.sessions.lock().await.remove(session_id);
+                    None
+                }
+            }
+            None => None,
+        };
+
         if let Some(s) = live {
             let mut s = s.lock().await;
             // Before the send, so the index reflects intent even if writing to
@@ -1210,11 +1244,9 @@ impl SessionManager {
                 // picker both left naming a level the session was not on.
                 if let Err(err) = s.set_effort(effort, app).await {
                     report_session_error(
-                        session_id,
+                        &s.handles,
                         s.harness,
                         &format!("{err:#}"),
-                        &s.seq,
-                        &s.events,
                         app,
                     )
                     .await;
@@ -1356,6 +1388,8 @@ impl SessionManager {
                 let baseline = git::base_ref_tree(&item.project_path).await;
                 (item.project_path.clone(), baseline)
             }
+            // A child is spawned at the project root here too — see the create
+            // path — and the session's own tree is carried as the session cwd.
             Some(item) => {
                 // Made only once, however many times this runs. The tree is
                 // created before the child is spawned and `fork_from` is only
@@ -1375,9 +1409,18 @@ impl SessionManager {
                     git::create_worktree(&item.project_path, &name, &base).await?;
                 }
 
-                (session_cwd.clone(), git::snapshot_tree(&session_cwd).await)
+                (item.project_path.clone(), git::snapshot_tree(&session_cwd).await)
             }
-            None => (session_cwd.clone(), git::snapshot_tree(&session_cwd).await),
+            // Nothing to make, so the child still runs at the project root: the
+            // index's own answer where there is an entry, and the caller's cwd
+            // where there is not.
+            None => (
+                indexed
+                    .as_ref()
+                    .map(|item| item.project_path.clone())
+                    .unwrap_or_else(|| cwd.to_string()),
+                git::snapshot_tree(&session_cwd).await,
+            ),
         };
 
         // The CLI's half of a fork, for a harness that has one. pi's fork was
@@ -1503,7 +1546,7 @@ impl SessionManager {
         }
 
         if let Some(s) = self.sessions.lock().await.get(session_id).cloned() {
-            if s.lock().await.status.lock().await.turn_in_flight() {
+            if s.lock().await.handles.status.lock().await.turn_in_flight() {
                 bail!("wait for the turn to finish before forking it");
             }
         }
@@ -1589,7 +1632,7 @@ impl SessionManager {
         // Refused rather than queued: the agent answers a second prompt with an
         // error, and a reading taken mid-turn would be of a run in progress
         // anyway. The panel says so and the reader asks again when it settles.
-        if session.status.lock().await.turn_in_flight() {
+        if session.handles.status.lock().await.turn_in_flight() {
             return Err("The agent is mid-turn — read this again when it settles.".into());
         }
 
@@ -1910,12 +1953,16 @@ impl SessionManager {
     /// Deletes a session: kills its child if one is running, then drops the
     /// index entry and the log. Returns whether the index held it.
     ///
-    /// The agent process's pid, for finding what it started (a dev server is a
-    /// descendant). `None` while no child is running.
+    /// The agent process's pid, for finding what it started — a dev server is a
+    /// descendant. `None` while no child is running, and `None` for a child that
+    /// carries more than one session: its descendants are every session's, so
+    /// this is no longer an answer about *this* one. See
+    /// [`Agent::pid`](crate::harness::mcode::Agent::pid).
     pub async fn child_pid(&self, session_id: &str) -> Option<u32> {
         let session = self.sessions.lock().await.get(session_id).cloned()?;
         let session = session.lock().await;
-        session.child.id()
+
+        session.agent.pid().await
     }
 
     /// The child goes first and its lock is released before the disk work, so a
@@ -1984,7 +2031,7 @@ impl SessionManager {
     pub async fn mark_idle(&self, session_id: &str) -> Result<Option<SessionStatus>> {
         if let Some(session) = self.sessions.lock().await.get(session_id).cloned() {
             let session = session.lock().await;
-            let Some(next) = session.status.lock().await.mark_seen() else {
+            let Some(next) = session.handles.status.lock().await.mark_seen() else {
                 return Ok(None);
             };
             set_session_status(session_id, next).await?;
@@ -2018,10 +2065,61 @@ pub enum Transport {
     Acp(McodeSession),
 }
 
+/// Everything one conversation is written through and read from, in one value.
+///
+/// These were once fields on [`Session`] *and* loose arguments to the read loop
+/// — eight of them, and the comment on [`flush_queued`] said outright that a
+/// struct was one function away — and two spellings of one set is two things to
+/// keep in step. So the set is named once, and the *same* value is held by the
+/// session, by the read loop, and by the live registry that lets a loop file a
+/// line against the session it belongs to rather than assuming it is that
+/// session.
+///
+/// Cloneable because the loop takes one out of the registry per line rather
+/// than holding a lock across the awaits that line's handling makes: every field
+/// is already shared (`Arc`, or a plain string that never moves), so a clone is
+/// a handful of refcounts.
+#[derive(Clone, Debug)]
+pub struct SessionHandles {
+    /// This app's id for the session — the one every event carries and the
+    /// frontend routes by. The agent mints its own, which is what the registry
+    /// is keyed by and nothing on screen says.
+    pub session_id: String,
+    /// The session's own tree, for the turn-end snapshot. Differs from the spawn
+    /// directory on a worktree creation, and only the session layer knows it.
+    pub session_cwd: String,
+    /// The retained events, in `seq` order. Deltas and usage updates never
+    /// reach it — [`ingest`] drops them.
+    pub events: Arc<Mutex<Vec<AgentEvent>>>,
+    /// The ordering key. One counter per conversation, and everything the app
+    /// synthesizes itself is numbered through it too.
+    pub seq: Arc<AtomicU64>,
+    /// Shared with the stdout task: sends flip it here, `turn_completed` and
+    /// `background_tasks_changed` flip it there.
+    pub status: Arc<Mutex<StatusTracker>>,
+    /// Prompts typed during a running turn, waiting for the next boundary.
+    /// Shared with the stdout task, which is what flushes them.
+    pub queued: QueuedMessages,
+    /// Permission requests the mapper has registered and nobody has answered.
+    pub pending: PendingPermissions,
+    /// Questions the child is waiting on an answer to — the sibling of the map
+    /// above, held for the same reason and filled the same way. See
+    /// [`PendingQuestions`].
+    pub pending_questions: PendingQuestions,
+}
+
 #[derive(Debug)]
 pub struct Session {
-    pub id: String,
-    pub child: Child,
+    /// The conversation's own state — see [`SessionHandles`] for why it is one
+    /// value rather than seven fields.
+    pub handles: SessionHandles,
+    /// The child this conversation is open on.
+    ///
+    /// **Held, not owned.** One child serves every session of a project, so the
+    /// registry is what has the process — a session needs this only to close its
+    /// own conversation, and to know that closing it may take the child with it
+    /// when it was the last one.
+    pub agent: Arc<Agent>,
     /// Shared with the stdout task, which has to write back on its own: an
     /// unanswerable `control_request` must be refused from where it is read,
     /// since the CLI blocks its turn until something replies.
@@ -2035,20 +2133,6 @@ pub struct Session {
     /// which nothing can move after. Compared against the composer's pick to
     /// decide whether anything has to happen at all.
     pub fast: bool,
-    pub events: Arc<Mutex<Vec<AgentEvent>>>,
-    pub seq: Arc<AtomicU64>,
-    /// Shared with the stdout task: sends flip it here, `result` and
-    /// `background_tasks_changed` flip it there.
-    pub status: Arc<Mutex<StatusTracker>>,
-    /// Permission requests the mapper has registered and nobody has answered.
-    pub pending_permissions: PendingPermissions,
-    /// Questions the child is waiting on an answer to — the sibling of the map
-    /// above, held for the same reason and filled the same way. See
-    /// [`PendingQuestions`].
-    pub pending_questions: PendingQuestions,
-    /// Prompts typed during a running turn, waiting for the next boundary.
-    /// Shared with the stdout task, which is what flushes them.
-    pub queued: QueuedMessages,
 }
 
 impl Session {
@@ -2143,7 +2227,7 @@ impl Session {
         app: &AppHandle,
     ) -> Result<()> {
         deliver_prompt(
-            &self.id,
+            &self.handles,
             self.harness,
             prompt,
             attachment_paths,
@@ -2153,8 +2237,6 @@ impl Session {
             true,
             from,
             sent_at,
-            &self.seq,
-            &self.events,
             &self.stdin,
             app,
         )
@@ -2162,8 +2244,8 @@ impl Session {
 
         // After the write: a prompt that never reached the child starts
         // nothing, and the command's error is what the frontend acts on.
-        if let Some(next) = self.status.lock().await.on_send() {
-            publish_status(&self.id, next, app).await;
+        if let Some(next) = self.handles.status.lock().await.on_send() {
+            publish_status(&self.handles.session_id, next, app).await;
         }
 
         Ok(())
@@ -2182,14 +2264,14 @@ impl Session {
     ) -> QueuedMessage {
         let message = QueuedMessage {
             id: Uuid::now_v7().to_string(),
-            session_id: self.id.clone(),
+            session_id: self.handles.session_id.clone(),
             text: prompt.to_string(),
             attachment_paths: attachment_paths.to_vec(),
             from,
             issues: issues.to_vec(),
             sent_at: sent_at.map(str::to_string),
         };
-        self.queued.lock().await.push(message.clone());
+        self.handles.queued.lock().await.push(message.clone());
         message
     }
 
@@ -2217,7 +2299,7 @@ impl Session {
         from: Option<MessageSender>,
         sent_at: Option<&str>,
     ) -> Option<QueuedMessage> {
-        let _turn = self.status.lock().await;
+        let _turn = self.handles.status.lock().await;
         if !_turn.turn_in_flight() {
             return None;
         }
@@ -2234,7 +2316,7 @@ impl Session {
     /// leaving the composer alone: the prompt is on its way and the frontend
     /// learns so from the `user_message` that follows.
     pub async fn cancel_queued(&self) -> Option<QueuedMessage> {
-        self.queued.lock().await.pop()
+        self.handles.queued.lock().await.pop()
     }
 
     /// Holds a prompt and immediately hands it over, for the case where a tool
@@ -2253,17 +2335,7 @@ impl Session {
     ) {
         self.queue_msg(prompt, attachment_paths, issues, from, sent_at)
             .await;
-        flush_queued(
-            &self.id,
-            self.harness,
-            &self.queued,
-            &self.seq,
-            &self.events,
-            &self.stdin,
-            &self.status,
-            app,
-        )
-        .await;
+        flush_queued(&self.handles, self.harness, &self.stdin, app).await;
     }
 
     /// Switches the model of a running child. mcode takes it as a session config
@@ -2350,7 +2422,7 @@ impl Session {
     /// next boundary delivers it exactly as if this had not been asked.
     pub async fn steer_queued(&mut self, app: &AppHandle) -> Result<usize> {
         let held: Vec<QueuedMessage> = {
-            let mut queue = self.queued.lock().await;
+            let mut queue = self.handles.queued.lock().await;
             std::mem::take(&mut *queue)
         };
         if held.is_empty() {
@@ -2361,7 +2433,7 @@ impl Session {
         for message in &held {
             texts.push(
                 deliver_prompt(
-                    &self.id,
+                    &self.handles,
                     self.harness,
                     &message.text,
                     &message.attachment_paths,
@@ -2371,8 +2443,6 @@ impl Session {
                     false,
                     message.from.clone(),
                     message.sent_at.as_deref(),
-                    &self.seq,
-                    &self.events,
                     &self.stdin,
                     app,
                 )
@@ -2386,7 +2456,7 @@ impl Session {
             // Put every one back, in order, and say why — a held prompt that
             // vanished into a failed call would be a sentence the reader wrote
             // and never saw again.
-            let mut queue = self.queued.lock().await;
+            let mut queue = self.handles.queued.lock().await;
             queue.splice(0..0, held);
             return Err(e);
         }
@@ -2409,7 +2479,8 @@ impl Session {
     ) -> Result<()> {
         let (pending, chosen) = {
             let mut guard = self
-                .pending_permissions
+                .handles
+                .pending
                 .lock()
                 .expect("pending permissions mutex poisoned");
 
@@ -2465,6 +2536,7 @@ impl Session {
     ) -> Result<()> {
         let (pending, outcome, answered) = {
             let mut guard = self
+                .handles
                 .pending_questions
                 .lock()
                 .expect("pending questions mutex poisoned");
@@ -2518,6 +2590,7 @@ impl Session {
     pub async fn cancel_question(&mut self, request_id: &str, app: &AppHandle) -> Result<()> {
         let pending = {
             let mut guard = self
+                .handles
                 .pending_questions
                 .lock()
                 .expect("pending questions mutex poisoned");
@@ -2554,9 +2627,9 @@ impl Session {
     fn emit_decision(&self, payload: AgentEventPayload, app: &AppHandle) -> Result<()> {
         let decision = AgentEvent {
             id: Uuid::now_v7().to_string(),
-            session_id: self.id.clone(),
+            session_id: self.handles.session_id.clone(),
             harness: self.harness,
-            seq: self.seq.fetch_add(1, Relaxed),
+            seq: self.handles.seq.fetch_add(1, Relaxed),
             ts: now_rfc3339(),
             turn_id: None,
             subagent: None,
@@ -2569,23 +2642,18 @@ impl Session {
         Ok(())
     }
 
-    /// Ends the child process. The caller has already taken the session out of
-    /// the map — that removal, not `self` by value, is what stops a stopped
-    /// session being reused.
+    /// Ends this conversation, and the child with it where it was the last one
+    /// open on it. The caller has already taken the session out of the map —
+    /// that removal, not `self` by value, is what stops a stopped session being
+    /// reused.
     ///
-    /// pi is asked to exit rather than killed, and that is not politeness: it
-    /// holds `~/.pi/agent/auth.json.lock` while it runs and a `SIGKILL`ed one
-    /// leaves it behind, so the cost of killing lands on the **next** pi, which
-    /// waits that stale lock out for ~30s before answering anything. Every
-    /// caller here is one where another pi follows — a respawn for an effort
-    /// change, an update install, a delete and retry.
+    /// **One session closing must not take the others' child.** `mcode::close`
+    /// closes this conversation alone unless it was the last, in which case the
+    /// process is given the same grace every child here gets and killed if it is
+    /// still there.
     pub async fn kill(&mut self) -> Result<()> {
-        // The session is closed and the pipe handed an EOF before the process
-        // is touched: mcode runs its own teardown on a clean exit and a
-        // `SIGKILL` would leave that half-written. `shutdown` waits for it, then
-        // kills whatever is still there.
         let Transport::Acp(session) = &self.stdin;
-        mcode::shutdown(&mut self.child, session).await;
+        mcode::close(&self.agent, session).await;
 
         Ok(())
     }
@@ -2596,10 +2664,10 @@ impl Session {
 /// place it enters the transcript.
 ///
 /// Free rather than a method because a queued prompt is delivered from the
-/// stdout task, which holds the same handles but no `Session`.
+/// stdout task, which holds the session's handles but no `Session`.
 #[allow(clippy::too_many_arguments)]
 async fn deliver_prompt(
-    session_id: &str,
+    handles: &SessionHandles,
     // Whose conversation this prompt joins. Recorded on the event rather than
     // assumed, since this is the one event hz mints itself for every harness.
     harness: Harness,
@@ -2625,17 +2693,16 @@ async fn deliver_prompt(
     // `None` for a prompt nothing pressed — a relayed message, `hz new` — which
     // is stamped now, the only thing left to say.
     sent_at: Option<&str>,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
     transport: &Transport,
     app: &AppHandle,
 ) -> Result<String> {
-    let seq = seq.fetch_add(1, Relaxed);
+    let seq = handles.seq.fetch_add(1, Relaxed);
 
     // Ahead of the event, because it is what decides the event's own text:
     // a non-image attachment becomes an `@path` mention on the prompt, and
     // the transcript has to show what the model was actually given.
-    let prepared = attachments::prepare(session_id, prompt, attachment_paths, harness).await?;
+    let prepared =
+        attachments::prepare(&handles.session_id, prompt, attachment_paths, harness).await?;
     // The event records what the reader wrote, the wire carries what the model
     // needs. They differ for an image: its path is the model's only way to the
     // file, and the transcript already draws the picture it names.
@@ -2663,7 +2730,7 @@ async fn deliver_prompt(
     };
     let agent_event = AgentEvent {
         id: Uuid::now_v7().to_string(),
-        session_id: session_id.to_string(),
+        session_id: handles.session_id.clone(),
         harness,
         seq,
         ts: prompt_ts(sent_at),
@@ -2676,11 +2743,11 @@ async fn deliver_prompt(
 
     app.emit("agent_event", &agent_event)?;
 
-    let mut events_guard = events.lock().await;
+    let mut events_guard = handles.events.lock().await;
     events_guard.push(agent_event.clone());
     drop(events_guard);
 
-    append_session_event(session_id, agent_event).await?;
+    append_session_event(&handles.session_id, agent_event).await?;
 
     // Logged, not sent: the caller holds the text and opens the turn itself.
     if !send {
@@ -2705,23 +2772,17 @@ async fn deliver_prompt(
     Ok(prompt_for_model)
 }
 
-/// The handles a read loop needs once its harness has stopped being relevant.
+/// What a read loop needs once its harness has stopped being relevant: the
+/// session a line belongs to, whose conversation it is, and where to write.
 ///
-/// Bundled rather than passed loose because [`ingest`] takes eight of them and
-/// every harness's reader holds the same set.
+/// Bundled because [`ingest`] reaches for six things at once and every harness's
+/// reader holds the same set — and because the *session* is the half that moves:
+/// a child serving more than one conversation files each line against the id it
+/// carries, so which handles this is can differ from one line to the next.
 pub struct Ingest<'a> {
-    pub session_id: &'a str,
-    /// Stamped on prompts flushed from the queue, which this mints itself.
+    pub handles: &'a SessionHandles,
     pub harness: Harness,
-    /// The session's own tree, for the turn-end snapshot. Differs from the
-    /// spawn directory on a worktree creation.
-    pub session_cwd: &'a str,
-    pub events: &'a Arc<Mutex<Vec<AgentEvent>>>,
-    pub status: &'a Arc<Mutex<StatusTracker>>,
-    pub queued: &'a QueuedMessages,
-    pub flush_seq: &'a Arc<AtomicU64>,
-    pub flush_events: &'a Arc<Mutex<Vec<AgentEvent>>>,
-    pub flush_transport: &'a Transport,
+    pub transport: &'a Transport,
 }
 
 /// Everything that happens to a mapped event, from the snapshot on a closing
@@ -2741,14 +2802,14 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // subagent's writes land after this, but its report-back turn closes
     // with its own, fresher snapshot.
     if let AgentEventPayload::TurnCompleted { ref mut head, .. } = agent_event.payload {
-        *head = crate::git::snapshot_tree(ctx.session_cwd).await;
+        *head = crate::git::snapshot_tree(&ctx.handles.session_cwd).await;
     }
 
     // Here for the same reason: only the session layer knows which session's
     // directory the bytes belong in. Before the emit below, so the live
     // transcript and the replayed one load the same file.
     if let AgentEventPayload::ToolCallCompleted { ref mut result, .. } = agent_event.payload {
-        crate::attachments::archive_result_images(ctx.session_id, &mut result.images).await;
+        crate::attachments::archive_result_images(&ctx.handles.session_id, &mut result.images).await;
     }
 
     // Read before the event is moved into the log below. These three are
@@ -2804,15 +2865,15 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // Order is status→queued, matching every other holder of both, so no
     // deadlock: nothing holds `queued` while awaiting `status`.
     let next_status = {
-        let mut tracker = ctx.status.lock().await;
+        let mut tracker = ctx.handles.status.lock().await;
         let before = tracker.status();
         if agent_event.subagent.is_none() {
             tracker.note_tool_call(&agent_event.payload);
         }
         tracker.on_event(&agent_event.payload);
-        let reserve = matches!(ctx.flush_transport, Transport::Acp(_))
+        let reserve = matches!(ctx.transport, Transport::Acp(_))
             && matches!(agent_event.payload, AgentEventPayload::TurnCompleted { .. })
-            && !ctx.queued.lock().await.is_empty();
+            && !ctx.handles.queued.lock().await.is_empty();
         if reserve {
             tracker.on_send();
         }
@@ -2820,13 +2881,17 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
         (after != before).then_some(after)
     };
     if let Some(next) = next_status {
-        publish_status(ctx.session_id, next, app).await;
+        publish_status(&ctx.handles.session_id, next, app).await;
     }
 
     // Live-view only, never retained. Deltas are superseded by the
     // committed event; a usage update is a running counter whose final
     // value lands on `turn_completed` — and `thinking_tokens` alone fires
     // dozens of times per turn, which would be most of a session's log.
+    //
+    // UsageRecords is deliberately absent: its cumulative rows are durable
+    // accounting, not a live counter, and the dashboard reads them back from
+    // the session log after the runtime has gone away.
     //
     // A permission request is here for a different reason: it is a question,
     // and it can only be answered by the child that asked. That child does
@@ -2874,9 +2939,9 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
         }
     }
 
-    ctx.events.lock().await.push(agent_event.clone());
+    ctx.handles.events.lock().await.push(agent_event.clone());
 
-    if let Err(err) = append_session_event(ctx.session_id, agent_event).await {
+    if let Err(err) = append_session_event(&ctx.handles.session_id, agent_event).await {
         eprintln!("[write err] {err}");
     }
 
@@ -2893,17 +2958,7 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // itself and the session stopped dead at the next tool boundary. mcode's
     // write is a detached request — it hands the line to the writer task and
     // returns — so there is nothing to wait on and no reason to spawn.
-    flush_queued(
-        ctx.session_id,
-        ctx.harness,
-        ctx.queued,
-        ctx.flush_seq,
-        ctx.flush_events,
-        ctx.flush_transport,
-        ctx.status,
-        app,
-    )
-    .await;
+    flush_queued(ctx.handles, ctx.harness, ctx.transport, app).await;
 }
 
 /// Hands every held prompt to the child, oldest first.
@@ -2921,13 +2976,6 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
 ///
 /// Failures are logged, not propagated — the stdout loop must survive anything,
 /// and a prompt that cannot be written is one the user can retype.
-// Eight arguments, and every one of them distinct plumbing: a session id, its
-// harness, the counter, the event list, the transport, the status tracker and
-// the app handle. `Ingest` groups the same set for the read loop and exists for
-// the same reason — this is that grouping one function short of being worth a
-// second struct, and a struct-of-handles that only ever has one literal built
-// at its call site is the list with more ceremony. What would earn one is a
-// *request*: `SendRequest` has three callers building it from three places.
 /// What a goal call's failure says to the reader.
 ///
 /// The wire's own error carries a code the runtime decides on, and the sentence
@@ -2940,38 +2988,30 @@ fn format_goal_error(err: anyhow::Error) -> String {
     format!("{err:#}")
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn flush_queued(
-    session_id: &str,
+    handles: &SessionHandles,
     harness: Harness,
-    queued: &QueuedMessages,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
     transport: &Transport,
-    status: &Arc<Mutex<StatusTracker>>,
     app: &AppHandle,
 ) {
     // ACP drains one prompt per turn and reserves the next in `ingest`, so its
     // release is a two-lock affair the batch model has no answer to. Its own
     // path.
     if matches!(transport, Transport::Acp(_)) {
-        flush_acp(session_id, harness, queued, seq, events, transport, status, app).await;
+        flush_acp(handles, harness, transport, app).await;
         return;
     }
 
     // Every other transport takes the whole batch at a boundary. Drained under
     // one lock so a cancel arriving mid-flush either takes a message back before
     // any of this or finds nothing — never races a half-written batch.
-    let batch: Vec<QueuedMessage> = std::mem::take(&mut *queued.lock().await);
+    let batch: Vec<QueuedMessage> = std::mem::take(&mut *handles.queued.lock().await);
     if batch.is_empty() {
         return;
     }
 
     let mut delivered = 0;
-    deliver_batch(
-        batch, session_id, harness, seq, events, transport, app, &mut delivered,
-    )
-    .await;
+    deliver_batch(batch, handles, harness, transport, app, &mut delivered).await;
 
     // A delivered batch at `turn_completed` opens a turn the CLI has not
     // announced yet, so without this the composer reads idle for the second or
@@ -2985,8 +3025,8 @@ pub async fn flush_queued(
     if delivered == 0 {
         return;
     }
-    if let Some(next) = status.lock().await.on_send() {
-        publish_status(session_id, next, app).await;
+    if let Some(next) = handles.status.lock().await.on_send() {
+        publish_status(&handles.session_id, next, app).await;
     }
 }
 
@@ -3015,28 +3055,16 @@ pub async fn flush_queued(
 ///
 /// Order is status -> queued, as everywhere; nothing holds queued while
 /// awaiting status, so no deadlock.
-// Eight arguments, and every one of them distinct plumbing: a session id, its
-// harness, the counter, the event list, the transport, the status tracker and
-// the app handle. `Ingest` groups the same set for the read loop and exists for
-// the same reason — this is that grouping one function short of being worth a
-// second struct, and a struct-of-handles that only ever has one literal built
-// at its call site is the list with more ceremony. What would earn one is a
-// *request*: `SendRequest` has three callers building it from three places.
-#[allow(clippy::too_many_arguments)]
 async fn flush_acp(
-    session_id: &str,
+    handles: &SessionHandles,
     harness: Harness,
-    queued: &QueuedMessages,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
     transport: &Transport,
-    status: &Arc<Mutex<StatusTracker>>,
     app: &AppHandle,
 ) {
     loop {
         let batch: Vec<QueuedMessage> = {
-            let mut tracker = status.lock().await;
-            let mut held = queued.lock().await;
+            let mut tracker = handles.status.lock().await;
+            let mut held = handles.queued.lock().await;
             let batch = std::mem::take(&mut *held);
             // Nothing to hand over: the whole queue failed to send, or a cancel
             // emptied it. Give the reserved turn back under both locks, or the
@@ -3048,7 +3076,7 @@ async fn flush_acp(
                 drop(held);
                 drop(tracker);
                 if let Some(next) = released {
-                    publish_status(session_id, next, app).await;
+                    publish_status(&handles.session_id, next, app).await;
                 }
                 return;
             }
@@ -3063,7 +3091,7 @@ async fn flush_acp(
         let mut texts = Vec::new();
         for message in batch {
             match deliver_prompt(
-                session_id,
+                handles,
                 harness,
                 &message.text,
                 &message.attachment_paths,
@@ -3074,8 +3102,6 @@ async fn flush_acp(
                 false,
                 message.from,
                 message.sent_at.as_deref(),
-                seq,
-                events,
                 transport,
                 app,
             )
@@ -3084,8 +3110,7 @@ async fn flush_acp(
                 Ok(text) => texts.push(text),
                 Err(err) => {
                     eprintln!("[queued flush err] {err}");
-                    report_send_failure(session_id, harness, &err.to_string(), seq, events, app)
-                        .await;
+                    report_send_failure(handles, harness, &err.to_string(), app).await;
                 }
             }
         }
@@ -3100,8 +3125,7 @@ async fn flush_acp(
                 Ok(()) => return,
                 Err(err) => {
                     eprintln!("[queued flush err] {err}");
-                    report_send_failure(session_id, harness, &err.to_string(), seq, events, app)
-                        .await;
+                    report_send_failure(handles, harness, &err.to_string(), app).await;
                 }
             }
         }
@@ -3113,20 +3137,10 @@ async fn flush_acp(
 }
 
 /// Hands one drained batch to the child, oldest first, counting what landed.
-// Eight arguments, and every one of them distinct plumbing: a session id, its
-// harness, the counter, the event list, the transport, the status tracker and
-// the app handle. `Ingest` groups the same set for the read loop and exists for
-// the same reason — this is that grouping one function short of being worth a
-// second struct, and a struct-of-handles that only ever has one literal built
-// at its call site is the list with more ceremony. What would earn one is a
-// *request*: `SendRequest` has three callers building it from three places.
-#[allow(clippy::too_many_arguments)]
 async fn deliver_batch(
     batch: Vec<QueuedMessage>,
-    session_id: &str,
+    handles: &SessionHandles,
     harness: Harness,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
     transport: &Transport,
     app: &AppHandle,
     delivered: &mut usize,
@@ -3138,7 +3152,7 @@ async fn deliver_batch(
         // range in two and credit it with only the work that came after this
         // prompt. `None` makes `changeRange` walk past it to the real prompt.
         match deliver_prompt(
-            session_id,
+            handles,
             harness,
             &message.text,
             &message.attachment_paths,
@@ -3148,8 +3162,6 @@ async fn deliver_batch(
             true,
             message.from,
             message.sent_at.as_deref(),
-            seq,
-            events,
             transport,
             app,
         )
@@ -3164,7 +3176,7 @@ async fn deliver_batch(
                 // session that will never answer it, with nothing saying why.
                 // It is out of the queue for good: retrying would mean a second
                 // copy of an event already persisted.
-                report_send_failure(session_id, harness, &err.to_string(), seq, events, app).await;
+                report_send_failure(handles, harness, &err.to_string(), app).await;
             }
         }
     }
@@ -3178,15 +3190,13 @@ async fn deliver_batch(
 /// the next prompt may well go through — the write is what failed, not the
 /// conversation.
 async fn report_send_failure(
-    session_id: &str,
+    handles: &SessionHandles,
     harness: Harness,
     message: &str,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
     app: &AppHandle,
 ) {
     let message = format!("This message could not be sent: {message}");
-    report_session_error(session_id, harness, &message, seq, events, app).await;
+    report_session_error(handles, harness, &message, app).await;
 }
 
 /// Files a sentence about the session itself — not about a turn — as a
@@ -3197,18 +3207,16 @@ async fn report_send_failure(
 /// because the session is intact either way, and the reader needs the sentence
 /// far more than the turn needs to be marked failed.
 pub(crate) async fn report_session_error(
-    session_id: &str,
+    handles: &SessionHandles,
     harness: Harness,
     message: &str,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
     app: &AppHandle,
 ) {
     let agent_event = AgentEvent {
         id: Uuid::now_v7().to_string(),
-        session_id: session_id.to_string(),
+        session_id: handles.session_id.clone(),
         harness,
-        seq: seq.fetch_add(1, Relaxed),
+        seq: handles.seq.fetch_add(1, Relaxed),
         ts: now_rfc3339(),
         turn_id: None,
         subagent: None,
@@ -3223,8 +3231,8 @@ pub(crate) async fn report_session_error(
     if let Err(err) = app.emit("agent_event", &agent_event) {
         eprintln!("[session error emit err] {err}");
     }
-    events.lock().await.push(agent_event.clone());
-    if let Err(err) = append_session_event(session_id, agent_event).await {
+    handles.events.lock().await.push(agent_event.clone());
+    if let Err(err) = append_session_event(&handles.session_id, agent_event).await {
         eprintln!("[session error log err] {err}");
     }
 }
@@ -3242,15 +3250,8 @@ pub(crate) async fn report_session_error(
 /// Each stranded prompt gets its own bubble and a failure beside it, so a queued
 /// row the composer is showing resolves into the transcript rather than sitting
 /// pending forever, and the reader sees the prompt was lost and can resend it.
-pub async fn strand_queue_on_exit(
-    session_id: &str,
-    harness: Harness,
-    queued: &QueuedMessages,
-    seq: &Arc<AtomicU64>,
-    events: &Arc<Mutex<Vec<AgentEvent>>>,
-    app: &AppHandle,
-) {
-    let stranded: Vec<QueuedMessage> = std::mem::take(&mut *queued.lock().await);
+pub async fn strand_queue_on_exit(handles: &SessionHandles, harness: Harness, app: &AppHandle) {
+    let stranded: Vec<QueuedMessage> = std::mem::take(&mut *handles.queued.lock().await);
     for message in stranded {
         // The same preparation delivery does, so the bubble carries exactly what
         // would have been sent: images resolved to `ImageRef`, non-image
@@ -3258,32 +3259,36 @@ pub async fn strand_queue_on_exit(
         // row retiring the queued prompt would drop its attachments from the
         // transcript while telling the reader to resend it. Best effort — a
         // failed prep still surfaces the text rather than losing the prompt.
-        let (text, images) =
-            match attachments::prepare(session_id, &message.text, &message.attachment_paths, harness)
-                .await
-            {
-                Ok(prepared) => (
-                    prepared.display,
-                    prepared
-                        .images
-                        .iter()
-                        .map(|i| ImageRef {
-                            path: Some(i.stored_path.clone()),
-                            url: None,
-                            mime_type: Some(i.mime_type.clone()),
-                        })
-                        .collect(),
-                ),
-                Err(err) => {
-                    eprintln!("[fx strand prepare err] {err:#}");
-                    (message.text.clone(), Vec::new())
-                }
-            };
+        let prepared = attachments::prepare(
+            &handles.session_id,
+            &message.text,
+            &message.attachment_paths,
+            harness,
+        )
+        .await;
+        let (text, images) = match prepared {
+            Ok(prepared) => (
+                prepared.display,
+                prepared
+                    .images
+                    .iter()
+                    .map(|i| ImageRef {
+                        path: Some(i.stored_path.clone()),
+                        url: None,
+                        mime_type: Some(i.mime_type.clone()),
+                    })
+                    .collect(),
+            ),
+            Err(err) => {
+                eprintln!("[fx strand prepare err] {err:#}");
+                (message.text.clone(), Vec::new())
+            }
+        };
         let bubble = AgentEvent {
             id: Uuid::now_v7().to_string(),
-            session_id: session_id.to_string(),
+            session_id: handles.session_id.clone(),
             harness,
-            seq: seq.fetch_add(1, Relaxed),
+            seq: handles.seq.fetch_add(1, Relaxed),
             ts: prompt_ts(message.sent_at.as_deref()),
             turn_id: None,
             subagent: None,
@@ -3301,16 +3306,14 @@ pub async fn strand_queue_on_exit(
         if let Err(err) = app.emit("agent_event", &bubble) {
             eprintln!("[fx strand emit err] {err}");
         }
-        events.lock().await.push(bubble.clone());
-        if let Err(err) = append_session_event(session_id, bubble).await {
+        handles.events.lock().await.push(bubble.clone());
+        if let Err(err) = append_session_event(&handles.session_id, bubble).await {
             eprintln!("[fx strand log err] {err}");
         }
         report_send_failure(
-            session_id,
+            handles,
             harness,
             "the agent exited before this queued message was sent — send it again to retry",
-            seq,
-            events,
             app,
         )
         .await;

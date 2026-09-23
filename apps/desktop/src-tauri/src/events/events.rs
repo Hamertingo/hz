@@ -20,7 +20,7 @@ use ts_rs::TS;
 
 pub mod usage;
 
-pub use usage::{ContextWindow, ModelUsage, RateLimit, Usage};
+pub use usage::{ContextWindow, ModelUsage, RateLimit, Usage, UsageRecord};
 
 // `Harness` is a harness concept, not an event one; it lives in `crate::harness`
 // and is used here only as a field type.
@@ -282,6 +282,12 @@ pub enum AgentEventPayload {
     /// Debounce these in the mapper: harnesses emit token counts far more often
     /// than the figures meaningfully change.
     UsageUpdate(Usage),
+    /// Cumulative usage rows received from a runtime. Unlike `UsageUpdate`,
+    /// this event is historical accounting and is retained in the session log.
+    UsageRecords {
+        #[serde(default)]
+        rows: Vec<UsageRecord>,
+    },
     /// The plan's usage limit, emitted **only when there is something to act
     /// on** — the limit is reached, or requests have moved to usage billing. A
     /// session running comfortably under its limit reports the fact constantly
@@ -1019,6 +1025,28 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn usage_records_accept_old_rows_with_optional_fields_missing() {
+        let payload: AgentEventPayload = serde_json::from_str(
+            r#"{"type":"usage_records","rows":[{"id":7,"inputTokens":12}]}"#,
+        )
+        .unwrap();
+
+        let AgentEventPayload::UsageRecords { rows } = &payload else {
+            panic!("usage records payload");
+        };
+        assert_eq!(rows[0].id, Some(7));
+        assert_eq!(rows[0].input_tokens, Some(12));
+        assert_eq!(rows[0].cost_usd, None);
+
+        let encoded = serde_json::to_string(&payload).unwrap();
+        assert!(encoded.contains(r#""type":"usage_records""#));
+        let AgentEventPayload::UsageRecords { rows } = payload else { unreachable!() };
+        let decoded: AgentEventPayload = serde_json::from_str(&encoded).unwrap();
+        assert!(matches!(decoded, AgentEventPayload::UsageRecords { rows: decoded_rows }
+            if decoded_rows == rows));
     }
 
     /// Rule 1 corollary: old code reads new lines. Unknown fields are ignored,

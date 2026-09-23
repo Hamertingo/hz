@@ -408,7 +408,13 @@ async fn dispatch(request: Request, app: &AppHandle) -> Result<Response> {
 async fn browse(request: hz_proto::BrowserRequest) -> Result<Response> {
     #[cfg(all(feature = "cef", target_os = "macos"))]
     {
-        Ok(match crate::cef::automation::run(&request.session_id, request.action).await {
+        // Addressed like every other session id arriving from an agent: the
+        // browser is keyed by this app's uuid, and `hz browser` defaults its
+        // target to whatever the environment named.
+        let Some(session) = resolved_session(Some(&request.session_id)).await else {
+            return Ok(Response::error(format!("no session {}", request.session_id)));
+        };
+        Ok(match crate::cef::automation::run(&session.session_id, request.action).await {
             Ok((output, data)) => Response::Browser { output, data },
             Err(message) => Response::error(message),
         })
@@ -442,8 +448,12 @@ async fn link_issues(link: LinkIssues) -> Result<Response> {
 
     // An unknown session is answered before anything is written, so a typo in
     // the id cannot half-apply a list.
-    store::get_session_index_item(&link.session_id)
-        .await?
+    //
+    // Through the address funnel because this is the command an agent reaches
+    // for with no id at all: `hz issue link DRA-53` takes the session out of its
+    // environment, which is the agent's own name for it.
+    resolved_session(Some(&link.session_id))
+        .await
         .with_context(|| format!("no session {}", link.session_id))?;
 
     let mut linked = Vec::new();
@@ -490,10 +500,10 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
     }
 
     let parent = match create.parent_session_id.as_deref() {
-        Some(id) => Some(
-            store::get_session_index_item(id)
-                .await?
-                .with_context(|| format!("no session {id}"))?,
+        Some(named) => Some(
+            resolved_session(Some(named))
+                .await
+                .with_context(|| format!("no session {named}"))?,
         ),
         None => None,
     };
@@ -571,7 +581,10 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
                 // CLI has no `--agent` to carry it today.
                 agent_name: None,
                 is_new_session: true,
-                parent_session_id: create.parent_session_id.as_deref(),
+                // The *resolved* id, which is what the sidebar nests by and what
+                // the depth guard walks: a caller naming the agent's own id would
+                // otherwise write a parent nothing can look up.
+                parent_session_id: parent.as_ref().map(|p| p.session_id.as_str()),
                 // The creating session is this one's *parent*, which the sidebar
                 // already draws by nesting the row. Its opening prompt is the
                 // brief, not a message relayed into a conversation already under
@@ -656,10 +669,7 @@ async fn list_sessions(list: ListSessions) -> Result<Response> {
     let scope = if list.all {
         None
     } else {
-        let parent = match list.parent_session_id.as_deref() {
-            Some(id) => store::get_session_index_item(id).await?,
-            None => None,
-        };
+        let parent = resolved_session(list.parent_session_id.as_deref()).await;
         project_from(list.project_path.as_deref(), parent.as_ref())
     };
 
@@ -786,15 +796,21 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
         bail!("a message needs some text");
     }
 
-    let target = store::get_session_index_item(&send.session_id)
-        .await?
+    let target = resolved_session(Some(&send.session_id))
+        .await
         .with_context(|| format!("no session {}", send.session_id))?;
 
-    if target.session_id == send.from_session_id.clone().unwrap_or_default() {
+    let from = resolved_session(send.from_session_id.as_deref())
+        .await
+        .map(|item| MessageSender {
+            session_id: item.session_id,
+            title: item.title,
+        });
+
+    if target.session_id == from.as_ref().map(|f| f.session_id.as_str()).unwrap_or_default() {
         bail!("a session cannot send a message to itself");
     }
 
-    let from = sender(&send).await;
     let prompt = attribute(&send.prompt, from.as_ref());
 
     let manager = app.state::<SessionManager>();
@@ -872,23 +888,26 @@ fn attribute(prompt: &str, from: Option<&MessageSender>) -> String {
     }
 }
 
-/// Who this message is from, as data the transcript can draw.
+/// The session a request addresses, read off the index.
 ///
-/// `None` for a call from the user's own terminal — there is no session behind
-/// it — and for one whose sender has since been deleted. One lookup answers for
-/// both readers, so neither the prefix nor the card claims a session the index
-/// can no longer name.
-async fn sender(send: &SendMessage) -> Option<MessageSender> {
-    let from = send.from_session_id.as_deref()?;
+/// **Every session address arriving from an agent goes through here**, and it is
+/// one rule rather than one per field: the id an agent holds is the one the
+/// runtime minted for the session it is serving — that is the only id it can put
+/// in a tool's environment, since one process serves several sessions and only
+/// the turn knows which one is running — while this app files by its own uuid.
+/// [`store::session_named`] reads both spellings off the pairing the index
+/// already carries, so nothing downstream has to know which was sent.
+///
+/// `None` for a call from a person's own terminal, which names no session at
+/// all, and for one whose session has since been deleted — one answer for both,
+/// so neither the relay prefix nor the transcript's card claims a session the
+/// index can no longer name.
+async fn resolved_session(named: Option<&str>) -> Option<SessionIndexItem> {
+    let named = named?;
+    let items = store::read_index().await.ok()?;
+    let id = store::session_named(&items, named)?.to_string();
 
-    store::get_session_index_item(from)
-        .await
-        .ok()
-        .flatten()
-        .map(|item| MessageSender {
-            session_id: item.session_id,
-            title: item.title,
-        })
+    items.into_iter().find(|item| item.session_id == id)
 }
 
 /// The caller's pick, else the parent's, else the only one this build runs.

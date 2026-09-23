@@ -447,7 +447,9 @@ function applyMessageSignals(
   if (/\b(?:2045|2046|2047|1039|1041)\b/u.test(message)) signals.add('tpm_rate_limit');
   if (
     LLM_USAGE_LIMIT_UPSTREAM_STATUS_CODE_RE.test(message) ||
-    /usage[_\s-](?:limit[_\s-])?(?:reached|exceeded|not[_\s-]included)/i.test(message)
+    /usage[_\s-](?:limit[_\s-])?(?:reached|exceeded|not[_\s-]included)/i.test(message) ||
+    /\bweekly\s+(?:usage[_\s-]+)?limit\b/i.test(message) ||
+    /\bweekly\s+limit\s+for\s+(?:your\s+)?usage\b/i.test(message)
   )
     signals.add('usage_limit');
   if (

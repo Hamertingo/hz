@@ -15,6 +15,7 @@ import type {
   TuiModel,
   TuiSession,
   TuiSessionMcpServer,
+  TuiSessionUsageRow,
 } from '../runtime/port.js';
 import { buildTuiMessageParts } from '../runtime/stream-events.js';
 import type { TuiMessage, TuiStreamEvent } from '../runtime/stream-events.js';
@@ -35,7 +36,10 @@ import {
   resolveRootSessionId,
   supportsTuiAcpExtensionNotifications,
   TUI_ACP_EXTENSION_VERSION,
+  TUI_ACP_USAGE_RECORDS_NOTIFICATION,
   tuiAcpExtensionCapabilities,
+  type TuiAcpUsageRecord,
+  type TuiAcpUsageRecordsNotification,
 } from './extensions.js';
 import { runTuiAcpInteractions, type TuiAcpRuntimeProjection } from './interactions.js';
 import { modelSupportsVariant } from './model-selection.js';
@@ -84,6 +88,7 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
     string,
     { readonly delivered: Promise<boolean>; readonly attachment: AcpSession }
   >();
+  const sentUsageRecordKeys = new Map<string, Set<string>>();
   const planAttachments = new Map<string, AcpSession>();
   const runSessionLifecycle = createKeyedSerialExecutor();
   const runSessionMcpMutation = createKeyedSerialExecutor();
@@ -321,6 +326,14 @@ export function createTuiAcpAgent(options: CreateTuiAcpAgentOptions): acp.AgentA
     }
     hasConnected = true;
     activeConnection = connection;
+    void runUsageRecordNotifications(
+      options.runtime,
+      connection,
+      sessions,
+      runtimeParentSessionIds,
+      sentUsageRecordKeys,
+      () => supportsTuiAcpExtensionNotifications(clientCapabilities),
+    );
     void runTuiAcpInteractions({
       runtime: options.runtime,
       connection,
@@ -1281,6 +1294,23 @@ function createRuntimeControlProjections(options: {
         },
       });
     }
+    if (options.event.type === 'session.llm_retry' && options.event.status === 'waiting') {
+      const event = options.event;
+      projections.push({
+        key: `${acpSessionId}\0llm-retry`,
+        run: async (signal) => {
+          if (!isCurrentAttachment(options.sessions, acpSessionId, active, signal)) return;
+          await options.client.notify('mcode/session/api_retry', {
+            sessionId: acpSessionId,
+            attempt: event.retryAttempt,
+            maxRetries: event.maxRetries,
+            ...(event.error?.reason && event.error.reason !== 'unknown'
+              ? { reason: event.error.reason }
+              : {}),
+          });
+        },
+      });
+    }
     if (shouldRefreshMode(options.event)) {
       projections.push({
         key: `${acpSessionId}\0session-state`,
@@ -1539,6 +1569,117 @@ async function notifyUsageUpdate(
     sessionId: acpSessionId,
     update: { sessionUpdate: 'usage_update', ...update },
   });
+}
+
+async function runUsageRecordNotifications(
+  runtime: TuiAcpRuntime,
+  connection: acp.AgentConnection,
+  sessions: ReadonlyMap<string, AcpSession>,
+  runtimeParentSessionIds: ReadonlyMap<string, string>,
+  sentRecordKeys: Map<string, Set<string>>,
+  notificationsEnabled: () => boolean,
+): Promise<void> {
+  const watchSessionUsageCommits = runtime.watchSessionUsageCommits;
+  if (!watchSessionUsageCommits) return;
+  try {
+    for await (const runtimeSessionId of watchSessionUsageCommits.call(
+      runtime,
+      connection.signal,
+    )) {
+      if (connection.signal.aborted) return;
+      try {
+        await notifyUsageRecords(
+          runtime,
+          connection.client,
+          sessions,
+          runtimeParentSessionIds,
+          sentRecordKeys,
+          runtimeSessionId,
+          notificationsEnabled,
+          connection.signal,
+        );
+      } catch {
+        // Usage-record delivery is auxiliary; a later commit can retry unsent rows.
+      }
+    }
+  } catch {
+    // Losing the auxiliary usage stream must not corrupt the ACP transport.
+  }
+}
+
+async function notifyUsageRecords(
+  runtime: TuiAcpRuntime,
+  client: acp.AgentContext,
+  sessions: ReadonlyMap<string, AcpSession>,
+  runtimeParentSessionIds: ReadonlyMap<string, string>,
+  sentRecordKeys: Map<string, Set<string>>,
+  runtimeSessionId: string,
+  notificationsEnabled: () => boolean,
+  connectionSignal: AbortSignal,
+): Promise<void> {
+  if (!notificationsEnabled()) return;
+  const resolved = resolveOwnedRuntimeSession(
+    sessions,
+    runtimeParentSessionIds,
+    runtimeSessionId,
+  );
+  if (!resolved) return;
+  const [acpSessionId, active] = resolved;
+  const isCurrent = () =>
+    isCurrentAttachment(sessions, acpSessionId, active, connectionSignal);
+  if (!isCurrent()) return;
+  const usage = await runtime.getSessionUsage(runtimeSessionId);
+  if (!isCurrent()) return;
+
+  const sent = sentRecordKeys.get(runtimeSessionId) ?? new Set<string>();
+  const pendingKeys = new Set<string>();
+  const rows: TuiAcpUsageRecord[] = [];
+  for (const row of usage.rows ?? []) {
+    const key = usageRecordKey(runtimeSessionId, row);
+    if (sent.has(key) || pendingKeys.has(key)) continue;
+    pendingKeys.add(key);
+    rows.push(toAcpUsageRecord(row));
+  }
+  if (rows.length === 0 || !isCurrent()) return;
+
+  const notification: TuiAcpUsageRecordsNotification = { sessionId: acpSessionId, rows };
+  await client.notify(TUI_ACP_USAGE_RECORDS_NOTIFICATION, notification);
+  for (const key of pendingKeys) sent.add(key);
+  sentRecordKeys.set(runtimeSessionId, sent);
+}
+
+function usageRecordKey(runtimeSessionId: string, row: TuiSessionUsageRow): string {
+  if (row.id !== undefined) return `id:${row.id}`;
+  return JSON.stringify([
+    row.sessionId ?? runtimeSessionId,
+    row.turnId ?? null,
+    row.ts ?? null,
+    row.model ?? null,
+    row.inputTokens ?? null,
+    row.outputTokens ?? null,
+    row.reasoningTokens ?? null,
+    row.cacheReadTokens ?? null,
+    row.cacheWriteTokens ?? null,
+    row.costUsd ?? null,
+  ]);
+}
+
+function toAcpUsageRecord(row: TuiSessionUsageRow): TuiAcpUsageRecord {
+  return {
+    id: row.id,
+    sessionId: row.sessionId,
+    agentName: row.agentName,
+    frameworkType: row.frameworkType,
+    turnId: row.turnId,
+    model: row.model,
+    ts: row.ts,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    reasoningTokens: row.reasoningTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    cacheWriteTokens: row.cacheWriteTokens,
+    costUsd: row.costUsd,
+  };
 }
 
 function resolveAttachedRuntimeSession(

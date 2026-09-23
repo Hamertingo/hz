@@ -201,7 +201,7 @@ rawInput: string | null, title: string | null, } | { "type": "tool_call_complete
  * progress event, so it drives a live status line without expanding
  * the subagent's own events.
  */
-description: string | null, lastTool: string | null, usage: Usage | null, } | { "type": "subagent_completed", agentId: string, status: string, summary: string | null, usage: Usage | null, } | { "type": "background_tasks_changed", tasks: Array<BackgroundTask>, } | { "type": "usage_update" } & Usage | { "type": "rate_limited", 
+description: string | null, lastTool: string | null, usage: Usage | null, } | { "type": "subagent_completed", agentId: string, status: string, summary: string | null, usage: Usage | null, } | { "type": "background_tasks_changed", tasks: Array<BackgroundTask>, } | { "type": "usage_update" } & Usage | { "type": "usage_records", rows: Array<UsageRecord>, } | { "type": "rate_limited", 
 /**
  * `allowed` is the steady state and never reaches here.
  */
@@ -2955,6 +2955,16 @@ reasoningTokens: number | null, totalTokens: number | null, costUsd: number | nu
  * and every event that doesn't report one. See [`ModelUsage`].
  */
 perModel: Array<ModelUsage>, };
+
+/**
+ * One cumulative usage row emitted by an agent runtime.
+ *
+ * Rows are optional at the wire boundary so a runtime can add fields without
+ * invalidating an older desktop. `session_id` is retained in the row when the
+ * runtime supplies it; the desktop fills it from the enclosing event while
+ * scanning older logs.
+ */
+export type UsageRecord = { id: number | null, sessionId: string | null, agentName: string | null, frameworkType: string | null, turnId: string | null, model: string | null, ts: number | null, inputTokens: number | null, outputTokens: number | null, reasoningTokens: number | null, cacheReadTokens: number | null, cacheWriteTokens: number | null, costUsd: number | null, };
 
 /**
  * The last verifier's verdict on a goal.
