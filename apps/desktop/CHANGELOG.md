@@ -5,6 +5,23 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.15
+
+**The same content as 0.20.14, with the Windows installer that release shipped
+without.** 0.20.14 published its macOS assets and then failed in the step that
+uploads the NSIS installer: the glob that names the version was written
+`*0.20.14-setup.exe`, while `tauri` writes `Hyze Code_0.20.14_x64-setup.exe` — the
+architecture sits between the version and `-setup`, so the pattern matched nothing
+and the guard fired on a bundle that was complete. The pattern names that
+separator now, which still leaves a stale `0.20.8` file out.
+
+**That failure also held the updater manifest.** The job that writes
+`stable.json` declares both builds as its needs, so a red Windows job skipped it —
+and 0.20.14 sat published with nobody offered it. It now runs whatever a platform
+build did: a missing Windows fragment was already an ordinary state to that step,
+and the alternative is one platform's build failure deciding when another
+platform's users hear about a release.
+
 ## 0.20.14
 
 ### Added

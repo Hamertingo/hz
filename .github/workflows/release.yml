@@ -352,8 +352,14 @@ jobs:
           # version, so a stale file can never match.
           V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
           shopt -s nullglob
-          SETUP=("$BUNDLE"/*"$V"-setup.exe)
-          SIG=("$BUNDLE"/*"$V"-setup.exe.sig)
+          # **The version is followed by the architecture**, which is the part
+          # this got wrong: `tauri` names the file `Hyze Code_0.20.14_x64-setup.exe`,
+          # so a pattern of `*0.20.14-setup.exe` matched nothing at all — and the
+          # guard below then failed the job on a bundle that was complete. The
+          # separator is what keeps `0.20.140` from matching `0.20.14`'s pattern,
+          # which is the stale-file case this exists for.
+          SETUP=("$BUNDLE"/*"$V"_*-setup.exe)
+          SIG=("$BUNDLE"/*"$V"_*-setup.exe.sig)
 
           if [ ${#SETUP[@]} -eq 0 ] || [ ${#SIG[@]} -eq 0 ]; then
             echo "::error::the NSIS bundle is incomplete — the installer and the signature the updater verifies both have to be there"
@@ -410,6 +416,13 @@ jobs:
   # else. Downloads still come off the release.
   manifest:
     needs: [build, build-windows]
+    # **A platform that failed does not get to hold the other one's update.**
+    # `needs` alone skips this job when either build fails, which is how a red
+    # Windows job left 0.20.14 published with its macOS assets and a `stable.json`
+    # that still named the version before it — a release nobody is offered. The
+    # step below already treats a missing Windows fragment as an ordinary state,
+    # so the only thing this has to do is run.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       # Full history, so the orphan branch below can be created on this clone.
