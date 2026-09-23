@@ -1626,6 +1626,34 @@ async fn read_stdout(
                                         time_used_seconds: finished.time_used_seconds,
                                     },
                                 );
+                                // The goal's turn closes here, and it has to: the
+                                // kickoff's `user_message` is in the log and no
+                                // `turn_completed` ever comes for a turn this app
+                                // did not open — a turn left open shimmers for the
+                                // life of the session. It arrives *before* the
+                                // receipt, so the receipt lands after the turn
+                                // rather than inside it.
+                                let closed = AgentEvent::mint(
+                                    handles.session_id.clone(),
+                                    Mcode,
+                                    seq.fetch_add(1, Ordering::Relaxed),
+                                    None,
+                                    None,
+                                    crate::events::AgentEventPayload::TurnCompleted {
+                                        status: crate::events::TurnStatus::Success,
+                                        stop_reason: Some("end_turn".into()),
+                                        final_text: None,
+                                        usage: None,
+                                        // Both left as nothing to say: this turn is
+                                        // one this app never watched, and inventing
+                                        // a duration or a login failure for it would
+                                        // be a claim about work nobody saw.
+                                        duration_ms: None,
+                                        head: None,
+                                        auth_failed: false,
+                                    },
+                                );
+                                sink.send(transport.as_ref().expect("checked above"), closed).await;
                                 sink.send(transport.as_ref().expect("checked above"), receipt).await;
                             }
                         }

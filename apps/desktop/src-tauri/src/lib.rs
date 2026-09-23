@@ -738,9 +738,10 @@ async fn create_session_goal(
     objective: String,
     token_budget: Option<u64>,
     manager: State<'_, SessionManager>,
+    app: tauri::AppHandle,
 ) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
     manager
-        .create_goal(&session_id, &objective, token_budget)
+        .create_goal(&session_id, &objective, token_budget, &app)
         .await
 }
 
