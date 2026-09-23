@@ -1732,51 +1732,13 @@ impl SessionManager {
         token_budget: Option<u64>,
         app: &AppHandle,
     ) -> Result<Option<mcode::goal::Goal>, String> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| "This session's agent is not running, so its goal cannot be set.".to_string())?;
-        drop(sessions);
-
-        let session = session.lock().await;
-        let Transport::Acp(child) = &session.stdin;
-        let goal = mcode::goal::create(child, objective, token_budget)
+        let _ = app;
+        let child = self.goal_child(session_id, "set").await?;
+        mcode::goal::create(&child, objective, token_budget)
             .await
-            .map_err(format_goal_error)?;
-
-        // **The reader's own words enter the transcript here**, because the turn
-        // this starts is the runtime's and nothing about it ever reaches this
-        // wire. `create` submits the objective as a kickoff (measured: the work
-        // begins with no prompt from us), so the text *did* go to the agent — and
-        // a transcript that showed neither what was asked nor what came back made
-        // a goal look like nothing happening at all.
-        //
-        // Logged and not sent: the kickoff is already running, and a
-        // `session/prompt` of our own beside it is refused outright
-        // ("Session alrea…", -32603, measured). The turn it opens is closed by
-        // the read loop when the goal reaches `complete`.
-        deliver_prompt(
-            session_id,
-            session.harness,
-            objective,
-            &[],
-            &[],
-            None,
-            false,
-            false,
-            None,
-            None,
-            &session.seq,
-            &session.events,
-            &session.stdin,
-            app,
-        )
-        .await
-        .ok();
-
-        Ok(goal)
+            .map_err(format_goal_error)
     }
+
 
     /// Pauses or resumes this session's goal.
     pub async fn move_goal(

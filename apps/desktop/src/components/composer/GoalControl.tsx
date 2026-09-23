@@ -47,11 +47,16 @@ export default function GoalControl({
   goal,
   variant,
   onError,
+  onStart,
 }: {
   sessionId: string | null;
   goal: Goal | null;
   /// `row` draws the start button, `band` the live line. See the note above.
   variant: "row" | "band";
+  /// Starts a goal: the objective goes out as an ordinary prompt and the goal is
+  /// created on it. `App` owns that pair — see `startGoal` for why the order is
+  /// what it is.
+  onStart: (objective: string, tokenBudget: number | null) => Promise<void>;
   /// Taken *at the start* of an action rather than passed a message at the end,
   /// so a failure that lands after the reader has moved on is dropped instead of
   /// written into whatever composer they moved to. `failUnlessLeft` fits it.
@@ -101,7 +106,7 @@ export default function GoalControl({
       if (editing) {
         await invoke("edit_session_goal", { sessionId, objective: cleaned, tokenBudget });
       } else {
-        await invoke("create_session_goal", { sessionId, objective: cleaned, tokenBudget });
+        await onStart(cleaned, tokenBudget);
       }
     } catch (e) {
       fail(e);

@@ -641,6 +641,37 @@ function App() {
     [sessionIndexItems, sessions, selectedSession, failUnlessLeft, openPr],
   );
 
+  /// **A goal starts as a prompt, and that is the whole of the shape.** The
+  /// runtime's `goal/create` submits the objective as a *kickoff turn of its
+  /// own*, and everything about that turn is invisible to this app — its
+  /// content never reaches an ACP client at all, so a goal made first and
+  /// prompted never is a session that looks idle while it spends tokens.
+  ///
+  /// Sending the objective through the ordinary path instead puts the reader's
+  /// own words in the transcript and streams the work into it like any other
+  /// turn. The goal is created *after* that, and measured, the runtime does not
+  /// redo a thing: it reads the objective as already met and lands on
+  /// `complete`, which is what the receipt then reports. An objective the turn
+  /// did not satisfy leaves the goal `active`, and the runtime pursues it from
+  /// there on its own.
+  const startGoal = useCallback(
+    async (objective: string, tokenBudget: number | null) => {
+      const fail = failUnlessLeft();
+      if (!selectedSessionId) return;
+      await handleSendMsg(objective);
+      try {
+        await invoke("create_session_goal", {
+          sessionId: selectedSessionId,
+          objective,
+          tokenBudget,
+        });
+      } catch (e) {
+        fail(e);
+      }
+    },
+    [selectedSessionId, handleSendMsg, failUnlessLeft, invoke],
+  );
+
   // The chip is drawn inside a message's markdown, four components below
   // anything that could hold a callback. Registered once, for `openLink`'s
   // reason — see `lib/prRef`.
@@ -3166,6 +3197,7 @@ function App() {
                 goal={goalsBySession[selectedSessionId] ?? null}
                 variant="row"
                 onError={failUnlessLeft}
+                onStart={startGoal}
               />
             ) : null
           }
@@ -3180,6 +3212,7 @@ function App() {
                 goal={goalsBySession[selectedSessionId] ?? null}
                 variant="band"
                 onError={failUnlessLeft}
+                onStart={startGoal}
               />
             ) : null
           }
