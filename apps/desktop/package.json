@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "types": "cd src-tauri && cargo test export_bindings",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs",
     "app": "node scripts/tauri.mjs dev",

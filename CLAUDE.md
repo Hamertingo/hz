@@ -198,7 +198,7 @@ The baseline rides on `user_message.baseline`, the closing head on `turn_complet
 - **Two `cat-file` passes per file, and the split is about memory.** `--batch` is one spawn but drains stdout whole, so a 2GB blob is read in before `MAX_BLOB` could reject it; `--batch-check` returns headers only. Input is NUL-delimited (`-z`), since a rev embeds a path and a path may contain a newline. Both parsers always answer exactly as many entries as asked for, or one file's contents render under another's name.
 - **Every `git diff` here ends in `--`**, or a working-tree file *named* like a sha makes it die with "ambiguous argument". Covered by test.
 
-**Filtering `cargo test` rewrites generated TS.** ts-rs regenerates `src/types/events.ts` from whatever exports ran, so `cargo test git::` leaves only git's types and breaks the frontend build. **Always follow a filtered run with a bare `cargo test`.**
+**Filtering `cargo test` rewrites generated TS.** ts-rs regenerates `src/types/events.ts` from whatever exports ran, so `cargo test git::` leaves only git's types and breaks the frontend build. **Always follow a filtered run with a bare `cargo test`** — or, when the point was the types, run `pnpm types`: `cargo test export_bindings`, which is every export test by name and can therefore truncate nothing.
 
 ### Indicators and failed turns
 
@@ -1104,7 +1104,7 @@ mcode's three, all captured against `mcode acp` 0.4.12, all `>> `/`<< ` one line
 - `resume_fork_cancel.jsonl` — the three lifecycle calls a live turn never reaches. `session/resume` answers **no `sessionId`**; `session/fork` answers a new one; `session/cancel` is a **notification**, and the turn ends as the prompt's own response with `stopReason: "cancelled"`.
 - `todowrite.jsonl` — a plan, which the strip, the panel and the transcript's plan rows are drawn from. The list rides the call's `rawInput` under `todos`; the same list comes back on `rawOutput.details.todos`. It also carries **80 bare `{toolCallId}` updates**, which is the evidence for skipping an update that says nothing.
 
-**Filtering `cargo test` rewrites generated TS.** ts-rs regenerates `src/types/events.ts` from whatever exports ran, so `cargo test git::` leaves only git's types and breaks the frontend build. **Always follow a filtered run with a bare `cargo test`.**
+**Filtering `cargo test` rewrites generated TS.** ts-rs regenerates `src/types/events.ts` from whatever exports ran, so `cargo test git::` leaves only git's types and breaks the frontend build. **Always follow a filtered run with a bare `cargo test`** — or, when the point was the types, run `pnpm types`: `cargo test export_bindings`, which is every export test by name and can therefore truncate nothing.
 
 ## Rendering code
 
