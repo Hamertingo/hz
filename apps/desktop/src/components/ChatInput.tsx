@@ -1265,12 +1265,14 @@ export default function ChatInput({
           )}
 
           {/* All three at the far end, in the order they are read: what this is
-              for, what the agent may do, then what it has spent doing it. The
-              first one present takes the push, so the row stays flush right
-              whichever of them exist. */}
-          {goal && (
-            <span className={cn("shrink-0", !permission && !meter && "ml-auto")}>{goal}</span>
-          )}
+              for, what the agent may do, then what it has spent doing it.
+
+              **The first one present takes the push, and it takes it
+              unconditionally** — it is the leading edge of the group, so its own
+              `ml-auto` is what moves all three to the far end. Asking it to check
+              whether anything follows made the whole group bunch left against the
+              toolbar whenever all three existed, which is every session. */}
+          {goal && <span className="ml-auto shrink-0">{goal}</span>}
           {permission && (
             <span className={cn("shrink-0", !goal && "ml-auto")}>{permission}</span>
           )}

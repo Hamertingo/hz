@@ -3152,13 +3152,21 @@ function App() {
           // moves without anybody pressing anything: the runtime pauses a goal
           // whose budget ran out and completes one the agent reports finished,
           // and both arrive as a push. See `useSessions`.
+          // **Absent, not an empty node, before a session exists.** A React
+          // element is truthy whether or not the component inside it renders
+          // anything, and the row reads this prop to decide which of its three
+          // nodes takes the push to the far end — so an element that draws
+          // nothing still counted as a node and left the permission picker and
+          // the meter bunched beside "Press ⏎ to send".
           goal={
-            <GoalControl
-              key={selectedSessionId ?? "new"}
-              sessionId={selectedSessionId}
-              goal={selectedSessionId ? (goalsBySession[selectedSessionId] ?? null) : null}
-              onError={failUnlessLeft}
-            />
+            selectedSessionId ? (
+              <GoalControl
+                key={selectedSessionId}
+                sessionId={selectedSessionId}
+                goal={goalsBySession[selectedSessionId] ?? null}
+                onError={failUnlessLeft}
+              />
+            ) : null
           }
           permission={
             offersPermissionModes(harness) ? (
