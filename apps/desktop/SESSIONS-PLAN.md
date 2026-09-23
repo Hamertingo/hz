@@ -96,9 +96,27 @@ Until that is settled, sharing a child is not ready, whatever the routing does.
 
 Then, in this order, each step landing on its own and compiling:
 
-1. **`SessionHandles`**, extracted from `Session`: `events`, `status`, `queued`,
-   `seq`, `session_cwd`, and the transport. No behaviour change — `Session` owns
-   one and its methods read through it. `cargo test` is the gate.
+0. **The seam already exists, and it is `ReaderHandles`** (`mcode.rs:1228`) —
+   an owned struct the read loop is handed. Reading it changes the shape of the
+   three steps below, because it holds **two lifetimes of state in one struct**:
+
+   | per **child** (shared by every session it serves) | per **session** |
+   |---|---|
+   | `client`, `stderr_tail`, `app` | `session_id`, `session_cwd`, `pending`, `pending_questions` |
+   | | plus the four to add: `events`, `seq`, `status`, `queued` |
+
+   The transport reads and the stderr tail belong to the process; the queue, the
+   sequence, the retained events and the pending cards belong to a conversation.
+   The read loop needs the pair for one event, so the registry stores the second
+   column and the loop keeps the first.
+
+1. **The four handles join `ReaderHandles`**, and `Session` holds the same value
+   rather than the four fields — one shape instead of two, which is the
+   unification `session.rs` already asked for in a comment about `Ingest`. The
+   edit is small and now measured: **twelve** `self.events`/`self.status`/
+   `self.queued`/`self.seq` sites in `session.rs` (2155–2559), and **nothing
+   else** — the hits at 274–329 are `StatusTracker`'s own fields and a blind
+   rename breaks them. `cargo test` is the gate.
 2. **The registry**, `Mutex<HashMap<String, SessionHandles>>` keyed by the
    agent's session id, filled where the handshake hands a session over. Still
    one child per session, still one handle set in it. `cargo test`.
