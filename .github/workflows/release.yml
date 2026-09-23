@@ -345,9 +345,15 @@ jobs:
           BUNDLE="apps/desktop/src-tauri/target/release/bundle/nsis"
           ls -la "$BUNDLE"
 
+          # **The bundle directory lives inside the cached `target/`**, so an
+          # installer from an older version is still sitting there — and a glob
+          # for `*-setup.exe` picks it up, publishing a 13MB wrong-version
+          # download onto the release beside the right one. Named for this
+          # version, so a stale file can never match.
+          V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
           shopt -s nullglob
-          SETUP=("$BUNDLE"/*-setup.exe)
-          SIG=("$BUNDLE"/*-setup.exe.sig)
+          SETUP=("$BUNDLE"/*"$V"-setup.exe)
+          SIG=("$BUNDLE"/*"$V"-setup.exe.sig)
 
           if [ ${#SETUP[@]} -eq 0 ] || [ ${#SIG[@]} -eq 0 ]; then
             echo "::error::the NSIS bundle is incomplete — the installer and the signature the updater verifies both have to be there"
