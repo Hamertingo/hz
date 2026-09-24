@@ -381,17 +381,31 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE="apps/desktop/src-tauri/target/release/bundle/nsis"
-          # The setup.exe the updater downloads, and the signature it verifies
-          # it against — see the note above the publish step for why there is no
-          # archive beside it.
-          SETUP="$(find "$BUNDLE" -name '*-setup.exe' -print -quit)"
-          SIG="$(find "$BUNDLE" -name '*-setup.exe.sig' -print -quit)"
           V="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+          # The signature the updater verifies the download against, read for its
+          # *contents* — the file's own name never reaches the manifest.
+          SIG="$(find "$BUNDLE" -name '*-setup.exe.sig' -print -quit)"
+
+          # **The name the release holds, not the name on disk.** `tauri` builds
+          # the installer out of `productName` — `Hyze Code_…` — and GitHub
+          # rewrites the spaces in an asset name to dots; measured, a file
+          # uploaded as `probe name with space.txt` comes back
+          # `probe.name.with.space.txt`. So a URL built from the local basename
+          # 404s, which is what every Windows manifest said until now: the entry
+          # named a file that was never there, and no Windows install was ever
+          # offered an update. Asked for rather than guessed.
+          SETUP="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --json assets \
+            --jq '.assets[] | select(.name | endswith("-setup.exe")) | .name' | head -1)"
+          if [ -z "$SETUP" ]; then
+            echo "::error::no installer on the release to name in the manifest"
+            exit 1
+          fi
 
           jq -n \
             --arg version "$V" \
             --arg signature "$(cat "$SIG")" \
-            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$SETUP")" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${SETUP}" \
             '{version: $version, platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
             > latest-windows.json
 
