@@ -1,6 +1,6 @@
 {
   "version": "0.20.15",
-  "notes": "**The same content as 0.20.14, with the Windows installer that release shipped\nwithout.** 0.20.14 published its macOS assets and then failed in the step that\nuploads the NSIS installer: the glob that names the version was written\n`*0.20.14-setup.exe`, while `tauri` writes `Hyze Code_0.20.14_x64-setup.exe` — the\narchitecture sits between the version and `-setup`, so the pattern matched nothing\nand the guard fired on a bundle that was complete. The pattern names that\nseparator now, which still leaves a stale `0.20.8` file out.\n\n**That failure also held the updater manifest.** The job that writes\n`stable.json` declares both builds as its needs, so a red Windows job skipped it —\nand 0.20.14 sat published with nobody offered it. It now runs whatever a platform\nbuild did: a missing Windows fragment was already an ordinary state to that step,\nand the alternative is one platform's build failure deciding when another\nplatform's users hear about a release.",
+  "notes": "**The same content as 0.20.14, with the Windows installer that release shipped\nwithout.** 0.20.14 published its macOS assets and then failed in the step that\nuploads the NSIS installer: the glob that names the version was written\n`*0.20.14-setup.exe`, while `tauri` writes `Hyze Code_0.20.14_x64-setup.exe` \u2014 the\narchitecture sits between the version and `-setup`, so the pattern matched nothing\nand the guard fired on a bundle that was complete. The pattern names that\nseparator now, which still leaves a stale `0.20.8` file out.\n\n**That failure also held the updater manifest.** The job that writes\n`stable.json` declares both builds as its needs, so a red Windows job skipped it \u2014\nand 0.20.14 sat published with nobody offered it. It now runs whatever a platform\nbuild did: a missing Windows fragment was already an ordinary state to that step,\nand the alternative is one platform's build failure deciding when another\nplatform's users hear about a release.",
   "pub_date": "2026-09-24T00:23:27.948Z",
   "platforms": {
     "darwin-aarch64": {
@@ -21,7 +21,7 @@
     },
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWlNDQ3doK1pqNWFLa2R4aGorWlBCMFNsWVdnWHlMWElLdFZGTm9yaDNBZ3pEanBzNGJEOWRsRFZlT0ZlczlqdXAxT1NVY2EzZHpvbGJabnJHSzdaSklGUlM1bXNHa2dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjExMTU4CWZpbGU6SHl6ZSBDb2RlXzAuMjAuMTVfeDY0LXNldHVwLmV4ZQpoM1VTb1pOcndvTS9BL1Q2MlY0ZnltWnFjenorbXROZ0N3VTlLNWhDakpTVHNUZ3hCU3ZEUlg5VDFJOVVvRnBNeGUvVkxELzhGUDhDUVhKYmsvWDdDUT09Cg==",
-      "url": "https://github.com/Hamertingo/hz/releases/download/v0.20.15/Hyze Code_0.20.15_x64-setup.exe"
+      "url": "https://github.com/Hamertingo/hz/releases/download/v0.20.15/Hyze.Code_0.20.15_x64-setup.exe"
     }
   }
 }
