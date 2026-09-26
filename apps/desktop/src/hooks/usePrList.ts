@@ -159,6 +159,27 @@ export function usePrList(
     void read(false);
   }, [active, read]);
 
+  // **Coming back to the page is a read, and a forced one.** A listing sits in
+  // the cache for [`FRESH_MS`] — an hour — so a page that read its repositories
+  // on arrival drew that hour-old answer on every return, and a pull request
+  // opened in the meantime only appeared if the reader pressed Refresh. What
+  // changed did so outside this app — a colleague merged, or the reader opened
+  // it in a browser — which is the one thing a cache cannot know.
+  //
+  // Keyed on `active` alone, and read through a ref: the effect above also runs
+  // per keystroke in the search box, and a `gh` per character typed is exactly
+  // the trade this refuses. `null` is the first render, where arrival is the
+  // other effect's job and the launch prefetch is already in hand.
+  const readRef = useRef(read);
+  readRef.current = read;
+
+  const wasActive = useRef<boolean | null>(null);
+  useEffect(() => {
+    const previous = wasActive.current;
+    wasActive.current = active;
+    if (previous === false && active) void readRef.current(true);
+  }, [active]);
+
   return {
     ...page,
     refresh: useCallback(() => void read(true), [read]),

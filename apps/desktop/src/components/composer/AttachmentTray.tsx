@@ -34,20 +34,11 @@ import type { Attachment } from "@/types/events";
 export default function AttachmentTray({
   attachments,
   onRemove,
-  modelTakesImages = true,
 }: {
   attachments: Attachment[];
   onRemove: (path: string) => void;
-  /// Whether the picked model can be handed an image at all. mcode declares
-  /// `image: false`, so every image is sent as a path — and the harness's own
-  /// refusal says so in words where a guess made here could not.
-  modelTakesImages?: boolean;
 }) {
   if (!attachments.length) return null;
-
-  // Said, not enforced: removing the tile or refusing the drop would act on a
-  // guess about what the model takes.
-  const warn = !modelTakesImages && attachments.some((attachment) => attachment.isImage);
 
   return (
     <ul className="flex flex-wrap items-center gap-1.5">
@@ -103,15 +94,6 @@ export default function AttachmentTray({
           </li>
         );
       })}
-
-      {warn && (
-        // Inside the list so it wraps with the tiles it is about, and full width
-        // so it reads as a line under them rather than a tile of its own.
-        <li className="w-full text-ui text-muted-foreground">
-          This model takes text only — the image will be sent as a path, and the
-          provider may refuse it.
-        </li>
-      )}
     </ul>
   );
 }

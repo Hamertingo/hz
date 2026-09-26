@@ -14,7 +14,11 @@ import {
   type MiniMaxM3ThinkingMode,
 } from '../contracts.js';
 import { CUSTOM_PROVIDER_ID_PREFIX } from '../identity.js';
-import { lookupLocalCatalogModel, patchedModelLimits } from './model-catalog.js';
+import {
+  lookupCatalogModelById,
+  lookupLocalCatalogModel,
+  patchedModelLimits,
+} from './model-catalog.js';
 import {
   OPENPLATFORM_THINKING_VARIANTS_CAPABILITY,
   type OpenPlatformThinkingVariants,
@@ -72,12 +76,20 @@ export interface ModelRefOverride {
 
 /// The bundled catalog's `input` list for a model, under either spelling of the
 /// provider — [lookupLocalCatalogModel] takes the config's id and the gateway's
-/// own name alike.
+/// own name alike — and then under the model's id alone.
+///
+/// **The provider is the half a reseller takes away.** A gateway the catalog has
+/// never heard of leaves every model behind it unanswered, which is
+/// `support_image: false` and an image the model never sees; the id is what
+/// survives, so [lookupCatalogModelById] is asked before giving up.
 function catalogInputModalities(
   catalog: { readonly provider: string; readonly modelId: string } | undefined,
 ): readonly string[] {
   if (!catalog) return [];
-  return lookupLocalCatalogModel(catalog.provider, catalog.modelId)?.input ?? [];
+  const entry =
+    lookupLocalCatalogModel(catalog.provider, catalog.modelId) ??
+    lookupCatalogModelById(catalog.modelId);
+  return entry?.input ?? [];
 }
 
 export function modelRefForModel(
@@ -509,7 +521,10 @@ export function resolveModelThinkingProtocol(
  *
  * So the order is the entry, then the catalog, then not-supported: a gateway that
  * states modalities still wins, and the catalog answers for the far more ordinary
- * case where nobody stated anything.
+ * case where nobody stated anything. A gateway the catalog has never heard of is
+ * the last of those cases rather than a different one — every model behind it
+ * comes out text-only, vision included — so there the model's id is asked on its
+ * own.
  */
 export function capabilitiesFromModelConfig(
   modelConfig: LocalModelConfig | undefined,

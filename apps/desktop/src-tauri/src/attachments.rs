@@ -197,7 +197,7 @@ const PASTED_RETAIN: std::time::Duration = std::time::Duration::from_secs(7 * 24
 /// that keeps a recording: nothing else would ever clear the last one.
 pub async fn write_pasted_text(text: &str) -> Result<Attachment> {
     let dir = pasted_dir().await?;
-    let path = free_pasted_path(&dir).await;
+    let path = free_pasted_path(&dir, "pasted-text", "txt").await;
     fs::write(&path, text)
         .await
         .with_context(|| format!("could not write {}", path.display()))?;
@@ -206,13 +206,57 @@ pub async fn write_pasted_text(text: &str) -> Result<Attachment> {
     describe(&path.to_string_lossy()).await
 }
 
+/// Writes a pasted image out as a file and answers the attachment for it.
+///
+/// The other half of [`write_pasted_text`], and the one a reader reaches for
+/// first: a copied screenshot has no path to drop and no text to paste, so ⌘V
+/// did nothing at all. The bytes arrive as a `data:` URL because that is what
+/// the webview's clipboard hands over — the shape [`parse_data_url`] already
+/// reads in the other direction.
+///
+/// **A mime nothing here draws as a picture is refused rather than written.**
+/// [`image_extension`] is read off the same table the tray uses, so a paste this
+/// cannot name is one the composer would have drawn as a file chip — a reader
+/// pasting a picture and getting something else is worse than being told.
+pub async fn write_pasted_image(data_url: &str) -> Result<Attachment> {
+    let (mime, payload) = parse_data_url(data_url).context("not a base64 data URL")?;
+    let ext = image_extension(mime)
+        .with_context(|| format!("{mime} is not an image this app draws"))?;
+    let bytes = STANDARD
+        .decode(payload)
+        .context("could not decode the pasted image")?;
+
+    let dir = pasted_dir().await?;
+    let path = free_pasted_path(&dir, "pasted-image", ext).await;
+    fs::write(&path, &bytes)
+        .await
+        .with_context(|| format!("could not write {}", path.display()))?;
+
+    prune_pasted().await;
+    describe(&path.to_string_lossy()).await
+}
+
+/// The extension for a `data:` URL's mime, where the composer draws pictures by
+/// extension.
+///
+/// Read off [`IMAGE_TYPES`] rather than written out again: that list is what
+/// decides which files the tray shows as pictures, and a second table here could
+/// accept a paste the tray then draws as a file.
+fn image_extension(mime: &str) -> Option<&'static str> {
+    let mime = mime.split(';').next()?.trim();
+    IMAGE_TYPES
+        .iter()
+        .find(|(_, known)| *known == mime)
+        .map(|(ext, _)| *ext)
+}
+
 /// `pasted-text.txt`, or `pasted-text-2.txt` and so on where that name is taken.
-async fn free_pasted_path(dir: &Path) -> PathBuf {
+async fn free_pasted_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     for n in 1..1_000 {
         let name = if n == 1 {
-            "pasted-text.txt".to_string()
+            format!("{stem}.{ext}")
         } else {
-            format!("pasted-text-{n}.txt")
+            format!("{stem}-{n}.{ext}")
         };
         let path = dir.join(name);
         if !fs::try_exists(&path).await.unwrap_or(false) {
@@ -223,7 +267,7 @@ async fn free_pasted_path(dir: &Path) -> PathBuf {
     // A thousand pastes nobody has cleared out. Fall back to a unique name rather
     // than refusing the paste: the sweep is what this is for, and the reader's
     // text is worth more than the name.
-    dir.join(format!("pasted-text-{}.txt", Uuid::now_v7()))
+    dir.join(format!("{stem}-{}.{ext}", Uuid::now_v7()))
 }
 
 /// Deletes pasted files older than [`PASTED_RETAIN`].
@@ -585,6 +629,24 @@ mod tests {
         assert_eq!(parse_data_url("data:image/png;base64"), None);
     }
 
+    /// **A pasted picture is named by an extension the tray draws.** The mime is
+    /// what the clipboard states and the extension is what decides whether the
+    /// composer shows a thumbnail or a file chip, so the two have to agree — and
+    /// they do by construction, since this reads the same table `image_mime`
+    /// does. Both spellings of the one jpeg mime resolve to `jpg`, the first one
+    /// the table lists.
+    #[test]
+    fn a_pasted_image_is_named_by_an_extension_the_tray_draws() {
+        for (ext, mime) in IMAGE_TYPES {
+            let expected = if *ext == "jpeg" { "jpg" } else { *ext };
+            assert_eq!(image_extension(mime), Some(expected), "{mime}");
+        }
+        assert_eq!(image_extension("image/svg+xml"), None);
+        assert_eq!(image_extension("text/plain"), None);
+        // A platform that sends the mime with its parameters still names a file.
+        assert_eq!(image_extension("image/png;charset=binary"), Some("png"));
+    }
+
     /// A paste is the only attachment this app writes itself, so the bytes are
     /// its own to get wrong. And the name is the chip the composer writes into
     /// the draft, so it has to be one a reader would put in a sentence — and two
@@ -595,12 +657,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hz-pasted-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
 
-        let first = free_pasted_path(&dir).await;
+        let first = free_pasted_path(&dir, "pasted-text", "txt").await;
         assert_eq!(first.file_name().and_then(|n| n.to_str()), Some("pasted-text.txt"));
         assert_eq!(first.extension().and_then(|e| e.to_str()), Some("txt"));
         fs::write(&first, "one").await.unwrap();
 
-        let second = free_pasted_path(&dir).await;
+        let second = free_pasted_path(&dir, "pasted-text", "txt").await;
         assert_eq!(
             second.file_name().and_then(|n| n.to_str()),
             Some("pasted-text-2.txt")
@@ -618,7 +680,7 @@ mod tests {
     async fn sweeps_pastes_past_their_retention() {
         let dir = std::env::temp_dir().join(format!("hz-pasted-{}", Uuid::now_v7()));
         fs::create_dir_all(&dir).await.unwrap();
-        let path = free_pasted_path(&dir).await;
+        let path = free_pasted_path(&dir, "pasted-text", "txt").await;
         fs::write(&path, "keep me").await.unwrap();
 
         prune_dir(&dir, PASTED_RETAIN).await;

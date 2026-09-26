@@ -70,6 +70,33 @@ export async function addPastedText(sessionId: string | null, text: string) {
   write(sessionId, [...now, added]);
 }
 
+/// Pins an image the clipboard handed over.
+///
+/// The other half of [`addPastedText`]: a pasted picture has no path yet, so the
+/// backend writes one into the same pasted directory and answers the tile. It
+/// travels as a `data:` URL because that is the one shape the webview can hand
+/// over whole — a screenshot is not text, so there is nothing to read out of the
+/// clipboard string-wise.
+///
+/// Nothing is deduped here either: two pastes of one screenshot are two files on
+/// disk, and the reader who pasted twice meant to attach twice.
+export async function addPastedImage(sessionId: string | null, image: Blob) {
+  const dataUrl = await readAsDataUrl(image);
+  const added = await invoke<Attachment>("write_pasted_image", { dataUrl });
+
+  const now = bySession.get(sessionId) ?? EMPTY;
+  write(sessionId, [...now, added]);
+}
+
+function readAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("could not read the paste"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /// Opens the system file picker and pins whatever comes back. Resolves to
 /// nothing when the user cancels.
 export async function pickAttachments(sessionId: string | null) {
