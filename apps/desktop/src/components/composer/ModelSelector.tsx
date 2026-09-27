@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Check, RefreshCw, Search } from "lucide-react";
+import { Check, ChevronRightIcon, RefreshCw, Search } from "lucide-react";
 import AgentIcon from "@/components/AgentIcon";
 import ModelMark from "@/components/ModelMark";
 import { useFanOutModels, toggleFanOutModel, clearFanOut } from "@/hooks/useModelFanOut";
@@ -245,6 +245,19 @@ export default function ModelSelector({
       row.variants.length > 1 ? (VARIANT_LABELS[shown.variant] ?? shown.variant) : null;
     const level = rowEffort(shown);
 
+    /// The variant and the level, named once. **They trail the name rather than
+    /// sitting in a column at the row's end**, which is where they started: the
+    /// menu is as wide as its search field, so a level right-aligned in a row
+    /// that long reads as a gap the name has left behind rather than as a value
+    /// beside it. Muted a step further than the name, since these qualify it
+    /// rather than being part of it.
+    const qualifiers = variant || level ? (
+      <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground/60">
+        {variant}
+        {level && <span>{EFFORT_LABELS[level]}</span>}
+      </span>
+    ) : null;
+
     const body = (
       <>
         <ModelMark name={shown.label} />
@@ -256,16 +269,7 @@ export default function ModelSelector({
         <span className={cn("min-w-0 truncate", picked && "text-accent-mention")}>
           {modelDisplayName(shown.label)}
         </span>
-        {(variant || level) && (
-          // Right-aligned rather than trailing the name: a qualified row and a
-          // plain one then start at the same place, and the name is what the eye
-          // scans down. Muted a step further than the name, since these qualify
-          // it rather than being part of it.
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground/60">
-            {variant}
-            {level && <span>{EFFORT_LABELS[level]}</span>}
-          </span>
-        )}
+        {qualifiers}
       </>
     );
 
@@ -304,9 +308,7 @@ export default function ModelSelector({
         >
           {body}
           {(chosen || picked) && (
-            <Check
-              className={cn("ml-auto size-3.5", picked && "text-accent-mention")}
-            />
+            <Check className={cn("size-3.5", picked && "text-accent-mention")} />
           )}
         </DropdownMenuItem>
       );
@@ -319,10 +321,15 @@ export default function ModelSelector({
           // The picked model takes a check where the submenu chevron would sit,
           // no leading indent and no background tint fighting the hover.
           // Unpicked rows keep the chevron that says "opens a submenu".
+          // The glyph comes after the qualifiers, with no auto margin on either:
+          // the row's free space belongs at its end, past the arrow, rather than
+          // between the level and the thing it opens.
           trailingIcon={
             chosen || picked ? (
-              <Check className={cn("ml-auto size-3.5", picked && "text-accent-mention")} />
-            ) : undefined
+              <Check className={cn("size-3.5", picked && "text-accent-mention")} />
+            ) : (
+              <ChevronRightIcon className="size-4" />
+            )
           }
           onClick={(event) => {
             // Shift on a row that has a submenu adds it rather than opening that
