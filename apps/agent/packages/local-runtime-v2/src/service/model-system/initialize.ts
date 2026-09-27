@@ -18,6 +18,7 @@ import type {
   ByokProviderPresetView,
 } from './contracts.js';
 import { LocalModelProviderService } from './management/service.js';
+import { backfillCustomProviderModelEffort } from './management/service-catalog-backfill.js';
 import { LocalModelResolver } from './resolution/local-model-resolver.js';
 
 export interface InitializeModelSystemOptions {
@@ -57,10 +58,17 @@ export function createLocalModelSystemConfigPort(read: () => LocalRuntimeConfig 
 
 /** Composes the single Runtime V2 owner for model resolution and Provider management. */
 export function initializeModelSystem(options: InitializeModelSystemOptions): ModelSystemOwner {
-  const providerPresets = new ProviderPresetCatalog({
+  const catalogOptions = {
     dataDir: options.config.read().dataDir,
     previewSecret: process.env.PREVIEW_SECRET,
     lane: process.env.MAVIS_PLUGIN_CLOUD_LANE,
+  };
+  const providerPresets = new ProviderPresetCatalog(catalogOptions);
+  // Nobody waits for it, and a boot that blocked on a migration would be worse
+  // than a ladder that arrives a beat late — the same trade the snapshot refresh
+  // above makes. See `backfillCustomProviderModelEffort` for who it is for.
+  void backfillCustomProviderModelEffort(options.config, catalogOptions).catch((error) => {
+    console.warn(`[model system] effort backfill skipped: ${error}`);
   });
   const resolver = new LocalModelResolver({
     ...options.resolverOptions,

@@ -407,16 +407,62 @@ export async function catalogFactsForModelId(
 ): Promise<UserModelInputView | undefined> {
   const latest = await latestCatalogSnapshot(options);
   if (!latest) return undefined;
+  return catalogFactsForId(latest, modelId);
+}
 
+/// The same answer for many ids, off one reading of the snapshot.
+///
+/// **One reading, because a reading decompresses the bundled catalog.**
+/// [`catalogFactsForModelId`] serves the connect flow, which asks about the
+/// handful of models a reader typed in; a sweep over every model of every
+/// connected gateway asks about hundreds, and a snapshot read per id would
+/// gunzip the bundled catalog that many times.
+export async function catalogFactsForModelIds(
+  modelIds: readonly string[],
+  options: ProviderPresetCatalogOptions = {},
+): Promise<Map<string, UserModelInputView>> {
+  const found = new Map<string, UserModelInputView>();
+  const latest = await latestCatalogSnapshot(options);
+  if (!latest) return found;
+  for (const modelId of modelIds) {
+    const facts = catalogFactsForId(latest, modelId);
+    if (facts) found.set(modelId, facts);
+  }
+  return found;
+}
+
+/// One id against a snapshot already in hand.
+///
+/// **Each fact is looked for in every listing, not in the first that says
+/// anything.** The presets arrive sorted by provider *name*, so "the first
+/// listing that declares something" is whichever reseller sorts first — and one
+/// that states the image it takes while saying nothing about effort would end
+/// the scan with the ladder unfound. A model connected that way has an effort
+/// picker with no rungs, which is what sent this here: `deepseek-v4-flash` came
+/// back with no ladder under the first-declaring rule while twenty-two listings
+/// in the fetched catalog state one.
+function catalogFactsForId(
+  latest: ParsedModelsDevCatalogSnapshot,
+  modelId: string,
+): UserModelInputView | undefined {
   const wanted = presetKey(modelId);
-  let quietest: UserModelInputView | undefined;
+  let base: UserModelInputView | undefined;
+  let modalities: UserModelInputView['modalities'];
+  let effortOptions: readonly string[] | undefined;
   for (const provider of latest.presets) {
     const match = provider.models.find((model) => presetKey(model.modelId) === wanted);
     if (!match) continue;
-    if (match.modalities?.input?.length || match.effortOptions?.length) return match;
-    quietest ??= match;
+    base ??= match;
+    modalities ??= match.modalities?.input?.length ? match.modalities : undefined;
+    effortOptions ??= match.effortOptions?.length ? match.effortOptions : undefined;
+    if (modalities && effortOptions) break;
   }
-  return quietest;
+  if (!base) return undefined;
+  return {
+    ...base,
+    ...(modalities ? { modalities } : {}),
+    ...(effortOptions ? { effortOptions: [...effortOptions] } : {}),
+  };
 }
 
 /// The last segment of a model id, lowercased — `publisher/model` and the bare

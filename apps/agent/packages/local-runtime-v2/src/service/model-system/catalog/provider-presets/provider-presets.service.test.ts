@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { providerCompletionUrl, providerModelsUrls } from '../../connectivity/provider-request.js';
-import { ProviderPresetCatalog } from './provider-presets.service.js';
+import { ProviderPresetCatalog, catalogFactsForModelId } from './provider-presets.service.js';
 import { readProviderPresetSnapshotCandidates } from './provider-presets.repository.js';
 import { modelsFromInputs } from '../../management/service-input.js';
 import { buildModelEntry } from '../list-models.js';
@@ -870,5 +870,60 @@ describe('Provider Preset ordering', () => {
       catalog.listProviderPresets().then((items) => items.map((item) => item.providerId)),
     ).resolves.toEqual(['tencent-tokenhub', 'openai', 'anthropic', 'deepseek', 'zhipuai']);
     expect(commonConfigFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the facts one model id answers for', () => {
+  /// Two listings of one model, sorted by provider name so the first one a scan
+  /// meets is the one that states only modalities.
+  async function twoListingCatalog() {
+    const paths = await catalogPaths();
+    await writeFile(
+      paths.bundledCatalogPath,
+      gzipSync(
+        JSON.stringify({
+          version: 1,
+          source: 'https://models.dev/api.json',
+          updatedAt: 1,
+          catalog: {
+            aaa: {
+              name: 'Aaa',
+              npm: '@ai-sdk/openai-compatible',
+              api: 'https://aaa.example/v1',
+              models: {
+                'deepseek-v4-flash': {
+                  name: 'Flash',
+                  tool_call: true,
+                  modalities: { input: ['text'] },
+                },
+              },
+            },
+            zzz: {
+              name: 'Zzz',
+              npm: '@ai-sdk/openai-compatible',
+              api: 'https://zzz.example/v1',
+              models: {
+                'deepseek-v4-flash': {
+                  name: 'Flash',
+                  tool_call: true,
+                  reasoning_options: [{ type: 'effort', values: ['low', 'high'] }],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    return paths;
+  }
+
+  it('takes each fact from the listing that states it, under the id a gateway serves', async () => {
+    const facts = await catalogFactsForModelId(
+      'deepseek/deepseek-v4-flash',
+      await twoListingCatalog(),
+    );
+
+    expect(facts?.modalities?.input).toEqual(['text']);
+    expect(facts?.effortOptions).toEqual(['low', 'high']);
   });
 });

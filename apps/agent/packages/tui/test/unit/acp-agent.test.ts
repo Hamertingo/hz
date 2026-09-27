@@ -3554,6 +3554,19 @@ describe('Hz Agent ACP agent', () => {
           expect.objectContaining({ id: 'thinkingEffort', currentValue: 'low' }),
         ]),
       );
+      // The ladder and its default ride each row's `_meta`, not only the
+      // `thinkingEffort` option: a client drawing levels from that option alone
+      // can state them for the model the session is running and for no other.
+      expect(
+        session.configOptions?.find((option) => option.id === 'model')?.options,
+      ).toEqual([
+        expect.objectContaining({
+          _meta: expect.objectContaining({
+            effortOptions: ['low', 'high'],
+            defaultEffort: 'low',
+          }),
+        }),
+      ]);
 
       await expect(
         connection.request(acp.methods.agent.session.setMode, {

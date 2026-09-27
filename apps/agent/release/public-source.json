@@ -919,6 +919,8 @@
     "packages/local-runtime-v2/src/service/model-system/initialize.ts",
     "packages/local-runtime-v2/src/service/model-system/management/provider-key.ts",
     "packages/local-runtime-v2/src/service/model-system/management/service-candidate-operations.ts",
+    "packages/local-runtime-v2/src/service/model-system/management/service-catalog-backfill.test.ts",
+    "packages/local-runtime-v2/src/service/model-system/management/service-catalog-backfill.ts",
     "packages/local-runtime-v2/src/service/model-system/management/service-connection-operations.ts",
     "packages/local-runtime-v2/src/service/model-system/management/service-context.test.ts",
     "packages/local-runtime-v2/src/service/model-system/management/service-context.ts",
