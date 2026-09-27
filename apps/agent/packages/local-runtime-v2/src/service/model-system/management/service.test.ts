@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1789,6 +1789,64 @@ describe('custom provider creation and duplication', () => {
     expect(h.config.custom_provider?.['openai-work']?.models?.['gpt-4.1']).not.toHaveProperty(
       'thinking',
     );
+  });
+
+  /// **A gateway the catalog has never heard of gets its models configured.**
+  /// `provider add --model` carries an id and a window and nothing else, so the
+  /// entries written for a reseller came out with no modalities and no effort
+  /// ladder: the reader met an image the model could not read and a picker with
+  /// no rungs, both of which the catalog states for the *id*. The provider here
+  /// is a name models.dev does not carry; the model is one it does, under the
+  /// bare spelling — which is the whole point of matching on the last segment.
+  it('fills modalities and the effort ladder from the catalog, by model id', async () => {
+    await mkdir(join(dataDir, 'cache'), { recursive: true });
+    await writeFile(
+      join(dataDir, 'cache', 'models-dev-catalog.json'),
+      JSON.stringify({
+        version: 1,
+        source: 'https://models.dev/api.json',
+        updatedAt: Date.now(),
+        catalog: {
+          opencode: {
+            name: 'OpenCode',
+            npm: '@ai-sdk/openai-compatible',
+            api: 'https://opencode.ai/zen/v1',
+            models: {
+              'deepseek-v4.1-flash': {
+                name: 'DeepSeek V4.1 Flash',
+                tool_call: true,
+                attachment: true,
+                modalities: { input: ['text', 'image'], output: ['text'] },
+                reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const h = makeHarness();
+    await h.service.createUserProvider({
+      name: 'Command Code',
+      baseUrl: 'https://api.commandcode.ai/provider/v1',
+      apiKey: CUSTOM_KEY,
+      apiFormat: 'openai-completions',
+      models: [
+        {
+          modelId: 'deepseek/deepseek-v4.1-flash',
+          limit: { context: 1_000_000, output: 384_000 },
+        },
+      ],
+    });
+
+    const entry =
+      h.config.custom_provider?.['command-code']?.models?.['deepseek/deepseek-v4.1-flash'];
+    expect(entry?.modalities).toEqual({ input: ['text', 'image'], output: ['text'] });
+    expect(entry?.thinking).toEqual({ effortOptions: ['low', 'high', 'max'] });
+    // **The window stays the caller's.** The gateway reported it, and the
+    // catalog's own numbers disagree across resellers — 44 of the 61 ids one of
+    // them serves — so a number read by id would be a guess dressed as a fact.
+    expect(entry?.limit).toEqual({ context: 1_000_000, output: 384_000 });
   });
 
   it('duplicates the complete provider config under a new identity without copying runtime state', async () => {

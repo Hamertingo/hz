@@ -386,3 +386,41 @@ function stringArray(value: unknown): string[] | undefined {
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
+
+/// What the catalog states about one model, wherever it lists it.
+///
+/// **The provider is the half a reseller takes away.** A gateway models.dev has
+/// never heard of answers nothing through the preset path — `command-code` is
+/// one — so the models behind it were written with no modalities and no effort
+/// ladder, and the reader met that as an image the model could not read and a
+/// picker with no rungs. Both are facts the catalog states for the *id*, which
+/// is what survives, matched the way the limits patch matches it: last segment,
+/// lowercased.
+///
+/// **A listing that states a capability is the one asked for.** Listings of one
+/// model disagree — `MiniMax-M3` comes back text-only from one and takes image
+/// and video from eight — so taking the first would let the order of the
+/// catalog decide whether a model can see or how it thinks.
+export async function catalogFactsForModelId(
+  modelId: string,
+  options: ProviderPresetCatalogOptions = {},
+): Promise<UserModelInputView | undefined> {
+  const latest = await latestCatalogSnapshot(options);
+  if (!latest) return undefined;
+
+  const wanted = presetKey(modelId);
+  let quietest: UserModelInputView | undefined;
+  for (const provider of latest.presets) {
+    const match = provider.models.find((model) => presetKey(model.modelId) === wanted);
+    if (!match) continue;
+    if (match.modalities?.input?.length || match.effortOptions?.length) return match;
+    quietest ??= match;
+  }
+  return quietest;
+}
+
+/// The last segment of a model id, lowercased — `publisher/model` and the bare
+/// `model` are one id to a reseller's gateway.
+function presetKey(modelId: string): string {
+  return modelId.slice(modelId.lastIndexOf('/') + 1).toLowerCase();
+}
