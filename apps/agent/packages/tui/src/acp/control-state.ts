@@ -176,20 +176,32 @@ function sessionModelOption(
     description: 'Selects the model used by subsequent turns in this Session.',
     category: 'model',
     currentValue: modelConfigValue(selected),
-    // **The limits ride along, because nothing else can tell the client what
-    // they are.** A client's model screen knows an id and a name and nothing
-    // more — the window is only ever stated on a usage update, which needs a
-    // session already running the model — so an app with no other source draws
-    // its own fallback and a row reads `200k` for a model that runs at a
-    // million. `_meta` is the protocol's own room for that.
-    options: values.map(({ selection, name, contextLimit, maxOutputTokens }) => ({
-      value: modelConfigValue(selection),
-      name,
-      ...(contextLimit === undefined && maxOutputTokens === undefined
-        ? {}
-        : { _meta: { ...(contextLimit !== undefined ? { contextWindow: contextLimit } : {}),
-                     ...(maxOutputTokens !== undefined ? { maxTokens: maxOutputTokens } : {}) } }),
-    })),
+    // **The limits and the ladder ride along, because nothing else can tell the
+    // client what they are.** A client's model screen knows an id and a name and
+    // nothing more — the window is only ever stated on a usage update, which
+    // needs a session already running the model, and the levels only on the
+    // `thinkingEffort` option, which states them for the running model alone —
+    // so an app with no other source draws its own fallback, and a row reads
+    // `200k` for a model that runs at a million. `_meta` is the protocol's own
+    // room for that.
+    options: values.map(
+      ({ selection, name, contextLimit, maxOutputTokens, effortOptions, effortDefault }) => ({
+        value: modelConfigValue(selection),
+        name,
+        ...(contextLimit === undefined &&
+        maxOutputTokens === undefined &&
+        !effortOptions?.length
+          ? {}
+          : {
+              _meta: {
+                ...(contextLimit !== undefined ? { contextWindow: contextLimit } : {}),
+                ...(maxOutputTokens !== undefined ? { maxTokens: maxOutputTokens } : {}),
+                ...(effortOptions?.length ? { effortOptions: [...effortOptions] } : {}),
+                ...(effortDefault !== undefined ? { defaultEffort: effortDefault } : {}),
+              },
+            }),
+      }),
+    ),
   };
 }
 
@@ -209,10 +221,7 @@ function thinkingEffortOption(
   if (efforts.length === 0) return undefined;
   const persistedEffort = session.model?.thinking?.effort;
   if (persistedEffort && !efforts.includes(persistedEffort)) return undefined;
-  const configuredDefault = model?.thinkingConfig?.defaultValue;
-  const current =
-    persistedEffort ??
-    (configuredDefault && efforts.includes(configuredDefault) ? configuredDefault : efforts[0]);
+  const current = persistedEffort ?? defaultEffortFor(model);
   if (!current) return undefined;
   return {
     type: 'select',
@@ -225,6 +234,19 @@ function thinkingEffortOption(
   };
 }
 
+/// The level a model lands on when nothing asks for one: its own default where
+/// the catalog states one the ladder carries, else the ladder's floor.
+///
+/// One rule with two readers — the session's `thinkingEffort` option and the
+/// `_meta` of every model row — because a client drawing a level the agent would
+/// not pick is a switch that reads as set and is not.
+function defaultEffortFor(model: TuiModel | undefined): string | undefined {
+  const efforts = model?.effortOptions ?? [];
+  if (efforts.length === 0) return undefined;
+  const configured = model?.thinkingConfig?.defaultValue;
+  return configured && efforts.includes(configured) ? configured : efforts[0];
+}
+
 function uniqueModelValues(models: readonly TuiModel[]): Array<{
   readonly selection: {
     readonly providerId: string;
@@ -234,10 +256,13 @@ function uniqueModelValues(models: readonly TuiModel[]): Array<{
   readonly name: string;
   readonly contextLimit?: number;
   readonly maxOutputTokens?: number;
+  readonly effortOptions?: readonly string[];
+  readonly effortDefault?: string;
 }> {
   const seen = new Set<string>();
   const values = [];
   for (const model of models) {
+    const effortDefault = defaultEffortFor(model);
     const variants = model.supportedVariants?.length
       ? model.supportedVariants
       : [model.variant].filter((variant): variant is string => variant !== undefined);
@@ -260,6 +285,14 @@ function uniqueModelValues(models: readonly TuiModel[]): Array<{
         ...(typeof model.maxOutputTokens === 'number'
           ? { maxOutputTokens: model.maxOutputTokens }
           : {}),
+        // **The ladder and its default travel per row, because no other channel
+        // carries them.** The `thinkingEffort` option states the levels of the
+        // model the session *runs* — a client drawing only that has one row with
+        // levels and every other row bare, which reads as a model that takes no
+        // effort at all. Published beside the window, on the same `_meta`, where a
+        // client is already reading the per-model facts it cannot ask for.
+        ...(model.effortOptions?.length ? { effortOptions: [...model.effortOptions] } : {}),
+        ...(effortDefault !== undefined ? { effortDefault } : {}),
       });
     }
   }

@@ -1099,7 +1099,7 @@ pub async fn set_model(session: &McodeSession, model: &Model, app: &AppHandle) -
     let answer = set_config(session, "model", &model.arg).await?;
     let configs = parser::ConfigOptions::of(&answer);
     session.configs(&configs);
-    announce_ladder(app);
+    announce_models(app);
     Ok(())
 }
 
@@ -1154,12 +1154,19 @@ pub async fn set_mode(session: &McodeSession, policy: ApprovalPolicy) -> Result<
 
 /// Tells the frontend to re-read the model list.
 ///
-/// An in-place switch restates the active model's ladder, and that ladder is
-/// what the composer's effort menu is drawn from — so a switch made here has to
-/// reach the picker, and `models_changed` is the channel every build of this app
-/// already listens on for exactly that. Nothing is learned into a catalog: the
-/// list *is* the agent's answer, read live off the session.
-fn announce_ladder(app: &AppHandle) {
+/// **Anything that restates the list has to reach the picker, and a reply is one
+/// of them.** Every session reply carries the whole list, with the ladder filled
+/// on the row *that* session is running — so a session opening restates it for a
+/// model the picker's own copy, fetched before that reply landed, knew nothing
+/// about. Measured: a session on a gateway model opened over a list whose ladder
+/// sat on the config's default model, and the effort control drew nothing for the
+/// model the reader was actually on.
+///
+/// The reload this triggers reads the cache rather than opening a child, so the
+/// event is cheap enough to send whenever the list is known to have moved — an
+/// in-place switch, a session opening, an effort landing. Nothing is learned into
+/// a catalog: the list *is* the agent's answer, read live off the session.
+pub fn announce_models(app: &AppHandle) {
     if let Err(err) = app.emit("models_changed", ()) {
         eprintln!("[mcode models_changed emit err] {err}");
     }

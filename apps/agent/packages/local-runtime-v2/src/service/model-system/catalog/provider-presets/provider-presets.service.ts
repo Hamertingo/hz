@@ -386,3 +386,87 @@ function stringArray(value: unknown): string[] | undefined {
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
+
+/// What the catalog states about one model, wherever it lists it.
+///
+/// **The provider is the half a reseller takes away.** A gateway models.dev has
+/// never heard of answers nothing through the preset path — `command-code` is
+/// one — so the models behind it were written with no modalities and no effort
+/// ladder, and the reader met that as an image the model could not read and a
+/// picker with no rungs. Both are facts the catalog states for the *id*, which
+/// is what survives, matched the way the limits patch matches it: last segment,
+/// lowercased.
+///
+/// **A listing that states a capability is the one asked for.** Listings of one
+/// model disagree — `MiniMax-M3` comes back text-only from one and takes image
+/// and video from eight — so taking the first would let the order of the
+/// catalog decide whether a model can see or how it thinks.
+export async function catalogFactsForModelId(
+  modelId: string,
+  options: ProviderPresetCatalogOptions = {},
+): Promise<UserModelInputView | undefined> {
+  const latest = await latestCatalogSnapshot(options);
+  if (!latest) return undefined;
+  return catalogFactsForId(latest, modelId);
+}
+
+/// The same answer for many ids, off one reading of the snapshot.
+///
+/// **One reading, because a reading decompresses the bundled catalog.**
+/// [`catalogFactsForModelId`] serves the connect flow, which asks about the
+/// handful of models a reader typed in; a sweep over every model of every
+/// connected gateway asks about hundreds, and a snapshot read per id would
+/// gunzip the bundled catalog that many times.
+export async function catalogFactsForModelIds(
+  modelIds: readonly string[],
+  options: ProviderPresetCatalogOptions = {},
+): Promise<Map<string, UserModelInputView>> {
+  const found = new Map<string, UserModelInputView>();
+  const latest = await latestCatalogSnapshot(options);
+  if (!latest) return found;
+  for (const modelId of modelIds) {
+    const facts = catalogFactsForId(latest, modelId);
+    if (facts) found.set(modelId, facts);
+  }
+  return found;
+}
+
+/// One id against a snapshot already in hand.
+///
+/// **Each fact is looked for in every listing, not in the first that says
+/// anything.** The presets arrive sorted by provider *name*, so "the first
+/// listing that declares something" is whichever reseller sorts first — and one
+/// that states the image it takes while saying nothing about effort would end
+/// the scan with the ladder unfound. A model connected that way has an effort
+/// picker with no rungs, which is what sent this here: `deepseek-v4-flash` came
+/// back with no ladder under the first-declaring rule while twenty-two listings
+/// in the fetched catalog state one.
+function catalogFactsForId(
+  latest: ParsedModelsDevCatalogSnapshot,
+  modelId: string,
+): UserModelInputView | undefined {
+  const wanted = presetKey(modelId);
+  let base: UserModelInputView | undefined;
+  let modalities: UserModelInputView['modalities'];
+  let effortOptions: readonly string[] | undefined;
+  for (const provider of latest.presets) {
+    const match = provider.models.find((model) => presetKey(model.modelId) === wanted);
+    if (!match) continue;
+    base ??= match;
+    modalities ??= match.modalities?.input?.length ? match.modalities : undefined;
+    effortOptions ??= match.effortOptions?.length ? match.effortOptions : undefined;
+    if (modalities && effortOptions) break;
+  }
+  if (!base) return undefined;
+  return {
+    ...base,
+    ...(modalities ? { modalities } : {}),
+    ...(effortOptions ? { effortOptions: [...effortOptions] } : {}),
+  };
+}
+
+/// The last segment of a model id, lowercased — `publisher/model` and the bare
+/// `model` are one id to a reseller's gateway.
+function presetKey(modelId: string): string {
+  return modelId.slice(modelId.lastIndexOf('/') + 1).toLowerCase();
+}

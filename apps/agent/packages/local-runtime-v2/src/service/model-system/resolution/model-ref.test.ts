@@ -664,6 +664,45 @@ describe('model capability helpers', () => {
     ).toMatchObject({ support_image: false });
   });
 
+  it('answers by the model id for a gateway the catalog has never heard of', () => {
+    // `command-code` is a reseller the catalog does not carry at all, so the
+    // provider half of the lookup can only fail — and the id is what survives
+    // it: the catalog names this same model bare, under providers of its own.
+    // Without this the whole gateway came out text-only, vision included.
+    expect(
+      capabilitiesFromModelConfig(undefined, {
+        provider: 'custom_provider:command-code',
+        modelId: 'deepseek/deepseek-v4.1-flash',
+      }),
+    ).toMatchObject({ support_image: true });
+
+    // An id nothing knows under any provider stays text-only, and an entry
+    // stating its own modalities still wins over the id's answer.
+    expect(
+      capabilitiesFromModelConfig(undefined, {
+        provider: 'custom_provider:command-code',
+        modelId: 'a-model-nothing-serves',
+      }),
+    ).toMatchObject({ support_image: false });
+    expect(
+      capabilitiesFromModelConfig(
+        { modalities: { input: ['text'], output: ['text'] } },
+        { provider: 'custom_provider:command-code', modelId: 'deepseek/deepseek-v4.1-flash' },
+      ),
+    ).toMatchObject({ support_image: false });
+
+    // The listings of one model disagree — `MiniMax-M3` is text-only in one and
+    // takes image and video in eight — so the scan looks for the capability
+    // rather than for the first match, or the catalog's own order would decide
+    // whether this model can see.
+    expect(
+      capabilitiesFromModelConfig(undefined, {
+        provider: 'custom_provider:command-code',
+        modelId: 'MiniMaxAI/MiniMax-M3',
+      }),
+    ).toMatchObject({ support_image: true });
+  });
+
   it('projects the explicit json_object capability into the selected model ref', () => {
     const capabilities = capabilitiesFromModelConfig({
       capabilities: { support_json_object_output: true },

@@ -51,6 +51,9 @@ struct OpenBlock {
     id: String,
     kind: BlockType,
     text: String,
+    /// Arrival order, so two runs closed together commit in the order the
+    /// reader met them.
+    started: u64,
 }
 
 /// Per-session state the mapping needs across lines.
@@ -63,6 +66,15 @@ pub struct Mapper {
     turn_open: bool,
     /// The one block streaming right now.
     open: Option<OpenBlock>,
+    /// The other kind's run, put aside uncommitted while this one streams.
+    ///
+    /// **mcode interleaves the two streams**, so a chunk of one kind is not the
+    /// end of the other: measured on a real turn, a reasoning run read `…Then
+    /// fix.\n\nLet`, a text chunk carried `A`, and the reasoning resumed ` me
+    /// read.` Both runs stay open here and each commits once.
+    parked: Option<OpenBlock>,
+    /// How many runs have opened, so `started` orders them.
+    runs: u64,
     /// Calls announced and not yet committed, by the id the update will name.
     announced: HashMap<String, Announced>,
     /// Calls already committed, so a second update does not draw a second row.
@@ -89,6 +101,8 @@ impl Mapper {
             seq,
             turn_open: false,
             open: None,
+            parked: None,
+            runs: 0,
             announced: HashMap::new(),
             drawn: Default::default(),
             subagents: Default::default(),
@@ -116,12 +130,7 @@ impl Mapper {
                     return Vec::new();
                 };
                 let mut out = self.ensure_turn();
-                out.extend(self.close_kind(BlockType::Thinking));
-                // The id is the block's when mcode sends one, and a constant
-                // otherwise: two messages in a row are one block here, since
-                // nothing on the wire separates them.
-                let id = message_id.unwrap_or_else(|| "message".to_string());
-                out.extend(self.stream(id, BlockType::Text, text));
+                out.extend(self.chunk(BlockType::Text, message_id, text));
                 out
             }
 
@@ -133,11 +142,7 @@ impl Mapper {
                     return Vec::new();
                 };
                 let mut out = self.ensure_turn();
-                out.extend(self.close_kind(BlockType::Text));
-                let id = message_id
-                    .map(|id| format!("thought-{id}"))
-                    .unwrap_or_else(|| "thought".to_string());
-                out.extend(self.stream(id, BlockType::Thinking, text));
+                out.extend(self.chunk(BlockType::Thinking, message_id, text));
                 out
             }
 
@@ -174,7 +179,7 @@ impl Mapper {
                     let drawable = raw_input.is_some() || status.is_final();
                     if drawable {
                         if let Some(announced) = self.announced.remove(&tool_call_id) {
-                            out.extend(self.close_open());
+                            out.extend(self.close_runs());
                             out.extend(self.tool_started(&tool_call_id, announced, raw_input));
                         }
                     }
@@ -364,7 +369,7 @@ impl Mapper {
     }
 
     fn prompt_done(&mut self, response: PromptResponse) -> Vec<AgentEvent> {
-        let mut out = self.close_open();
+        let mut out = self.close_runs();
 
         let (status, final_text) = match response.stop_reason.as_str() {
             "refused" | "refusal" => (
@@ -398,7 +403,7 @@ impl Mapper {
     /// `session/prompt` refused outright. The sentence is mcode's own and
     /// usually names its cure (`mcode login`), so it is the row's text.
     fn prompt_failed(&mut self, message: String) -> Vec<AgentEvent> {
-        let mut out = self.close_open();
+        let mut out = self.close_runs();
         let auth_failed = mentions_any(&message, LOGIN_NEEDLES);
         out.push(self.turn_completed(
             TurnStatus::Error,
@@ -468,54 +473,113 @@ impl Mapper {
         ]
     }
 
-    /// Appends a chunk to the block `id`, opening it first where it is not the
-    /// one already open.
-    fn stream(&mut self, id: String, kind: BlockType, text: &str) -> Vec<AgentEvent> {
+    /// Appends a chunk to the run of its kind, opening one where none is
+    /// running.
+    ///
+    /// **A chunk of the other kind parks a run, it does not end one.** mcode
+    /// interleaves the two streams — measured on a real turn, a reasoning run
+    /// read `…Then fix.\n\nLet`, a text chunk carried `A`, and the reasoning
+    /// resumed ` me read.` — so closing on the kind that arrived is what cut one
+    /// sentence into a row of `A` and a row of `gora …`, and severed the
+    /// reasoning the same way. Both runs stay open, each keeps accumulating, and
+    /// each commits once.
+    fn chunk(&mut self, kind: BlockType, id: Option<String>, text: &str) -> Vec<AgentEvent> {
         let mut out = Vec::new();
-        let same = self
-            .open
-            .as_ref()
-            .is_some_and(|block| block.id == id && block.kind == kind);
-        if !same {
-            out.extend(self.close_open());
-            out.push(self.event(AgentEventPayload::Delta(DeltaEvent::BlockStart {
-                block: block_ref(&id),
-                block_type: kind.clone(),
-            })));
+        // The id is the run's when mcode sends one, and a constant otherwise:
+        // two chunks in a row with nothing named are one run, since nothing on
+        // the wire separates them.
+        let named = id.unwrap_or_else(|| match kind {
+            BlockType::Thinking => "thought".to_string(),
+            _ => "message".to_string(),
+        });
+
+        let running = self.open.as_ref().is_some_and(|block| block.kind == kind);
+        let aside = !running && self.parked.as_ref().is_some_and(|block| block.kind == kind);
+
+        if running {
+            // A run named by a different id is a different run: that id is what
+            // separates two answers written back to back.
+            if self.open.as_ref().is_some_and(|block| block.id != named) {
+                let open = self.open.take();
+                if let Some(block) = open {
+                    out.extend(self.commit_run(block));
+                }
+            }
+        } else if aside {
+            if self.parked.as_ref().is_some_and(|block| block.id != named) {
+                let parked = self.parked.take();
+                if let Some(block) = parked {
+                    out.extend(self.commit_run(block));
+                }
+            } else {
+                out.extend(self.swap());
+            }
+        } else {
+            out.extend(self.park());
+        }
+
+        if self.open.is_none() {
+            out.push(self.block_start(&named, &kind));
             self.open = Some(OpenBlock {
-                id: id.clone(),
+                id: named.clone(),
                 kind,
                 text: String::new(),
+                started: self.next_run(),
             });
         }
         if let Some(block) = &mut self.open {
             block.text.push_str(text);
         }
         out.push(self.event(AgentEventPayload::Delta(DeltaEvent::TextDelta {
-            block: block_ref(&id),
+            block: block_ref(&named),
             text: text.to_string(),
         })));
         out
     }
 
-    /// Closes the open block where it is of `kind` — the other kind of chunk
-    /// arriving is what ends a run of one, since nothing on the wire does.
-    fn close_kind(&mut self, kind: BlockType) -> Vec<AgentEvent> {
-        match &self.open {
-            Some(block) if block.kind == kind => self.close_open(),
-            _ => Vec::new(),
-        }
+    fn next_run(&mut self) -> u64 {
+        self.runs += 1;
+        self.runs
     }
 
-    /// Closes the streaming block, committing its whole text: the deltas were a
-    /// preview and this is what the transcript keeps.
-    fn close_open(&mut self) -> Vec<AgentEvent> {
+    /// Puts the open run aside uncommitted: the other kind is streaming now, and
+    /// this one resumes where it left off.
+    fn park(&mut self) -> Vec<AgentEvent> {
         let Some(block) = self.open.take() else {
             return Vec::new();
         };
-        let stop = self.event(AgentEventPayload::Delta(DeltaEvent::BlockStop {
-            block: block_ref(&block.id),
-        }));
+        let stop = self.block_stop(&block.id);
+        self.parked = Some(block);
+        vec![stop]
+    }
+
+    /// Exchanges the two runs, so neither commits across an interleave.
+    fn swap(&mut self) -> Vec<AgentEvent> {
+        let resumed = self.parked.take();
+        let mut out = self.park();
+        if let Some(block) = resumed {
+            out.push(self.block_start(&block.id, &block.kind));
+            self.open = Some(block);
+        }
+        out
+    }
+
+    /// Closes every run still open, earliest first — what a tool call and the
+    /// end of a turn do. Two can be open at once across an interleave, and the
+    /// reader met them in the order they started.
+    fn close_runs(&mut self) -> Vec<AgentEvent> {
+        let mut runs: Vec<OpenBlock> = [self.open.take(), self.parked.take()]
+            .into_iter()
+            .flatten()
+            .collect();
+        runs.sort_by_key(|block| block.started);
+        runs.into_iter()
+            .flat_map(|block| self.commit_run(block))
+            .collect()
+    }
+
+    fn commit_run(&mut self, block: OpenBlock) -> Vec<AgentEvent> {
+        let stop = self.block_stop(&block.id);
         let committed = match block.kind {
             BlockType::Thinking => self.event(AgentEventPayload::Reasoning {
                 block: Some(block_ref(&block.id)),
@@ -531,6 +595,19 @@ impl Mapper {
             }),
         };
         vec![stop, committed]
+    }
+
+    fn block_start(&self, id: &str, kind: &BlockType) -> AgentEvent {
+        self.event(AgentEventPayload::Delta(DeltaEvent::BlockStart {
+            block: block_ref(id),
+            block_type: kind.clone(),
+        }))
+    }
+
+    fn block_stop(&self, id: &str) -> AgentEvent {
+        self.event(AgentEventPayload::Delta(DeltaEvent::BlockStop {
+            block: block_ref(id),
+        }))
     }
 
     /// Mints an event the read loop needs but no update carried — a permission
@@ -698,6 +775,46 @@ mod tests {
             }
         }
         out
+    }
+
+    /// **A chunk of the other kind parks a run, it does not end one.** mcode
+    /// interleaves the two streams: this reproduces a real session, where a
+    /// reasoning run read `…Then fix.\n\nLet`, a text chunk carried `A`, and the
+    /// reasoning resumed ` me read.` — and where the two halves of the answer
+    /// are one message (`Agora o README …`). Reading the kind switch as an end
+    /// committed both halves, which the reader met as a row of `A` and a row of
+    /// `gora …`, with the thinking severed the same way. The words are
+    /// shortened; the shape is the measured one.
+    #[test]
+    fn an_interleaved_chunk_parks_a_run_instead_of_ending_it() {
+        const INTERLEAVED: &str = r#"
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mvs_x","update":{"sessionUpdate":"agent_thought_chunk","messageId":"step-2","content":{"type":"text","text":"Now the SDK TS README fix.\n\nThen fix.\n\nLet"}}}}
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mvs_x","update":{"sessionUpdate":"agent_message_chunk","messageId":"step-2","content":{"type":"text","text":"A"}}}}
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mvs_x","update":{"sessionUpdate":"agent_thought_chunk","messageId":"step-2","content":{"type":"text","text":" me read."}}}}
+<< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mvs_x","update":{"sessionUpdate":"agent_message_chunk","messageId":"step-2","content":{"type":"text","text":"gora o README do SDK TS:\n\n"}}}}
+<< {"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
+"#;
+        let events = mapped(INTERLEAVED);
+
+        let messages: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                P::AssistantText { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let thoughts: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                P::Reasoning { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(messages.len(), 1, "one answer, not one row per chunk: {messages:?}");
+        assert_eq!(thoughts.len(), 1, "one thought, not one row per chunk: {thoughts:?}");
+        assert_eq!(messages[0], "Agora o README do SDK TS:\n\n");
+        assert_eq!(thoughts[0], "Now the SDK TS README fix.\n\nThen fix.\n\nLet me read.");
     }
 
     /// **The thinking commits as a `Reasoning` block carrying its text.** The

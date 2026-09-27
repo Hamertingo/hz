@@ -1,5 +1,9 @@
 import type { LocalModelConfig, ModelProviderTestApi, UserModelInputView } from '../contracts.js';
 import { LocalModelProviderError } from '../contracts.js';
+import {
+  catalogFactsForModelId,
+  type ProviderPresetCatalogOptions,
+} from '../catalog/provider-presets/provider-presets.service.js';
 import { isModelProviderApi } from '../identity.js';
 import {
   isMiniMaxM3ModelId,
@@ -196,6 +200,48 @@ function normalizeModelConfigurationSource(
     400,
     'configuration_source must be manual or discovered',
     'VALIDATION_ERROR',
+  );
+}
+
+/// Fills what a caller did not state from what the catalog knows by model id.
+///
+/// **The connect flow states an id and, at most, a window.** `provider add
+/// --model` carries nothing else, so a gateway models.dev has not heard of
+/// produced entries with no modalities and no effort ladder — which the reader
+/// met as an image the model could not read and an effort picker with no rungs,
+/// both of which the catalog states for the id. Every field is filled on its own
+/// because of that flow: a model whose window the endpoint reported still needs
+/// the other two.
+///
+/// **`reasoning` is left alone deliberately.** It has an implicit default of its
+/// own (`implicitCustomProviderThinking`), stated by the provider rather than by
+/// the model, and a catalog row that calls a model quiet would take that default
+/// away from a reader who set it.
+///
+/// The catalog options are the caller's, so the lookup reads the same snapshot
+/// the presets screen does — the fetched one under the data directory first,
+/// which is the half that knows a model published after this build.
+export async function enrichModelsFromCatalog(
+  models: readonly UserModelInputView[],
+  options: ProviderPresetCatalogOptions = {},
+): Promise<UserModelInputView[]> {
+  return await Promise.all(
+    models.map(async (model) => {
+      if (model.modalities?.input?.length && model.effortOptions?.length) return model;
+
+      const facts = await catalogFactsForModelId(model.modelId, options);
+      if (!facts) return model;
+
+      return {
+        ...model,
+        ...(!model.modalities?.input?.length && facts.modalities
+          ? { modalities: facts.modalities }
+          : {}),
+        ...(!model.effortOptions?.length && facts.effortOptions?.length
+          ? { effortOptions: facts.effortOptions }
+          : {}),
+      };
+    }),
   );
 }
 

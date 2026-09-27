@@ -10,6 +10,7 @@ import SlashCommandMenu from "@/components/composer/SlashCommandMenu";
 import { Button } from "@/components/ui/button";
 import {
   addAttachmentPaths,
+  addPastedImage,
   addPastedText,
   clearAttachments,
   pickAttachments,
@@ -127,7 +128,6 @@ type ChatInputProps = {
   /// `true` where nothing says otherwise, which covers the model list not
   /// having landed and pi picking a model for itself — hz has no answer in
   /// either case, and a warning drawn on a guess is worse than none.
-  modelTakesImages?: boolean;
   /// The "hand it back" actions, clipped to a sliver above the card and opening
   /// on hover. A node for the toolbar's reason, and placed here rather than by
   /// the shell so it sits inside the same column the composer uses and against the
@@ -224,6 +224,23 @@ const WORDMARK_MASK = {
 /// broken — has the same answer both times.
 const NO_COMMANDS_NOTE = "This agent publishes no slash commands";
 
+/// The first picture the clipboard offers, or `null`.
+///
+/// **`items`, not `files`.** A screenshot copied out of a viewer arrives as an
+/// item whose `type` says `image/png`, and on more than one platform that item is
+/// the only place the bytes are — `files` lists what was dragged in, which is
+/// nothing here. A copy that carries both flavours still reads as the picture,
+/// because that is what a reader copying a screenshot meant.
+function pastedImage(clipboard: DataTransfer): File | null {
+  for (let i = 0; i < clipboard.items.length; i += 1) {
+    const item = clipboard.items[i];
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) return file;
+  }
+  return null;
+}
+
 export default function ChatInput({
   onSend,
   commands = [],
@@ -242,7 +259,6 @@ export default function ChatInput({
   dictation,
   dictating = false,
   notice,
-  modelTakesImages = true,
   handoff,
   followup,
   busy = false,
@@ -1023,7 +1039,6 @@ export default function ChatInput({
                 <AttachmentTray
                   attachments={attachments}
                   onRemove={(path) => removeAttachment(sessionId, path)}
-                  modelTakesImages={modelTakesImages}
                 />
               </div>
             )}
@@ -1078,6 +1093,21 @@ export default function ChatInput({
                   // text they then have to undo. Everything smaller is left to the
                   // browser, which keeps undo, spellcheck and the caret honest.
                   onPaste={(e) => {
+                    // A picture off the clipboard is written out and pinned as a
+                    // tile, and it is checked *before* the text flavour: a
+                    // screenshot's clipboard carries both, and the picture is
+                    // what the reader meant by the paste. There is no path to
+                    // drop and no text to hold it, so the backend makes the path.
+                    const image = pastedImage(e.clipboardData);
+                    if (image) {
+                      e.preventDefault();
+                      setPasteError(null);
+                      void addPastedImage(sessionId, image).catch((err) =>
+                        setPasteError(String(err)),
+                      );
+                      return;
+                    }
+
                     const pasted = e.clipboardData.getData("text");
                     if (!pasteBecomesFile(pasted)) return;
                     e.preventDefault();

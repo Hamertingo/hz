@@ -1534,12 +1534,6 @@ function App() {
   // for, where an empty list would be drawn as "this agent publishes none".
   const slashCommands = slashCommandsForSession ?? [];
   const slashCommandsLoading = slashCommandsForSession === null;
-  // `true` wherever hz has no answer: the list may not have landed, and pi
-  // picks its own model when none is named. A warning drawn on a guess is worse
-  // than none, so absence reads as capable.
-  const modelTakesImages =
-    models.find((m) => m.id === modelId)?.acceptsImages ?? true;
-
   const { baseline, head } = useMemo(
     () => changeRange(selectedSession?.events ?? []),
     [selectedSession?.events],
@@ -3153,7 +3147,6 @@ function App() {
           // prompts already in it.
           history={promptHistory}
           issuesConnected={issuesConnected}
-          modelTakesImages={modelTakesImages}
           error={error}
           onDismissError={() => setError(null)}
           // The agent is blocked until this is answered, so it sits with the

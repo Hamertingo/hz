@@ -31,6 +31,15 @@ const FALLBACK_MODEL_LIMITS = {
 /// different answers for this one id, one per reseller, so reading from one of
 /// them would be dressing a guess as a fact. Add a row when you know the number
 /// for the models you run; leave it out and the honest guess above stands.
+///
+/// **Measured, because "why not read the window by id" is the obvious
+/// question.** Of the 61 ids one gateway serves, 44 disagree across the
+/// providers that list them — `gpt-5.6-sol` is 372,000 in four listings and
+/// 1,050,000 in the rest. A rule that took the number by id would overstate the
+/// window up to threefold on those, which is a turn the endpoint rejects rather
+/// than a number that is merely wrong on paper. So modality is looked up by id
+/// below — a capability one listing can carry — while the window stays stated
+/// here, where only the endpoint can settle it.
 const MODEL_LIMITS_PATCH: Record<string, { contextWindow: number; maxTokens: number }> = {
   "deepseek-v4.1": { contextWindow: 1_000_000, maxTokens: 384_000 },
   "deepseek-v4.1-flash": { contextWindow: 1_000_000, maxTokens: 384_000 },
@@ -57,6 +66,36 @@ export function lookupLocalCatalogModel(provider: string, modelId: string): Mode
     if (model) return model;
   }
   return undefined;
+}
+
+/// The catalog entry for a model a gateway serves under an id of its own.
+///
+/// **A reseller is the ordinary case, not the exception.** `command-code` is a
+/// gateway the catalog has never heard of, so `getModels(provider)` answers
+/// nothing for any model behind it — and a model with vision comes out
+/// text-only, which the reader meets as an image the model cannot read. The id
+/// is the half that survives the reseller, matched the way
+/// [`patchedModelLimits`] matches it: last segment, lowercased, so
+/// `deepseek/deepseek-v4.1-flash` and the bare `deepseek-v4.1-flash` are one
+/// model.
+///
+/// **Listings of one model disagree, so the scan is for the capability rather
+/// than for the model.** A reseller can serve a narrower deployment than the
+/// vendor's own listing — `MiniMax-M3` comes back text-only from one and takes
+/// image and video from eight others — so the first listing that names the image
+/// modality is the answer asked for, and a text-only one is kept only as a
+/// fallback. That keeps the order of the catalog out of the result: a model
+/// nothing lists with vision still answers text-only.
+export function lookupCatalogModelById(modelId: string): Model<Api> | undefined {
+  const wanted = patchKey(modelId);
+  let firstTextOnly: Model<Api> | undefined;
+  for (const provider of getProviders()) {
+    const match = getModels(provider).find((entry) => patchKey(entry.id) === wanted);
+    if (!match) continue;
+    if (match.input.includes('image')) return match;
+    firstTextOnly ??= match;
+  }
+  return firstTextOnly;
 }
 
 /// The stated window for a model, where one has been stated.

@@ -217,6 +217,16 @@ async fn write_pasted_text(text: String) -> Result<Attachment, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The same, for a picture off the clipboard: the webview holds the bytes and
+/// has no path, so the path is made here and the tray gets the tile it draws.
+/// See `attachments::write_pasted_image`.
+#[tauri::command]
+async fn write_pasted_image(data_url: String) -> Result<Attachment, String> {
+    attachments::write_pasted_image(&data_url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Which agents can actually be run on this machine, and what to say about
 /// one that can't.
 ///
@@ -1140,6 +1150,7 @@ pub fn run() {
             send_msg,
             read_attachments,
             write_pasted_text,
+            write_pasted_image,
             list_models,
             list_providers,
             list_provider_presets,

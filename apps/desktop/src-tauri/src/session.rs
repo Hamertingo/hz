@@ -2178,7 +2178,7 @@ impl Session {
 
         match harness {
             Harness::Mcode => {
-                mcode::init(
+                let session = mcode::init(
                     session_id,
                     model,
                     effort,
@@ -2190,7 +2190,16 @@ impl Session {
                     agent_name,
                     app,
                 )
-                .await
+                .await?;
+                // **The list, now that a session has restated it.** Every reply
+                // from here on carries the whole model list with the ladder filled
+                // on the row this session runs — and the picker's own copy was
+                // fetched before this reply existed, so the ladder it holds sits on
+                // whatever model the last reading ran. One emit closes that gap,
+                // and the reload it triggers reads the cache rather than opening a
+                // child of its own.
+                mcode::announce_models(app);
+                Ok(session)
             }
             // A session some newer build wrote into the shared index. Its
             // transcript still reads and its row still draws — that is what the
@@ -2366,7 +2375,6 @@ impl Session {
     /// level is dropped, the session runs on mcode's own default, and stderr
     /// says which level was refused.
     pub async fn set_effort(&mut self, effort: Option<Effort>, app: &AppHandle) -> Result<()> {
-        let _ = app;
         let Transport::Acp(session) = &self.stdin;
 
         if let Some(effort) = effort {
@@ -2375,6 +2383,10 @@ impl Session {
             }
         }
         self.effort = effort;
+        // The reply restates the list with the level it landed on, and a refused
+        // level is the one that did *not* land — so what the picker draws comes
+        // from the agent rather than from what was asked for.
+        mcode::announce_models(app);
 
         Ok(())
     }

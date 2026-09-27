@@ -133,8 +133,10 @@ describe('LocalModelProviderService context', () => {
       headers: { 'X-Tenant': 'one', 'X-Trace': 'keep' },
       models: [
         {
-          modelId: 'gpt-5',
-          displayName: 'GPT 5',
+          // An id no catalog knows, so what is stored here is what the flow
+          // wrote and not what the catalog fills in for a real model id.
+          modelId: 'house-model',
+          displayName: 'House Model',
           limit: { context: 128_000, output: 16_000 },
         },
       ],
@@ -157,7 +159,7 @@ describe('LocalModelProviderService context', () => {
         headers: { 'x-tenant': 'two' },
       },
       models: {
-        'gpt-5': {
+        'house-model': {
           reasoning: true,
           thinking_config: { mode: 'switchable', default_value: 'true' },
           limit: { context: 128_000, output: 16_000 },
@@ -174,7 +176,10 @@ describe('LocalModelProviderService context', () => {
       apiKey: CUSTOM_KEY,
       apiFormat: 'openai-responses',
       headers: { Authorization: 'Api-Key custom', 'X-Tenant': 'tenant-a' },
-      models: [{ modelId: 'gpt-5' }],
+      // One rung, stated: left off, the catalog's own ladder for `gpt-5` is
+      // filled in and the connection test proves every level, which the call
+      // count below is not about.
+      models: [{ modelId: 'gpt-5', effortOptions: ['high'] }],
     });
 
     await expect(harness.service.testModel(provider.providerId, 'gpt-5')).resolves.toMatchObject({

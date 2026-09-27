@@ -16,6 +16,7 @@ import {
 } from './service-helpers.js';
 import {
   assertValidRawApiKey,
+  enrichModelsFromCatalog,
   mergeModelsFromInputs,
   modelsFromInputs,
   normalizeApiFormat,
@@ -74,6 +75,14 @@ export async function createUserProvider(
   const apiFormat = normalizeApiFormat(input.apiFormat);
   const headers = normalizeHeaders(input.headers);
   const name = input.name?.trim();
+  // Enriched before the write rather than inside it: the config callback is
+  // synchronous, and what the catalog states about a model does not depend on
+  // the draft being built.
+  const models = input.models
+    ? await enrichModelsFromCatalog(input.models, {
+        dataDir: context.deps.configGetter().dataDir,
+      })
+    : undefined;
   let providerKey = '';
   await context.deps.updateByokConfig((draft) => {
     const tree = (draft.custom_provider ?? {}) as LocalCustomProvidersConfig;
@@ -93,10 +102,10 @@ export async function createUserProvider(
         authMode: 'api-key',
         ...(headers ? { headers } : {}),
       },
-      ...(input.models
+      ...(models
         ? {
             models: modelsFromInputs(
-              input.models,
+              models,
               undefined,
               context.deps.implicitCustomProviderThinking === true,
             ),

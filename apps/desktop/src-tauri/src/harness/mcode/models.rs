@@ -180,12 +180,40 @@ pub fn from_configs(configs: &ConfigOptions) -> Vec<Model> {
                 // a screen then draws its fallback rather than a fact.
                 context_window: meta.and_then(|m| m.context_window),
                 max_tokens: meta.and_then(|m| m.max_tokens),
+                // **The row's own ladder, where the agent stated one.** A reading
+                // states the ladder of the model it is running and, on each row's
+                // `_meta`, the ladder of that row — so a picker draws levels
+                // beside every model rather than beside the one in use, and both
+                // come from the agent rather than from a guess. The active row
+                // keeps the session's own statement, which is the same ladder
+                // unioned with the level the session sits on.
                 efforts: if running {
                     active_efforts.clone()
                 } else {
-                    Vec::new()
+                    stated_efforts(meta)
                 },
-                default_effort: None,
+                // **The level the row lands on, which nothing else on it states.**
+                // The ladder is the model's levels in order, so the picker can
+                // draw them, but only this says which one a pick starts on:
+                // without it the control draws its own fallback — the top rung of
+                // a list that is not the ladder — and a reader looking at a
+                // session on `max` sees `high` named beside the model.
+                //
+                // The active row answers with the level the session is **on**,
+                // since that is what a pick would keep; every other row answers
+                // with the model's **own** default, off its `_meta`. Where the
+                // agent's answer is a level this app cannot spell — `none`, at the
+                // floor of most gateway ladders — the row lands on the lowest rung
+                // it can send rather than on nothing.
+                default_effort: if running {
+                    landing_effort(configs.current("thinkingEffort"), &active_efforts)
+                } else {
+                    let stated = stated_efforts(meta);
+                    landing_effort(
+                        meta.and_then(|meta| meta.default_effort.as_deref()),
+                        &stated,
+                    )
+                },
                 // The value *is* the argument: ACP takes the same
                 // `m:<provider>:<model>:v:<variant>` string the option lists.
                 arg: choice.value.clone(),
@@ -204,14 +232,52 @@ pub fn from_configs(configs: &ConfigOptions) -> Vec<Model> {
         .collect()
 }
 
+/// The levels a row's own `_meta` states, in the agent's order.
+///
+/// Filtered the way the session's ladder is: a rung this app cannot spell is
+/// dropped rather than rounded to a neighbour — `Effort` has no variant for
+/// mcode's `minimal`, and `none` is a level of its own that this build cannot
+/// send.
+fn stated_efforts(meta: Option<&super::parser::ConfigChoiceMeta>) -> Vec<Effort> {
+    meta.and_then(|meta| meta.effort_options.as_ref())
+        .map(|levels| levels.iter().filter_map(|level| Effort::from_arg(level)).collect())
+        .unwrap_or_default()
+}
+
+/// The level a row lands on: what the agent stated, where this app can spell it,
+/// else the lowest rung of that row's own ladder that it can.
+///
+/// **A ladder that opens at `none` — most of a gateway's do — leaves the agent's
+/// own default unsendable**, and a row with nothing stated drew no tick while
+/// the app sent its own fallback: the global `high`, or the top of the ladder.
+/// Either is a level above the one the model runs at by default. The floor of
+/// the ladder is the nearest honest answer — a level the model takes, chosen
+/// rather than invented — and it is what a reader asked for when they asked for
+/// "something rather than nothing".
+fn landing_effort(stated: Option<&str>, ladder: &[Effort]) -> Option<Effort> {
+    stated
+        .and_then(Effort::from_arg)
+        .or_else(|| ladder.first().copied())
+}
+
 /// The active model's thinking-effort ladder, off a session's `configOptions`.
 ///
 /// `None` where the reply carries no `thinkingEffort` option: mcode only builds
 /// that option for a model with `effortOptions`, so its absence is the agent
 /// saying this model does not reason — which is a different answer from an
 /// empty ladder, and the one that must not collapse into it.
+///
+/// **The list is taken whole, the level in force included.** The option's values
+/// are the model's ladder *unioned with the session's own level*, and an earlier
+/// cut subtracted that level to keep only what it read as the model's — which
+/// left the picker unable to draw where the session is: measured on a model
+/// stating `['high','max']` with the session on `max`, the row offered one rung,
+/// no level was ticked, and the control read as having no effort at all. A level
+/// in the union was stated by the agent for this session either way, so offering
+/// it back cannot ask for something the model refuses — it is the level already
+/// running.
 pub fn effort_levels(configs: &ConfigOptions) -> Option<Vec<Effort>> {
-    let levels = configs.model_levels("thinkingEffort")?;
+    let levels = configs.levels("thinkingEffort")?;
     Some(
         levels
             .into_iter()
@@ -449,10 +515,11 @@ mod tests {
         assert!(from_configs(&configs()).iter().all(|m| m.efforts.is_empty()));
     }
 
-    /// A ladder is read off the option when there is one, and a rung this app
-    /// cannot spell is dropped rather than rounded to a neighbour.
+    /// A ladder is read off the option when there is one, with the level in use
+    /// among it, and a rung this app cannot spell is dropped rather than rounded
+    /// to a neighbour.
     #[test]
-    fn a_ladder_is_read_and_unspellable_rungs_are_dropped() {
+    fn a_ladder_is_read_with_the_level_in_use_in_it() {
         let reply = serde_json::json!({
             "configOptions": [
                 {
@@ -479,17 +546,160 @@ mod tests {
 
         let configs = ConfigOptions::of(&reply);
 
-        // `minimal` is dropped — `Effort` has no variant for it — and `medium`
-        // is dropped as the level in use, since that entry may be the
-        // *session's* rather than the model's and offering it back would let
-        // the picker choose a level the model does not have.
-        assert_eq!(effort_levels(&configs), Some(vec![Effort::Low, Effort::High]));
+        // `minimal` is dropped — `Effort` has no variant for it. `medium` stays:
+        // it is the level the session is on, and a picker that cannot draw where
+        // it is draws a row with no effort at all.
+        assert_eq!(
+            effort_levels(&configs),
+            Some(vec![Effort::Low, Effort::Medium, Effort::High])
+        );
 
-        // The active row carries the same ladder; no other row carries one at
-        // all, since one reading cannot know what a model it is not running
-        // takes.
+        // The active row carries that ladder and names the level in force; no
+        // other row carries either, since one reading cannot know what a model
+        // it is not running takes.
         let models = from_configs(&configs);
-        assert_eq!(models[0].efforts, vec![Effort::Low, Effort::High]);
+        assert_eq!(models[0].efforts, vec![Effort::Low, Effort::Medium, Effort::High]);
+        assert_eq!(models[0].default_effort, Some(Effort::Medium));
+    }
+
+    /// A level the app cannot spell costs the row the level, not the ladder: the
+    /// floor of what it *can* send is where a pick starts.
+    #[test]
+    fn a_level_the_app_cannot_spell_lands_on_the_floor() {
+        let reply = serde_json::json!({
+            "configOptions": [
+                {
+                    "type": "select",
+                    "id": "model",
+                    "currentValue": "m:custom_provider%3Aopencode-go:minimax-m3:v:thinking",
+                    "options": [
+                        {"value": "m:custom_provider%3Aopencode-go:minimax-m3:v:thinking", "name": "minimax-m3 · thinking"}
+                    ]
+                },
+                {
+                    "type": "select",
+                    "id": "thinkingEffort",
+                    "currentValue": "minimal",
+                    "options": [
+                        {"value": "minimal", "name": "Minimal"},
+                        {"value": "high", "name": "High"}
+                    ]
+                }
+            ]
+        });
+
+        let models = from_configs(&ConfigOptions::of(&reply));
+
+        assert_eq!(models[0].efforts, vec![Effort::High]);
+        assert_eq!(models[0].default_effort, Some(Effort::High));
+    }
+
+    /// **A ladder opening at `none` lands on `low`.** Most of a gateway's models
+    /// are listed that way — the level the agent picks for them is one this app
+    /// cannot send — and the row used to state nothing at all, which left the
+    /// picker sending its own global default instead.
+    #[test]
+    fn a_ladder_opening_at_none_lands_on_its_floor() {
+        let reply = serde_json::json!({
+            "configOptions": [
+                {
+                    "type": "select",
+                    "id": "model",
+                    "currentValue": "m:custom_provider%3Acommand-code:gpt-5.6-sol:v:thinking",
+                    "options": [
+                        {
+                            "value": "m:custom_provider%3Acommand-code:gpt-5.6-sol:v:thinking",
+                            "name": "gpt-5.6-sol · thinking",
+                            "_meta": {
+                                "effortOptions": ["none", "low", "medium", "high"],
+                                "defaultEffort": "none"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "type": "select",
+                    "id": "thinkingEffort",
+                    "currentValue": "none",
+                    "options": [
+                        {"value": "none", "name": "None"},
+                        {"value": "low", "name": "Low"},
+                        {"value": "medium", "name": "Medium"},
+                        {"value": "high", "name": "High"}
+                    ]
+                }
+            ]
+        });
+
+        let models = from_configs(&ConfigOptions::of(&reply));
+
+        assert_eq!(
+            models[0].efforts,
+            vec![Effort::Low, Effort::Medium, Effort::High]
+        );
+        assert_eq!(models[0].default_effort, Some(Effort::Low));
+    }
+
+    /// Every row states its own ladder, so the picker draws levels beside each
+    /// model rather than beside the one the session happens to run.
+    #[test]
+    fn a_quiet_row_takes_its_ladder_from_its_own_meta() {
+        let reply = serde_json::json!({
+            "configOptions": [
+                {
+                    "type": "select",
+                    "id": "model",
+                    "currentValue": "m:custom_provider%3Aopencode-go:active-model:v:thinking",
+                    "options": [
+                        {
+                            "value": "m:custom_provider%3Aopencode-go:active-model:v:thinking",
+                            "name": "active-model · thinking"
+                        },
+                        {
+                            "value": "m:custom_provider%3Aopencode-go:deepseek-v4.1-flash:v:thinking",
+                            "name": "deepseek-v4.1-flash · thinking",
+                            "_meta": {
+                                "contextWindow": 1_000_000,
+                                "effortOptions": ["low", "high", "max"],
+                                "defaultEffort": "high"
+                            }
+                        },
+                        {
+                            "value": "m:custom_provider%3Aopencode-go:house-model:v:thinking",
+                            "name": "house-model · thinking",
+                            "_meta": { "effortOptions": ["minimal", "high"] }
+                        },
+                        {"value": "m:opencode:quiet:v:thinking", "name": "quiet · thinking"}
+                    ]
+                },
+                {
+                    "type": "select",
+                    "id": "thinkingEffort",
+                    "currentValue": "high",
+                    "options": [
+                        {"value": "high", "name": "High"},
+                        {"value": "xhigh", "name": "XHigh"}
+                    ]
+                }
+            ]
+        });
+
+        let models = from_configs(&ConfigOptions::of(&reply));
+
+        // The row the session runs keeps the session's own statement, which is
+        // the ladder unioned with the level it sits on.
+        assert_eq!(models[0].efforts, vec![Effort::High, Effort::Xhigh]);
+        assert_eq!(models[0].default_effort, Some(Effort::High));
+        // The others state theirs, in the agent's order — and a rung this app
+        // cannot spell is dropped rather than rounded to its neighbour. Their
+        // default is the one the agent named, which is where a pick starts.
+        assert_eq!(models[1].efforts, vec![Effort::Low, Effort::High, Effort::Max]);
+        assert_eq!(models[1].default_effort, Some(Effort::High));
+        assert_eq!(models[2].efforts, vec![Effort::High]);
+        // A row that states nothing stays empty: a model the agent says nothing
+        // about must not borrow the levels of the row above it.
+        assert!(models[3].efforts.is_empty());
+        assert_eq!(models[3].default_effort, None);
     }
 
     /// What the picker draws after a session has opened is that session's own
