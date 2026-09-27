@@ -685,6 +685,16 @@ pub struct ConfigChoiceMeta {
     pub context_window: Option<u64>,
     #[serde(default, rename = "maxTokens")]
     pub max_tokens: Option<u64>,
+    /// The levels this model takes, stated per row. The `thinkingEffort` option
+    /// states them for the model the session **runs**, so a picker reading only
+    /// that had one row with levels and every other row bare.
+    #[serde(default, rename = "effortOptions")]
+    pub effort_options: Option<Vec<String>>,
+    /// The level that model lands on when nothing asks for one — the agent's own
+    /// default, so a picker draws where a pick would start rather than the level
+    /// this build would otherwise make up.
+    #[serde(default, rename = "defaultEffort")]
+    pub default_effort: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -728,19 +738,6 @@ impl ConfigOptions {
     /// session's**, exactly as fx's is.
     pub fn current(&self, id: &str) -> Option<&str> {
         self.option(id)?.current_value.as_deref()
-    }
-
-    /// The levels that can only be the model's own: the option's list minus the
-    /// one in use. See [`current`](Self::current) for why that subtraction is
-    /// what makes a stored ladder safe to offer.
-    pub fn model_levels(&self, id: &str) -> Option<Vec<&str>> {
-        let current = self.current(id);
-        Some(
-            self.levels(id)?
-                .into_iter()
-                .filter(|level| Some(*level) != current)
-                .collect(),
-        )
     }
 
     /// The model in use, as mcode spells it on the wire.
