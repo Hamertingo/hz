@@ -446,3 +446,35 @@ describe('TUI BYOK think toggle across persisted model shapes', () => {
     expect(thinkingConfigFor('preset-without-reasoning')).toBeUndefined();
   });
 });
+
+/// **The ladder a custom provider's model declares reaches the entry the client
+/// draws.** It is the whole chain the effort picker stands on: the entry states
+/// `thinking.effortOptions`, `buildModelEntry` carries them, and the TUI's own
+/// projector passes the entry through — so a reader can choose a level. Written
+/// because a gateway the catalog does not know is exactly the case where nothing
+/// else would have filled them in.
+describe('the effort ladder of a custom provider model', () => {
+  const provider: LocalCustomProviderConfig = {
+    name: 'Command Code',
+    kind: 'custom',
+    enabled: true,
+    api: 'openai-completions',
+    options: { apiKey: 'sk-x', baseURL: 'https://api.commandcode.ai/provider/v1', authMode: 'api-key' },
+    models: {
+      'deepseek/deepseek-v4.1-flash': {
+        reasoning: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        thinking: { effortOptions: ['low', 'high', 'max'] },
+        thinking_config: { mode: 'switchable', default_value: 'true' },
+      },
+    },
+  };
+
+  it('carries the declared levels into the entry a client reads', () => {
+    const entries = listByokRuntimeModels(config({ custom_provider: { 'command-code': provider } }));
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.effortOptions).toEqual(['low', 'high', 'max']);
+    expect(entries[0]?.modalities).toEqual({ input: ['text', 'image'], output: ['text'] });
+  });
+});
