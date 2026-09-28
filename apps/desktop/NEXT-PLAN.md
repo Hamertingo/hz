@@ -411,16 +411,43 @@ child waiting on a slow build has made no progress *and* burned no requests. 200
 Only a delegated run is budgeted — a reader's own turn is bounded by the reader, who
 can watch it going and stop it.
 
-The wording deliberately does **not** promise the forced stop at 1.5× that the design
-this follows puts beside it, because hz does not stop a run yet: a prompt that names a
-consequence the runtime does not deliver teaches the agent that these statements are
-decoration. That sentence arrives with the stop.
+**And the stop is real now, which is what lets the notice name it.** Three decisions the
+request pipeline already understands carry the ladder, so no new machinery: a marker at
+the budget, a marker saying the run is **stopped** from 1.5× on every request it is
+still allowed, and `abort` once those five are spent. Ending the Turn rather than
+asking again is what makes the stop real — and it is also what brings the answer back,
+since a Turn that ends still carries the messages it committed.
 
-**Still open:** the setting. The executor takes a `softRequestBudget` and nothing sets
-one, so every delegated run sits on the bundled 200 — which also means the rung cannot
-be watched working end to end yet, since a child crossing a budget of 2 is the only
-cheap way to see it. Then the forced stop, then the salvage that turns a stopped run's
-last assistant turn into its report.
+**Measured, with the budget lowered to 2 and a delegation that asked for a report on
+419 files.** The child was stopped before reading any of them, and it **reported
+anyway**: `run_status: succeeded`, `exit: reported`, and a ~10k-character
+`final_text` that said plainly it had enumerated 419 files, read none, and inferred
+every per-file line from filenames. That is the Done-when below, exactly — a run that
+hit its ceiling returned what it found rather than being killed empty.
+
+*Unverified:* the `abort` rung itself, and the salvage behind it. The child complied
+with the stop, so the run never spent its grace and never had to be ended for it; the
+path where a run refuses until the Turn is aborted, and the committed messages are all
+the parent gets, has not been watched.
+
+**And the setting exists.** `softRequestBudget` in the agent's config, read where the
+Turn's own model policy is read, with the parse's own rule: **`0` is a valid value** —
+the one that means the guard is off — which is why its bound is `>= 0` where the context
+window beside it needs `> 0`.
+
+**What verifying it cost, and the trap that fell out of it.** A bare `hz-agent` reads
+`~/.minimax/config.yaml` — `APP_DIR` is hard-coded to the pre-rebrand directory — while
+the app's agent reads `~/.hz/agent/config.yaml`, because the Rust side pins
+`MINIMAX_DATA_DIR` to it. A budget written into the file the app owns therefore never
+reaches a CLI run, and three attempts were measured against the wrong file before the
+path itself was printed. That is its own decision for later: two configs that can
+disagree, on every machine with an older install on it.
+
+One measurement lesson, because it cost the most time of anything here: **the runtime
+log keeps the `input` of every tool call**, so a `grep` for a log message finds the
+greps themselves and reports their text as records. A probe has to write to a file of
+its own, which no logger and no echo can pollute — and a claim built on the log without
+that is worth nothing.
 
 **4. One field that says what the work *is*.** `solutionSpace` describes how
 open-ended a child's problem is — whether the fix is given, or which causes remain
