@@ -1205,6 +1205,8 @@ pub fn run() {
             track_active_day,
             files::warm_file_index,
             files::search_files,
+            files::resolve_named_path,
+            files::write_text_file,
             files::list_dir,
             files::read_file,
             store::list_session_index_items,
