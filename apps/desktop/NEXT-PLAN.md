@@ -385,6 +385,29 @@ progress coalesced at 150ms over an 8KB tail; and a session-scoped `Semaphore`
 timeouts. It does not have a ceiling that turns into a partial answer rather than a
 lost run.
 
+**Landed for the half that could be measured, and the measurement changed what the
+half was.** hz's ceiling is **time**, not a request count: a policy's `timeoutMs`
+becomes `executionDeadlineAtMs`, and `createExecutionBudgetReminder` already tells the
+run how much of it is left at every model request. That reminder was measured doing
+its job — given a 20s budget and a 40s sleep, the run read `Execution time remaining
+at request preparation: N seconds`, dispatched the sleep as a **background** task
+rather than blocking on it, and reported what it could and could not verify. So the
+soft budget omp keeps for this purpose is already here, and works.
+
+What was missing was the other half: when the model blocks anyway. `createExecResult`
+published `output` only for a run that succeeded, so a hard cut returned a status and
+nothing else — and two attempts at 25s showed why that is not enough, since both ended
+`modelSteps: 1, answerBytes: 0` with the model spending its step on the tool that
+outlived the deadline. So the answer rides on **any** status now, and a run that did
+not succeed also carries `progress`: the model steps and tool calls it made, and the
+operation still running when it was cut.
+
+**Still open, and it needs a decision rather than code:** a **task child has no
+ceiling at all**. Nothing in the task runner sets a deadline, so a child that loops is
+unbounded. What budget a child should get — requests, wall-clock, or both — and what
+setting it comes from is a product call; the mechanism to honour one is now in place,
+since a cut child would report its progress like any other run.
+
 **4. One field that says what the work *is*.** `solutionSpace` describes how
 open-ended a child's problem is — whether the fix is given, or which causes remain
 open. The part worth stealing is not the field but its scope: **it is the only input
@@ -423,7 +446,8 @@ were closer than this section first said.
 - A child that would have produced nothing instead **ends through a contract**, so
   the parent can tell "produced nothing" from "still going". — **Landed.**
 - A run that hits its ceiling **returns what it found** rather than being killed
-  empty. — *Not started.*
+  empty. — **Landed** for a run that had a ceiling. A task child still has none, which
+  is the open half above.
 - The reported defect is closed by the first of those, not by a patch around it. —
   Closed by the model-limit fix, which is a different thing; the contract above is for
   the case nobody has watched happen.
