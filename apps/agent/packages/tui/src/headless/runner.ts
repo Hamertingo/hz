@@ -137,11 +137,10 @@ export async function runTuiExec(
   let executionMetadata: Readonly<Record<string, unknown>> = {};
   let stoppedForRecovery = false;
   let originalAnswer: string | null | undefined;
-  const progress = input.diagnosticsDir
-    ? new ExecProgress((event) =>
-        evidence?.record({ ...executionMetadata, ...event }),
-      )
-    : undefined;
+  // Built whether or not diagnostics were asked for, because its summary is now what
+  // a run that did not succeed reports about itself. The `record` sink is already a
+  // no-op without an evidence file, and observing a stream event is a map lookup.
+  const progress = new ExecProgress((event) => evidence?.record({ ...executionMetadata, ...event }));
   const startedAt = Date.now();
   const supervisor = new ExecRunSupervisor(dependencies.runtime);
   const coordinator = new TuiRunCoordinator(supervisor.conversationPort(), {
@@ -271,7 +270,7 @@ export async function runTuiExec(
             };
           }
         }
-        progress?.observe(event);
+        progress.observe(event);
         if (event.type === "session-status") {
           evidence?.record({ kind: "session_status", status: event.status });
         } else if (
@@ -347,6 +346,9 @@ export async function runTuiExec(
             usageIncomplete: facts.usageIncomplete,
           }
         : {}),
+      // `createExecResult` decides whether it belongs in the result: it carries this
+      // only for a run that did not succeed, where the caller has nothing else.
+      progress: progress.summary(),
     };
     const execResult = createExecResult(outcome, resultOptions);
     const result: ExecResult = reviewResult
@@ -367,7 +369,7 @@ export async function runTuiExec(
     };
     if (result.status !== "succeeded") {
       evidence?.failure(outcome.answer, {
-        ...progress?.summary(),
+        ...progress.summary(),
         ...answerSelection,
         error: result.error,
         status: result.status,
@@ -495,7 +497,7 @@ export async function runTuiExec(
       runId: executionMetadata.runId,
       sessionId: executionMetadata.sessionId,
       turnId: executionMetadata.turnId,
-      ...progress?.summary(),
+      ...progress.summary(),
       exitCode,
       shutdownComplete: !shutdownFailure,
       recoveryReady: stoppedForRecovery && !shutdownFailure,
