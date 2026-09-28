@@ -94,6 +94,11 @@ impl std::fmt::Debug for Fail {
         self.0.fmt(f)
     }
 }
+impl std::fmt::Display for Fail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl serde::Serialize for Fail {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
