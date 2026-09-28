@@ -183,6 +183,13 @@ async fn title_command(harness: Harness, prompt: &str, _cwd: &str) -> Result<Com
             let mut cmd = Command::new(&bin).hide_console();
             crate::harness::agent_env(&mut cmd, &bin).await;
             cmd.args([
+                // **`exec`, because `--output-format` is that subcommand's flag
+                // and not the CLI's.** Named at the top level commander refuses
+                // it, prints its usage on stderr and exits 1 — so every title
+                // failed and fell back to the prompt-derived one, and the log
+                // named the last line of that usage ("plugin  Manage Hz Agent
+                // Plugins") as the reason.
+                "exec",
                 // Raw text, not the TUI's transcript: what comes back is the
                 // title alone and `clean_title` has nothing to strip.
                 "--output-format",
@@ -685,6 +692,21 @@ mod command_tests {
 
         assert!(!path.is_empty());
     }
+
+    /// **`--output-format` belongs to `exec`, not to the CLI**, so the
+    /// subcommand has to come first. Passed at the top level the flag is
+    /// refused and the child exits 1 having printed its usage — a title that
+    /// silently never arrives, which is the one failure nothing on screen shows.
+    #[tokio::test]
+    async fn the_title_child_names_the_subcommand_its_flags_belong_to() {
+        let args = args_for(Harness::Mcode).await;
+        let subcommand = args.iter().position(|a| a == "exec");
+        let format = args.iter().position(|a| a == "--output-format");
+
+        assert_eq!(subcommand, Some(0), "got: {args:?}");
+        assert!(format > subcommand, "got: {args:?}");
+    }
+
     /// The child must not run in the project: the agent can read a repo, and a
     /// repo can therefore steer the title it is writing.
     #[tokio::test]
@@ -765,8 +787,15 @@ mod command_tests {
     }
 }
 
-/// Hits the real CLI, so these are `#[ignore]`d: `cargo test -- --ignored
-/// calls_the_real_cli` when changing the flags above.
+/// Hits the real CLI, so this one is `#[ignore]`d: `cargo test -- --ignored
+/// titles_a_prompt_against_the_real_cli` when changing the flags above.
+///
+/// **Nothing else covers them, and that is what let them rot.** The command tests
+/// read argv back off the built command, which cannot tell a flag the CLI refuses
+/// from one it takes — and it refused `--output-format` at the top level for as
+/// long as it was passed there, with every title falling back to the
+/// prompt-derived one in silence. `--ignored` because it costs a node boot and a
+/// model call, the same reason nothing else waits on a title.
 #[cfg(test)]
 mod cli_tests {
     use super::*;
@@ -790,6 +819,23 @@ mod cli_tests {
         .to_string();
 
         assert!(err.contains("/nonexistent/worktrees/blue-kite"), "got: {err}");
+    }
+
+    /// The whole path, against the CLI this build ships: the flags, the scratch
+    /// cwd, and `clean_title` on what a real model answers with.
+    #[tokio::test]
+    #[ignore]
+    async fn titles_a_prompt_against_the_real_cli() {
+        let title = generate_title(
+            Harness::Mcode,
+            "the desktop app crashes on launch and i think it's the sqlite native module",
+            ".",
+        )
+        .await
+        .expect("the real CLI titles a prompt");
+
+        println!("title: {title}");
+        assert!(!title.is_empty());
     }
 }
 

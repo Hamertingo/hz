@@ -642,6 +642,7 @@ async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
         process: AsyncMutex::new(Some(child)),
         client,
         live: AsyncMutex::new(HashMap::new()),
+        opening: Default::default(),
     });
 
     // **The read loop first, and that ordering is load-bearing**: the handshake
@@ -650,17 +651,37 @@ async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
     // sitting in the pipe. One loop per child, outliving every conversation it
     // will carry, and it is handed the first conversation's handles — what a line
     // naming no session at all is filed against.
-    tokio::spawn({
-        let reader = ReaderHandles {
-            agent: ours.clone(),
-            own: opening.handles.clone(),
-            stderr_tail: stderr_tail.clone(),
-            app: app.clone(),
-        };
-        async move {
-            if let Err(error) = read_stdout(stdout, reader).await {
-                eprintln!("Failed to read mcode stdout: {error}");
-            }
+    let reader = ReaderHandles {
+        agent: ours.clone(),
+        own: opening.handles.clone(),
+        stderr_tail: stderr_tail.clone(),
+        app: app.clone(),
+    };
+
+    // **The loop is watched, because ending and dying are different things.** A
+    // loop that *ends* has already closed every conversation it was carrying; one
+    // that unwinds closes none of them, and the turn in flight is then left
+    // `in_progress` for good — a row spinning on a child that may not even be
+    // gone, and nothing on screen or in the log saying so. So the handle is kept
+    // rather than dropped: a task that came back an `Err` is one that panicked,
+    // and it gets the same recovery the ordinary path runs.
+    //
+    // Only a panic reaches that `Err`, and that is worth being sure of:
+    // `read_stdout` has no `?` before its own cleanup, so every ordinary exit
+    // returns `Ok` having already closed its turns. This is therefore not a second
+    // close — it is the one case the cleanup cannot cover, since the cleanup is
+    // exactly what did not run.
+    let watched = reader.clone();
+    let read_loop = tokio::spawn(async move {
+        if let Err(error) = read_stdout(stdout, reader).await {
+            eprintln!("Failed to read mcode stdout: {error}");
+        }
+    });
+
+    tokio::spawn(async move {
+        if let Err(join) = read_loop.await {
+            eprintln!("mcode read loop died: {join}");
+            close_after_exit(&watched, ExitCause::Loop).await;
         }
     });
 
@@ -732,6 +753,12 @@ async fn open_conversation(
     } = opening;
 
     let opening_at = Instant::now();
+    // **The window a line naming an unknown session is waited for opens here**, and
+    // one call covers all three registrations because this is the only place they
+    // are issued from. It replaced a clause that only ever held for a child's
+    // *first* conversation.
+    agent.mark_opening();
+
     let (mcode_id, config) = match open_session(
         &agent.client,
         session_id,
@@ -743,7 +770,7 @@ async fn open_conversation(
     .await
     {
         Ok(opened) => opened,
-        Err(error) => return Err(abandon(agent, error).await),
+        Err(error) => return Err(abandon(agent, None, error).await),
     };
     let opened = opening_at.elapsed();
 
@@ -751,7 +778,7 @@ async fn open_conversation(
     // session to resume rather than one that silently starts over.
     if record_thread && (is_new_session || fork_from.is_some()) {
         if let Err(error) = store::set_session_thread_id(session_id, &mcode_id).await {
-            return Err(abandon(agent, error).await);
+            return Err(abandon(agent, None, error).await);
         }
     }
 
@@ -773,6 +800,31 @@ async fn open_conversation(
     // booting a child of its own beside this one.
     models::remember_configs(&config);
 
+    // **On the table before the settings, which is what stops the pushes
+    // `session/new` is answered with from being dropped.** The agent sends the
+    // session's `available_commands_update` — the composer's command list — on the
+    // heels of that reply, measured at 1ms behind it, and until an entry exists the
+    // loop has nowhere to file one: five lines per session in `~/.hz/hz.log`, and
+    // the menu empty for that session's whole life. The entry used to be filed
+    // after the settings, which left the push racing a deadline rather than a fact
+    // — `route` gives a line 200ms from `mark_opening`, while `open` plus
+    // `settings` measured 240ms on the same line of the log — and it lost.
+    //
+    // The session's own state is all `Arc`, so everything the settings below
+    // change is visible through this entry as it lands. What goes in beside it is
+    // the read loop's per-conversation state: the mapper that numbers this
+    // conversation's events and remembers its subagents, and the coalescer that
+    // holds one of its blocks.
+    agent.live.lock().await.insert(
+        session.id.clone(),
+        Live {
+            handles: handles.clone(),
+            session: session.clone(),
+            mapper: mapper::Mapper::new(handles.session_id.clone(), handles.seq.clone()),
+            coalescer: Coalescer::new(),
+        },
+    );
+
     let settings = Instant::now();
 
     // The session settings, applied in place on a session that now exists — the
@@ -786,7 +838,7 @@ async fn open_conversation(
     // what the effort below is judged against.
     if let Some(model) = model {
         if let Err(error) = set_model(&session, model, app).await {
-            return Err(abandon(agent, error).await);
+            return Err(abandon(agent, Some(&session.id), error).await);
         }
     }
 
@@ -807,7 +859,7 @@ async fn open_conversation(
     // setting reached two ways, and `default` is where the plan branch has to
     // start from.
     if let Err(error) = set_mode(&session, permission_mode).await {
-        return Err(abandon(agent, error).await);
+        return Err(abandon(agent, Some(&session.id), error).await);
     }
 
     // **One line per conversation start, and the outlier is what it is for.**
@@ -830,20 +882,6 @@ async fn open_conversation(
             settings.elapsed().as_secs_f64(),
         ),
     }
-
-    // **On the table before the session is handed over**, so the first line the
-    // loop has to file lands on an entry. What goes in is the read loop's own
-    // per-conversation state: the mapper that numbers this conversation's events
-    // and remembers its subagents, and the coalescer that holds one of its blocks.
-    agent.live.lock().await.insert(
-        session.id.clone(),
-        Live {
-            handles: handles.clone(),
-            session: session.clone(),
-            mapper: mapper::Mapper::new(handles.session_id.clone(), handles.seq.clone()),
-            coalescer: Coalescer::new(),
-        },
-    );
 
     Ok(Session {
         handles,
@@ -868,8 +906,20 @@ async fn open_conversation(
 /// its first conversation has nothing left to serve and a `Child` is not reaped on
 /// drop — while a shared one has other sessions on it, which this must not take
 /// down over a model that was refused.
-async fn abandon(agent: &Arc<Agent>, error: anyhow::Error) -> anyhow::Error {
-    let alone = agent.live.lock().await.is_empty();
+///
+/// `id` is the conversation this failure belongs to where one got far enough to be
+/// filed. That is the two settings failures: the entry has to be on the table
+/// before them, or the pushes `session/new` is answered with are dropped, and an
+/// entry left behind by a conversation that never opened is a session the app
+/// would route to and the child would not answer for.
+async fn abandon(agent: &Arc<Agent>, id: Option<&str>, error: anyhow::Error) -> anyhow::Error {
+    let alone = {
+        let mut live = agent.live.lock().await;
+        if let Some(id) = id {
+            live.remove(id);
+        }
+        live.is_empty()
+    };
     if alone {
         if let Some(mut child) = retract(&agent.project, agent).await {
             let _ = child.kill().await;
@@ -1435,6 +1485,20 @@ pub struct Agent {
     client: RpcClient,
     /// The conversations open on it, by the id the agent minted for each.
     live: AsyncMutex<HashMap<String, Live>>,
+    /// When a registration was last issued on this child.
+    ///
+    /// **This is what makes a line naming an unknown session worth waiting for**,
+    /// and it replaced a guess. `route` used to wait only while the child carried
+    /// *nothing*, on the reasoning that an empty child is the only sign of a
+    /// registration in flight — but a child carries several conversations, so the
+    /// second session opened on one emptied that clause and had its settings and
+    /// its command list dropped the moment they arrived. Measured in `~/.hz/hz.log`:
+    /// five lines per session, for every session.
+    ///
+    /// A moment rather than a count: it needs no bookkeeping on the several paths
+    /// that can fail between the request and the registration, and it expires on
+    /// its own.
+    opening: std::sync::Mutex<Option<tokio::time::Instant>>,
 }
 
 impl std::fmt::Debug for Agent {
@@ -1449,6 +1513,31 @@ impl std::fmt::Debug for Agent {
 }
 
 impl Agent {
+    /// Records that a registration is in flight, which is the fact [`route`] waits
+    /// on rather than inferring from an empty child.
+    ///
+    /// **Set once, by the caller of `open_session`**, because that is the only place
+    /// that covers `session/new`, `session/resume` and `session/fork` alike.
+    fn mark_opening(&self) {
+        let mut opening = self
+            .opening
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *opening = Some(tokio::time::Instant::now());
+    }
+
+    /// Whether a registration was issued within [`CLAIM_GRACE`] — the question
+    /// [`route`] actually has to answer, and the one `!any_live` was standing in for.
+    ///
+    /// Tolerant of a poisoned lock, for [`close_after_exit`]'s reason: this is read
+    /// from the loop, which can still be running while another task unwinds.
+    fn opening(&self) -> bool {
+        self.opening
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some_and(|at| at.elapsed() < CLAIM_GRACE)
+    }
+
     /// The process's pid, or `None` once it has been torn down.
     ///
     /// **`None` while the child carries more than one conversation**, which is
@@ -1554,6 +1643,12 @@ async fn retract(project: &str, agent: &Arc<Agent>) -> Option<Child> {
 /// conversation the loop *is* — a child carries several — it is the one that was
 /// open first, which is what a line naming no session at all can still be
 /// attributed to.
+///
+/// Cloneable because the watcher needs a copy: the loop's own is moved into its
+/// task, so nothing else holds one once it starts, and the recovery below runs
+/// from outside that task. Every field is shared already — an `Arc`, or a
+/// `String` — so a clone is a handful of refcounts.
+#[derive(Clone)]
 struct ReaderHandles {
     agent: Arc<Agent>,
     own: SessionHandles,
@@ -1579,16 +1674,30 @@ const CLAIM_BEAT: Duration = Duration::from_millis(10);
 
 /// Whether a line the loop cannot file yet is worth waiting for.
 ///
-/// **The only thing worth waiting for is a registration in flight**, and the only
-/// sign of one is that the child carries nothing at all yet: the first session on
-/// a child is opened by the handshake that is already running. A line naming an
-/// id while the child carries conversations is therefore a stranger — a session
-/// from an hz that has since quit, or one deleted while its turn ran — and waiting
-/// for it costs the loop a beat per line for nothing.
+/// **The only thing worth waiting for is a registration in flight**, and `opening`
+/// is what says so: the child was asked to register a conversation within
+/// [`CLAIM_GRACE`] — see [`Agent::mark_opening`], called at the one place all three
+/// registrations are issued from.
+///
+/// **It used to be `!any_live`**, on the reasoning that an empty child is the only
+/// sign of a registration in flight. That premise is false one screen up — a child
+/// carries several conversations — so the window held for a child's *first* session
+/// and for no other. Opening a second one meant `any_live` was already true on the
+/// first pass and its pushes were dropped the instant they arrived: five lines per
+/// session, for every session, in `~/.hz/hz.log`. A stranger costs nothing under the
+/// new reading, because a stranger arrives long after the window has closed.
+///
+/// **This is one half of the fix and the other half is over in
+/// [`open_conversation`]: the entry has to be filed *before* the session's settings
+/// are applied.** Waiting only covers a line that arrives while the registration is
+/// still open, and the registration is answered with its pushes long before the
+/// settings finish — measured, the first push lands 1ms behind the reply where
+/// `open` plus `settings` runs to 240ms. File the entry after them again and the
+/// push goes back to losing a race against `CLAIM_GRACE` rather than being filed.
 ///
 /// Free so the judgement is testable on three facts rather than through a child.
-fn wait_for_registration(named: Option<&str>, carried: bool, any_live: bool) -> bool {
-    named.is_some() && !carried && !any_live
+fn wait_for_registration(named: Option<&str>, carried: bool, opening: bool) -> bool {
+    named.is_some() && !carried && opening
 }
 
 /// The session a payload names, where it names one.
@@ -1604,12 +1713,17 @@ fn line_session(params: &Value) -> Option<&str> {
 impl ReaderHandles {
     /// Where a line goes: the id of a conversation this child carries, or `None`
     /// when nothing here can be it.
-    async fn route(&self, params: &Value) -> Option<String> {
+    ///
+    /// `method` is carried only to name the line where it is dropped. **A drop
+    /// that does not say what was lost is the same silence this file's log sink
+    /// exists to end** — `dropped a line` reads as noise until the day it costs
+    /// something, and then it is the one detail that would have said what.
+    async fn route(&self, method: &str, params: &Value) -> Option<String> {
         let named = line_session(params).map(str::to_string);
         let give_up = tokio::time::Instant::now() + CLAIM_GRACE;
 
         loop {
-            let (carried, any_live) = {
+            let (carried, opening) = {
                 let live = self.agent.live.lock().await;
 
                 // A line that names no session can only be attributed by a child
@@ -1626,14 +1740,18 @@ impl ReaderHandles {
                     return Some(id.to_string());
                 }
 
-                (false, !live.is_empty())
+                // Asked of the child rather than inferred from the map it is
+                // holding: a registration in flight says nothing about how many
+                // conversations are already open, which is precisely what the old
+                // reading got wrong.
+                (false, self.agent.opening())
             };
 
-            if !wait_for_registration(named.as_deref(), carried, any_live)
+            if !wait_for_registration(named.as_deref(), carried, opening)
                 || tokio::time::Instant::now() >= give_up
             {
                 eprintln!(
-                    "[mcode route] dropped a line for {}, which this child does not carry",
+                    "[mcode route] dropped {method} for {}, which this child does not carry",
                     named.as_deref().unwrap_or("no session at all")
                 );
                 return None;
@@ -2063,10 +2181,66 @@ async fn read_stdout(stdout: ChildStdout, reader: ReaderHandles) -> Result<()> {
         take_value(&line, value, &reader).await;
     }
 
+    close_after_exit(&reader, ExitCause::Child).await;
+
+    Ok(())
+}
+
+/// Why a read loop ended, which decides what its closing turn says.
+///
+/// Two ways in and only two, and they are worth telling apart on screen: "mcode
+/// exited" is the child going away, where a loop that unwound leaves a child that
+/// is very possibly still running with nobody reading it. A reader told the wrong
+/// one goes looking in the wrong place.
+#[derive(Clone, Copy)]
+enum ExitCause {
+    /// stdout closed: the child exited, or was killed.
+    Child,
+    /// The loop unwound past its own cleanup. Nothing has closed these
+    /// conversations yet, and the recovery below is the only thing that will.
+    Loop,
+}
+
+impl ExitCause {
+    /// Carried on the synthesized `turn_completed`, where the app reads it.
+    fn stop_reason(self) -> &'static str {
+        match self {
+            ExitCause::Child => "mcode exited",
+            ExitCause::Loop => "mcode read loop died",
+        }
+    }
+
+    /// What the reader is left with.
+    fn sentence(self) -> &'static str {
+        match self {
+            ExitCause::Child => "mcode exited before the turn finished.",
+            ExitCause::Loop => {
+                "The agent's read loop died before the turn finished. Send again to continue; \
+                 the session itself is still open."
+            }
+        }
+    }
+}
+
+/// The one place a child's death becomes a closed turn.
+///
+/// **Reached two ways, and both have to do exactly this.** The ordinary one is
+/// the tail of [`read_stdout`], where stdout closed. The other is the watcher
+/// beside that spawn, for a loop that *unwound* instead of ending — and that is
+/// the case this arrangement exists for: a panic inside the loop runs none of
+/// this, and without it the turn in flight is left `in_progress` forever, its row
+/// spinning on a child that may not even be gone. Two copies of it would be one
+/// copy too many, so it is a function.
+///
+/// **Safe to run twice, because on the path that does it never has to be.** The
+/// second call cannot reach the loop below: `close_everything` *drains* `live`, so
+/// there is no orphan left to close, and `retract` drops only the entry it owns
+/// and answers `None` once it is gone.
+async fn close_after_exit(reader: &ReaderHandles, cause: ExitCause) {
     // Every conversation this child was carrying, each one's last held text
     // already flushed. The registry entry goes **before** the closing turns, so
     // nothing routes into it again — the child is gone.
-    let orphans = close_everything(&reader).await;
+    let orphans = close_everything(reader).await;
     retract(&reader.agent.project, &reader.agent).await;
 
     // A prompt still in flight will never be answered, so its turn is closed as a
@@ -2075,10 +2249,17 @@ async fn read_stdout(stdout: ChildStdout, reader: ReaderHandles) -> Result<()> {
     // cleared), so the closing turn's boundary flush finds nothing to hand the
     // dead child.
     for (handles, session) in orphans {
+        // **Tolerant of a poisoned lock, where the rest of this file is not.**
+        // This function runs *because* something unwound, and a `std` mutex held
+        // at that moment stays poisoned for the life of the process — so the
+        // `expect` the ordinary path uses would panic here and take the recovery
+        // down with it, leaving the session hanging after all. That is the exact
+        // failure this function exists to prevent, so the lock is taken through
+        // its poison rather than refused.
         let outstanding = session
             .prompt_id
             .lock()
-            .expect("mcode prompt id poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .is_some();
         if !outstanding {
             continue;
@@ -2092,11 +2273,11 @@ async fn read_stdout(stdout: ChildStdout, reader: ReaderHandles) -> Result<()> {
         let mapper = mapper::Mapper::new(handles.session_id.clone(), handles.seq.clone());
         let closed = mapper.synthesize(AgentEventPayload::TurnCompleted {
             status: crate::events::TurnStatus::Error,
-            stop_reason: Some("mcode exited".to_string()),
+            stop_reason: Some(cause.stop_reason().to_string()),
             auth_failed: false,
             final_text: Some(match detail {
-                Some(detail) => format!("mcode exited before the turn finished.\n\n{detail}"),
-                None => "mcode exited before the turn finished.".to_string(),
+                Some(detail) => format!("{}\n\n{detail}", cause.sentence()),
+                None => cause.sentence().to_string(),
             }),
             usage: None,
             duration_ms: None,
@@ -2104,8 +2285,6 @@ async fn read_stdout(stdout: ChildStdout, reader: ReaderHandles) -> Result<()> {
         });
         send(&handles, &session, &reader.app, closed).await;
     }
-
-    Ok(())
 }
 
 /// Files one parsed line against the conversation it belongs to.
@@ -2136,7 +2315,7 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
 
     match reader.agent.client.accept_value(value).await {
         Incoming::Notification { method, params } => {
-            let Some(agent_id) = reader.route(&params).await else {
+            let Some(agent_id) = reader.route(&method, &params).await else {
                 return;
             };
             let Some((handles, session)) = conversation(reader, &agent_id).await else {
@@ -2233,7 +2412,7 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
         // Every agent request blocks the turn until it is answered, so silence
         // stalls the session exactly as an unanswered `can_use_tool` does.
         Incoming::Request { id, method, params } => {
-            let carried = reader.route(&params).await;
+            let carried = reader.route(&method, &params).await;
             let conversation = match carried.as_deref() {
                 Some(agent_id) => conversation(reader, agent_id).await,
                 None => None,
@@ -2731,6 +2910,7 @@ mod route_tests {
             process: AsyncMutex::new(None),
             client: RpcClient::new(stdin),
             live: AsyncMutex::new(HashMap::new()),
+            opening: Default::default(),
         })
     }
 
@@ -2751,25 +2931,30 @@ mod route_tests {
     /// lookup: a line this child carries nothing for is waited on exactly while a
     /// registration could be in flight, and dropped otherwise.
     ///
-    /// The second half is the half that matters: a line naming an id while the
-    /// child already carries conversations is a stranger — a session from an hz
-    /// that has quit, one deleted while its turn ran — and waiting for it would
-    /// cost the loop a beat per line for nothing.
+    /// **There used to be a fourth fact here, and it was the bug.** The third
+    /// parameter was `any_live` — "the child carries something already, so nothing
+    /// is in flight" — which is false the moment a project has a second session,
+    /// because a child carries several conversations. Both cases below are asserted
+    /// against the fact hz actually has: a registration *it issued* a beat ago.
     #[test]
     fn a_line_is_waited_for_only_while_a_registration_could_be_in_flight() {
-        // Nothing registered yet, and the line names a session: the handshake that
-        // is opening the first conversation may have it a beat from now.
-        assert!(wait_for_registration(Some("mvs_1"), false, false));
+        // A registration was issued within the window and the child has not filed
+        // the session yet. Whether it is already carrying others is not consulted,
+        // and must not be: this is the case that was being dropped, and it is the
+        // ordinary one on a shared child.
+        assert!(wait_for_registration(Some("mvs_1"), false, true));
 
-        // The child carries something already, so nothing is in flight.
-        assert!(!wait_for_registration(Some("mvs_1"), false, true));
+        // No registration within the window, so an id this child does not carry is
+        // a stranger — an hz that has quit, a session deleted mid-turn — and waiting
+        // for it would cost the loop a beat per line for nothing.
+        assert!(!wait_for_registration(Some("mvs_1"), false, false));
 
-        // Carried: nothing to wait for.
+        // Already filed: nothing to wait for either way.
         assert!(!wait_for_registration(Some("mvs_1"), true, true));
 
         // A line naming no session never waits: it is either the loop's own
         // conversation or one nothing can be.
-        assert!(!wait_for_registration(None, false, false));
+        assert!(!wait_for_registration(None, false, true));
     }
 
     /// The table is keyed by the project, and that is the whole of what makes a
@@ -2851,6 +3036,7 @@ mod route_tests {
             process: AsyncMutex::new(Some(cat)),
             client: RpcClient::new(stdin),
             live: AsyncMutex::new(HashMap::new()),
+            opening: Default::default(),
         });
         register("/retract-hands-back", held.clone()).await;
 

@@ -36,6 +36,7 @@ pub mod cef;
 pub mod chromium;
 pub mod context;
 mod local_servers;
+mod logging;
 pub mod docs;
 pub mod download;
 #[path = "events/events.rs"]
@@ -89,6 +90,11 @@ impl From<Fail> for anyhow::Error {
 }
 
 impl std::fmt::Debug for Fail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::fmt::Display for Fail {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
@@ -1103,6 +1109,20 @@ pub fn run() {
             // survived the restart. Spawned, not awaited: the reset needs no
             // window, and the frontend's first fetch lands well after it.
             tauri::async_runtime::spawn(async {
+                // **Before anything else that can fail.** From here on, every
+                // `eprintln!` in this process — and every panic message — lands
+                // in `~/.hz/hz.log` as well as on a terminal, which is the
+                // difference between a bundled app that reports its failures and
+                // one that writes them to a system log nobody opens.
+                //
+                // Through the canonical resolver rather than by joining `~/.hz`
+                // directly, and that is not tidiness: the resolver is what moves a
+                // directory left by an earlier name of the app into place, and it
+                // only does so while `~/.hz` does not exist. Creating the
+                // directory here to hold a log would cost a reader their history.
+                if let Ok(dir) = store::get_home_app_dir().await {
+                    logging::tee_stderr(&dir);
+                }
                 if let Err(e) = store::reset_in_progress_sessions().await {
                     eprintln!("[status reset err] {e}");
                 }
