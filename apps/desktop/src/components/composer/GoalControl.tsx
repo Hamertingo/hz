@@ -1,5 +1,5 @@
 import { Pause, Pencil, Play, Target, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
 
@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { compactTokens, formatElapsed } from "@/lib/format";
+import { elapsedSeconds, goalBaseline, type GoalBaseline } from "@/lib/goalClock";
 import { cn } from "@/lib/utils";
 import type { Goal, GoalMove } from "@/types/events";
 
@@ -268,6 +269,22 @@ export default function GoalControl({
   );
 }
 
+/// Where each goal's clock is measured from, keyed by the goal and kept outside
+/// React.
+///
+/// **Outside, because the baseline belongs to the goal and not to the band that
+/// draws it.** In component state it was restamped on every mount — and an effect
+/// runs on mount as well as on a change — so switching chats, which unmounts this
+/// band, threw away every second the local tick had accumulated since the
+/// runtime's last push and dropped the number back onto it. Leave for two minutes
+/// and the goal appeared to lose two minutes.
+///
+/// Bounded, because one session can run many goals and only the ones still being
+/// drawn are worth a stamp. A `Map` iterates in insertion order, so the first key
+/// is the oldest.
+const baselines = new Map<string, GoalBaseline>();
+const BASELINE_LIMIT = 8;
+
 /// The runtime's count, with the reader's own second hand in between.
 ///
 /// **The push is the baseline and the clock is the interpolation**, which is the
@@ -276,19 +293,45 @@ export default function GoalControl({
 /// schedule — so a band that only repainted on pushes would sit still through a
 /// long stretch of work, which is exactly the stretch a reader watches.
 ///
+/// **Stamped when the figure moves, never merely on mount.** That is what lets the
+/// number survive leaving the chat and coming back: the baseline is read out of
+/// [`baselines`] rather than made fresh, so a remount finds the clock where it was
+/// left. Written during the render rather than in an effect, because an effect
+/// lands a frame later and the figure drawn in between would be measured from a
+/// stamp that does not exist yet — the write is idempotent for one pair of inputs,
+/// so a double render cannot restamp it.
+///
 /// Only an `active` goal ticks. The runtime stops counting when it stops working,
 /// so a paused one that kept ticking would drift upward on screen and claim time
 /// nobody spent.
 function useElapsed(goal: Goal | null): number {
   const active = goal?.status === "active";
+  const goalId = goal?.goalId ?? null;
   const seconds = goal?.timeUsedSeconds ?? 0;
   const [now, setNow] = useState(() => Date.now());
-  const [baseline, setBaseline] = useState(() => ({ seconds, at: Date.now() }));
 
-  // A fresh push is a fresh baseline — the number on it is the runtime's own.
-  useEffect(() => {
-    setBaseline({ seconds, at: Date.now() });
-  }, [seconds, goal?.goalId]);
+  const baseline = useMemo(() => {
+    // Nothing to key on, or nothing to interpolate: the band draws the runtime's
+    // own figure for a goal that is not running, so a stamp would exist only to be
+    // dropped.
+    if (goalId === null || !active) return { seconds, at: Date.now() };
+
+    const held = baselines.get(goalId);
+    const fresh = goalBaseline(held, seconds, Date.now());
+
+    // Only a genuinely new anchor is written. Setting the same object back would
+    // reorder the map, and the map's order is what decides which goal is evicted
+    // when the limit is reached — so a render that changed nothing could push a
+    // running goal out ahead of a finished one.
+    if (fresh !== held) {
+      baselines.set(goalId, fresh);
+      if (baselines.size > BASELINE_LIMIT) {
+        const oldest = baselines.keys().next().value;
+        if (oldest !== undefined) baselines.delete(oldest);
+      }
+    }
+    return fresh;
+  }, [goalId, seconds, active]);
 
   useEffect(() => {
     if (!active) return;
@@ -297,8 +340,17 @@ function useElapsed(goal: Goal | null): number {
     return () => clearInterval(timer);
   }, [active]);
 
+  // **Nothing is kept for a goal that has stopped.** A goal the runtime reports as
+  // finished or paused leaves no stamp behind, so a later goal can never inherit
+  // one — and since the band stops interpolating for it, there was nothing the
+  // stamp could be serving.
+  useEffect(() => {
+    if (active || goalId === null) return;
+    baselines.delete(goalId);
+  }, [active, goalId]);
+
   if (!active) return seconds;
-  return baseline.seconds + Math.max(0, Math.floor((now - baseline.at) / 1_000));
+  return elapsedSeconds(baseline, now);
 }
 
 /// What the band calls the goal.
