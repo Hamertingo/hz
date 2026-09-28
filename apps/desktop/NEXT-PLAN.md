@@ -1164,9 +1164,44 @@ agent's name. Only MiniMax as **the agent's own identity** goes.
   vendor run, so the rename belongs in the patch step, not in the vendored files.
 - **The name has to be chosen once, and the tree currently offers three.**
   `AgentIcon` says `Hz Agent`, the request that produced this item said *Hyze*, and
-  the name on the connected services is `Hyze`. That is a product decision rather
-  than something to assume — but it has to end as one string everywhere, or the
-  reader meets this same disagreement one layer down.
+  the name on the connected services is `Hyze`. **Decided: `Hz Agent`.** It is the one
+  the app already draws, and the sidebar's icon is what a reader actually reads; the
+  persona strings and the connected-services name move to it rather than the other way
+  round.
+
+**Decided: the data directory too, and it is a second rename the tree has not had.**
+The name is not only prose — it is where the agent keeps everything — and today a
+**bare** `hz-agent` and the app disagree about that place:
+
+- The app spawns the child with `MINIMAX_DATA_DIR=~/.hz/agent`
+  ([harness.rs](../../apps/desktop/src-tauri/src/harness/harness.rs#L76), joining
+  `home.join(".hz")` from `store.rs`). That variable **is** honoured
+  (`config.ts`: `process.env.MINIMAX_DATA_DIR?.trim() || process.env.MAVIS_DATA_DIR`),
+  so a child the app started reads the right place.
+- A bare `hz-agent` has no such variable and falls back to `resolveDataDir()`, whose
+  primary basename is still `NEW_DATA_DIR_BASENAME = '.minimax'`
+  ([data-dir.ts](../../apps/agent/packages/config/src/data-dir.ts#L5)). So it reads
+  `~/.minimax` — the pre-rebrand directory — and the two can disagree on every machine
+  with an older install on it. That is the trap that cost three wrong measurements
+  during the budget work.
+
+So the rename is three strings and one path, and each lands in the patch step:
+`HZ_DATA_DIR` as the variable (with `MINIMAX_DATA_DIR` still honoured, so an older app
+build talking to a newer CLI does not silently split them); the default directory
+becoming `~/.hz/agent`, which is *not* a basename swap — `resolveDataDir` joins one
+basename onto home and derives profiles as `<basename>-<profile>`, so reaching
+`~/.hz/agent` (and `~/.hz/agent-<profile>`) is a real change to
+`getPrimaryDataDirPath`, not a constant; and the legacy side becoming `.minimax`, whose
+existing migration machinery — primary/legacy pair, backup, compat symlink — already
+does this once for `.mavis`, so it is proven to work and needs no second mechanism.
+
+**Not flipped yet, and that is deliberate.** The one-line version of this —
+`NEW_DATA_DIR_BASENAME = '.hz'` — would leave a bare CLI at `~/.hz` while the app sits
+at `~/.hz/agent`, which is a different disagreement in the same place; and edited into
+the vendored tree it is silently reverted by the next `vendor-agent.mjs` run, so it
+would read as fixed while being undone. A data directory is also the one thing here
+that can lose a reader's sessions if it moves wrong, which is why the migration path
+above is named before the change is made.
 
 **A caution on the working tree.** `apps/agent/packages/local-runtime-v2` has
 uncommitted edits in flight. Nothing here should be written until that lands.
