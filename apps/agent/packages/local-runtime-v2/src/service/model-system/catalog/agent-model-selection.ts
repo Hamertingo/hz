@@ -590,6 +590,26 @@ function resolveLimit(input: {
     );
   }
   if (input.physicalLimit === undefined) {
+    // **A window inherited from the session that spawned a task is an observation,
+    // not a claim.** That source is a task child taking its model and its window
+    // from the parent it was spawned by — a session that is *running that very
+    // model* — so the number is not something a catalog would be checking, and a
+    // catalog merely silent about the ceiling cannot make it wrong. There is
+    // nothing to clamp, so nothing is reported: this returns the same empty
+    // diagnostics the ordinary no-clamp path does.
+    //
+    // Refusing it is what killed every delegated subagent before its first tool
+    // call — `MODEL_LIMIT_UNAVAILABLE`, "contextWindow from task-parent-session
+    // requires a catalog physical limit." — and it is why `explore` and `worker`
+    // died identically: the model comes from the parent, not from the agent type.
+    //
+    // A *configured* window is a different thing and is still refused just below:
+    // the operator asked for a bound nobody can check, and saying so is the useful
+    // answer. This is the one source that is not asking for one.
+    if (input.source === 'task-parent-session') {
+      return { effective: input.requested, diagnostics: [] };
+    }
+
     throw new AgentModelSelectionError(
       'MODEL_LIMIT_UNAVAILABLE',
       `${input.field} from ${input.source} requires a catalog physical limit.`,

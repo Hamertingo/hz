@@ -1,4 +1,4 @@
-import type { LocalTaskRunResult } from '@hz/agent-tools/desktop';
+import { type LocalTaskRunResult, SILENT_EXIT_NOTICE } from '@hz/agent-tools/desktop';
 
 import type { LocalTaskRunnerHostWithSessionLookup } from '../api/local-task-host.js';
 import { logger } from '../common/logger.js';
@@ -33,7 +33,7 @@ export interface PersistLocalSubagentTaskTerminalInput {
   readonly delivery: LocalSubagentTaskDelivery;
 }
 
-interface TerminalProjection {
+export interface TerminalProjection {
   readonly status: BackgroundTaskStatus;
   readonly outputText: string;
   readonly summary?: string;
@@ -144,7 +144,16 @@ async function patchTerminalTaskOutput(
   });
 }
 
-function toTerminalProjection(result: LocalSubagentTaskOutcome): TerminalProjection {
+/**
+ * What an owner reads about a finished background child: the status the row takes,
+ * the text `task_output` answers with, and the one-line summary the delivery notice
+ * carries.
+ *
+ * Exported for its test, because this is the third place a child's exit has to be
+ * written down and the one with no other reader: the foreground report and the tool
+ * details are both in the same reply, while a background exit is only ever seen here.
+ */
+export function toTerminalProjection(result: LocalSubagentTaskOutcome): TerminalProjection {
   if (isFailure(result)) {
     return {
       status: 'failed',
@@ -157,9 +166,16 @@ function toTerminalProjection(result: LocalSubagentTaskOutcome): TerminalProject
     result.status === 'succeeded'
       ? ''
       : `\n\n[${result.status}] ${result.errorMessage ?? 'Local background task did not complete.'}`;
+  // **The silent exit has to be written down here too.** An owner reads a background
+  // child through `task_output`, which is this text, so an exit the foreground report
+  // carries and this one does not is the same "came back with nothing" one level down:
+  // an empty result under `succeeded`, which the owner cannot tell from a task that
+  // has not produced yet.
+  const silentText =
+    result.status === 'succeeded' && result.exit === 'silent' ? `\n\n${SILENT_EXIT_NOTICE}` : '';
   return {
     status,
-    outputText: `${result.finalText ?? ''}${failureText}`,
+    outputText: `${result.finalText ?? ''}${failureText}${silentText}`,
     ...(result.finalText !== undefined ? { summary: result.finalText } : {}),
     ...(result.status === 'succeeded'
       ? {}

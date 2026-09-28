@@ -4,6 +4,7 @@
     "capability": [
       "packages/agent-core/test/unit/bash-subprocess-env.test.ts",
       "packages/agent-modules/permission/test/unit/permission/bash-policy-regressions.test.ts",
+      "packages/agent-tools/src/desktop/task-verification.test.ts",
       "packages/agent-tools/src/shared/replace-all-edit.test.ts",
       "packages/local-runtime-v2/test/unit/agent/agent-import.test.ts",
       "packages/tui/test/unit/auth-application.test.ts",
@@ -111,6 +112,7 @@
       "packages/local-runtime/test/unit/content-safety-turn-v2.test.ts",
       "packages/local-runtime/test/unit/local-runtime-host-input-safety-v2.test.ts",
       "packages/local-runtime/test/unit/local-runtime-host-output-safety-concurrency.test.ts",
+      "packages/local-runtime/test/unit/local-task-child-exit.test.ts",
       "packages/local-runtime/test/unit/local-output-safety-writer-v2-guide-review.test.ts",
       "packages/agent-modules/goal/test/unit/thread-goal/continuation.test.ts",
       "packages/agent-modules/goal/test/unit/thread-goal/tool-impls.test.ts",

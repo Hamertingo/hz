@@ -110,6 +110,19 @@ function nextNonEmptyLine(lines: readonly string[], from: number): number | unde
 }
 
 /**
+ * What a silent exit means to the parent, and what to do about it.
+ *
+ * Printed under the report rather than left to be inferred from an empty
+ * `final_text:`, because the parent is an agent: a fact with no next step is the same
+ * mudez this report exists to end. Both routes named are real ones — ask the child
+ * again through `task_append`, or read what it did through the member transcript.
+ */
+export const SILENT_EXIT_NOTICE =
+  'exit_notice: this child finished without a report, having been asked for one. It is ' +
+  'not still working. Ask it again with task_append, or read its transcript, rather ' +
+  'than delegating the same work to a new child.';
+
+/**
  * Render the raw child facts that the parent Agent should receive.
  *
  * This formatter deliberately only serializes facts already present on the
@@ -123,6 +136,7 @@ export function formatLocalTaskParentReport(result: LocalTaskRunResult): string 
 
   return [
     `run_status: ${result.status}`,
+    `exit: ${result.exit ?? 'missing'}`,
     `requested_agent_name: ${result.requestedAgentName}`,
     `resolved_agent_name: ${result.resolvedAgentName ?? 'missing'}`,
     `model_verdict: ${verification?.modelVerdict ?? 'missing'}`,
@@ -133,5 +147,6 @@ export function formatLocalTaskParentReport(result: LocalTaskRunResult): string 
     'final_text:',
     result.finalText ?? '',
     `error_message: ${result.errorMessage ?? ''}`,
+    ...(result.exit === 'silent' ? [SILENT_EXIT_NOTICE] : []),
   ].join('\n');
 }

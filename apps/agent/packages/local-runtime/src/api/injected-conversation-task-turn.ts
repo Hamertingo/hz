@@ -59,13 +59,14 @@ export async function runInjectedConversationTaskTurn(input: {
     return result;
   }
   let acceptedTurnId = input.turnId;
+  const clientRequestId = taskClientRequestId(input.turnId);
   try {
     const accepted = await input.conversation.ingress.submit({
       sessionId: input.childSession.sessionId,
       source: input.source,
       allowQueue: true,
       requestedTurnId: input.turnId,
-      clientRequestId: `task-turn:${input.turnId}`,
+      clientRequestId,
       message: {
         content: input.prompt,
         attachments: [],
@@ -73,12 +74,11 @@ export async function runInjectedConversationTaskTurn(input: {
       },
     });
     acceptedTurnId = accepted.turnId;
-    const result = await awaitTaskCompletion(input, accepted);
-    const finalText = result.messages
-      .filter((message) => message.role === 'assistant' && message.text)
-      .map((message) => message.text)
-      .join('\n')
-      .trim();
+    const result = await awaitTaskCompletion(input, accepted, clientRequestId);
+    let finalText = assistantReport(result);
+    if (result.status === 'completed' && !finalText) {
+      finalText = (await askForReport(input)) ?? '';
+    }
     const verification = buildConversationVerification({
       agentRole: input.agentRole,
       finalText,
@@ -92,6 +92,12 @@ export async function runInjectedConversationTaskTurn(input: {
             ? 'aborted'
             : 'failed',
       subTurnId: accepted.turnId,
+      // Only a turn that *finished* has an exit to state. A failed or aborted run
+      // says why in its status, and calling it `silent` would name a contract it
+      // never had the chance to keep.
+      ...(result.status === 'completed'
+        ? { exit: finalText ? ('reported' as const) : ('silent' as const) }
+        : {}),
       ...(finalText ? { finalText } : {}),
       ...(verification ? { verification } : {}),
       ...(result.status === 'completed'
@@ -134,10 +140,72 @@ function buildConversationVerification(input: {
   };
 }
 
+/** The id a child Turn is submitted under, so a cancel can find its queue entry. */
+function taskClientRequestId(turnId: string): string {
+  return `task-turn:${turnId}`;
+}
+
+/** What a finished child published, as the parent reads it. */
+function assistantReport(result: ConversationTurnResult): string {
+  return result.messages
+    .filter((message) => message.role === 'assistant' && message.text)
+    .map((message) => message.text)
+    .join('\n')
+    .trim();
+}
+
+/**
+ * What a child that finished without a report is asked for.
+ *
+ * It names the artefact, and refuses the two ways a model answers this without
+ * producing one: an acknowledgement that it will write the report, and a summary of
+ * what it did rather than of what it found.
+ */
+const REPORT_REMINDER =
+  'Your run ended without a report, so the agent that delegated this work has nothing to read. ' +
+  'Publish your findings now: what you found, and — where your role requires one — the verdict line. ' +
+  'Answer with the report itself, not with an acknowledgement and not with a promise to write one.';
+
+/**
+ * Asks a child that ended without a report for one, **once**.
+ *
+ * One more Turn in the **same** conversation, which is what makes it cheap: the whole
+ * of the run is still in that child's context, so the reminder costs a Turn where a
+ * fresh spawn costs the run again. **Once, never a loop** — a child that has just
+ * proved it will not answer is not made to answer by being asked twice, and every ask
+ * is a model Turn.
+ *
+ * Best-effort on purpose: a failure here leaves the run as it was. Reported silence is
+ * still a result, and losing a completed run to a failed recovery would be a worse
+ * answer than the silence it set out to fix.
+ */
+async function askForReport(
+  input: Parameters<typeof runInjectedConversationTaskTurn>[0],
+): Promise<string | undefined> {
+  const clientRequestId = `${taskClientRequestId(input.turnId)}:report`;
+  try {
+    const accepted = await input.conversation.ingress.submit({
+      sessionId: input.childSession.sessionId,
+      source: input.source,
+      allowQueue: true,
+      requestedTurnId: `${input.turnId}:report`,
+      clientRequestId,
+      message: { content: REPORT_REMINDER, attachments: [] },
+    });
+    const result = await awaitTaskCompletion(input, accepted, clientRequestId);
+    // A reminder that did not finish offers no report; the caller keeps the silence
+    // it already had rather than half a Turn's text.
+    return result.status === 'completed' ? assistantReport(result) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Covers cancellation both during admission and while queued/running. */
 async function awaitTaskCompletion(
   input: Parameters<typeof runInjectedConversationTaskTurn>[0],
   accepted: ConversationAcceptedTurn,
+  clientRequestId: string,
 ): Promise<ConversationTurnResult> {
   const { signal } = input;
   if (!signal) return accepted.completion;
@@ -148,7 +216,7 @@ async function awaitTaskCompletion(
   });
   const onAbort = () => {
     if (abortOperation) return;
-    abortOperation = cancelAcceptedTask(input, accepted.turnId);
+    abortOperation = cancelAcceptedTask(input, accepted.turnId, clientRequestId);
     void abortOperation.catch(rejectAbort);
   };
   signal.addEventListener('abort', onAbort, { once: true });
@@ -180,15 +248,13 @@ async function awaitTaskCompletion(
 async function cancelAcceptedTask(
   input: Parameters<typeof runInjectedConversationTaskTurn>[0],
   turnId: string,
+  clientRequestId: string,
 ): Promise<void> {
   const { ingress } = input.conversation;
   const sessionId = input.childSession.sessionId;
   const failures: unknown[] = [];
   try {
-    const queued = await ingress.findQueuedByClientRequestId(
-      sessionId,
-      `task-turn:${input.turnId}`,
-    );
+    const queued = await ingress.findQueuedByClientRequestId(sessionId, clientRequestId);
     if (queued) await ingress.cancelQueued(sessionId, queued.itemId);
   } catch (error) {
     failures.push(error);

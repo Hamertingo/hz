@@ -250,6 +250,17 @@ export interface VerificationReport {
 
 export interface LocalTaskRunResult {
   status: 'succeeded' | 'failed' | 'aborted';
+  /**
+   * Whether a run that *finished* published anything.
+   *
+   * **The exit, stated rather than inferred.** A completed child used to arrive as
+   * `succeeded` with an empty `finalText`, which the parent cannot tell from a child
+   * that has not produced *yet* — and that indistinguishability is exactly what
+   * "subagents come back with nothing" means. `silent` is a child that finished and
+   * reported nothing, after being asked once in its own conversation. Absent on a
+   * failed or aborted run, whose `status` already says why.
+   */
+  exit?: 'reported' | 'silent';
   requestedAgentName: string;
   resolvedAgentName?: string;
   /**
