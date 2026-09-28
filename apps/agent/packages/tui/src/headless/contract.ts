@@ -33,6 +33,20 @@ export interface ExecTokenUsage {
 
 export type ExecUsageSource = 'completed_responses' | 'analytics_fallback' | 'unavailable';
 
+/** Where a run that did not succeed had got to when it stopped. */
+export interface ExecProgressSummary {
+  readonly modelSteps: number;
+  readonly toolCalls: number;
+  readonly lastActivityAt: number;
+  readonly droppedOperations: number;
+  readonly unfinishedOperations: readonly {
+    readonly operationId: string;
+    readonly kind: string;
+    readonly startedAtMs: number;
+    readonly elapsedMs: number;
+  }[];
+}
+
 /** Stable public result emitted by mcode exec. */
 export interface ExecResult {
   readonly schemaVersion: 1;
@@ -47,6 +61,7 @@ export interface ExecResult {
   readonly usage?: ExecTokenUsage;
   readonly usageSource?: ExecUsageSource;
   readonly usageIncomplete?: boolean;
+  readonly progress?: ExecProgressSummary;
   readonly durationMs: number;
 }
 
@@ -95,6 +110,7 @@ export function createExecResult(
     readonly usageSource?: ExecUsageSource;
     readonly usageIncomplete?: boolean;
     readonly validation?: OutputValidation;
+    readonly progress?: ExecProgressSummary;
   },
 ): ExecResult {
   const validation =
@@ -102,14 +118,37 @@ export function createExecResult(
       ? (options.validation ?? validateExecOutput(outcome.answer, options.outputSchema))
       : undefined;
   const normalized = normalizeOutcome(outcome, validation);
+  const status: ExecResultStatus =
+    normalized.status === 'awaiting-user-continuation' ? 'failed' : normalized.status;
+  const succeeded = status === 'succeeded';
+  const answer =
+    normalized.answer !== undefined && normalized.answer !== null && normalized.answer.trim()
+      ? normalized.answer
+      : undefined;
   return {
     schemaVersion: 1,
     type: 'exec.result',
     runId: options.runId,
     sessionId: normalized.sessionId,
     turnId: normalized.turnId,
-    status: normalized.status === 'awaiting-user-continuation' ? 'failed' : normalized.status,
-    ...(normalized.status === 'succeeded' && validation?.ok ? { output: validation.value } : {}),
+    status,
+    // **A run that stopped short still has whatever it produced, and `status` is the
+    // only thing that should say it stopped short.** `output` was gated on
+    // `succeeded`, so a run the reader cancelled after its answer had landed, or one
+    // its own deadline cut, returned a status and nothing else — the answer was in
+    // hand and thrown away. On a run that succeeded the field is the validated
+    // schema output, where a schema was asked for; on any other it is the answer as
+    // text, because a run that did not finish has no schema to satisfy.
+    ...(succeeded
+      ? validation?.ok
+        ? { output: validation.value }
+        : {}
+      : answer === undefined
+        ? {}
+        : { output: answer }),
+    // And where it got to, for the runs with no answer to carry: a run cut
+    // mid-tool-call was, until this, indistinguishable from one that never started.
+    ...(succeeded || options.progress === undefined ? {} : { progress: options.progress }),
     ...(normalized.error ? { error: { ...normalized.error } } : {}),
     ...(options.model ? { model: { ...options.model } } : {}),
     ...(options.usage ? { usage: { ...options.usage } } : {}),
@@ -137,8 +176,32 @@ export function isExecResult(value: unknown): value is ExecResult {
       value.usageSource === 'analytics_fallback' ||
       value.usageSource === 'unavailable') &&
     (value.usageIncomplete === undefined || typeof value.usageIncomplete === 'boolean') &&
+    (value.progress === undefined || isProgress(value.progress)) &&
     isError(value.error)
   );
+}
+
+function isProgress(value: unknown): value is ExecProgressSummary {
+  if (!isRecord(value)) return false;
+  return (
+    isCount(value.modelSteps) &&
+    isCount(value.toolCalls) &&
+    isCount(value.lastActivityAt) &&
+    isCount(value.droppedOperations) &&
+    Array.isArray(value.unfinishedOperations) &&
+    value.unfinishedOperations.every(
+      (operation) =>
+        isRecord(operation) &&
+        typeof operation.operationId === 'string' &&
+        typeof operation.kind === 'string' &&
+        isCount(operation.startedAtMs) &&
+        isCount(operation.elapsedMs),
+    )
+  );
+}
+
+function isCount(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
 function normalizeOutcome(

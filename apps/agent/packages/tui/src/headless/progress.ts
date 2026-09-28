@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 
 import type { TuiStreamEvent, TuiToolCall } from '../runtime/stream-events.js';
+import type { ExecProgressSummary } from './contract.js';
 
 /** Projects only allowlisted metadata; never forwards arbitrary event bodies. */
 export class ExecProgress {
@@ -43,7 +44,7 @@ export class ExecProgress {
     }
   }
 
-  summary(): Readonly<Record<string, unknown>> {
+  summary(): ExecProgressSummary {
     return {
       modelSteps: this.modelSteps,
       toolCalls: this.toolCalls,
