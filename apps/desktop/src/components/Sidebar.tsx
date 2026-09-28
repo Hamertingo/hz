@@ -1,6 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowDownToLine, Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
-import Orb from "@/components/Orb";
 
 import BloubAvatar from "@/components/BloubAvatar";
 
@@ -1020,17 +1019,45 @@ function Sidebar({
           },
     [showArchived, delegations, foldedSubagents],
   );
+  /// Whether the list is narrowed to what is waiting on the reader.
+  ///
+  /// Read with the line in [`WaitingRow`], which is the only thing that turns it
+  /// on, and deliberately not persisted: it is a question asked of a list right
+  /// now, not a view the reader chose to live in.
+  const [waitingOnly, setWaitingOnly] = useState(false);
+
+  const waiting = askingSessions.size;
+
+  // **The filter lets go of its own accord.** A waiting session can be answered
+  // from the transcript, archived from its own menu, or have its card answered in
+  // another pane entirely — so the count can reach zero while the filter is on,
+  // and a narrowed list holding nothing with no way back that is not the same
+  // control is a sidebar that looks broken. Nothing here moves a row on its own;
+  // this only puts the list back the way it was.
+  useEffect(() => {
+    if (waiting === 0) setWaitingOnly(false);
+  }, [waiting]);
+
+  // The one narrowing that is not a place. It runs over the same items the space
+  // and project picks narrow, so a waiting session is still drawn under its own
+  // project heading and still counted in that group — the line says how many,
+  // and the list underneath still says who and where.
+  const listed = useMemo(
+    () => (waitingOnly ? items.filter((item) => askingSessions.has(item.sessionId)) : items),
+    [items, waitingOnly, askingSessions],
+  );
+
   const groups = useMemo(
     () =>
       sessionGroups(
-        items,
+        listed,
         projects,
         live,
         showArchived,
         showArchived ? [] : splits,
         subagentsOf,
       ),
-    [items, projects, live, showArchived, splits, subagentsOf],
+    [listed, projects, live, showArchived, splits, subagentsOf],
   );
   // Sessions only, not every drawn row: this is what decides whether the
   // shortcut hint is worth drawing, and the chords step between *sessions*. A
@@ -1220,6 +1247,18 @@ function Sidebar({
           Search
           <ShortcutKeys ids={["search"]} className="ml-auto" />
         </Button>
+
+        {/* The line, and the filter behind it — see [`WaitingRow`]. Above the
+            project filter because it answers a question about the whole column
+            rather than about which project is being looked at, and absent from
+            the settled list, where nothing is waiting on anybody. */}
+        {!showArchived && waiting > 0 && (
+          <WaitingRow
+            count={waiting}
+            active={waitingOnly}
+            onToggle={() => setWaitingOnly((on) => !on)}
+          />
+        )}
       </div>
 
       {/* The filter is where project grouping went. */}
@@ -1254,9 +1293,15 @@ function Sidebar({
         </div>
       </div>
 
-      {/* No right padding: the scrollbar gutter is the right-hand spacing. The
-          rows balance the track's extra width themselves with `pr-0.5`. */}
-      <div className="scrollbar-overlay flex min-h-0 flex-1 flex-col gap-px overflow-y-auto pb-3 pl-2 pr-0">
+      {/* **Right padding, the same as the left.** `scrollbar-gutter: stable`
+          reserves the track's width, and this comment used to read that as the
+          right-hand spacing — it is not. Reserving room for a scrollbar is not
+          the same as leaving room for it: the fill and every timestamp were
+          drawn *inside* that strip, so a hovered row ended flush against the
+          track and the time sat under it the moment the scrollbar appeared.
+          `pr-2` puts both exactly as far clear of the gutter as `pl-2` gives the
+          other side. */}
+      <div className="scrollbar-overlay flex min-h-0 flex-1 flex-col gap-px overflow-y-auto pb-3 pl-2 pr-2">
         {rowCount === 0 ? (
           <p className="px-2 py-6 text-ui text-muted-foreground">{emptyText}</p>
         ) : (
@@ -1305,6 +1350,9 @@ function Sidebar({
                     aria-hidden
                     className={cn(
                       "shrink-0",
+                      // A project opens on a taller break than a state run takes,
+                      // so a group reads as one block under its heading rather
+                      // than as runs of equal weight stacked in a column.
                       group.kind !== "project" || opensProject ? "h-4" : "h-3",
                     )}
                   />
@@ -1321,6 +1369,7 @@ function Sidebar({
                         : undefined
                     }
                     label={heading}
+                    count={group.rows.filter((row) => !row.member).length}
                   />
                 )}
 
@@ -1590,23 +1639,113 @@ function DotTrack({
   );
 }
 
+/// The column's first question, answered in one line: does anything need me.
+///
+/// **A line with a filter behind it, never a run of the waiting sessions.** A run
+/// driven by state would move a row out on send and back when the turn lands,
+/// which this file already names as the reason a session mid-turn is deliberately
+/// not a state of its own; a row that moves under the cursor on the click that
+/// moved it is a list the reader has to re-find; and drawing one session in two
+/// places is what `Pinned`'s own rule refuses. So nothing moves until the reader
+/// asks, and asking narrows the list through the mechanism the space and project
+/// picks already use — which keeps every waiting session under its own project
+/// heading, and still counted in that group.
+///
+/// Drawn only where something is actually waiting, for the reason the sidebar
+/// carries no permanent footer: a line reading `0 need you` is chrome for a fact
+/// nobody asked about.
+///
+/// The count wears the rail's own command yellow — this app's colour for "this is
+/// for you", the same fact a waiting row states in 2px at its left edge, said once
+/// in words here so it can be found without scanning forty rows for a mark that
+/// thin.
+function WaitingRow({
+  count,
+  active,
+  onToggle,
+}: {
+  count: number;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onToggle}
+      aria-pressed={active}
+      // The places rows' own fill and their `data-active` pair, so this reads as
+      // one of the column's controls rather than as a notice that happens to be
+      // clickable.
+      className="w-full justify-start px-1.5 text-ui text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground/80 dark:hover:bg-sidebar-accent/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground"
+      data-active={active || undefined}
+    >
+      {/* The rows' own rail at the size they draw it, so the one mark meaning
+          "over to you" is the same shape in the line as in the list under it. */}
+      <span aria-hidden className="h-1.5 w-0.5 shrink-0 rounded-[1px] bg-accent-command" />
+      Needs you
+      <span className="ml-auto font-mono text-[10.5px] text-accent-command tabular-nums">
+        {count}
+      </span>
+    </Button>
+  );
+}
+
 /// A group heading, and where the group is a project, the button that starts a
 /// task in it. The plus only appears under the cursor: the row is a label first
 /// and every heading carrying one at rest would draw more chrome than the
 /// sessions beneath it.
+///
+/// Quiet on purpose, and it was already written down once: it draws at `text-ui`
+/// at `/70` — a session's own size, one shade dimmer — because at full strength it
+/// became the brightest text in the pane, louder than the sessions it labels.
+///
+/// **A tracked uppercase label was tried here and turned down.** The hierarchy it
+/// bought was real, but in a pane whose whole design is one typeface it read as a
+/// second one, and the reader asked for the heading back. Recorded so the next
+/// pass at "the list has no landmarks" does not re-derive it.
 function HeadingRow({
   onClick,
   label,
+  count,
 }: {
   onClick?: () => void;
   label: string;
+  /// Sessions in the group, never drawn rows: a subagent is part of the session
+  /// above it, so counting one in would report work this heading does not name.
+  count: number;
 }) {
-  // `pr-0.5` is the session rows' own right inset, so the plus lands under their
-  // timestamps rather than short of them.
+  // `pr-0.5` is the session rows' own right inset, so the count and the plus
+  // land under their timestamps rather than short of them.
   const shared =
     "flex min-h-6 items-center truncate pr-0.5 pl-2 text-ui text-muted-foreground/70";
 
-  if (!onClick) return <div className={shared}>{label}</div>;
+  // **One slot at the right edge, and the plus takes it rather than sitting
+  // beside it.** The app's own bargain is that a slot holds one thing and
+  // crossfades: two things here would be a number and a control fighting for the
+  // same strip. The button's width is the count's either way, so hovering a
+  // heading does not shift the label.
+  //
+  // The count is the face this app gives a numeral, at the size the rows put their
+  // timestamps at — so it lands in that column as the same kind of fact as the
+  // time below it, rather than as another word in the heading.
+  const slot = (
+    <span className="relative ml-auto flex shrink-0 items-center justify-end pl-1.5 font-mono text-[10.5px] text-muted-foreground/40 tabular-nums">
+      <span className="transition-opacity duration-150 group-hover/heading:opacity-0">
+        {count}
+      </span>
+      <Plus className="absolute right-0 size-3.5 opacity-0 transition-opacity duration-150 group-hover/heading:opacity-100" />
+    </span>
+  );
+
+  if (!onClick) {
+    return (
+      <div className={shared}>
+        <span className="truncate">{label}</span>
+        {slot}
+      </div>
+    );
+  }
 
   return (
     <button
@@ -1621,7 +1760,7 @@ function HeadingRow({
       )}
     >
       <span className="truncate">{label}</span>
-      <Plus className="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity duration-150 group-hover/heading:opacity-100" />
+      {slot}
     </button>
   );
 }
@@ -2367,7 +2506,29 @@ const SessionRow = memo(function SessionRow({
           </span>
         )}
 
-        <span className="min-w-0 flex-1 truncate text-ui">{item.title}</span>
+        {/* **Weight is the second channel, and it is spent on the same two
+            states the rail is.** The row's base sets `/80`, so a list of forty
+            sessions is forty equally-loud titles and the reader scans all of
+            them to find the two that want something. Full strength on those two
+            and `/80` on the rest makes the answer visible before any of it is
+            read — without a second colour for a fact the rail already carries,
+            which is the mistake this app refuses everywhere else: two signals
+            for one thing is one too many, and a coloured title would have to
+            fight the rail for the same meaning.
+
+            The same two states, and no third: a session mid-turn is not one of
+            them, deliberately, for the reason the rail is not — the orb on the
+            right already says it is working, and a row that shouted for both
+            would shout on every row the reader has a turn running in. */}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-ui",
+            (asking || status === "completed") &&
+              "font-medium text-sidebar-foreground",
+          )}
+        >
+          {item.title}
+        </span>
 
         {/* One slot for both, sized by the buttons and always holding that width
             — so a long title truncates against it either way and nothing reflows
@@ -2382,25 +2543,18 @@ const SessionRow = memo(function SessionRow({
             the absolutely-drawn date shrink-to-fit inside 20-odd pixels, where
             "Aug 18" wraps onto two lines. In `em` so it follows the interface
             font size the reader picks, and wide enough for a month-and-day. */}
-        <div className="relative flex min-w-[4em] shrink-0 items-center justify-end self-stretch pl-2 text-ui">
+        <div className="relative flex min-w-[4em] shrink-0 items-center justify-end self-stretch pl-2 font-mono text-[10.5px] tabular-nums">
           {/* `pointer-events-none` unconditionally: it's never a target, and a
               faded-but-present element still hit-tests — stacked on `right-0` it
               would otherwise swallow the cursor over the last button, which reads
               as that one button being dead while its neighbour works. */}
-          <span className="pointer-events-none absolute right-0 flex items-center whitespace-nowrap text-ui text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-data-[state=open]:opacity-0">
-            {/* The orb takes the timestamp's place rather than a slot of its
-                own: a row that's working right now is the one row whose "last
-                activity" reads as stale, and one indicator per row is what keeps
-                the right edge quiet. 20 is the inline-with-text preset, and
-                `theme` is pinned for the same reason as everywhere else — the
-                orb's `auto` looks for `data-theme="dark|light"` and this app
-                stamps a palette name there. */}
+          <span className="pointer-events-none absolute right-0 flex items-center whitespace-nowrap text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-data-[state=open]:opacity-0">
             {/* Three things want this one slot, and the order is the whole of
-                the rule. Checks win: the orb says the agent is working, which
+                the rule. Checks win: the bot says the agent is working, which
                 the reader already knows because they set it going and the
                 transcript is one click away — where CI reports on a machine
                 elsewhere, on its own schedule, and this row is the only place
-                that lands. The orb comes next, for the same reason it beats the
+                that lands. The bot comes next, for the same reason it beats the
                 timestamp: "last activity" is the least useful thing to say
                 about a row with anything in flight.
 
@@ -2411,20 +2565,45 @@ const SessionRow = memo(function SessionRow({
                 is settled, and the row goes back to its timestamp rather than
                 growing a second colour to decode.
 
-                `mr-[3px]` sits it on the orb's centre line: the glyph is 14px
-                against the orb's 20px box, and both are flush right, so without
-                it the mark shifts sideways row to row. */}
+                `mr-[2px]` sits the glyph on the bot's centre line: 14px against
+                the bot's 18px box, both flush right, so without it the mark
+                would sit off-centre from a row whose slot holds a date. */}
             {marksLive && pr?.checksState === "RUNNING" ? (
               <CircleDashed
-                className="mr-[3px] size-3.5 animate-spin text-accent-command [animation-duration:3s]"
+                className="mr-[2px] size-3.5 animate-spin text-accent-command [animation-duration:3s]"
                 strokeWidth={1.5}
                 aria-label="Checks running"
               />
             ) : status === "in_progress" ? (
-              <Orb
-                state="listening"
-                size={20}
-                aria-label="Working"
+              // **The agent's own face, and the same one the transcript draws for
+              // this session.** It takes the timestamp's place rather than a slot
+              // of its own: a row working right now is the one whose "last
+              // activity" reads as stale, and one mark per row is what keeps the
+              // right edge quiet.
+              //
+              // Not a generic orb, which is what this was, and not by taste —
+              // `WorkingIndicator` states the rule: a reader looking at a wait
+              // should be looking at *the thing that is working*. Seeded from the
+              // session id, so two sessions mid-turn wear two faces rather than
+              // one glyph in two places, and the face here is the face met on
+              // opening the row. This file's own subagent branch has drawn it
+              // this way all along.
+              //
+              // **`live`, and it was a still first.** The argument for a still was
+              // that a worklist can have several rows mid-turn and a running clock
+              // per row is the orb's cost by another road. That was wrong twice: the
+              // motion *is* the fact here — `orbit` is a pose the eyes travel
+              // through, so a frozen frame of it is a bot looking off to one side,
+              // which reads as a face rather than as work — and the cost is not the
+              // row's, because the avatar holds its own frame, so a ticking bot
+              // re-renders one SVG and nothing around it. The subagent branch below
+              // has run its own bot `live` all along.
+              <BloubAvatar
+                name={item.sessionId}
+                size={18}
+                live
+                mood="working"
+                label="Working"
               />
             ) : (
               relativeTime(item.modified)
