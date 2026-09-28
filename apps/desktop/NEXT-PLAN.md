@@ -283,7 +283,9 @@ And the same concepts in `oh-my-pi`:
 | `task/persisted-revive.ts` | 259 |
 
 Roughly **eight times the code**, and the gap is not volume — it is that theirs has a
-*lifecycle* and hz's has a *spawn*.
+*lifecycle* and hz's has a *spawn*. **Read to the end of item 1 before believing that
+sentence: the lifecycle turned out to have nothing here to own, and the list below is
+what survived the reading.**
 
 ### The delta, in the order it matters
 
@@ -495,11 +497,22 @@ greps themselves and reports their text as records. A probe has to write to a fi
 its own, which no logger and no echo can pollute — and a claim built on the log without
 that is worth nothing.
 
-**4. One field that says what the work *is*.** `solutionSpace` describes how
+**4. One field that says what the work *is*, read by a classifier hz does not have and
+does not want. Not built, and it is two things.** `solutionSpace` describes how
 open-ended a child's problem is — whether the fix is given, or which causes remain
-open. The part worth stealing is not the field but its scope: **it is the only input
-the child's reasoning classifier sees.** Volume and openness are separate questions,
-and hz asks neither.
+open — and it is a field on the task tool because it is the *only* input the child's
+reasoning classifier sees: for a task-spawned turn, `DifficultyInput.solutionSpace`
+**replaces the prompt text** as the sole thing classified (omp's
+`auto-thinking/classifier.ts`, `:95`). That classifier is omp's `auto` thinking level,
+and it is a judge-model call of its own: one `ChoiceQuestion` per prompt, mapped onto
+the effort ladder and clamped to what the active model supports.
+
+So the field is the cheap half and the classifier is the whole of the value, and hz has
+neither. There is no `auto` level — the reader picks the effort, per session, and the
+pick is theirs. And automatic model-or-effort routing is off the table at the reader's
+request: a routing layer is one more thing to keep true, and the reader's own pick is
+not a worse answer to a question they are already answering. Volume and openness are
+separate questions, and hz asks neither on purpose.
 
 **5. Isolation with a fallback and a mode.** Nine copy backends (`apfs`, `btrfs`,
 `zfs`, reflink, `overlayfs`, `projfs`, block-clone, `rcopy`) resolved by a PAL with
