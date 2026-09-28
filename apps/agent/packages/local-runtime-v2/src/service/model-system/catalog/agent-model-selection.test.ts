@@ -449,6 +449,24 @@ function registerResolverBoundaryCoverageTest(): void {
         ],
       }),
     ).toThrow('contextWindow from agent-config requires a catalog physical limit.');
+
+    // **The same request, inherited instead of configured — and it must not throw.**
+    // A task child takes its model *and* its window from the session that spawned
+    // it, which is running that very model, so the number is an observation rather
+    // than a claim the catalog is there to check. Refusing it here is what killed
+    // every delegated subagent before its first tool call, and why `explore` and
+    // `worker` died identically: the model comes from the parent, not the type.
+    expect(
+      resolveAgentModelSelection({
+        config: boundaryConfig,
+        sources: [
+          {
+            source: 'task-parent-session',
+            selection: { model: 'target/noLimits', contextWindow: 1_024 },
+          },
+        ],
+      }),
+    ).toMatchObject({ contextWindow: 1_024, diagnostics: [] });
   });
 }
 
