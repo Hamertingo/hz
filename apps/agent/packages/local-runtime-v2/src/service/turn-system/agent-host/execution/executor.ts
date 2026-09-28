@@ -69,7 +69,11 @@ import {
 } from '../tools/index.js';
 import { withPluginAutomaticCompactionLifecycle } from './plugin-hook-compaction-lifecycle.js';
 import { createControlledToolHooks } from './plugin-hook-tool-lifecycle.js';
-import { createExecutionBudgetReminder } from '../runner/execution-budget-reminder.js';
+import {
+  createExecutionBudgetReminder,
+  isBudgetedRunSource,
+  NO_REQUEST_BUDGET,
+} from '../runner/execution-budget-reminder.js';
 import { withExecutionObservability } from './execution-observability.js';
 import {
   ackCommittedToolResultTailClaims,
@@ -558,6 +562,9 @@ export class LocalRuntimeTurnExecutor<
           this.options.nowMs,
           this.options.canAppendExecutionBudgetReminder,
           this.options.logger,
+          isBudgetedRunSource(input.request.provenance?.source)
+            ? this.options.softRequestBudget
+            : NO_REQUEST_BUDGET,
         ),
         backgroundReminder?.hook,
       ),
