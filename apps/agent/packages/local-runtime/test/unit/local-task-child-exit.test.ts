@@ -175,6 +175,32 @@ describe('a task child ends through a contract', () => {
     expect(result.exit).toBeUndefined();
     expect(submitted).toHaveLength(1);
   });
+
+  it('hands the owner what an aborted child committed before it was ended', async () => {
+    // The salvage behind a forced stop. A run that spends its grace and has its
+    // Turn ended for it is still a run that said things, and those messages are
+    // the whole of what the owner receives — ending the Turn is what makes the
+    // budget's stop real without making it a lost run.
+    const { conversation, submitted } = scriptedChild([
+      {
+        turnId: 'turn_1',
+        status: 'aborted',
+        messages: [
+          { role: 'assistant', text: 'I enumerated 419 files and read none.' },
+        ],
+      },
+    ]);
+
+    const result = await run(conversation);
+
+    expect(result.status).toBe('aborted');
+    expect(result.finalText).toBe('I enumerated 419 files and read none.');
+    // Not `silent`: a run ended for it never had the chance to keep that contract,
+    // and asking it for a report would be asking a Turn that is already over.
+    expect(result.exit).toBeUndefined();
+    expect(submitted).toHaveLength(1);
+    expect(result.errorMessage).toBe('Conversation turn aborted');
+  });
 });
 
 describe('a background child writes its exit down where its owner will read it', () => {
