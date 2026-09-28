@@ -5,6 +5,51 @@ The release job reads the matching section into the GitHub release notes and the
 updater carries it, so this file is what a release says about itself — not a
 second description of it. GitHub's generated commit list is appended below it.
 
+## 0.20.16
+
+### Fixed
+
+- **Delegated work comes back.** Every subagent a session handed work to failed
+  before it started, with `contextWindow from task-parent-session requires a
+  catalog physical limit`: a child inherits its parent's window, so nothing
+  needed to state one for it, and asking for one failed the delegation. This is
+  the "subagents come back with nothing" report.
+- **A goal's elapsed time counts from the goal.** It restarted whenever you
+  switched away from a session and back, because it counted from the redraw
+  rather than from the goal.
+- **A bundled app writes a log.** Launched from Finder, the agent's own account
+  of a failure went to a descriptor nothing read, so a bundle that failed had
+  nothing to open.
+- **A session's first five lines are no longer dropped.** The agent announces its
+  commands a millisecond behind the session opening, and the app filed that
+  answer only after applying the session's settings — about 240ms against a
+  200ms window.
+- **Session titles exist.** The title command passed `--output-format` to the
+  wrong subcommand, so it printed its usage and exited: no session had ever been
+  titled.
+- **A file link in a message opens the file.** A relative path is resolved
+  against the session's workspace as well as the project root, with a
+  unique-suffix fallback, instead of one base that is right only sometimes.
+- **An exec run that was cut off keeps what it found**, instead of returning a
+  status with no output at all.
+
+### Added
+
+- **A delegated run has a ceiling that delivers rather than kills.** It is held
+  to 200 model requests, told when it crosses, and stopped at 1.5× — and a
+  stopped run reports what it found. A run that will not wrap up is ended, and
+  what it committed is still its answer.
+- **A child cannot end without producing something.** A run that finishes
+  silently is asked once, in the same conversation whose context it still holds,
+  and the result says `exit: reported` or `exit: silent` — so "produced nothing"
+  is no longer indistinguishable from "still going". A silent exit names both
+  ways to get the rest.
+- **Export a session** from its context menu: the transcript as Markdown, or its
+  event log as JSON.
+- **The sidebar says more with less** — counts in the numeral face, a line for
+  the sessions waiting on you, and the agent's own face on a session that is
+  working, where an orb used to be.
+
 ## 0.20.15
 
 **The same content as 0.20.14, with the Windows installer that release shipped
