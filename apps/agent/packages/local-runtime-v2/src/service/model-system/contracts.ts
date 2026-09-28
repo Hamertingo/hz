@@ -116,6 +116,8 @@ export interface LocalRuntimeConfig {
   defaultModelVariant?: string;
   defaultModelThinking?: { effort?: string };
   defaultModelContextWindow?: number;
+  /** Model requests one delegated run may make; a ceiling, and `0` disables it. */
+  softRequestBudget?: number;
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'auto' | 'off';
   dataDir: string;
   beta?: LocalBetaConfig;
