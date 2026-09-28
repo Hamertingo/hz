@@ -332,6 +332,42 @@ written:
 `persisted-revive.ts` (259) is the reviver built for a ref restored *from disk* —
 the piece hz has no version of at all.
 
+**Read one layer further, and every one of those rules is protecting a dispose that
+hz never performs. Deliberately not built, and the reason is the whole finding.**
+
+omp's manager exists because an `AgentRef` holds a live `AgentSession` — a process,
+transports, in-memory state — and parking it is worth a TTL. hz has no such object.
+A task child is a **row**: `agentRoutes.createSession` lands on
+`conversation.lifecycle.createSession`, which writes a session and returns it, and
+nothing about the child outlives the Turn that ran it. I went looking for the live
+resource and there is exactly one kind in the tree: session-scoped MCP connections,
+held by `SessionMcpServers` under `sessionMcpConnectionKey(sessionId, server)` and
+torn down by its own `remove` — and a task child never has one, because a session's
+servers are configured by the ACP client that opened it, and a child is opened
+internally by `task`. So `park` would have no session to detach, `revive` nothing to
+rebuild, and `reclaimDeadCorpse` a corpse that never had a body.
+
+**And "warm" is not needed, because the rebuild it would avoid is not a cost hz
+pays.** The follow-up this item is about already goes through
+`conversation.ingress.steer` on the child's own session id, and the child's history is
+read from the store — so it answers from its own context with no spawn today. What
+retention would save is re-reading a transcript, and what it would cost is a second
+source of truth about which children are alive.
+
+**The restart half is answered in the app, and by a decision already taken.** The
+sidebar's watched set is process-local, so a restarted app keeps nothing — but
+finished subagent rows are *deliberately folded* once nothing is running
+([subagent.ts](../../apps/desktop/src/lib/subagent.ts#L45)), and what survives is the
+spawning call in the transcript, whose `SubagentRow` opens the same view the sidebar
+row did. `runBrief` states it as the design: "a roster is live-only, so a transcript
+replayed after a restart holds runs whose children are gone — the call is then the
+only account of what the subagent was asked to do." Persisting a roster would put
+back exactly what `watchableChildren` was written to stop: mcode's family of every
+child the session ever ran, all at once. *Unverified*: that the transcript's
+`SubagentRow` still opens a child after a restart. The join is there
+(`subSessionIdOf` reads the id off the call's own result) and the child's session
+still exists; I did not watch it open.
+
 **2. A child cannot end without producing something.** omp hides a `yield` tool the
 child must finish through, allows three reminders, and on the last forces
 `toolChoice = yield` where the provider supports it; without it the parent is told
@@ -425,10 +461,20 @@ anyway**: `run_status: succeeded`, `exit: reported`, and a ~10k-character
 every per-file line from filenames. That is the Done-when below, exactly — a run that
 hit its ceiling returned what it found rather than being killed empty.
 
-*Unverified:* the `abort` rung itself, and the salvage behind it. The child complied
-with the stop, so the run never spent its grace and never had to be ended for it; the
-path where a run refuses until the Turn is aborted, and the committed messages are all
-the parent gets, has not been watched.
+**The salvage behind the abort is tested now, and the rung firing is not.** Two halves
+that were both marked unverified turned out to be different things. The *decision* was
+already covered — a run past its grace is told to report and then ended, asserted in
+`execution-budget-reminder.test.ts` — and the *delivery* was covered by nothing: every
+case scripted for an aborted child passed an empty message list, which is the one shape
+where the answer is nothing either way. So the claim rested on reading the code. It is
+asserted at the seam the parent reads instead: the committed text comes back as
+`finalText` under `run_status: aborted`, with no `exit`, because an ended run never had
+the chance to keep that contract. Ten tests in
+[local-task-child-exit.test.ts](../../apps/agent/packages/local-runtime/test/unit/local-task-child-exit.test.ts),
+that the tenth. *Still unobserved*: the rung firing in a live run. The measurement that
+set the ladder found the child obeying the stop, so the grace was never spent and no
+Turn was ever ended for one — the decision and the delivery are each tested where they
+can be, and the wire between them has not been seen.
 
 **And the setting exists.** `softRequestBudget` in the agent's config, read where the
 Turn's own model policy is read, with the parse's own rule: **`0` is a valid value** —
@@ -479,11 +525,17 @@ Marked with where each one stands after reading the code, because two of the fou
 were closer than this section first said.
 
 - A run that has finished can be **messaged again** and answers from its own
-  context, with no new spawn. — *Half there.* `task_append` already activates a Turn
-  on the finished child; what is missing is keeping it warm so the answer does not
-  rebuild the context every time.
-- A subagent's row **survives a restart** and can be revived from it. — *There on the
-  agent's side*, which builds the roster from the store; unverified in the app.
+  context, with no new spawn. — **Done, and retention was never what it needed.**
+  `task_append` steers the finished child's own session, and its history comes from
+  the store, so the answer is already from its own context. What "keeping it warm"
+  would have saved is re-reading a transcript; what it would have cost is a second
+  source of truth about which children are alive.
+- A subagent's row **survives a restart** and can be revived from it. — **Answered by
+  the transcript**, which is the decision the app already made: finished rows fold
+  away and the spawning call stays, with a `SubagentRow` that opens the same view. The
+  sidebar's own set is process-local on purpose, because a persisted roster is mcode's
+  whole family appearing at once. *Unverified*: that the row still opens after a
+  restart.
 - A child that would have produced nothing instead **ends through a contract**, so
   the parent can tell "produced nothing" from "still going". — **Landed.**
 - A run that hits its ceiling **returns what it found** rather than being killed
@@ -1116,7 +1168,7 @@ reach calls the agent by a name the app does not use.
 
 | | new code | existing code it leans on |
 |---|---|---|
-| Orchestration | a lifecycle and a persisted registry; a contractual child exit; delivering budgets | `local-task*.ts`, `task-waiter-registry.ts`, `subagent-result.ts`, `harness/mcode/delegation.rs` |
+| Orchestration | a contractual child exit; delivering budgets; **no lifecycle, and that is the finding** | `local-task*.ts`, `task-waiter-registry.ts`, `subagent-result.ts`, `harness/mcode/delegation.rs` |
 | Defect: goal time | done — an anchor keyed by `goalId` in `lib/goalClock.ts` | `GoalControl.tsx`'s `useElapsed` |
 | Defect: subagents | nothing until it is reproduced | `useSubagentWork.ts`, `session_delegations` |
 | Defect: file links | a second base (`projectPath`) and a unique-suffix fallback | `lib/filePath.ts`, `Markdown.tsx:251`, `useChatSession` |
