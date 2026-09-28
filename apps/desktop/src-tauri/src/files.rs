@@ -214,6 +214,122 @@ fn search(cwd: &str, query: &str, limit: usize) -> Result<Vec<FileMatch>> {
         .collect())
 }
 
+/// How many index hits a suffix lookup is allowed to look through.
+///
+/// The search is fuzzy and ranked, so an exact path is at or near the top; this
+/// is a ceiling on work rather than a tuning knob, and reaching it means the
+/// answer is "not sure" — which is the answer this rule prefers anyway.
+const SUFFIX_HITS: usize = 25;
+
+/// Writes text where the reader asked for it to go.
+///
+/// **The path comes from a save dialog, and that is the whole of its warrant.**
+/// Nothing here constrains it: the reader chose it in their own file system with
+/// their own hands, and a command that narrowed where a save could land would be
+/// refusing the one path it was handed — which is the failure mode of every
+/// "safe" file API.
+///
+/// The parent has to exist, and that is not a restriction but a message: a save
+/// into a folder that is gone is worth saying out loud rather than failing with a
+/// bare OS error.
+///
+/// Plain `fs::write`, not the temp-and-rename dance the session log gets: an
+/// interrupted export is a file the reader can see is wrong, where an interrupted
+/// log entry is a session that will not load.
+#[tauri::command]
+pub async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !tokio::fs::try_exists(parent).await.unwrap_or(false) {
+            return Err("That folder is gone — pick somewhere else to save it.".to_string());
+        }
+    }
+
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|e| format!("Could not write the file: {e}"))
+}
+
+/// Where a path an agent *named* actually is.
+///
+/// **An agent writes a path against the directory it was in**, and that is not
+/// the same thing as the session's own. It `cd`s into a subdirectory mid-turn and
+/// then names `src/lib/highlight.ts`; or it names a file from the repository while
+/// the session runs inside a worktree of it. Resolved against `cwd` alone — which
+/// is what `Markdown` does at draw time, because it is synchronous and runs on
+/// every message — that is a path which does not exist, and the reader gets "No
+/// file at this path" for a file sitting one folder over.
+///
+/// So the check happens here instead: on the click, where it can touch the disk,
+/// with three bases tried cheapest first.
+///
+/// 1. **As given** — an absolute path that exists is the whole answer.
+/// 2. **`cwd`, then the project root.** The second is what covers the worktree
+///    case, and it costs one `stat`.
+/// 3. **The file index**, for the commonest case of all — the agent had `cd`-ed
+///    somewhere and named the path from there. The longest suffix matching
+///    **exactly one** indexed file is the answer.
+///
+/// **A suffix matching twice is `None`, not a guess.** Opening the wrong file is
+/// worse than a click that does nothing, which is the direction this whole rule is
+/// written to be wrong in — the same bargain [`continuesPath`]'s caller makes.
+///
+/// [continuesPath]: ../../src/lib/filePath.ts
+#[tauri::command]
+pub async fn resolve_named_path(
+    raw: String,
+    cwd: Option<String>,
+    project_path: Option<String>,
+) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    // An absolute path that missed is a file that is gone, and the index has
+    // nothing to say about where it went — so it is answered here and never
+    // reaches the suffix lookup below.
+    let absolute = raw.starts_with('/');
+    if tokio::fs::metadata(raw).await.is_ok() {
+        return Some(raw.to_string());
+    }
+
+    let roots: Vec<&str> = [cwd.as_deref(), project_path.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|root| !root.is_empty())
+        .collect();
+
+    if absolute {
+        return None;
+    }
+
+    for root in &roots {
+        let candidate = format!("{}/{}", root.trim_end_matches('/'), raw.trim_start_matches("./"));
+        if tokio::fs::metadata(&candidate).await.is_ok() {
+            return Some(candidate);
+        }
+    }
+
+    for root in roots {
+        let Ok(hits) = search_files(root.to_string(), raw.to_string(), SUFFIX_HITS).await else {
+            continue;
+        };
+        let mut matching: Vec<String> = hits
+            .into_iter()
+            // The index answers relative to its own base, so this is a suffix
+            // test on both sides of the same root — and the join below is what
+            // turns the winner back into something `read_file` can open.
+            .filter(|hit| hit.path.ends_with(raw))
+            .map(|hit| format!("{}/{}", root.trim_end_matches('/'), hit.path))
+            .collect();
+        if matching.len() == 1 {
+            return Some(matching.remove(0));
+        }
+    }
+
+    None
+}
+
 /// One row in the Files view's tree.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "events.ts")]

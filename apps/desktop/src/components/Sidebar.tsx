@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
+import { Activity, ArrowDownToLine, Check, CheckCheck, ChevronDown, ChevronRight, CircleDashed, GitBranchPlus, Inbox, Package, Pin, Plus, Search, Settings, Trash2, Undo2, Unlink } from "lucide-react";
 import Orb from "@/components/Orb";
 
 import BloubAvatar from "@/components/BloubAvatar";
@@ -42,6 +42,7 @@ import { sessionBranch } from "@/lib/pr";
 import { foldSubagents, isActive, memberTitle, statusWord } from "@/lib/subagent";
 import { useResizable } from "@/components/ResizeHandle";
 import { cn } from "@/lib/utils";
+import type { ExportFormat } from "@/lib/exportSession";
 import type {
   DelegatedMember,
   PrMark,
@@ -126,6 +127,9 @@ type SidebarProps = {
   onFork: (sessionId: string, worktree: boolean) => Promise<void>;
   onDelete: (sessionId: string) => Promise<void>;
   onDetach: (sessionId: string) => Promise<void>;
+  /// Writes one session out. Here rather than in `App` alone, because the row's
+  /// own menu is where every other per-session action lives — see [`RowMenu`].
+  onExport: (sessionId: string, format: ExportFormat) => void;
   showArchived: boolean;
   onToggleArchived: () => void;
   /// Already narrowed to the active space by the caller, like `items` — so
@@ -934,6 +938,7 @@ function Sidebar({
   namingSpace,
   projectFilter,
   onDetach,
+  onExport,
   onProjectFilterChange,
   onNewSessionInProject,
   updateStatus,
@@ -1392,6 +1397,7 @@ function Sidebar({
                       onFork={onFork}
                       onDelete={onDelete}
                       onDetach={onDetach}
+                      onExport={onExport}
                     />
                   );
                 })}
@@ -1863,6 +1869,7 @@ function RowMenu({
   forkDisabled,
   onDelete,
   onDetach,
+  onExport,
   children,
 }: {
   onFork: (worktree: boolean) => void;
@@ -1877,6 +1884,11 @@ function RowMenu({
   /// a disabled item on every row in the list would be noise rather than a
   /// promise of something coming.
   onDetach?: () => void;
+  /// **Here rather than only in `⌘K`, which is where it started.** A palette row
+  /// is found by someone who already knows what they are looking for, and every
+  /// other thing you can do to one session already lives in this menu — so an
+  /// export that existed only down there was a feature with no way in.
+  onExport: (format: ExportFormat) => void;
   children: React.ReactNode;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -1975,6 +1987,27 @@ function RowMenu({
                     <Kbd className="ml-auto">{i + 1}</Kbd>
                   </ContextMenuItem>
                 ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+
+            {/* A submenu for Fork's own reason: two answers to one question,
+                and flattening them would put the rarer choice beside Delete on
+                every row. The extension is on the right where a chord would be,
+                because it is the one thing telling the two apart. */}
+            <ContextMenuSub>
+              <ContextMenuSubTrigger className="text-ui">
+                <ArrowDownToLine />
+                Export
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ContextMenuItem className="text-ui" onSelect={() => onExport("md")}>
+                  This session
+                  <span className="ml-auto text-muted-foreground">.md</span>
+                </ContextMenuItem>
+                <ContextMenuItem className="text-ui" onSelect={() => onExport("json")}>
+                  The event log
+                  <span className="ml-auto text-muted-foreground">.json</span>
+                </ContextMenuItem>
               </ContextMenuSubContent>
             </ContextMenuSub>
 
@@ -2126,6 +2159,7 @@ const SessionRow = memo(function SessionRow({
   onFork,
   onDelete,
   onDetach,
+  onExport,
 }: {
   item: SessionIndexItem;
   /// Levels below the top; 0 draws no connector at all. See [`sessionRows`] —
@@ -2178,6 +2212,7 @@ const SessionRow = memo(function SessionRow({
   onFork: (sessionId: string, worktree: boolean) => Promise<void>;
   onDelete: (sessionId: string) => Promise<void>;
   onDetach: (sessionId: string) => Promise<void>;
+  onExport: (sessionId: string, format: ExportFormat) => void;
 }) {
   // The keyboard shortcut can walk the selection past the fold, and `nearest`
   // means a row selected by click — already in view — doesn't scroll at all.
@@ -2198,6 +2233,7 @@ const SessionRow = memo(function SessionRow({
       forkDisabled={status === "in_progress"}
       onDelete={() => void onDelete(item.sessionId)}
       onDetach={nested ? () => void onDetach(item.sessionId) : undefined}
+      onExport={(format) => onExport(item.sessionId, format)}
     >
       {/* A button can't nest a button, so the row is a div with a click handler
           and the pin/settle controls are the only real buttons inside it. */}

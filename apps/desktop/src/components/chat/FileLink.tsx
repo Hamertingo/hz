@@ -1,5 +1,7 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 
+import { invoke } from "@tauri-apps/api/core";
+
 import { useChatSession } from "@/hooks/useChatSession";
 import { openPath } from "@/hooks/useDocs";
 import { openFile } from "@/lib/openWith";
@@ -24,6 +26,7 @@ import { cn } from "@/lib/utils";
 /// half-converted.
 export default function FileLink({
   path,
+  raw,
   line,
   title,
   writtenAsLink = false,
@@ -35,6 +38,15 @@ export default function FileLink({
   /// so in their own words, and a ⌘-click on something gone falls through to a
   /// reveal that does nothing.
   path: string;
+  /// The name as the agent wrote it, where what it wrote was *relative*.
+  ///
+  /// Present only on that branch, and it is what turns the click into a check:
+  /// `path` above came from joining this to the session's cwd, and that join is a
+  /// guess — the agent wrote the name against whatever directory *it* was in, so
+  /// the join lands one folder off often enough to be worth undoing at the one
+  /// moment something can look at the disk. Absent for an absolute path, which is
+  /// the agent's own and needs no second opinion.
+  raw?: string;
   /// The line the reference named, where it named one. Scrolled to and marked
   /// in the Files view, honoured by an editor, and ignored by a reveal, which
   /// can only select the file.
@@ -49,7 +61,29 @@ export default function FileLink({
   // belongs in. Read from context rather than passed down: three components in
   // between would carry an id they never look at, and the transcript that drew
   // the link is the right answer even where it is not the selected session.
-  const { sessionId } = useChatSession();
+  const { sessionId, cwd, projectPath } = useChatSession();
+
+  /// Where this link's file actually is, before anything is opened.
+  ///
+  /// **Only a path that was *resolved* is re-checked.** An absolute one is the
+  /// agent's own and is opened exactly as drawn; a relative one was joined to the
+  /// session's cwd at draw time, and that join is a guess — the agent wrote the
+  /// name against whatever directory *it* was in, which is often a subdirectory of
+  /// the session's, so the guess lands one folder off and the click answers "No
+  /// file at this path" about a file that is right there.
+  ///
+  /// Draw time cannot check it: this renders on every streamed delta and has no way
+  /// to touch the disk. The click can, so it does — and where nothing resolves with
+  /// certainty, the drawn path is opened unchanged, which is what happened before.
+  const locate = async (): Promise<string> => {
+    if (!raw) return path;
+    const found = await invoke<string | null>("resolve_named_path", {
+      raw,
+      cwd,
+      projectPath,
+    }).catch(() => null);
+    return found ?? path;
+  };
 
   const open = (e: MouseEvent | KeyboardEvent) => {
     e.stopPropagation();
@@ -57,8 +91,11 @@ export default function FileLink({
     // means on an issue row and in the link dialog — so it goes straight to the
     // reader's own editor, line and all. A plain click stays in the app:
     // markdown in the Docs panel, everything else in the Files view.
-    if (e.metaKey || e.ctrlKey) return void openFile(path, line);
-    openPath(sessionId, path, line);
+    const outThere = e.metaKey || e.ctrlKey;
+    void locate().then((resolved) => {
+      if (outThere) return void openFile(resolved, line);
+      openPath(sessionId, resolved, line);
+    });
   };
 
   return (

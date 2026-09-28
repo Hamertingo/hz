@@ -238,9 +238,9 @@ function MarkedSpan({
   const classes = className?.split(" ") ?? [];
   const number = Number(dataPr);
   // Read above both branches: a relative path resolves against the session's own
-  // working directory, the one thing the prose does not carry, and a chip needs
-  // the session to open anything. Inert without one, since a path resolved
-  // against wherever the app happens to run opens the wrong file.
+  // working directory, the one thing the prose does not carry. That join is only
+  // the first guess — the resolver behind the click also has the project root and
+  // the file index, which is where `FileLink`'s `raw` comes in.
   const { cwd } = useChatSession();
 
   if (classes.includes(PR_REF_CLASS) && Number.isInteger(number) && number > 0) {
@@ -248,6 +248,12 @@ function MarkedSpan({
   }
 
   if (classes.includes(FILE_PATH_CLASS) && title && (isFilePath(title) || isRelativePath(title))) {
+    // **What the agent wrote, where what it wrote was relative.** The join below
+    // is the only resolution draw time can do, and it is a guess — the agent
+    // wrote the name against whatever directory *it* was in. So the raw name
+    // travels with the link and the click re-resolves it against the disk before
+    // opening anything. See `FileLink`.
+    const relative = isRelativePath(title);
     const path = absolutePath(title, cwd);
     const line = Number(dataLine);
     const written = classes.includes(FILE_LINK_CLASS);
@@ -260,7 +266,11 @@ function MarkedSpan({
     const locator = label?.startsWith(title) ? label.slice(title.length) : "";
     const name = title.split("/").filter(Boolean).at(-1) ?? title;
     const body = written ? children : `@${name}${locator}`;
-    if (!path) {
+    // A relative name is worth a link even with no cwd to join it to: the
+    // resolver also has the project root and the file index, and one of them is
+    // usually the folder the name was written from.
+    const target = path ?? (relative ? title : null);
+    if (!target) {
       return (
         <span className={written ? undefined : SEGMENT_COLOR.mention} title={title}>
           {body}
@@ -269,7 +279,8 @@ function MarkedSpan({
     }
     return (
       <FileLink
-        path={path}
+        path={target}
+        raw={relative ? title : undefined}
         line={Number.isInteger(line) && line > 0 ? line : undefined}
         writtenAsLink={written}
         className={written ? undefined : SEGMENT_COLOR.mention}

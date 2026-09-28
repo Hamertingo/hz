@@ -127,6 +127,7 @@ import type {
   Issue,
   PrListItem,
   SessionIndexItem,
+  SessionSnapshot,
   TranscriptMatch,
   WorktreeDisposition,
 } from "@/types/events";
@@ -155,6 +156,7 @@ import {
 } from "@/lib/space";
 import { worktreeNoticeDetail } from "@/lib/worktree";
 import { buildTranscript } from "@/lib/transcript";
+import { exportSession, type ExportFormat } from "@/lib/exportSession";
 import { isActive, memberIdOf, memberTitle, runBrief, statusWord } from "@/lib/subagent";
 import {
   EMPTY_VISITS,
@@ -641,6 +643,42 @@ function App() {
       }
     },
     [sessionIndexItems, sessions, selectedSession, failUnlessLeft, openPr],
+  );
+
+  /// Writes the selected session out to a file the reader picks.
+  ///
+  /// **Cancelling is not an error.** `exportSession` answers `null` for a closed
+  /// dialog, and this says nothing about it — an app that raises a complaint for a
+  /// thing somebody decided not to do is arguing with them. Only a real refusal
+  /// reaches `fail`.
+  ///
+  /// The index entry carries every fact the frontmatter needs and the event log
+  /// carries none of them, so both are read here rather than reconstructed.
+  const exportSessionById = useCallback(
+    async (sessionId: string, format: ExportFormat) => {
+      const item = sessionIndexItems.find((held) => held.sessionId === sessionId);
+      if (!item) return;
+
+      const fail = failUnlessLeft();
+      try {
+        // **The loaded log where there is one, and a read where there is not.**
+        // The row's own menu exports a session this window may never have opened,
+        // and writing an empty file from it would be worse than not offering the
+        // item at all.
+        let events = sessions.find((held) => held.sessionId === sessionId)?.events;
+        if (!events) {
+          const snapshot = await invoke<SessionSnapshot | null>("get_session_by_id", {
+            sessionId,
+          });
+          events = snapshot?.events ?? [];
+        }
+
+        await exportSession(item, events, format);
+      } catch (e) {
+        fail(e);
+      }
+    },
+    [sessionIndexItems, sessions, failUnlessLeft],
   );
 
   /// **A goal starts as a prompt, and that is the whole of the shape.** The
@@ -2524,6 +2562,31 @@ function App() {
       rows.push({ kind: "action", id: action.id, label: action.label, shortcut: action.id, run: action.run });
     }
 
+    // **Pushed apart from the array above, because that array's ids *are* the
+    // registry's.** A palette row draws its caps from the chord registry, so
+    // every entry there carries an id that is a real binding — and an export has
+    // no key. Naming one here would draw caps for a chord nobody can press.
+    //
+    // Two rows rather than one with a format picker behind it: the two things a
+    // reader wants out of a session are a document and a log, and a dialog asking
+    // which of two is worse than two rows that each say what they do.
+    if (selectedSessionId && !pageOpen) {
+      rows.push(
+        {
+          kind: "action",
+          id: "session.export",
+          label: "Export this session",
+          run: () => void exportSessionById(selectedSessionId, "md"),
+        },
+        {
+          kind: "action",
+          id: "session.exportJson",
+          label: "Export the event log",
+          run: () => void exportSessionById(selectedSessionId, "json"),
+        },
+      );
+    }
+
     return rows;
   }, [
     ordered,
@@ -2549,6 +2612,7 @@ function App() {
     openPrs,
     openUsage,
     openPlugins,
+    exportSessionById,
     pageOpen,
     prsCwds,
     showPanelTab,
@@ -2640,6 +2704,7 @@ function App() {
           // see nothing saying where they are or how to get back.
           inboxActive={inboxOpen || issuesOpen || prsOpen}
           onDetach={paneDetach}
+          onExport={exportSessionById}
           onSetFlags={handleSetSessionFlags}
           onFork={paneFork}
           onDelete={paneDelete}
