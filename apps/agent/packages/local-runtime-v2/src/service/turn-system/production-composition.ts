@@ -416,6 +416,9 @@ export async function createLocalAgentHost<
       backgroundCadenceReminder: createBackgroundCadenceReminder(contextUsageAnchor),
       canAppendExecutionBudgetReminder: (input, marker) =>
         fitsReminderInFinalRequest(input, marker, contextUsageAnchor),
+      // Read where the Turn's other policy does, so the ceiling a reader sets and the
+      // ceiling a run is held to cannot be two different numbers.
+      softRequestBudget: options.product.preparation.configBuilder.config().softRequestBudget,
       fileApi: {
         uploadStores: createFileApiUploadStoreSource({
           db: options.db,

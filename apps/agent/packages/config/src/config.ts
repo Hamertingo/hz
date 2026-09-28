@@ -948,6 +948,14 @@ export interface Config {
   defaultModelVariant?: string;
   defaultModelThinking?: { effort?: string };
   defaultModelContextWindow?: number;
+  /**
+   * Model requests one **delegated** run may make before it is told to wrap up.
+   *
+   * A ceiling, not a value: a number here can only tighten the bundled 200, never
+   * loosen it, and `0` disables the guard. A reader's own turn is never budgeted —
+   * they can watch it going and stop it, which a run they are waiting on cannot be.
+   */
+  softRequestBudget?: number;
   /** Optional lightweight model for auxiliary tasks (title gen, etc.). Falls back to defaultModel. Format: "providerID/modelID" */
   defaultLightModel?: string;
   /** Permission mode for tool call authorization. */
@@ -1988,6 +1996,14 @@ export function resolveConfigFromRaw(
       Number(raw.defaultModelContextWindow) > 0 &&
       Number(raw.defaultModelContextWindow) <= 2_147_483_647
         ? Number(raw.defaultModelContextWindow)
+        : undefined,
+    // `0` is a real value here rather than an absent one: it means the guard is off,
+    // which is why the bound is `>= 0` where the window above needs `> 0`.
+    softRequestBudget:
+      Number.isSafeInteger(raw.softRequestBudget) &&
+      Number(raw.softRequestBudget) >= 0 &&
+      Number(raw.softRequestBudget) <= 2_147_483_647
+        ? Number(raw.softRequestBudget)
         : undefined,
     minimax_api: parseMinimaxApiConfig(raw.minimax_api),
     minimaxModelContextLimits,

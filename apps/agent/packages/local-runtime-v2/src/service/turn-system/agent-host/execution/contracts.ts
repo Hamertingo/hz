@@ -280,6 +280,12 @@ export interface LocalRuntimeTurnExecutorOptions<
   readonly runtime: LocalRuntimeTurnRunnerPort<TContext>;
   readonly backgroundCadenceReminder?: BackgroundCadenceReminder;
   readonly canAppendExecutionBudgetReminder?: ExecutionBudgetReminderAdmission;
+  /**
+   * Model requests this Turn may make before it is told to wrap up. A ceiling: a
+   * configured value is capped by the bundled one, and `0` disables the guard.
+   * Absent, the bundled ceiling applies.
+   */
+  readonly softRequestBudget?: number;
   /** Exact child Turn scope; notifications join this Turn and never independently reactivate it. */
   readonly createChildBashLifecycle?: (input: {
     readonly session: SessionRecord;
