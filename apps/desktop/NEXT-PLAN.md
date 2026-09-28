@@ -402,11 +402,25 @@ outlived the deadline. So the answer rides on **any** status now, and a run that
 not succeed also carries `progress`: the model steps and tool calls it made, and the
 operation still running when it was cut.
 
-**Still open, and it needs a decision rather than code:** a **task child has no
-ceiling at all**. Nothing in the task runner sets a deadline, so a child that loops is
-unbounded. What budget a child should get — requests, wall-clock, or both — and what
-setting it comes from is a product call; the mechanism to honour one is now in place,
-since a cut child would report its progress like any other run.
+**And the ceiling a child had none of, decided and landed in its first rung.** A
+delegated run is now held to **200 model requests**, told when it crosses, and the
+notice tells it to wrap up and report. Requests rather than wall-clock, because a step
+that spends ten tool calls and one that spends a hundred cost the same request, and a
+child waiting on a slow build has made no progress *and* burned no requests. 200 is a
+**ceiling**: a setting may tighten it and never loosen it, and `0` disables the guard.
+Only a delegated run is budgeted — a reader's own turn is bounded by the reader, who
+can watch it going and stop it.
+
+The wording deliberately does **not** promise the forced stop at 1.5× that the design
+this follows puts beside it, because hz does not stop a run yet: a prompt that names a
+consequence the runtime does not deliver teaches the agent that these statements are
+decoration. That sentence arrives with the stop.
+
+**Still open:** the setting. The executor takes a `softRequestBudget` and nothing sets
+one, so every delegated run sits on the bundled 200 — which also means the rung cannot
+be watched working end to end yet, since a child crossing a budget of 2 is the only
+cheap way to see it. Then the forced stop, then the salvage that turns a stopped run's
+last assistant turn into its report.
 
 **4. One field that says what the work *is*.** `solutionSpace` describes how
 open-ended a child's problem is — whether the fix is given, or which causes remain
