@@ -106,6 +106,24 @@ export function planOf(tasks: TodoTask[]): TodoPlan | null {
   };
 }
 
+/// The plan with the steps the reader has taken off it.
+///
+/// **A view filter, not a plan edit.** The list is read out of the session's own
+/// log, so there is nothing to write back: the agent still holds the step, and
+/// the call that carried it is still in the transcript — which is where it can be
+/// read again. That is also why a dismissal has no undo: the row is not lost, it
+/// is only off this list.
+///
+/// Matched on the subject because a `todowrite` row carries no id — the rows are
+/// positional — and it is the subject the reader is pointing at when they press
+/// the cross. Null where that leaves nothing, the same answer as a session that
+/// never opened a plan, since a Plan tab for an empty list is a tab for nothing.
+export function planWithout(tasks: TodoTask[], dismissed: readonly string[]): TodoPlan | null {
+  if (dismissed.length === 0) return planOf(tasks);
+  const gone = new Set(dismissed);
+  return planOf(tasks.filter((task) => !gone.has(task.subject)));
+}
+
 /// The step a running task is named by — its own continuous label where the
 /// agent wrote one, its subject where it did not.
 export function activeLabel(task: TodoTask): string {
