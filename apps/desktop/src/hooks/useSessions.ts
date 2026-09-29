@@ -37,7 +37,8 @@ import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList
 
 const DEFAULT_EFFORT: Effort = "high";
 
-/// The children this app has watched *work*, by the child's own id.
+/// The children this app has watched *work*, by the child's own id — per
+/// session, because what forgets them is per session.
 ///
 /// **mcode's roster can name children from before this app started.** They live
 /// in the agent's own store, so a session resumed after a restart reports its
@@ -50,17 +51,37 @@ const DEFAULT_EFFORT: Effort = "high";
 /// afterwards — the run the reader watched finish is still there to open. What is
 /// dropped is only what this run never saw run, and those are rows whose
 /// transcripts this app could never read either.
-const watchedChildren = new Set<string>();
+const watchedChildren = new Map<string, Set<string>>();
 
 /// A roster narrowed to the rows worth drawing. See [`watchedChildren`].
-function watchableChildren(members: DelegatedMember[]): DelegatedMember[] {
+function watchableChildren(sessionId: string, members: DelegatedMember[]): DelegatedMember[] {
+  let watched = watchedChildren.get(sessionId);
+  if (!watched) {
+    watched = new Set();
+    watchedChildren.set(sessionId, watched);
+  }
+
   const kept: DelegatedMember[] = [];
   for (const member of members) {
-    if (isActive(member)) watchedChildren.add(member.sessionId);
-    else if (!watchedChildren.has(member.sessionId)) continue;
+    if (isActive(member)) watched.add(member.sessionId);
+    else if (!watched.has(member.sessionId)) continue;
     kept.push(member);
   }
   return kept;
+}
+
+/// Takes children back out of the memory above, so a roster still naming them
+/// cannot put them back on screen.
+///
+/// **The memory exists to keep a *finished* run's row; a child the reader
+/// stopped is not that.** mcode's roster may keep naming a child for a while
+/// after its turn is cancelled, and without this the row the reader just
+/// cancelled stays on screen — which reads as a stop that did nothing, and
+/// invites pressing it again.
+function forgetChildren(sessionId: string, childIds: Iterable<string>): void {
+  const watched = watchedChildren.get(sessionId);
+  if (!watched) return;
+  for (const id of childIds) watched.delete(id);
 }
 
 /// Images for a prompt the backend has not archived yet, through `url` and never
@@ -2828,7 +2849,7 @@ useEffect(() => {
 useEffect(() => {
   const listenerPromise = listen<DelegationEvent>("subagent_delegations", (event) => {
     const { sessionId, members } = event.payload;
-    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(members) }));
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(sessionId, members) }));
   });
 
   return () => {
@@ -2961,7 +2982,7 @@ const delegations = selectedSessionId ? delegationsBySession[selectedSessionId] 
 const refreshDelegations = useCallback(async (sessionId: string) => {
   try {
     const members = await invoke<DelegatedMember[]>("session_delegations", { sessionId });
-    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(members) }));
+    setDelegationsBySession((prev) => ({ ...prev, [sessionId]: watchableChildren(sessionId, members) }));
   } catch {
     // Nothing to say that the empty list does not already say.
   }
@@ -2974,9 +2995,23 @@ const refreshDelegations = useCallback(async (sessionId: string) => {
 /// slot: the control lives in a panel that may belong to a split pane, and a
 /// sentence about one session written into another's composer is worse than
 /// none.
+///
+/// **A stop ends the rows it stopped, and only those.** What the reader
+/// cancelled leaves the roster here rather than waiting for mcode to say so:
+/// the roster that follows may still name those children, and the memory that
+/// keeps a finished run on screen would then put back the three rows the reader
+/// just cancelled. A child that had already finished stays — it is not what the
+/// stop was about, and it is still there to open.
 const stopDelegations = useCallback(async (sessionId: string): Promise<string | null> => {
   try {
     await invoke("stop_session_delegations", { sessionId });
+    setDelegationsBySession((prev) => {
+      const current = prev[sessionId] ?? [];
+      const stopped = current.filter(isActive);
+      // Idempotent, which matters because React may run this twice.
+      forgetChildren(sessionId, stopped.map((member) => member.sessionId));
+      return { ...prev, [sessionId]: current.filter((member) => !isActive(member)) };
+    });
     return null;
   } catch (cause) {
     return String(cause);

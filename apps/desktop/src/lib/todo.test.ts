@@ -5,6 +5,7 @@ import {
   planLine,
   planOf,
   planRows,
+  planWithout,
   todoMutation,
   todoRowSummary,
   todoTimeline,
@@ -304,6 +305,57 @@ describe("planRows", () => {
 
     expect(shown.map((row) => row.subject)).toEqual(["a", "b"]);
     expect(hidden).toBe(1);
+  });
+});
+
+describe("planWithout", () => {
+  const task = (subject: string, status: "pending" | "in_progress" | "completed") => ({
+    id: null,
+    subject,
+    status,
+    activeForm: null,
+    description: null,
+    blockedBy: [],
+    owner: null,
+  });
+
+  it("takes the named steps off, and the counts follow them", () => {
+    const plan = planWithout(
+      [
+        task("scaffold", "completed"),
+        task("wire the mapper", "in_progress"),
+        task("write the test", "pending"),
+      ],
+      ["write the test"],
+    );
+
+    expect(plan?.tasks.map((row) => row.subject)).toEqual(["scaffold", "wire the mapper"]);
+    expect(plan?.total).toBe(2);
+    expect(plan?.done).toBe(1);
+    expect(plan?.current?.subject).toBe("wire the mapper");
+  });
+
+  it("matches the subject the reader pressed, not the row's place in the list", () => {
+    // A `todowrite` row carries no id, so the subject is the whole of its
+    // identity — and dropping by index would take out whichever row moved into
+    // that slot when the agent wrote the plan again.
+    const plan = planWithout(
+      [task("scaffold", "pending"), task("wire the mapper", "pending")],
+      ["scaffold"],
+    );
+
+    expect(plan?.tasks.map((row) => row.subject)).toEqual(["wire the mapper"]);
+  });
+
+  it("has no plan once every step is off it", () => {
+    // Null rather than an empty plan: the Plan tab is drawn from this, and a tab
+    // onto an empty list is a tab onto nothing.
+    expect(planWithout([task("only", "pending")], ["only"])).toBeNull();
+  });
+
+  it("leaves the plan alone when nothing was dismissed", () => {
+    const tasks = [task("a", "pending")];
+    expect(planWithout(tasks, [])?.tasks).toEqual(tasks);
   });
 });
 

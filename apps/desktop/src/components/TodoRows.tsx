@@ -1,4 +1,7 @@
+import { X } from "lucide-react";
+
 import IssueStateIcon from "@/components/IssueStateIcon";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { activeLabel, type TodoPlan, type TodoTask } from "@/lib/todo";
 
@@ -124,11 +127,16 @@ export default function TodoRows({
   /// status line and the number is the least of what is on it; on in the panel,
   /// where it is how the reader names a task back to the agent.
   showId = false,
+  /// Takes a row off the plan the reader is looking at. **Absent wherever the
+  /// surface is history** — an expanded call in the transcript shows the list as
+  /// it stood then, and a cross there would offer to change a record.
+  onDismiss,
   className,
 }: {
   tasks: TodoTask[];
   live?: boolean;
   showId?: boolean;
+  onDismiss?: (task: TodoTask) => void;
   className?: string;
 }) {
   return (
@@ -136,7 +144,7 @@ export default function TodoRows({
       {tasks.map((task, index) => (
         <div
           key={task.id ?? index}
-          className="flex items-start gap-2 rounded-md px-1.5 py-0.5 text-ui"
+          className="group flex items-start gap-2 rounded-md px-1.5 py-0.5 text-ui"
         >
           <TodoGlyph task={task} className="mt-px" />
 
@@ -152,6 +160,25 @@ export default function TodoRows({
 
           {showId && task.id !== null && (
             <span className="shrink-0 tabular-nums text-muted-foreground/60">#{task.id}</span>
+          )}
+
+          {onDismiss && (
+            // On hover, like a tab's cross: a column of crosses is a column of
+            // things to press by accident, and this one is not what the plan is
+            // for. The keyboard reaches it anyway, hence the focus rule.
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Take "${task.subject}" off the plan`}
+                  onClick={() => onDismiss(task)}
+                  className="mt-px shrink-0 cursor-pointer rounded-sm p-0.5 text-muted-foreground opacity-0 transition-colors hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <X className="size-3" strokeWidth={2} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Take off the plan</TooltipContent>
+            </Tooltip>
           )}
         </div>
       ))}

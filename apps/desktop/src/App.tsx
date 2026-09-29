@@ -141,6 +141,7 @@ import { basename } from "@/lib/format";
 import { focusComposer } from "@/lib/composerFocus";
 import { changeRange, turnChangedTree } from "@/lib/changes";
 import { agentPickOf, hasPick, mcpPickOf, pickedSkillOf, sectionTab, type PluginsTab } from "@/lib/plugins";
+import { planWithout, type TodoTask } from "@/lib/todo";
 import { prBadgeCount, sessionBranch } from "@/lib/pr";
 import { setPrRefOpener } from "@/lib/prRef";
 import { playCelebration } from "@/lib/sound";
@@ -999,6 +1000,38 @@ function App() {
     [selectedSession?.events, busy, liveTaskIds],
   );
 
+  // Steps the reader has taken off the plan, by session.
+  //
+  // **A view filter, not a plan edit.** The list is read out of the session's own
+  // log (see [todoTimeline](lib/todo.ts)), so there is nothing here to write
+  // back: the agent still holds the step and the call that carried it is still in
+  // the transcript, which is where it can be read again. Keyed by subject because
+  // a `todowrite` row usually carries no id — the rows are positional — and held
+  // per session because two panes' plans are two different plans.
+  const [dismissedSteps, setDismissedSteps] = useState<Record<string, string[]>>({});
+
+  const dismissStep = useCallback(
+    (task: TodoTask) => {
+      // No session, no plan: the panel is drawing the empty state.
+      if (!selectedSessionId) return;
+      const sessionId = selectedSessionId;
+      setDismissedSteps((prev) => {
+        const gone = prev[sessionId] ?? [];
+        if (gone.includes(task.subject)) return prev;
+        return { ...prev, [sessionId]: [...gone, task.subject] };
+      });
+    },
+    [selectedSessionId],
+  );
+
+  /// The plan as the surfaces draw it. The transcript keeps the log's own list —
+  /// an expanded call shows the plan as it stood then, and a record that changed
+  /// under it would not be a record.
+  const plan = useMemo(() => {
+    if (!todoPlan || !selectedSessionId) return todoPlan;
+    return planWithout(todoPlan.tasks, dismissedSteps[selectedSessionId] ?? []);
+  }, [todoPlan, dismissedSteps, selectedSessionId]);
+
   // The strip is **this turn's** work: runs the agent is holding, and runs that
   // reported before the turn closed — dropping one the moment it lands reads as
   // the strip swallowing its own news. The next prompt retires them, since
@@ -1031,7 +1064,7 @@ function App() {
   // ended an hour ago, with the handoff peek locked out of it. So the strip
   // drops it with the turn and the panel's Plan tab keeps it: a tab costs
   // nothing idle, and the peek is the only way to Commit at all.
-  const stripPlan = busy ? todoPlan : null;
+  const stripPlan = busy ? plan : null;
   const stripShown = liveRuns.length > 0 || stripPlan !== null;
 
   // ── The open subagent ─────────────────────────────────────────────────────
@@ -1448,7 +1481,7 @@ function App() {
 
   // Read off the session's own log rather than off `busy`: a plan outlives the
   // turn that wrote it, and the tab is what the strip hands the finished one to.
-  const hasTodoTab = todoPlan !== null;
+  const hasTodoTab = plan !== null;
 
   const tabs = tabOrder({
     pr: hasPrTab,
@@ -3113,7 +3146,7 @@ function App() {
               />
             </TabBody>
             <TabBody active={hasTodoTab && activeTab === "todo"}>
-              <TodoPanel plan={todoPlan} live={busy} />
+              <TodoPanel plan={plan} live={busy} onDismiss={dismissStep} />
             </TabBody>
             <TabBody active={hasPrTab && activeTab === "pr"}>
               <PrPanel

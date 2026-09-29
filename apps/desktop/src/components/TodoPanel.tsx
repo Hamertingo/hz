@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { ChevronRight, Link2 } from "lucide-react";
+import { ChevronRight, Link2, X } from "lucide-react";
 
 import { PlanRing, TodoGlyph } from "@/components/TodoRows";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { activeLabel, type TodoPlan, type TodoTask } from "@/lib/todo";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +14,18 @@ import { cn } from "@/lib/utils";
 /// waiting on, and which of the plan's rows the strip had to fold away. That
 /// split is the same one Changes and Subagents make: the band above the composer
 /// answers "what is happening", and the panel answers "what is the whole of it".
-export default function TodoPanel({ plan, live }: { plan: TodoPlan | null; live: boolean }) {
+export default function TodoPanel({
+  plan,
+  live,
+  onDismiss,
+}: {
+  plan: TodoPlan | null;
+  live: boolean;
+  /// Takes a step off the plan. The list is read out of the session's own log,
+  /// so this hides a row rather than editing what the agent holds — see App's
+  /// `dismissedSteps`.
+  onDismiss?: (task: TodoTask) => void;
+}) {
   if (!plan) {
     return <p className="px-3 py-6 text-ui text-muted-foreground">No plan in this session.</p>;
   }
@@ -56,7 +68,13 @@ export default function TodoPanel({ plan, live }: { plan: TodoPlan | null; live:
       </div>
 
       {plan.tasks.map((task) => (
-        <TaskRow key={task.id ?? task.subject} task={task} waiting={blocked.includes(task)} live={live} />
+        <TaskRow
+          key={task.id ?? task.subject}
+          task={task}
+          waiting={blocked.includes(task)}
+          live={live}
+          onDismiss={onDismiss}
+        />
       ))}
     </div>
   );
@@ -71,27 +89,33 @@ function TaskRow({
   task,
   waiting,
   live,
+  onDismiss,
 }: {
   task: TodoTask;
   waiting: boolean;
   live: boolean;
+  onDismiss?: (task: TodoTask) => void;
 }) {
   const [open, setOpen] = useState(false);
   const description = task.description?.trim() ?? "";
   const expandable = description.length > 0;
 
   return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        disabled={!expandable}
-        onClick={() => setOpen((prev) => !prev)}
-        className={cn(
-          "flex w-full items-start gap-2 px-3 py-1 text-left text-ui",
-          expandable && "transition-colors hover:bg-sidebar-accent/50",
-        )}
-      >
-        <TodoGlyph task={task} className="mt-0.5" />
+    <div className="group flex flex-col">
+      {/* The cross is the row's sibling rather than its child: the row itself is
+          a button (it expands onto the description), and a button inside a
+          button is not a thing. */}
+      <div className="flex items-start">
+        <button
+          type="button"
+          disabled={!expandable}
+          onClick={() => setOpen((prev) => !prev)}
+          className={cn(
+            "flex min-w-0 flex-1 items-start gap-2 px-3 py-1 text-left text-ui",
+            expandable && "transition-colors hover:bg-sidebar-accent/50",
+          )}
+        >
+          <TodoGlyph task={task} className="mt-0.5" />
 
         {/* The id the agent uses to name this task, ahead of the words rather
             than after them: a reader skimming for "#4" looks at the left edge,
@@ -142,7 +166,27 @@ function TaskRow({
             )}
           />
         )}
-      </button>
+        </button>
+
+        {onDismiss && (
+          // On hover, like a tab's cross, and for the same reason: a column of
+          // crosses down the plan is a column of things to press by accident.
+          // The keyboard still reaches it.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Take "${task.subject}" off the plan`}
+                onClick={() => onDismiss(task)}
+                className="mr-2 mt-1 shrink-0 cursor-pointer rounded-sm p-0.5 text-muted-foreground opacity-0 transition-colors hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <X className="size-3" strokeWidth={2} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Take off the plan</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
 
       {open && (
         <p className="whitespace-pre-wrap wrap-anywhere px-3 pb-1.5 pl-[2.375rem] text-ui text-muted-foreground">
