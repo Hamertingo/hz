@@ -219,7 +219,7 @@ one line later if the filter box wants a key — skipped until asked.
    shortcut id, `App.tsx` body and hotkey.
 4. Chat links: `openPath` branch, `FileLink` modifier.
 5. Side switch and drag handle, local storage.
-6. CLAUDE.md section "The files view" beside "The repo view"; COPY nothing —
+6. FEATURES.md section "The files view" beside "The repo view"; COPY nothing —
    no tracker strings here.
 
 One PR, draft, Codex reviewer, then ready — real change spanning both sides.
