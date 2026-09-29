@@ -395,6 +395,17 @@ fn parse_branches(raw: &str) -> Vec<String> {
 /// The blobs `add` writes are unreachable and a routine `git gc` collects them;
 /// a session's worth is a few dozen small loose objects.
 pub async fn snapshot_tree(cwd: &str) -> Option<String> {
+    // **A `cwd` that is gone, checked before anything is spawned.** A removed
+    // worktree is how this happens: the session outlives the tree the app made for
+    // it. Every `git` below then fails at the *spawn* — `current_dir` on a path
+    // that is not there gives the same `No such file or directory` as a `git` that
+    // isn't installed — so the log named neither the directory nor the reason, once
+    // per snapshot, and the panel was going to be hidden anyway. `None` already
+    // means that, and this decides it before three `git` invocations rather than after.
+    if !fs::try_exists(cwd).await.unwrap_or(false) {
+        return None;
+    }
+
     let index = std::env::temp_dir().join(format!("hz-index-{}", Uuid::now_v7()));
     let tree = write_snapshot(cwd, &index).await;
     let _ = fs::remove_file(&index).await;
@@ -3096,6 +3107,18 @@ mod tests {
         assert!(snapshot_tree(dir.to_str().unwrap()).await.is_none());
 
         fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn a_directory_that_is_gone_has_no_baseline() {
+        // Never created: a session that outlived the worktree it ran in is how
+        // this arrives. Both halves matter — `None`, and `None` decided without
+        // spawning anything, since every `git` here fails at the spawn with the
+        // same `No such file or directory` a missing `git` gives.
+        let dir = std::env::temp_dir().join(format!("hz-gone-{}", Uuid::now_v7()));
+        fs::remove_dir_all(&dir).await.ok();
+
+        assert!(snapshot_tree(dir.to_str().unwrap()).await.is_none());
     }
 
     #[tokio::test]

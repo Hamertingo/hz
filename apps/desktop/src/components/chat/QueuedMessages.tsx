@@ -161,4 +161,4 @@ export default function QueuedMessages({
 }
 
 /// The pictures among the attachments, in the shape the delivered bubble's row
-/// takes. A file draws nothing — see CLAUDE.md.
+/// takes. A file draws nothing — see FEATURES.md.
