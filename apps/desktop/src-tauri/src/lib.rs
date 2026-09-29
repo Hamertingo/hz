@@ -345,8 +345,39 @@ async fn list_models(harness: Option<harness::Harness>) -> Vec<Model> {
 /// For the refresh a reader asks for by hand: they have just connected or
 /// removed a provider, and waiting out the freshness window would read as the
 /// picker being wrong.
+///
+/// **Cheap on purpose, and it asks no gateway.** This is the call a provider
+/// write makes on its way out, because a write has already changed the list the
+/// agent answers with. A reader who wants the *gateways* asked — which is the
+/// only way a model they have started serving appears — wants
+/// [`check_providers`].
 #[tauri::command]
 async fn refresh_models() {
+    harness::mcode::models::forget();
+}
+
+/// Asks one provider's own list endpoint what it serves, and registers what is
+/// new — the refresh behind a connected card's button.
+///
+/// Answers with the list as it stands after, each row carrying when it was last
+/// checked, so the screen that asked never has to guess what happened.
+#[tauri::command]
+async fn check_provider(provider_id: String) -> Result<Vec<harness::mcode::providers::Provider>, String> {
+    harness::mcode::providers::check(&provider_id)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+/// Asks **every** provider, then drops the cached model list.
+///
+/// The composer's own refresh, and the whole of why it used to do nothing: the
+/// picker draws what the agent says, and the agent's list is the providers'
+/// lists — so re-reading it without asking the gateways showed the reader the
+/// same rows again. Best effort per provider: see
+/// [`providers::check_all`](harness::mcode::providers::check_all).
+#[tauri::command]
+async fn check_providers() {
+    harness::mcode::providers::check_all().await;
     harness::mcode::models::forget();
 }
 
@@ -1178,6 +1209,8 @@ pub fn run() {
             remove_provider,
             test_provider,
             refresh_models,
+            check_provider,
+            check_providers,
             git::undo_turn,
             prepare_session,
             agent_availability,

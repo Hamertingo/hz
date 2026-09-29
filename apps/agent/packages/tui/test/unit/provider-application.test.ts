@@ -335,4 +335,27 @@ describe('saved provider model refresh', () => {
     await expect(new McodeProviderApplication(port).refreshModels({ ...provider, configRevision: undefined })).rejects.toThrow('Reopen /provider');
     expect(port.discoverUserModelsCandidate).not.toHaveBeenCalled();
   });
+
+  it('adds the ids it is handed without asking the provider anything', async () => {
+    const port = createPort();
+    await expect(new McodeProviderApplication(port).addModels(provider, ['new-model', 'old-model'])).resolves.toBe(1);
+    expect(port.discoverUserModelsCandidate).not.toHaveBeenCalled();
+    expect(port.saveUserModelProviderCandidate).toHaveBeenCalledWith({
+      providerId: provider.providerId, expectedRevision: 'rev-1', baseUrl: provider.baseUrl,
+      models: [{ modelId: 'old-model' }, { modelId: 'new-model', configurationSource: 'discovered' }],
+      modelId: 'new-model', skipConnectionTest: true, saveAndUse: false,
+    });
+  });
+
+  it('saves nothing when every id handed to it is already saved', async () => {
+    const port = createPort();
+    await expect(new McodeProviderApplication(port).addModels(provider, ['old-model', ''])).resolves.toBe(0);
+    expect(port.saveUserModelProviderCandidate).not.toHaveBeenCalled();
+  });
+
+  it('refuses to add to a provider it could not edit', async () => {
+    const port = createPort();
+    await expect(new McodeProviderApplication(port).addModels({ ...provider, readOnly: true }, ['new-model'])).rejects.toThrow('Reopen /provider');
+    expect(port.saveUserModelProviderCandidate).not.toHaveBeenCalled();
+  });
 });

@@ -114,7 +114,6 @@ export default function SettingsDialog({
   updateChannel,
   onUpdateChannelChange,
   models,
-  loadingModels,
   onProvidersChanged,
 }: {
   open: boolean;
@@ -156,9 +155,6 @@ export default function SettingsDialog({
   /// same rows, and a model is named on this side by the wire id the picker
   /// holds.
   models: Model[];
-  /// The composer's read of that list, so a refresh started here spins the same
-  /// way it does there.
-  loadingModels: boolean;
   /// A provider was added, removed or made active, so the model list the
   /// composer draws is stale — the app re-reads it.
   onProvidersChanged?: () => void;
@@ -224,8 +220,6 @@ export default function SettingsDialog({
               <ProviderSettings
                 {...providers}
                 models={models}
-                loadingModels={loadingModels}
-                onRefreshModels={onProvidersChanged}
               />
             ),
             appearance: (

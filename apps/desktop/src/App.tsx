@@ -267,6 +267,7 @@ function App() {
     setShowArchived,
     models,
     refreshModels,
+    checkProviders,
     loadingModels,
     harness,
     modelId,
@@ -3348,7 +3349,7 @@ function App() {
               onFastChange={setFast}
               fastNote={fastNote}
               onModelChange={handleModelChange}
-              onRefreshModels={refreshModels}
+              onRefreshModels={checkProviders}
               onOpenProviderSettings={openProviderSettings}
               loadingModels={loadingModels}
               projects={spaceProjects}
@@ -3667,7 +3668,6 @@ function App() {
         // model switches are drawn from that same list, which is why it is handed
         // down rather than read again there.
         models={models}
-        loadingModels={loadingModels}
         onProvidersChanged={() => void refreshModels()}
       />
     </Suspense>

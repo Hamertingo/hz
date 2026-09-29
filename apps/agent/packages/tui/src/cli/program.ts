@@ -237,6 +237,24 @@ export function createTuiProgram(options: CreateTuiProgramOptions): Command {
     );
 
   provider
+    .command('add-models')
+    .description('Add models a configured provider already serves, by id')
+    .argument('<provider-id>', 'provider id')
+    .option('--model <id>', 'model ID (repeatable)', collectOptionValue, [])
+    .option('--json', 'print a JSON document')
+    .action((providerId: string, commandOptions: { model: string[]; json?: boolean }) => {
+      if (commandOptions.model.length === 0) {
+        throw new Error('At least one --model <id> is required.');
+      }
+      return runProvider({
+        action: 'add-models',
+        providerId,
+        models: commandOptions.model,
+        json: commandOptions.json,
+      });
+    });
+
+  provider
     .command('test')
     .description('Test a provider or one configured model')
     .argument('<provider-id>', 'provider id')
