@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
 import { Activity, ChevronDown, Plus, Trash2, X } from "lucide-react";
@@ -11,6 +11,7 @@ import Spinner from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HIDDEN_MODELS_KEY, byBase, hiddenSet, rowShown } from "@/lib/modelVisibility";
+import { checkDue } from "@/lib/providerChecks";
 import { usePreference } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
 import type { Model, ModelId, NewProvider, Provider, ProviderModel, ProviderPreset } from "@/types/events";
@@ -56,9 +57,15 @@ import type { Model, ModelId, NewProvider, Provider, ProviderModel, ProviderPres
 ///
 /// **The key is written, and read back only as the agent redacts it.** What a
 /// connected row draws is `maskedApiKey` — `sk-q****CXTE` — which the CLI
-/// produces for its own list. The app still never holds the secret after
-/// handing it over; four characters are enough to answer the one question a
-/// row has about a key, which is whether it is the one just pasted.
+/// produces for its own list, and four characters are enough to answer the one
+/// question a row has about a key, which is whether it is the one just pasted.
+///
+/// **One exception, and it is not on this screen.** A model check authenticates
+/// its own request to the gateway, and the key for that is read out of hz's own
+/// copy of the agent's config inside the backend — see
+/// [`read_api_key`](../src-tauri/src/harness/mcode/providers.rs). It never
+/// reaches the bridge, is never drawn and is never logged, which is the half of
+/// the rule above that a request header does not break.
 
 const API_FORMATS = [
   { id: "anthropic-messages", label: "Anthropic messages" },
@@ -73,7 +80,7 @@ const API_FORMATS = [
 /// the press was — a bare dot beside the name said "something is happening"
 /// and left the reader looking at the row to work out what.
 type RowState = {
-  busy: null | "test" | "remove" | "connect";
+  busy: null | "test" | "remove" | "connect" | "check";
   note: string | null;
   error: string | null;
 };
@@ -103,8 +110,6 @@ export default function ProviderSettings({
   error,
   apply,
   models = [],
-  onRefreshModels,
-  loadingModels,
 }: {
   /// What the agent has configured, and the two ways it changes — read and owned
   /// by [`useProviders`](../hooks/useProviders.ts), which starts that read when
@@ -123,10 +128,6 @@ export default function ProviderSettings({
   /// does not state. A provider serving nothing the probe found falls back to
   /// what the CLI itself reports; see `count` below.
   models?: Model[];
-  onRefreshModels?: () => void;
-  /// The composer's own read of that list, so a refresh started here shows the
-  /// same spinner it would there.
-  loadingModels?: boolean;
 }) {
   const [rows, setRows] = useState<Record<string, RowState>>({});
   /// Which gateway's body is open — the key field where it is not connected, the
@@ -158,7 +159,11 @@ export default function ProviderSettings({
   /// was a line about nothing on a screen where every row already shows what
   /// it holds. The one sentence worth keeping is the one a connect writes,
   /// because it tells the reader where to go next.
-  const act = async (key: string, action: "remove", work: () => Promise<Provider[]>) => {
+  const act = async (
+    key: string,
+    action: "remove" | "check",
+    work: () => Promise<Provider[]>,
+  ) => {
     setConfirming(null);
     setRow(key, { busy: action, note: null, error: null });
     try {
@@ -195,6 +200,18 @@ export default function ProviderSettings({
   const remove = (provider: Provider) =>
     act(provider.providerId, "remove", () =>
       invoke<Provider[]>("remove_provider", { providerId: provider.providerId }),
+    );
+
+  /// Asks the gateway which models it serves, right now.
+  ///
+  /// **A press, so it never waits out the freshness window** — and it is the only
+  /// way a model the gateway started serving after the connect reaches this list
+  /// at all, since the provider's list is otherwise written once and read by
+  /// nobody. The gateway's own answer, refusal included, comes back on the
+  /// provider rather than as a note here: see `check` on the row.
+  const check = (provider: Provider) =>
+    act(provider.providerId, "check", () =>
+      invoke<Provider[]>("check_provider", { providerId: provider.providerId }),
     );
 
   /// Connects a gateway and reports where to go next.
@@ -316,8 +333,7 @@ export default function ProviderSettings({
               models={models}
               hidden={hiddenModels}
               onHiddenChange={setHidden}
-              onRefreshModels={() => onRefreshModels?.()}
-              loadingModels={loadingModels ?? false}
+              onCheck={() => void check(connected)}
               open={open === gateway.key}
               onToggle={() => setOpen((prev) => (prev === gateway.key ? null : gateway.key))}
               state={state}
@@ -383,8 +399,7 @@ function ConnectedCard({
   models,
   hidden,
   onHiddenChange,
-  onRefreshModels,
-  loadingModels,
+  onCheck,
   open,
   onToggle,
   state,
@@ -400,8 +415,8 @@ function ConnectedCard({
   models: Model[];
   hidden: ModelId[];
   onHiddenChange: (next: ModelId[]) => void;
-  onRefreshModels: () => void;
-  loadingModels: boolean;
+  /// Ask the gateway for this provider's models. See [`check`] above.
+  onCheck: () => void;
   open: boolean;
   onToggle: () => void;
   state: RowState;
@@ -423,6 +438,28 @@ function ConnectedCard({
   // — a session's list is what it will accept right now, `provider list` what it
   // holds, and the two can differ for a moment after a connect.
   const count = rows.length || provider.models.length;
+
+  /// **Asked once as the card opens, and only where the reading is stale.**
+  ///
+  /// The list is the gateway's, and nothing else refreshes it: without this, a
+  /// reader who opens a card a week after connecting is reading a week-old list
+  /// and the only cure is a button they would have to know to press. A reading
+  /// inside its freshness window is left alone, so opening five cards is not five
+  /// requests the gateway did not ask for.
+  ///
+  /// Once per open rather than per render, and the guard is a ref: what comes
+  /// back changes `provider`, which is a dependency, so the effect runs again the
+  /// moment its own request lands.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      asked.current = false;
+      return;
+    }
+    if (asked.current || !checkDue(provider.check, Date.now())) return;
+    asked.current = true;
+    onCheck();
+  }, [open, provider.check, onCheck]);
 
   /// The window each of this provider's models is registered with, by the key
   /// the rows are grouped under.
@@ -501,8 +538,9 @@ function ConnectedCard({
                 windows={windows}
                 hidden={hidden}
                 onHiddenChange={onHiddenChange}
-                onRefresh={onRefreshModels}
-                loading={loadingModels}
+                onRefresh={onCheck}
+                checking={state.busy === "check"}
+                check={provider.check}
               />
             </div>
           ) : (

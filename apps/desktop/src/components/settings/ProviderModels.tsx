@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, RefreshCw, Search } from "lucide-react";
 
 import ModelMark from "@/components/ModelMark";
@@ -14,6 +14,7 @@ import {
 } from "@/lib/modelVisibility";
 import { modelSlug } from "@/lib/model";
 import { modelDisplayName } from "@/lib/modelBrand";
+import { checkSummary, checkedAgo, type ProviderReading } from "@/lib/providerChecks";
 import {
   BYOK_FALLBACK_CONTEXT,
   BYOK_FALLBACK_OUTPUT,
@@ -52,7 +53,8 @@ export default function ProviderModels({
   hidden,
   onHiddenChange,
   onRefresh,
-  loading,
+  checking,
+  check,
 }: {
   /// The models this provider serves, one row per model — grouped by
   /// [`byBase`]. Computed by the caller, because the card's own facts line
@@ -65,14 +67,29 @@ export default function ProviderModels({
   hidden: ModelId[];
   onHiddenChange: (next: ModelId[]) => void;
   onRefresh: () => void;
-  loading: boolean;
+  /// That button's own press is in flight — the spinner belongs where the press
+  /// was, and this is the only list able to say it.
+  checking: boolean;
+  /// What the last time it was pressed found. Absent for a provider nothing has
+  /// asked yet, which is a state of its own rather than an old reading.
+  check: ProviderReading;
 }) {
   const [query, setQuery] = useState("");
+  // **The age is relative, so something has to move for it to stay true.** A
+  // card left open for an hour would otherwise still read `checked 4m ago`, and
+  // that timestamp is the whole reason the reader can trust the list under it.
+  // Thirty seconds against a label whose shortest unit is a minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const off = hiddenSet(hidden);
   const shown = useMemo(() => matchingRows(rows, query), [rows, query]);
   const allOff = everyHidden(rows, off);
   const filterable = rows.length > FILTER_THRESHOLD;
+  const summary = check ? checkSummary(check) : null;
 
   /// Everything on or everything off, which is the one thing worth doing in bulk:
   /// a provider serving forty models is forty presses to a short list otherwise.
@@ -120,18 +137,41 @@ export default function ProviderModels({
 
         {/* The list is the agent's answer rather than a table, so it goes stale
             the moment a provider is reconnected or a key is replaced. Nothing
-            else on this card can say so. */}
+            else on this card can say so — and **the press now asks the gateway
+            itself**, which is the only way a model it has started serving
+            reaches this list at all. */}
+        {check && (
+          <span
+            className="shrink-0 text-[0.7rem] text-muted-foreground/60"
+            // The ids the one-line summary is too short to carry, and which are
+            // the only part of it a reader may want to act on.
+            title={check.missing.length > 0 ? check.missing.join("\n") : undefined}
+          >
+            checked {checkedAgo(check, now)}
+          </span>
+        )}
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
           className="shrink-0 cursor-pointer text-muted-foreground"
-          aria-label="Refresh the model list"
+          aria-label="Ask this provider which models it serves"
           onClick={onRefresh}
         >
-          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("size-3.5", checking && "animate-spin")} />
         </Button>
       </div>
+
+      {summary && (
+        <p
+          className={cn(
+            "px-4 pb-1.5 text-[0.7rem]",
+            summary.bad ? "text-destructive" : "text-muted-foreground/60",
+          )}
+        >
+          {summary.text}
+        </p>
+      )}
 
       {shown.length === 0 ? (
         <p className="px-4 py-3 text-ui text-muted-foreground">

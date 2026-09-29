@@ -576,6 +576,17 @@ oldPath: string | null, status: ChangeStatus, added: number, removed: number,
 binary: boolean, };
 
 /**
+ * Which of the three things a check came back with.
+ *
+ * **Three, not two.** "Answered with nothing" is a real answer — a gateway
+ * whose models are all on the other wire answers the list endpoint with rows
+ * this build may not register — and folding it into a failure would draw a
+ * working gateway as a broken one, and hide the one state a reader can act on
+ * (the wire is wrong).
+ */
+export type CheckOutcome = "served" | "empty" | "failed";
+
+/**
  * Where a check ended up, flattened from the two different shapes GitHub
  * reports one in. Callers branch on this and never on the wire's own strings.
  */
@@ -1967,7 +1978,48 @@ apiFormat?: string | null,
  * cross back, and this is here for the one thing four characters can
  * answer — whether the key on this row is the one just pasted.
  */
-maskedApiKey?: string | null, models: Array<ProviderModel>, };
+maskedApiKey?: string | null, models: Array<ProviderModel>, 
+/**
+ * When, and how, this provider's list was last read off its own endpoint —
+ * absent for one hz has never asked. See [`check`].
+ */
+check?: ProviderCheck | null, };
+
+/**
+ * What hz last learned about one provider's models, and when.
+ *
+ * **The app's own clock, and its own record.** Nothing on the wire states when
+ * a list was read — `provider list` names what the config holds and says
+ * nothing about where it came from — so this is what lets the card say "checked
+ * 4 minutes ago" instead of leaving the reader to guess whether the button in
+ * front of them is worth pressing. It is **not** the agent's list: that is read
+ * live, and this describes only the last time hz asked a gateway for one.
+ */
+export type ProviderCheck = { 
+/**
+ * Milliseconds since the epoch, hz's clock: a reading from the agent's
+ * would be a different machine's idea of "recent".
+ */
+checkedAt: number, 
+/**
+ * The provider's shape when it was asked — see [`fingerprint`]. A row whose
+ * reading describes a different one is not drawn as this entry's.
+ */
+fingerprint: string, 
+/**
+ * How many model ids this reading added.
+ */
+added: number, 
+/**
+ * Ids the provider holds that the gateway did **not** list. Reported, never
+ * acted on: see [`check`].
+ */
+missing: Array<string>, outcome: CheckOutcome, 
+/**
+ * The gateway's own sentence, where it refused or could not be asked.
+ * Absent on a reading that landed.
+ */
+error?: string | null, };
 
 /**
  * One row of a provider's `models` — **an object, not an id.**

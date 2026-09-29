@@ -648,7 +648,15 @@ export default function ModelSelector({
             the account and providers this machine is configured with, and that
             changes the moment a provider is connected or a key replaced — both
             of which happen one screen away, which is why the ask belongs here and
-            not only beside the switches that decide what it draws. */}
+            not only beside the switches that decide what it draws.
+
+            **And it asks the providers, not the agent.** The agent states the
+            list its config holds, so re-reading it shows the reader rows they
+            had a moment ago: what is missing is a model a gateway has *started
+            serving*, which is in no config anywhere until something asks it. So
+            this row walks the providers and asks each one — see `checkProviders`
+            — and the seconds that takes are the reason the glyph spins for the
+            whole of it rather than for the read that follows. */}
         {discoveredList(harness) && (
           <DropdownMenuItem
             className="cursor-pointer gap-2 text-ui text-muted-foreground"

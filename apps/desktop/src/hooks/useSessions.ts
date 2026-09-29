@@ -1964,6 +1964,33 @@ const refreshModels = () => {
     .finally(() => setModelsGeneration((n) => n + 1));
 };
 
+/// Asks every provider's own endpoint what it serves, *then* re-reads the list.
+///
+/// **This is the picker's refresh row, and the difference from [`refreshModels`]
+/// is the whole of it.** That one drops what the agent already answered, so it
+/// can only ever show the reader rows they had a moment ago — a model the
+/// gateway started serving after the provider was connected is in no list
+/// anywhere, and pressing it changed nothing on screen. This asks the gateways
+/// themselves, which is the one thing that can add a row.
+///
+/// Best effort by design: a provider that refuses keeps the models it had, and
+/// the reason lands on its own card in Settings rather than on a picker that has
+/// no room to explain four of them.
+const checkProviders = async () => {
+  // Held up across the whole call: the seconds are spent in the gateways, not in
+  // the read that follows, and a bare row with no spinner reads as a dead
+  // button. The read's own effect clears it.
+  setLoadingModels(true);
+  try {
+    await invoke("check_providers");
+  } catch {
+    // The command itself being unavailable — an agent build without the verb. A
+    // gateway's own refusal is not an error here; it is that provider's record.
+  } finally {
+    setModelsGeneration((n) => n + 1);
+  }
+};
+
 /// Re-reads the current harness's model list without dropping the backend
 /// Reads the current list again **without** dropping the backend's cache, so a
 /// caller that knows the list has changed — `models_changed`, a session that
@@ -3134,6 +3161,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, goalsBySession, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, failUnlessLeft, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, goalsBySession, models, refreshModels, checkProviders, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, failUnlessLeft, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
 
 }

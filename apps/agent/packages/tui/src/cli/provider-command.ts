@@ -19,6 +19,12 @@ export type McodeProviderCliRequest =
     }
   | { readonly action: 'remove'; readonly providerId: string; readonly confirmed: boolean }
   | {
+      readonly action: 'add-models';
+      readonly providerId: string;
+      readonly models: readonly string[];
+      readonly json?: boolean;
+    }
+  | {
       readonly action: 'test';
       readonly providerId: string;
       readonly modelId?: string;
@@ -108,6 +114,37 @@ export async function runMcodeProviderCommand(
       }
       await context.application.remove(request.providerId);
       return `Provider removed: ${request.providerId}`;
+    }
+    if (request.action === 'add-models') {
+      if (request.models.length === 0) {
+        throw new Error('At least one --model <id> is required.');
+      }
+      const before = await context.application.snapshot();
+      const provider = before.providers.find(
+        (candidate) => candidate.providerId === request.providerId,
+      );
+      if (!provider) {
+        throw new Error(
+          `No provider ${request.providerId} is configured here. \`provider list\` names the ids.`,
+        );
+      }
+      const added = await context.application.addModels(provider, request.models);
+      const after = await context.application.snapshot();
+      const models =
+        after.providers.find((candidate) => candidate.providerId === request.providerId)?.models ??
+        [];
+      if (request.json) {
+        return JSON.stringify(
+          {
+            providerId: request.providerId,
+            added,
+            models: models.map(({ modelId }) => modelId),
+          },
+          null,
+          2,
+        );
+      }
+      return `Added ${added} model${added === 1 ? '' : 's'} to ${provider.name}; ${models.length} in all`;
     }
     if (request.action === 'test') {
       if (request.providerId === 'minimax_oauth') {

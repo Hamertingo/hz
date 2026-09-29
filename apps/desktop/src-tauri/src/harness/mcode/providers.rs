@@ -35,6 +35,17 @@
 //! is 600 lines of the vendor's own metadata with the reader's key in it, and a
 //! round trip would reformat all of it and drop every field this build has never
 //! heard of.
+//!
+//! **And a refresh asks the *gateway*, which is the one provider change whose
+//! asking this side has to do.** [`check`] re-reads a provider's model list so a
+//! model the gateway started serving after the connect appears at all — the list
+//! is otherwise written once and read by nobody again. Two things put the asking
+//! here rather than in the agent's own discovery: which of a list endpoint's rows
+//! may be registered is [`read_models`]'s decision (a gateway that serves two
+//! wires answers one list for both), and the key that request carries is read
+//! back out of hz's own copy of the config ([`read_api_key`]). Only the *write*
+//! goes through the subcommand, as `provider add-models` — so the key is never in
+//! argv, and re-adding a provider is never the way a model is added.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -85,6 +96,10 @@ pub struct Provider {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub masked_api_key: Option<String>,
     pub models: Vec<ProviderModel>,
+    /// When, and how, this provider's list was last read off its own endpoint —
+    /// absent for one hz has never asked. See [`check`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<ProviderCheck>,
 }
 
 impl Provider {
@@ -157,6 +172,55 @@ pub struct DiscoveredModel {
 struct ProviderList {
     #[serde(default)]
     providers: Vec<Provider>,
+}
+
+/// What hz last learned about one provider's models, and when.
+///
+/// **The app's own clock, and its own record.** Nothing on the wire states when
+/// a list was read — `provider list` names what the config holds and says
+/// nothing about where it came from — so this is what lets the card say "checked
+/// 4 minutes ago" instead of leaving the reader to guess whether the button in
+/// front of them is worth pressing. It is **not** the agent's list: that is read
+/// live, and this describes only the last time hz asked a gateway for one.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCheck {
+    /// Milliseconds since the epoch, hz's clock: a reading from the agent's
+    /// would be a different machine's idea of "recent".
+    pub checked_at: u64,
+    /// The provider's shape when it was asked — see [`fingerprint`]. A row whose
+    /// reading describes a different one is not drawn as this entry's.
+    pub fingerprint: String,
+    /// How many model ids this reading added.
+    pub added: u32,
+    /// Ids the provider holds that the gateway did **not** list. Reported, never
+    /// acted on: see [`check`].
+    pub missing: Vec<String>,
+    pub outcome: CheckOutcome,
+    /// The gateway's own sentence, where it refused or could not be asked.
+    /// Absent on a reading that landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Which of the three things a check came back with.
+///
+/// **Three, not two.** "Answered with nothing" is a real answer — a gateway
+/// whose models are all on the other wire answers the list endpoint with rows
+/// this build may not register — and folding it into a failure would draw a
+/// working gateway as a broken one, and hide the one state a reader can act on
+/// (the wire is wrong).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub enum CheckOutcome {
+    /// It served models, and the ones this build can run are in the provider.
+    Served,
+    /// It answered, and served nothing this build can register.
+    Empty,
+    /// It did not answer, or refused. The provider keeps what it had.
+    Failed,
 }
 
 /// What the composer's add form collects.
@@ -262,11 +326,42 @@ pub async fn list() -> Result<Vec<Provider>> {
     let reply: ProviderList = serde_json::from_str(&out)
         .context("mcode's provider list is not the shape this build reads")?;
 
-    Ok(reply
-        .providers
+    // A checks file that will not parse is a card that says "never checked",
+    // never a providers screen that will not open: what is lost is a timestamp,
+    // and the next check writes the file again.
+    let checks = read_checks().await.unwrap_or_default();
+
+    Ok(with_checks(
+        reply
+            .providers
+            .into_iter()
+            .filter(|provider| !provider.is_minimax_account())
+            .collect(),
+        &checks,
+    ))
+}
+
+/// The list as the screen draws it: what the CLI reported, plus the one reading
+/// that describes *this* entry.
+///
+/// Pure, so the rule that decides which reading belongs to which card is pinned
+/// without a `~/.hz` or a child. The rule is the fingerprint, and it is the
+/// whole of it: a provider reconnected with another URL or another wire is a
+/// different endpoint, and the reading taken against the old one is not an
+/// answer about this card — it would draw "checked 4 minutes ago" over a
+/// provider nothing has asked yet.
+fn with_checks(providers: Vec<Provider>, checks: &Checks) -> Vec<Provider> {
+    providers
         .into_iter()
-        .filter(|provider| !provider.is_minimax_account())
-        .collect())
+        .map(|mut provider| {
+            let (base_url, api_format) = provider_shape(&provider);
+            provider.check = checks
+                .get(&provider.provider_id)
+                .filter(|check| check.fingerprint == fingerprint(&base_url, &api_format))
+                .cloned();
+            provider
+        })
+        .collect()
 }
 
 /// Adds a custom provider, and — where the reader asked — makes it the one the
@@ -548,6 +643,45 @@ async fn config_path() -> Result<std::path::PathBuf> {
     Ok(path)
 }
 
+/// How far a line is indented, which is the whole of how this file is read.
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// Whether this line is the map key `want`, with any quoting taken off it.
+///
+/// **Two spellings, and the second is not belt-and-braces.** A key whose own
+/// text holds a colon — a model id like `vendor/model:free` — is written bare by
+/// the agent, and splitting on the *first* colon reads `vendor/model` out of it,
+/// which matches nothing. So a line ending in `:` is compared whole, and only a
+/// line carrying a value falls back to the first colon — which is what reads
+/// `context: 1000000` and `baseURL: https://…` as their keys.
+///
+/// Shared by all three readers of this file — the two writes and
+/// [`read_api_key`] — because the spelling a key is written in is one rule, and
+/// a second copy of it is a key that stops matching in one place and not the
+/// other.
+fn is_key(line: &str, want: &str) -> bool {
+    let trimmed = line.trim();
+    if let Some(rest) = trimmed.strip_suffix(':') {
+        if rest.trim().trim_matches(['"', '\'']) == want {
+            return true;
+        }
+    }
+    match trimmed.split_once(':') {
+        Some((before, _)) => before.trim().trim_matches(['"', '\'']) == want,
+        None => false,
+    }
+}
+
+/// Where the block indented under the line at `at` ends: the first line at or
+/// above `level` that carries anything, or `end`.
+fn block_end(lines: &[&str], at: usize, end: usize, level: usize) -> usize {
+    (at + 1..end)
+        .find(|i| indent_of(lines[*i]) <= level && !lines[*i].trim().is_empty())
+        .unwrap_or(end)
+}
+
 /// Sets one model's `limit` in the agent's config, or clears it.
 ///
 /// **The per-model context window, and it is the only lever there is.** A BYOK
@@ -591,30 +725,6 @@ fn with_model_limits(
     const FIELD: usize = 8;
     const LIMIT: usize = 10;
 
-    fn indent(line: &str) -> usize {
-        line.len() - line.trim_start().len()
-    }
-    // Whether this line is the map key `want`, with any quoting taken off it.
-    //
-    // **Two spellings, and the second is not belt-and-braces.** A key whose own
-    // text holds a colon — a model id like `vendor/model:free` — is written bare
-    // by the agent, and splitting on the *first* colon reads `vendor/model` out
-    // of it, which matches nothing. So a line ending in `:` is compared whole,
-    // and only a line carrying a value falls back to the first colon — which is
-    // what reads `context: 1000000` and `baseURL: https://…` as their keys.
-    fn is_key(line: &str, want: &str) -> bool {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_suffix(':') {
-            if rest.trim().trim_matches(['"', '\'']) == want {
-                return true;
-            }
-        }
-        match trimmed.split_once(':') {
-            Some((before, _)) => before.trim().trim_matches(['"', '\'']) == want,
-            None => false,
-        }
-    }
-
     let lines: Vec<&str> = text.lines().collect();
     let provider_at = lines
         .iter()
@@ -625,38 +735,32 @@ fn with_model_limits(
     let end = body
         .iter()
         .position(|line| {
-            indent(line) == 0 && !line.trim().is_empty() && !line.trim().starts_with('#')
+            indent_of(line) == 0 && !line.trim().is_empty() && !line.trim().starts_with('#')
         })
         .unwrap_or(body.len());
 
-    let slug_at = (0..end).find(|i| indent(body[*i]) == SLUG && is_key(body[*i], slug))?;
+    let slug_at = (0..end).find(|i| indent_of(body[*i]) == SLUG && is_key(body[*i], slug))?;
     let models_at = (slug_at + 1..end)
-        .find(|i| indent(body[*i]) <= SLUG || (indent(body[*i]) == MODELS && is_key(body[*i], "models")))?;
-    if indent(body[models_at]) != MODELS {
+        .find(|i| indent_of(body[*i]) <= SLUG || (indent_of(body[*i]) == MODELS && is_key(body[*i], "models")))?;
+    if indent_of(body[models_at]) != MODELS {
         return None;
     }
     let model_at = (models_at + 1..end)
-        .find(|i| indent(body[*i]) <= MODELS || (indent(body[*i]) == MODEL && is_key(body[*i], model_id)))?;
-    if indent(body[model_at]) != MODEL {
+        .find(|i| indent_of(body[*i]) <= MODELS || (indent_of(body[*i]) == MODEL && is_key(body[*i], model_id)))?;
+    if indent_of(body[model_at]) != MODEL {
         return None;
     }
     // Where this model's own fields stop: the next line at or above its own
     // indent, which is the next model or the end of the map.
-    let fields_end = (model_at + 1..end)
-        .find(|i| indent(body[*i]) <= MODEL && !body[*i].trim().is_empty())
-        .unwrap_or(end);
+    let fields_end = block_end(body, model_at, end, MODEL);
 
     let find_field = |from: usize, to: usize, level: usize, want: &str| {
-        (from..to).find(|i| indent(body[*i]) == level && is_key(body[*i], want))
+        (from..to).find(|i| indent_of(body[*i]) == level && is_key(body[*i], want))
     };
 
     let limit_at = find_field(model_at + 1, fields_end, FIELD, "limit");
     let limit_end = limit_at
-        .map(|at| {
-            (at + 1..fields_end)
-                .find(|i| indent(body[*i]) <= FIELD && !body[*i].trim().is_empty())
-                .unwrap_or(fields_end)
-        })
+        .map(|at| block_end(body, at, fields_end, FIELD))
         .unwrap_or(model_at + 1);
 
     // The limit's children with ours taken out and every key this build does
@@ -667,7 +771,7 @@ fn with_model_limits(
             body[at + 1..limit_end]
                 .iter()
                 .filter(|line| {
-                    !(indent(line) == LIMIT
+                    !(indent_of(line) == LIMIT
                         && (is_key(line, "context") || is_key(line, "output")))
                 })
                 .map(|line| (*line).to_string())
@@ -745,6 +849,62 @@ fn with_default_model(text: &str, value: &str) -> String {
     }
 
     out
+}
+
+/// The API key the agent holds for this provider, read out of hz's own copy of
+/// its config.
+///
+/// **The one place this app reads the secret back, and it is [`check`] that
+/// needs it.** A gateway's list endpoint answers a keyed request and no
+/// subcommand of the CLI will make that call: `provider add` is the only one
+/// that takes a key, and it *mints a provider* rather than adding to one — the
+/// slug it derives is suffixed when it is taken, so a second add is a second
+/// entry, not an update. What the key never does is leave the process: it goes
+/// into one request's headers, is never drawn, never logged and never sent over
+/// the bridge, which is the half of the rule [`Provider::masked_api_key`] states
+/// the other end of. The file it comes from is hz's own — `MINIMAX_DATA_DIR` is
+/// pinned to `~/.hz/agent` and nothing else writes there — which is what makes
+/// reading it different from reading a vendor's.
+///
+/// Indentation again, and the same shape the writes above go through:
+/// `custom_provider:` at 0, the slug at 2, `options:` at 4, the key at 6. `None`
+/// where the entry has no key of its own, which is the ordinary state of a
+/// provider whose key was cleared.
+fn read_api_key(text: &str, provider_id: &str) -> Option<String> {
+    let (parent, slug) = provider_id.split_once(':')?;
+    const SLUG: usize = 2;
+    const FIELD: usize = 4;
+    const KEY: usize = 6;
+
+    let lines: Vec<&str> = text.lines().collect();
+    let provider_at = lines
+        .iter()
+        .position(|line| line.trim() == format!("{parent}:"))?;
+    let body = &lines[provider_at + 1..];
+    let end = body
+        .iter()
+        .position(|line| {
+            indent_of(line) == 0 && !line.trim().is_empty() && !line.trim().starts_with('#')
+        })
+        .unwrap_or(body.len());
+
+    let slug_at = (0..end).find(|i| indent_of(body[*i]) == SLUG && is_key(body[*i], slug))?;
+    let slug_end = block_end(body, slug_at, end, SLUG);
+    let options_at = (slug_at + 1..slug_end)
+        .find(|i| indent_of(body[*i]) == FIELD && is_key(body[*i], "options"))?;
+    let key_at = (options_at + 1..block_end(body, options_at, slug_end, FIELD))
+        .find(|i| indent_of(body[*i]) == KEY && is_key(body[*i], "apiKey"))?;
+
+    // Trimmed on both sides of the quoting: a writer that leaves `apiKey: '  '`
+    // means no key, and an empty string sent as a credential is a 401 the reader
+    // would read as the gateway having refused them.
+    let value = body[key_at]
+        .split_once(':')?
+        .1
+        .trim()
+        .trim_matches(['"', '\''])
+        .trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// The model ids a provider serves, read off its own list endpoint.
@@ -973,10 +1133,264 @@ fn client() -> &'static reqwest::Client {
     &CLIENT
 }
 
+/// Asks a provider's own list endpoint what it serves, and registers the rows it
+/// serves that the provider does not already have.
+///
+/// **The one thing the config's model list cannot do for itself.** That list is
+/// written once, when the provider is connected, and read by nobody afterwards —
+/// so a model the gateway starts serving later is in no list anywhere, and the
+/// reader's only way to it was to remove the provider and connect it again,
+/// typing the key a second time. A check is that, without the key and without
+/// the second provider entry a reconnect would mint.
+///
+/// **Additive, and it deletes nothing.** Ids the gateway no longer lists are
+/// `missing` — reported on the card, not removed. The reader may have typed that
+/// id (the form takes a hand-written list), and a gateway's `/models` is its own
+/// view of itself rather than a promise about what it will serve. Removing a row
+/// is the destructive direction, it is not this app's call to make on a
+/// background read, and the report is what explains the one failure that used to
+/// arrive with no warning at all: a row the agent then refuses at the end of its
+/// turn.
+///
+/// A refusal is a reading too, stored with the gateway's own sentence, so a card
+/// cannot keep saying "checked 4 minutes ago" over a key that stopped working.
+pub async fn check(provider_id: &str) -> Result<Vec<Provider>> {
+    let before = list().await?;
+    let provider = before
+        .iter()
+        .find(|listed| listed.provider_id == provider_id)
+        .with_context(|| format!("{provider_id} is not one of this machine's providers"))?;
+    let (base_url, api_format) = provider_shape(provider);
+
+    let mut check = ProviderCheck {
+        checked_at: now_ms(),
+        fingerprint: fingerprint(&base_url, &api_format),
+        added: 0,
+        missing: Vec::new(),
+        outcome: CheckOutcome::Failed,
+        error: None,
+    };
+
+    match asked_of_the_gateway(&base_url, &api_format, provider_id).await {
+        Err(why) => check.error = Some(why),
+        // An answer with nothing this build may register — a gateway serving
+        // every model on the other wire — is its own outcome, and `missing` is
+        // left empty: a list that states nothing is not a list that says the
+        // provider's own rows are gone.
+        Ok(served) if served.is_empty() => check.outcome = CheckOutcome::Empty,
+        Ok(served) => {
+            check.outcome = CheckOutcome::Served;
+            let serving: std::collections::HashSet<&str> =
+                served.iter().map(|model| model.id.as_str()).collect();
+            let known: std::collections::HashSet<&str> =
+                provider.models.iter().map(|model| model.model_id.as_str()).collect();
+            check.missing = provider
+                .models
+                .iter()
+                .filter(|model| !serving.contains(model.model_id.as_str()))
+                .map(|model| model.model_id.clone())
+                .collect();
+
+            let added: Vec<&str> = served
+                .iter()
+                .map(|model| model.id.as_str())
+                .filter(|id| !known.contains(id))
+                .collect();
+            if !added.is_empty() {
+                let mut args: Vec<&str> = vec!["provider", "add-models", provider_id];
+                for id in &added {
+                    args.push("--model");
+                    args.push(id);
+                }
+                run(&args, None).await?;
+                models::forget();
+                check.added = added.len() as u32;
+
+                // **The same windows the connect writes, out of the same reply.**
+                // Without this a model added here would be the one kind of row
+                // with the gateway's own size missing: the config holds none for
+                // it, and the catalog answers only for a model it has heard of —
+                // so one Command Code states a million tokens for would run at
+                // the agent's 200k fallback, while the same model added at a
+                // connect runs at the size its gateway states. Best effort, as
+                // it is there: the models are registered and usable either way,
+                // and the row draws the window it ended up on.
+                if let Err(err) = apply_windows(provider_id, &served).await {
+                    eprintln!("[hz] could not record the refreshed model windows: {err:#}");
+                }
+            }
+        }
+    }
+
+    remember_check(provider_id, &check).await?;
+
+    // Read back only where the config actually moved. A check that added nothing
+    // changed nothing but the record, and that is spliced in here rather than
+    // paid for with a second round trip to the CLI — which is the ordinary case,
+    // and the one an automatic check runs.
+    if check.added == 0 {
+        let mut after = before;
+        if let Some(listed) = after.iter_mut().find(|listed| listed.provider_id == provider_id) {
+            listed.check = Some(check);
+        }
+        return Ok(after);
+    }
+
+    list().await
+}
+
+/// Checks every provider this machine has, one at a time, and swallows the
+/// refusals.
+///
+/// **Best effort, because one gateway being down is not the other one's
+/// problem.** A provider that will not answer must not stop the ones after it
+/// from being asked — and the failure is not lost by being swallowed: it is in
+/// that provider's own record, which is the screen that draws it. Sequential
+/// rather than concurrent, so a gateway that hangs spends one ten-second timeout
+/// rather than one each on the same reader's click.
+pub async fn check_all() {
+    let Ok(listed) = list().await else {
+        return;
+    };
+    for provider in listed {
+        if let Err(err) = check(&provider.provider_id).await {
+            eprintln!("[hz] could not check {}: {err:#}", provider.provider_id);
+        }
+    }
+}
+
+/// The pair of facts a reading describes, with the CLI's own default filled in.
+///
+/// A provider the agent recorded with no `api` is a Messages one — that is the
+/// CLI's default for `provider add` — and both sides have to read that the same
+/// way, or a fingerprint would not match the reading it was written from.
+fn provider_shape(provider: &Provider) -> (String, String) {
+    (
+        provider.base_url.clone().unwrap_or_default(),
+        provider
+            .api_format
+            .clone()
+            .filter(|format| !format.trim().is_empty())
+            .unwrap_or_else(|| "anthropic-messages".to_string()),
+    )
+}
+
+/// What a reading describes, so a provider **reconnected** since is not drawn
+/// wearing the old answer.
+///
+/// **The base URL and the wire, and neither the key nor the model list.** The
+/// first two decide which endpoint answers and how its reply is parsed, and both
+/// can be replaced in the agent's own terminal while hz is open, with no write of
+/// hz's to notice it. The key is left out because it is a secret and this file is
+/// not one. The model list is left out because it is what a reading *changes*:
+/// folding it in would make every successful check invalidate its own record.
+///
+/// Plain text rather than a hash of it. It is not long, it is not secret —
+/// both halves are already drawn on the card as facts — and a hash would be a
+/// second rule about this file's format that two builds could disagree about.
+fn fingerprint(base_url: &str, api_format: &str) -> String {
+    format!("{}\n{}", base_url.trim(), api_format.trim())
+}
+
+/// The wall clock in milliseconds, which is the only clock a reading may be
+/// stamped with: the agent's is the same machine's, but nothing on the wire
+/// states a time at all.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+/// [`discover`], with the key read out of hz's own copy of the config.
+///
+/// Split out for the refusal it can give that `discover` cannot: "there is no
+/// key here" is a fact about hz's copy of the file rather than about the
+/// gateway, and it must not arrive as the gateway having turned a request down.
+async fn asked_of_the_gateway(
+    base_url: &str,
+    api_format: &str,
+    provider_id: &str,
+) -> Result<Vec<DiscoveredModel>, String> {
+    if base_url.trim().is_empty() {
+        return Err("the agent has no base URL for this provider".to_string());
+    }
+
+    let path = config_path()
+        .await
+        .map_err(|err| format!("{err:#}"))?;
+    let text = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|err| format!("could not read {}: {err}", path.display()))?;
+    let Some(key) = read_api_key(&text, provider_id) else {
+        return Err("the agent's config holds no API key for this provider".to_string());
+    };
+
+    discover(base_url, api_format, &key)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+/// Where a provider's last reading is kept, beside the app's other stores.
+async fn checks_path() -> Result<std::path::PathBuf> {
+    Ok(crate::store::get_home_app_dir()
+        .await?
+        .join("provider-checks.json"))
+}
+
+/// Every provider's last reading, by the id `provider list` reports.
+type Checks = std::collections::HashMap<String, ProviderCheck>;
+
+/// Makes a read-modify-write of that file one step.
+///
+/// **Two callers, and they can overlap**: the providers screen checks one card
+/// while the composer's refresh walks every provider, and last-one-wins would
+/// lose a reading rather than merely order them.
+static CHECKS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Every reading on disk. A file that will not parse reads as none of them,
+/// which costs a card its timestamp and the next check nothing.
+async fn read_checks() -> Result<Checks> {
+    let path = checks_path().await?;
+    crate::store::read_json(&path).await
+}
+
+/// Stores one reading, so the card can say when it last ran and what it found.
+async fn remember_check(provider_id: &str, check: &ProviderCheck) -> Result<()> {
+    let _guard = CHECKS_LOCK.lock().await;
+    let path = checks_path().await?;
+    let mut checks: Checks = crate::store::read_json(&path).await?;
+    checks.insert(provider_id.to_string(), check.clone());
+    write_checks(&path, &checks).await
+}
+
+/// Throws a provider's reading away — for the two writes hz makes itself, so the
+/// next card cannot draw an answer about the entry that was there before.
+async fn forget_check(provider_id: &str) {
+    let Ok(path) = checks_path().await else {
+        return;
+    };
+    let _guard = CHECKS_LOCK.lock().await;
+    let Ok(mut checks) = crate::store::read_json::<Checks>(&path).await else {
+        return;
+    };
+    if checks.remove(provider_id).is_some() {
+        if let Err(err) = write_checks(&path, &checks).await {
+            eprintln!("[hz] could not drop {provider_id}'s check: {err:#}");
+        }
+    }
+}
+
+async fn write_checks(path: &std::path::Path, checks: &Checks) -> Result<()> {
+    let body = serde_json::to_vec_pretty(checks).context("could not encode the provider checks")?;
+    crate::store::write_atomic(path, body).await
+}
+
 /// Removes a provider hz added.
 pub async fn remove(provider_id: &str) -> Result<Vec<Provider>> {
     run(&["provider", "remove", provider_id, "--yes"], None).await?;
     models::forget();
+    forget_check(provider_id).await;
     list().await
 }
 
@@ -1088,6 +1502,7 @@ custom_provider:
     kind: custom
     enabled: true
     options:
+      apiKey: sk-example-key
       baseURL: https://example.test/v1
     models:
       alpha:
@@ -1193,6 +1608,164 @@ permissionMode: auto
         assert!(!out.contains("        limit:"), "wrote {out}");
         // The list that followed it is still there.
         assert!(out.contains("        contextWindowOptions:\n          - 256000\n"));
+    }
+
+    /// A reading belongs to the entry it was taken against, and to no other.
+    ///
+    /// **The whole of what the fingerprint buys.** A provider reconnected with
+    /// another URL is a different endpoint, and drawing the old answer on it
+    /// would put "checked 4 minutes ago" over a card that has never been asked —
+    /// which is worse than saying nothing, since that timestamp is the reader's
+    /// only reason to trust the list under it.
+    #[test]
+    fn a_reading_is_attached_only_to_the_entry_it_describes() {
+        let listed = |base_url: &str| Provider {
+            provider_id: "custom_provider:example".into(),
+            name: "Example".into(),
+            kind: "custom".into(),
+            active: true,
+            enabled: true,
+            read_only: false,
+            has_api_key: true,
+            base_url: Some(base_url.into()),
+            api_format: Some("openai-completions".into()),
+            masked_api_key: None,
+            models: Vec::new(),
+            check: None,
+        };
+        let reading = |fingerprint: &str| ProviderCheck {
+            checked_at: 1_700_000_000_000,
+            fingerprint: fingerprint.into(),
+            added: 2,
+            missing: vec!["gone".into()],
+            outcome: CheckOutcome::Served,
+            error: None,
+        };
+        let matching = fingerprint("https://example.test/v1", "openai-completions");
+
+        let mut checks: Checks = std::collections::HashMap::new();
+        checks.insert("custom_provider:example".into(), reading(&matching));
+        // A reading for a provider this machine no longer has.
+        checks.insert("custom_provider:gone".into(), reading(&matching));
+
+        let attached = with_checks(vec![listed("https://example.test/v1")], &checks);
+        assert_eq!(attached[0].check.as_ref().map(|check| check.added), Some(2));
+
+        // The same provider, reconnected somewhere else.
+        let moved = with_checks(vec![listed("https://elsewhere.test/v1")], &checks);
+        assert!(moved[0].check.is_none());
+    }
+
+    /// The key is read out of the provider's own `options`, under its own slug.
+    ///
+    /// **This is the one read that has to be exactly right**, since what comes
+    /// back goes into a request header: a walk that lands on the wrong block
+    /// hands the gateway somebody else's key, and the gateway answers 401 about
+    /// a provider that was working. So the three shapes a real config has are
+    /// all pinned — a slug with options, a slug without any, and a slug that
+    /// does not exist.
+    #[test]
+    fn the_key_is_read_out_of_the_providers_own_options() {
+        assert_eq!(
+            read_api_key(CONFIG, "custom_provider:example").as_deref(),
+            Some("sk-example-key")
+        );
+        // No `options:` block at all.
+        assert!(read_api_key(CONFIG, "custom_provider:other").is_none());
+        // The managed map's slug is not this map's slug.
+        assert!(read_api_key(CONFIG, "provider:minimax").is_none());
+        assert!(read_api_key(CONFIG, "custom_provider:nope").is_none());
+    }
+
+    /// **A model id carrying a colon does not swallow the read.** The agent
+    /// writes `vendor/model:free` bare, and a walk that split on the first colon
+    /// would read the models map as a key of its own and lose the block under
+    /// it — which is why [`is_key`] compares a line ending in `:` whole.
+    #[test]
+    fn a_colon_in_a_model_id_does_not_end_the_providers_options() {
+        let config = "custom_provider:\n  zen:\n    options:\n      apiKey: sk-zen\n    models:\n      vendor/model:free:\n        reasoning: true\n";
+        assert_eq!(read_api_key(config, "custom_provider:zen").as_deref(), Some("sk-zen"));
+    }
+
+    /// An empty value is no key, rather than an empty one sent as a credential.
+    #[test]
+    fn a_blank_key_reads_as_no_key() {
+        let config = "custom_provider:\n  zen:\n    options:\n      apiKey: '  '\n";
+        assert!(read_api_key(config, "custom_provider:zen").is_none());
+    }
+
+    /// A reading describes the endpoint and the wire, and nothing else — not the
+    /// key, and not the model list it is about to change.
+    #[test]
+    fn a_reading_describes_the_url_and_the_wire() {
+        assert_eq!(
+            fingerprint("https://a.test/v1", "openai-completions"),
+            fingerprint("  https://a.test/v1  ", "openai-completions")
+        );
+        assert_ne!(
+            fingerprint("https://a.test/v1", "openai-completions"),
+            fingerprint("https://b.test/v1", "openai-completions")
+        );
+        assert_ne!(
+            fingerprint("https://a.test/v1", "openai-completions"),
+            fingerprint("https://a.test/v1", "anthropic-messages")
+        );
+    }
+
+    /// A provider the agent recorded with no wire is a Messages one, and both
+    /// sides have to read that the same way or a reading never matches itself.
+    #[test]
+    fn a_provider_with_no_wire_is_read_as_messages() {
+        let mut provider = Provider {
+            provider_id: "custom_provider:example".into(),
+            name: "Example".into(),
+            kind: "custom".into(),
+            active: true,
+            enabled: true,
+            read_only: false,
+            has_api_key: true,
+            base_url: Some("https://example.test/v1".into()),
+            api_format: None,
+            masked_api_key: None,
+            models: Vec::new(),
+            check: None,
+        };
+        assert_eq!(
+            provider_shape(&provider),
+            ("https://example.test/v1".to_string(), "anthropic-messages".to_string())
+        );
+
+        provider.api_format = Some("openai-completions".into());
+        assert_eq!(provider_shape(&provider).1, "openai-completions");
+    }
+
+    /// **The whole check, against this machine's own provider.** It reads the key
+    /// out of the agent's real config, asks the real gateway, diffs what it
+    /// serves against what the provider holds, and writes the reading — the one
+    /// path no test above can take, since every one of them stops at a pure
+    /// function. It is what to run after touching `read_api_key`, `discover` or
+    /// the `add-models` call, because it is the only thing that exercises all
+    /// three together.
+    ///
+    /// Ignored by default for the reasons
+    /// [`connecting_a_provider_opens_a_session`] is: a provider this machine has
+    /// actually connected, the network, and a write to `~/.hz`. **And it can add
+    /// models** — a gateway serving one the config does not have is the very case
+    /// it exists for — so it is run by hand, by whoever is looking at the answer.
+    #[tokio::test]
+    #[ignore = "asks a real gateway and writes to ~/.hz"]
+    async fn a_connected_provider_can_be_checked() {
+        let listed = list().await.expect("the agent lists its providers");
+        let provider = listed.first().expect("a provider is connected");
+
+        let after = check(&provider.provider_id).await.expect("the check ran");
+
+        let reading = after
+            .iter()
+            .find(|listed| listed.provider_id == provider.provider_id)
+            .and_then(|listed| listed.check.as_ref())
+            .expect("the reading is on the row it was taken for");
+        assert_eq!(reading.outcome, CheckOutcome::Served, "{reading:?}");
     }
 
     /// The form's own refusals, before any child is spawned. Each is a field
@@ -1525,6 +2098,7 @@ permissionMode: auto
             api_format: None,
             masked_api_key: None,
             models: Vec::new(),
+            check: None,
         };
 
         assert!(row("minimax-oauth").is_minimax_account());
