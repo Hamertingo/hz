@@ -20,7 +20,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import InlineApproval from "@/components/chat/InlineApproval";
+import TypingDots from "@/components/chat/TypingDots";
+import { useAgentChatActions } from "@/hooks/useAgentChat";
 import { ChatSessionContext } from "@/hooks/useChatSession";
+import { isFolded, useBoundaries } from "@/lib/chatMarks";
+import { clockTime } from "@/lib/format";
+import { MOUNT_ALL } from "@/lib/jump";
 import { addCitation } from "@/hooks/useCitations";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
@@ -28,14 +34,13 @@ import type { ApiRetryState, QueuedPrompt, StreamingBlock, Working } from "@/hoo
 import { useStableCallback } from "@/hooks/useStableCallback";
 import type { QuestionAnswer } from "@/lib/questionnaire";
 import { toolArgument } from "@/lib/tools";
-import { buildTranscript } from "@/lib/transcript";
+import { buildTranscript, isToolGroup, type Turn } from "@/lib/transcript";
 import { firstMount, grow, mountedTurns } from "@/lib/turnWindow";
 import type { SessionSnapshot } from "@/types/events";
 
 type ChatProps = {
   session: SessionSnapshot | null;
   streamingBlock: StreamingBlock | null;
-  onOpenSubagent: (id: string) => void;
   /// Opens the session that relayed a prompt into this one, for the avatar a
   /// `hz send` message draws. Selecting the session is all it does — the same
   /// thing clicking its sidebar row does.
@@ -46,7 +51,6 @@ type ChatProps = {
   /// Absent where the session has none to open — a background task is not a
   /// subagent, so a session can be holding one with no roster behind it, and the
   /// notice then draws as a line rather than as a button that does nothing.
-  onOpenSubagents?: () => void;
   /// Answers a permission request. The agent is blocked until this fires, so it
   /// is the one callback here whose absence stalls a session rather than
   /// degrading a view.
@@ -120,12 +124,17 @@ const RAIL_MIN = 2;
 /// cannot appear while the transcript is still following its own bottom.
 const AT_BOTTOM_PX = 40;
 
+/// The `seq` a turn starts at, which is what a page boundary is compared with.
+function turnSeq(turn: Turn): number {
+  const first = turn.prompt ?? turn.completed ?? turn.work[0];
+  if (!first) return 0;
+  return isToolGroup(first) ? (first.calls[0]?.seq ?? 0) : first.seq;
+}
+
 export default function Chat({
   session,
   streamingBlock,
-  onOpenSubagent,
   onOpenSession,
-  onOpenSubagents,
   onRespondPermission,
   onAnswerQuestions,
   onCancelQuestion,
@@ -197,17 +206,39 @@ export default function Chat({
   // event lands, so a row props-deep compare would have to walk a turn's entire
   // event list to notice — more work than the re-render it saves, on every row,
   // on every event. Memoize the walk and identity does the rest.
-  const { events, turns, subagentById, resultByCallId, editsByCallId, todosByCallId, pendingAsks } =
-    useMemo(
+  const {
+    events,
+    turns: allTurns,
+    subagentById,
+    resultByCallId,
+    editsByCallId,
+    todosByCallId,
+    pendingAsks,
+  } = useMemo(
       () => buildTranscript(session?.events ?? [], busy, liveTaskIds),
       [session?.events, busy, liveTaskIds],
     );
+
+  // An agent's chat is one endless conversation, and Clear starts a fresh page in
+  // it: the turns above the newest boundary are folded away behind "Show
+  // earlier" and nothing is deleted.
+  const agentChat = useAgentChatActions();
+  const boundaries = useBoundaries(session?.sessionId ?? null);
+  const [showEarlier, setShowEarlier] = useState(false);
+  useEffect(() => setShowEarlier(false), [session?.sessionId]);
+  const turns = useMemo(
+    () =>
+      agentChat && boundaries.length > 0 && !showEarlier
+        ? allTurns.filter((t) => !isFolded(turnSeq(t), boundaries, false))
+        : allTurns,
+    [agentChat, allTurns, boundaries, showEarlier],
+  );
+  const foldedCount = allTurns.length - turns.length;
 
   const cards = useLingeringCards(pendingAsks);
 
   // The two openers every row takes, frozen for the life of the pane so a row's
   // props can compare equal across a delta. See `useStableCallback`.
-  const openSubagent = useStableCallback(onOpenSubagent);
   const openSession = useStableCallback(onOpenSession);
   // Frozen for the same reason: `QueuedMessages` binds a chord on this prop, and
   // the handler is re-created by the hook above on every session event.
@@ -382,6 +413,15 @@ export default function Chat({
     }, 0);
     return () => clearTimeout(timer);
   }, [backfilling, mounted, session?.sessionId]);
+
+  // A jump to a quoted message above the mounted window asks for the rest.
+  useEffect(() => {
+    const onMountAll = () => {
+      if (session) setMount({ sessionId: session.sessionId, start: 0 });
+    };
+    window.addEventListener(MOUNT_ALL, onMountAll);
+    return () => window.removeEventListener(MOUNT_ALL, onMountAll);
+  }, [session?.sessionId]);
 
   // A step mounts turns *above* everything on screen, so left alone it would
   // shove what the reader is looking at down by their height. Pinned, the
@@ -656,18 +696,44 @@ export default function Chat({
           onWheel={onWheel}
           className="h-full overflow-y-auto"
         >
-          <div ref={contentRef} className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
-            {shownTurns.map((turn) => (
+          <div ref={contentRef} className="chat-col mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
+            {agentChat && foldedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowEarlier(true)}
+                className="mx-auto cursor-pointer rounded-full px-3 py-1 text-xs text-ink3 transition-colors hover:bg-hover hover:text-ink2"
+              >
+                Show earlier · {foldedCount} {foldedCount === 1 ? "turn" : "turns"} before the page was cleared
+              </button>
+            )}
+            {agentChat && showEarlier && boundaries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowEarlier(false)}
+                className="mx-auto cursor-pointer rounded-full px-3 py-1 text-xs text-ink3 transition-colors hover:bg-hover hover:text-ink2"
+              >
+                Hide earlier pages
+              </button>
+            )}
+            {shownTurns.map((turn, i) => (
               // The wrapper is what the rail measures and scrolls to. It carries
               // no styles of its own — it stands in for the block as the flex item.
               <div key={turn.key} data-turn={turn.key}>
+                {agentChat && (
+                  <PageBreaks
+                    boundaries={boundaries}
+                    from={i === 0 ? -1 : turnSeq(shownTurns[i - 1])}
+                    to={turnSeq(turn)}
+                    first={i === 0}
+                    folded={!showEarlier}
+                  />
+                )}
                 <TurnBlock
                   turn={turn}
                   subagentById={subagentById}
                   resultByCallId={resultByCallId}
                   editsByCallId={editsByCallId}
                   todosByCallId={todosByCallId}
-                  onOpenSubagent={openSubagent}
                   onOpenSession={openSession}
                   botSeed={session?.sessionId}
                   // Both cover the wait for output, and on every harness but fx
@@ -690,19 +756,43 @@ export default function Chat({
                           ) : (
                             <AssistantMessage text={streamingText} streaming />
                           ))}
-                        {turn === waitingTurn && (
-                          <WorkingIndicator
-                            tokens={working?.tokens ?? 0}
-                            seed={session?.sessionId}
-                            since={turn.prompt?.ts}
-                          />
-                        )}
+                        {turn === waitingTurn &&
+                          (agentChat ? (
+                            <TypingDots />
+                          ) : (
+                            <WorkingIndicator
+                              tokens={working?.tokens ?? 0}
+                              seed={session?.sessionId}
+                              since={turn.prompt?.ts}
+                            />
+                          ))}
                       </>
                     )
                   }
                 />
               </div>
             ))}
+
+            {agentChat && turns.length === 0 && boundaries.length > 0 && (
+              <p className="py-10 text-center text-[13px] text-ink3">
+                Fresh page. {agentChat.agent.name} keeps its memory.
+              </p>
+            )}
+
+            {agentChat &&
+              cards.map(
+                (ask) =>
+                  ask.type === "permission_requested" && (
+                    <InlineApproval
+                      key={ask.requestId}
+                      ask={ask}
+                      agent={agentChat.agent}
+                      onRespond={(optionId) =>
+                        onRespondPermission(session.sessionId, ask.requestId, optionId)
+                      }
+                    />
+                  ),
+              )}
 
             {/* Only where this pane has no composer. The focused pane's asks are
                 drawn beside the composer instead (`PendingAskPanel`) — one card
@@ -755,7 +845,6 @@ export default function Chat({
             {backgroundTaskCount > 0 && (
               <BackgroundTasksIndicator
                 count={backgroundTaskCount}
-                onOpen={onOpenSubagents}
               />
             )}
 
@@ -825,5 +914,34 @@ export default function Chat({
         />
       )}
     </ChatSessionContext>
+  );
+}
+
+/// The line across the chat where the reader cleared it. Drawn before the first
+/// turn that starts after the boundary — and at the very top when everything
+/// before it is folded, so the page reads as having begun there.
+function PageBreaks({
+  boundaries,
+  from,
+  to,
+  first,
+  folded,
+}: {
+  boundaries: readonly { seq: number; ts: string }[];
+  /// The previous turn's seq, or -1 for none.
+  from: number;
+  to: number;
+  first: boolean;
+  folded: boolean;
+}) {
+  const here = boundaries.filter((b) => (first && folded ? b.seq <= to : b.seq > from && b.seq <= to));
+  if (here.length === 0) return null;
+  const last = here[here.length - 1];
+  return (
+    <div className="mb-4 flex items-center gap-3 text-[11.5px] font-medium text-ink4">
+      <span className="h-px flex-1 bg-line" />
+      Cleared at {clockTime(last.ts) ?? ""}
+      <span className="h-px flex-1 bg-line" />
+    </div>
   );
 }

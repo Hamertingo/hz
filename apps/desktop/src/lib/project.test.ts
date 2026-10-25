@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { containingProject, projectKey } from "@/lib/project";
+import { containingProject, displayPath, projectKey } from "@/lib/project";
 import type { Project } from "@/types/events";
 
-/// Only the three fields these functions read. `lastSelected` is a sort key and
+/// Only the fields these functions read. `lastSelected` is a sort key and
 /// nothing here sorts.
-function project(path: string, space: string | null = null): Project {
-  return { path, name: path.split("/").pop() ?? path, space, lastSelected: "" };
+function project(path: string): Project {
+  return { path, name: path.split("/").pop() ?? path, lastSelected: "" };
 }
 
-const WORKSPACE = project("/repos/hyze-cloud", "Work");
+const WORKSPACE = project("/repos/hyze-cloud");
 const API = project("/repos/hyze-cloud/api");
 const OTHER = project("/repos/elsewhere");
 
@@ -97,5 +97,12 @@ describe("projectKey", () => {
   it("falls back to the path itself when nothing contains it", () => {
     expect(projectKey([WORKSPACE], "/tmp/loose")).toBe("/tmp/loose");
     expect(projectKey([], "/tmp/loose")).toBe("/tmp/loose");
+  });
+});
+
+describe("displayPath", () => {
+  it("drops the leading slash and nothing else", () => {
+    expect(displayPath("/Users/y/proj")).toBe("Users/y/proj");
+    expect(displayPath("C:/proj")).toBe("C:/proj");
   });
 });

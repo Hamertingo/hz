@@ -34,7 +34,7 @@ const PROMPT = event(1, {
   type: "user_message",
   text: "fix the thing",
   images: [],
-  issues: [],
+ 
 });
 
 const CALL = event(2, {
@@ -72,8 +72,8 @@ describe("sessionToJson", () => {
   });
 
   it("sorts object keys, so insertion order cannot leak into the bytes", () => {
-    const a = event(1, { type: "user_message", text: "t", images: [], issues: [] });
-    const b = event(1, { issues: [], images: [], text: "t", type: "user_message" });
+    const a = event(1, { type: "user_message", text: "t", images: [] });
+    const b = event(1, { images: [], text: "t", type: "user_message" });
 
     expect(sessionToJson([a])).toBe(sessionToJson([b]));
   });

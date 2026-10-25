@@ -1,4 +1,5 @@
 import { Check, FolderOpen, Mic, RotateCcw, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import AudioVisualizer from "@/components/composer/AudioVisualizer";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -16,6 +17,21 @@ import { cn } from "@/lib/utils";
 /// the height of a line of text the moment the model starts, so the composer
 /// jumps and then jumps back a second later.
 const ROW_H = "h-7";
+
+/// How long the recording has run, `0:14`. Mounted only while recording, so it
+/// starts from zero each time without a reset to forget.
+function RecordingClock() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <span className="px-1 text-xs tabular-nums text-muted-foreground" aria-label="Recording time">
+      {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
+    </span>
+  );
+}
 
 /// Dictation, in whichever of its three shapes applies.
 ///
@@ -86,6 +102,7 @@ export default function DictateControl({
             error rather than as a live level — red is what this palette says
             "something is wrong" with, and a working microphone is not that. */}
         <AudioVisualizer level={level} className="px-1 text-foreground" />
+        <RecordingClock />
 
         <Tooltip>
           <TooltipTrigger asChild>

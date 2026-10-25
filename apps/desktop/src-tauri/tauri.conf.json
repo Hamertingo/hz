@@ -34,7 +34,9 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/.hz/attachments/**"
+          "$HOME/.hz/attachments/**",
+          "$HOME/.hz/workspaces/**",
+          "$HOME/.hz/profile/**"
         ]
       }
     }

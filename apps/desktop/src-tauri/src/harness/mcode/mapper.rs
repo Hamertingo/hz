@@ -82,6 +82,9 @@ pub struct Mapper {
     /// Calls whose row opened a nested run, so the closing update can close it —
     /// a `tool_call_update` names an id and nothing else.
     subagents: std::collections::HashSet<String>,
+    /// A shell call's output as it streams, for an agent that sends it beside the
+    /// update rather than as `rawOutput` — Codex does.
+    terminal: HashMap<String, String>,
     /// The newest spend the agent reported, folded onto the turn's own
     /// `usage.cost_usd` for the same reason [`occupancy`](Self::occupancy) is:
     /// it arrives on `usage_update`, which is never written to the log, and the
@@ -92,6 +95,11 @@ pub struct Mapper {
     /// `TurnCompleted` — the composer's ring reads it back out of the log, and
     /// `UsageUpdate` is not persisted.
     occupancy: Option<ContextWindow>,
+    /// The newest committed answer text of the open turn. mcode's prompt reply
+    /// carries only a `stopReason`, so this is the sole source of the turn's
+    /// `final_text`; without it a channel, a teammate's ask or a routine waits
+    /// on an answer that is always empty.
+    answer: Option<String>,
 }
 
 impl Mapper {
@@ -106,8 +114,10 @@ impl Mapper {
             announced: HashMap::new(),
             drawn: Default::default(),
             subagents: Default::default(),
+            terminal: HashMap::new(),
             occupancy: None,
             spend: None,
+            answer: None,
         }
     }
 
@@ -168,9 +178,18 @@ impl Mapper {
                 status,
                 raw_input,
                 raw_output,
-                ..
+                content,
+                meta,
             } => {
                 let mut out = Vec::new();
+
+                if let Some(delta) = meta
+                    .as_ref()
+                    .and_then(|m| m.pointer("/terminal_output_delta/data"))
+                    .and_then(Value::as_str)
+                {
+                    self.terminal.entry(tool_call_id.clone()).or_default().push_str(delta);
+                }
 
                 // The row lands here, with the arguments, unless something
                 // already drew it — an `in_progress` update carries them, and a
@@ -189,10 +208,22 @@ impl Mapper {
                     return out;
                 };
 
+                // The agent's own account first, then the update's content blocks,
+                // then a shell's streamed output — whichever this agent speaks.
+                let streamed = self.terminal.remove(&tool_call_id).filter(|t| !t.is_empty());
                 let text = raw_output
                     .as_ref()
                     .and_then(|output| output.text())
+                    .filter(|t| !t.is_empty())
+                    .or_else(|| content_text(&content))
+                    .or(streamed)
                     .unwrap_or_default();
+                let exit = exit_code(raw_output.as_ref().and_then(|o| o.details.as_ref())).or_else(|| {
+                    meta.as_ref()
+                        .and_then(|m| m.pointer("/terminal_exit/exit_code"))
+                        .and_then(Value::as_i64)
+                        .map(|code| code as i32)
+                });
                 let result = ToolResult {
                     text,
                     is_error: status == ToolStatus::Failed,
@@ -200,7 +231,7 @@ impl Mapper {
                     // panel reads a `todowrite` run's list out of it, and nothing
                     // here knows what the other eleven tools put beside it.
                     structured: raw_output.as_ref().and_then(|o| o.details.clone()),
-                    exit_code: exit_code(raw_output.as_ref().and_then(|o| o.details.as_ref())),
+                    exit_code: exit,
                     duration_ms: None,
                     images: Vec::new(),
                 };
@@ -384,11 +415,12 @@ impl Mapper {
                 TurnStatus::Error,
                 Some("mcode stopped: the turn hit its request limit.".to_string()),
             ),
-            // `end_turn`, and `cancelled` — the reader's own Stop, reported as a
-            // success carrying a reason nothing draws, the reading both other
-            // ACP harnesses make.
-            _ => (TurnStatus::Success, None),
+            // The reader's own Stop: a partial sentence is not an answer.
+            "cancelled" => (TurnStatus::Success, None),
+            // `end_turn`: the last answer text the turn committed.
+            _ => (TurnStatus::Success, self.answer.clone()),
         };
+        self.answer = None;
 
         out.push(self.turn_completed(
             status,
@@ -404,6 +436,7 @@ impl Mapper {
     /// usually names its cure (`mcode login`), so it is the row's text.
     fn prompt_failed(&mut self, message: String) -> Vec<AgentEvent> {
         let mut out = self.close_runs();
+        self.answer = None;
         let auth_failed = mentions_any(&message, LOGIN_NEEDLES);
         out.push(self.turn_completed(
             TurnStatus::Error,
@@ -589,10 +622,15 @@ impl Mapper {
                 encrypted: block.text.is_empty(),
                 text: block.text,
             }),
-            _ => self.event(AgentEventPayload::AssistantText {
-                block: Some(block_ref(&block.id)),
-                text: block.text,
-            }),
+            _ => {
+                if !block.text.trim().is_empty() {
+                    self.answer = Some(block.text.clone());
+                }
+                self.event(AgentEventPayload::AssistantText {
+                    block: Some(block_ref(&block.id)),
+                    text: block.text,
+                })
+            }
         };
         vec![stop, committed]
     }
@@ -737,6 +775,19 @@ fn text_of(input: &Value, key: &str) -> Option<String> {
 
 /// A shell call's exit status, out of mcode's own `details`. `None` where the
 /// tool is not a shell or the shape is not what it was.
+/// The text blocks of an update's own `content`, joined, or `None` when it holds
+/// none — Claude and OpenCode both close a call with one.
+fn content_text(content: &[super::parser::ToolContent]) -> Option<String> {
+    let joined: Vec<&str> = content
+        .iter()
+        .filter_map(|block| match block {
+            super::parser::ToolContent::Content { content } => content.text(),
+            _ => None,
+        })
+        .collect();
+    (!joined.is_empty()).then(|| joined.join(""))
+}
+
 fn exit_code(details: Option<&Value>) -> Option<i32> {
     let details = details?.as_object()?;
     // A run that was killed reports no code at all, and `status` is then the
@@ -744,6 +795,7 @@ fn exit_code(details: Option<&Value>) -> Option<i32> {
     details
         .get("exitCode")
         .or_else(|| details.get("exit_code"))
+        .or_else(|| details.get("exit"))
         .and_then(Value::as_i64)
         .map(|code| code as i32)
 }
@@ -775,6 +827,51 @@ mod tests {
             }
         }
         out
+    }
+
+    const CLAUDE_TURN: &str = include_str!("fixtures/claude_turn.jsonl");
+    const CODEX_TURN: &str = include_str!("fixtures/codex_turn.jsonl");
+    const OPENCODE_TURN: &str = include_str!("fixtures/opencode_turn.jsonl");
+
+    /// **The three adapters' real turns, each writing a file and running
+    /// `wc -c` on it.** Their tool updates are not mcode's: Claude closes a call
+    /// with a bare-string `rawOutput`, Codex with none at all (the shell output
+    /// rides `_meta.terminal_output_delta`), OpenCode with `{output, metadata}`.
+    /// A turn is only drawn if each of them yields a tool row, a result that says
+    /// something, the answer and the close.
+    #[test]
+    fn every_adapter_turn_draws_a_tool_a_result_an_answer_and_a_close() {
+        for (who, fixture) in [
+            ("claude", CLAUDE_TURN),
+            ("codex", CODEX_TURN),
+            ("opencode", OPENCODE_TURN),
+        ] {
+            let events = mapped(fixture);
+
+            let started = events
+                .iter()
+                .filter(|e| matches!(e.payload, P::ToolCallStarted { .. }))
+                .count();
+            let results: Vec<&str> = events
+                .iter()
+                .filter_map(|e| match &e.payload {
+                    P::ToolCallCompleted { result, .. } => Some(result.text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let answered = events
+                .iter()
+                .any(|e| matches!(&e.payload, P::AssistantText { text, .. } if !text.trim().is_empty()));
+            let closed = events.iter().any(|e| matches!(e.payload, P::TurnCompleted { .. }));
+
+            assert!(started > 0, "{who}: no tool row was drawn");
+            assert!(
+                results.iter().any(|text| text.contains('2')),
+                "{who}: the shell result never reached the row, got {results:?}"
+            );
+            assert!(answered, "{who}: no answer was drawn");
+            assert!(closed, "{who}: the turn never closed");
+        }
     }
 
     /// **A chunk of the other kind parks a run, it does not end one.** mcode
@@ -815,6 +912,30 @@ mod tests {
         assert_eq!(thoughts.len(), 1, "one thought, not one row per chunk: {thoughts:?}");
         assert_eq!(messages[0], "Agora o README do SDK TS:\n\n");
         assert_eq!(thoughts[0], "Now the SDK TS README fix.\n\nThen fix.\n\nLet me read.");
+    }
+
+    /// **A finished turn carries its answer as `final_text`.** mcode's prompt
+    /// reply names only a `stopReason`, so a turn closed with `None` and every
+    /// waiter on it (a channel thread, a teammate's ask, a routine, the Inbox)
+    /// read an empty answer: the reader's #teste post got no reply at all. A
+    /// Stop carries none, and the next turn starts clean.
+    #[test]
+    fn a_closing_turn_carries_the_last_answer_as_its_final_text() {
+        let line = |reason: &str| format!(r#"<< {{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"{reason}"}}}}"#);
+        let chunk = |t: &str| format!(r#"<< {{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"mvs_x","update":{{"sessionUpdate":"agent_message_chunk","messageId":"m","content":{{"type":"text","text":"{t}"}}}}}}}}"#);
+        let final_of = |fixture: &str| {
+            mapped(fixture)
+                .into_iter()
+                .find_map(|e| match e.payload {
+                    P::TurnCompleted { final_text, .. } => Some(final_text),
+                    _ => None,
+                })
+                .expect("the turn closed")
+        };
+        let done = format!("{}\n{}\n{}", chunk("Fala, "), chunk("Gabriel!"), line("end_turn"));
+        assert_eq!(final_of(&done).as_deref(), Some("Fala, Gabriel!"));
+        let stopped = format!("{}\n{}", chunk("half"), line("cancelled"));
+        assert_eq!(final_of(&stopped), None);
     }
 
     /// **The thinking commits as a `Reasoning` block carrying its text.** The
@@ -1034,6 +1155,7 @@ mod tests {
             })),
             raw_output: None,
             content: Vec::new(),
+            meta: None,
         })));
 
         // The row is still a spawn, which is what the chat draws the link from.
@@ -1077,6 +1199,7 @@ mod tests {
             raw_input: None,
             raw_output: None,
             content: Vec::new(),
+            meta: None,
         })));
         let completed = closed
             .iter()

@@ -1,5 +1,5 @@
 /// Splits a prompt into the runs that get a colour — the leading slash command,
-/// every `@file` mention, issue tag and URL — and the inline marks a sentence
+/// every `@file` mention and URL — and the inline marks a sentence
 /// carries: bold, italic, code, strikethrough and links.
 ///
 /// Markdown lives here rather than in the `Markdown` component because a prompt
@@ -30,10 +30,14 @@ import { findPromptPaths } from "@/lib/filePath";
 /// sentence that reads wrong.
 export const ATTACHMENT_MARK = "📎";
 
+/// Punctuation a word may open behind, so `(https://…)` or `("@file")` is a
+/// token inside a sentence rather than prose. Read by the URL and the PR
+/// reference too, which are the other things that need a word to open.
+export const OPENERS = "([\"'";
+
 /// The size `formatBytes` wrote, as it sits after a token's name. A match is
 /// allowed to end early: the reader could edit either half.
 export const ATTACHMENT_SIZE = /^ [\d.]+ ?(?:B|KB|MB|GB)\b/;
-import { OPENERS, parseIdentifier } from "@/lib/issue";
 import { parseSlashCommand } from "@/lib/slash";
 
 export type Segment = {
@@ -41,7 +45,6 @@ export type Segment = {
     | "text"
     | "command"
     | "mention"
-    | "issue"
     | "url"
     | "strong"
     | "em"
@@ -79,7 +82,6 @@ export const SEGMENT_COLOR: Record<Segment["kind"], string> = {
   text: "",
   command: "text-accent-command",
   mention: "text-accent-mention",
-  issue: "text-accent-issue",
   // Underlined and nothing else: a URL is already its own colour of word,
   // and it must read the same in the composer, where it is only text. The
   // decoration follows the *text* rather than naming a page token, since the
@@ -262,7 +264,7 @@ function closeIndex(text: string, mark: string, from: number): number {
 /// literal text it was typed as, because a prompt is one person's sentence and
 /// the bubble drawing it is not a document.
 function inlineAt(text: string, i: number, exhausted: Exhausted): Segment | null {
-  // Must open a word, the rule an issue tag already takes. Without it
+  // Must open a word, the rule a URL or a PR reference takes too. Without it
   // `snake_case_name` is an italic and so is `2 * 3 * 4`, and both are ordinary
   // things to type into a prompt.
   const previous = i > 0 ? text[i - 1] : " ";
@@ -476,21 +478,14 @@ export function highlightSegments(text: string): Segment[] {
       continue;
     }
 
-    if (opener !== "@" && opener !== "#") continue;
-    // Must open a word, which is what keeps an email address and a `#fff`
-    // colour plain. Note this also holds at `i === plainFrom` right after a
-    // command, where the previous character is the last of the command name
-    // rather than a space.
-    //
-    // Bracketing punctuation counts as opening one — `(#DRA-53)` is a tag in a
-    // sentence — and only for a tag, because that is the rule the backend
-    // links by. A mention is left as strict as it was: the CLI parses `@path`
-    // out of the prompt itself, so widening it here would paint mentions the
-    // harness will not read.
+    if (opener !== "@") continue;
+    // Must open a word, which is what keeps an email address plain. Note this
+    // also holds at `i === plainFrom` right after a command, where the previous
+    // character is the last of the command name rather than a space. Strict on
+    // purpose: the CLI parses `@path` out of the prompt itself, so widening it
+    // would paint mentions the harness will not read.
     const previous = i > 0 ? text[i - 1] : " ";
-    const opensWord =
-      SPACE.test(previous) || (opener === "#" && OPENERS.includes(previous));
-    if (!opensWord) continue;
+    if (!SPACE.test(previous)) continue;
 
     let end = i + 1;
     while (end < text.length && !SPACE.test(text[end])) end += 1;
@@ -499,29 +494,11 @@ export function highlightSegments(text: string): Segment[] {
     // colour arrives with the path rather than flashing on the `@` itself.
     if (end === i + 1) continue;
 
-    let kind: Segment["kind"];
-    let stop = end;
-
-    if (opener === "@") {
-      kind = "mention";
-    } else {
-      // A tag is coloured only where it is a real identifier, because that is
-      // exactly what will be linked — `#fff` at the start of a line, or a
-      // markdown heading's word, must read as the prose they are. The scan
-      // stops at the number's end rather than the token's, so the comma in
-      // `#DRA-53,` stays plain like the sentence it belongs to.
-      const identifier = parseIdentifier(text.slice(i + 1, end));
-      if (!identifier) continue;
-
-      kind = "issue";
-      stop = i + 1 + identifier.length;
-    }
-
     if (i > plainFrom) segments.push({ kind: "text", text: text.slice(plainFrom, i) });
-    segments.push({ kind, text: text.slice(i, stop) });
+    segments.push({ kind: "mention", text: text.slice(i, end) });
 
-    plainFrom = stop;
-    i = stop - 1;
+    plainFrom = end;
+    i = end - 1;
   }
 
   if (plainFrom < text.length) {

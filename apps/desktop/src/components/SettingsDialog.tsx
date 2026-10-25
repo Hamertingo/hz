@@ -2,22 +2,18 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState, type ReactNo
 import {
   Check,
   ChevronDown,
-  GitBranch,
-  Info,
-  Keyboard,
-  Layers,
-  Mic,
-  Palette,
-  Plug,
-  Server,
-  Timer,
+  Building2,
+  Gauge,
+  Settings2,
+  SquareTerminal,
+  User,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import AppIcon from "@/components/AppIcon";
-import LinearIcon from "@/components/LinearIcon";
 import { CommandChip, INSTALL_COMMAND, LOGIN_COMMAND } from "@/components/PrPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,13 +30,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { inputClassName } from "@/components/ui/input";
+import { Skeleton, SkeletonRegion } from "@/components/ui/skeleton";
 import Spinner from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { resetFontSizes, setFontSize, useFontSizes } from "@/hooks/useFontSizes";
-import type { useIntegrations } from "@/hooks/useIntegrations";
-import { useProviders } from "@/hooks/useProviders";
 import { useSourceControl } from "@/hooks/useSourceControl";
 import { useTheme } from "@/hooks/useTheme";
 import { type ManualCheck, updateFailure } from "@/hooks/useUpdater";
@@ -60,21 +55,21 @@ import {
   OPEN_FILE_KEY,
   pickFileOpener,
 } from "@/lib/openWith";
-import ProviderSettings from "@/components/settings/ProviderSettings";
-import AutomationsSettings from "@/components/settings/AutomationsSettings";
-import ShortcutsSettings from "@/components/settings/ShortcutsSettings";
-import SpacesSettings from "@/components/settings/SpacesSettings";
+import ClisSettings from "@/components/settings/ClisSettings";
+import DefaultsSettings from "@/components/settings/DefaultsSettings";
+import PreferencesSettings from "@/components/settings/PreferencesSettings";
+import ProfileSettings from "@/components/settings/ProfileSettings";
+import UsageSettings from "@/components/settings/UsageSettings";
+import WorkspaceSettings from "@/components/settings/WorkspaceSettings";
+import { useWorkspaces } from "@/hooks/useWorkspaces";
 import TranscriptionSettings from "@/components/settings/TranscriptionSettings";
 import { useTranscriptionSettings } from "@/hooks/useTranscription";
-import { useAutomations } from "@/hooks/useAutomations";
 import { IS_MAC } from "@/lib/platform";
-import { hasLightMode, THEMES, type ThemeMode } from "@/lib/theme";
+import { hasLightMode, THEMES } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import type {
   ExternalApp,
   GhAccount,
-  Model,
-  Project,
   SettingsView,
   UpdateChannel,
   UpdateStatus,
@@ -95,17 +90,7 @@ const REPO_URL = "https://github.com/Hamertingo/hz";
 export default function SettingsDialog({
   open,
   onOpenChange,
-  initialTab = "appearance",
-  projects,
-  spaces,
-  startNamingSpace,
-  onSetProjectSpace,
-  onRemoveProject,
-  onCreateSpace,
-  onRenameSpace,
-  onRemoveSpace,
-  onMoveSpace,
-  integrations,
+  initialTab = "profile",
   updateStatus,
   updateManual,
   updateBlocked,
@@ -113,9 +98,7 @@ export default function SettingsDialog({
   onInstallUpdate,
   updateChannel,
   onUpdateChannelChange,
-  models,
-  loadingModels,
-  onProvidersChanged,
+  onOpenAgentAccess,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
@@ -123,21 +106,6 @@ export default function SettingsDialog({
   /// to Transcription when no model is downloaded, which is the whole reason
   /// this is a prop rather than internal state.
   initialTab?: SettingsTab;
-  /// Every attached project, not the active space's — this is where one is
-  /// filed into a space, so a narrowed list would hide the rows to move.
-  projects: Project[];
-  spaces: string[];
-  /// Opens the Spaces tab with its new-space field already up, which is where
-  /// the sidebar's own "New space" lands.
-  startNamingSpace?: boolean;
-  onSetProjectSpace: (path: string, space: string | null) => void;
-  onRemoveProject: (path: string) => void;
-  onCreateSpace: (name: string) => void;
-  onRenameSpace: (from: string, to: string) => void;
-  onRemoveSpace: (name: string) => void;
-  onMoveSpace: (name: string, delta: number) => void;
-  /// Owned by `App`, because the issues page and the composer read it too.
-  integrations: ReturnType<typeof useIntegrations>;
   /// The updater's state, owned by `App` — the sidebar's own `UpdateRow` draws
   /// the same fields, and a second copy of the hook would run its own check.
   updateStatus: UpdateStatus | null;
@@ -150,27 +118,13 @@ export default function SettingsDialog({
   /// hands the pick back to the effect that re-arms the check on it.
   updateChannel: UpdateChannel;
   onUpdateChannelChange: (next: UpdateChannel) => void;
-  /// Every model the agent serves — the composer's own list, handed down rather
-  /// than read again here. The provider cards' switches decide which of those
-  /// rows the picker draws, so the two surfaces have to be talking about the
-  /// same rows, and a model is named on this side by the wire id the picker
-  /// holds.
-  models: Model[];
-  /// The composer's read of that list, so a refresh started here spins the same
-  /// way it does there.
-  loadingModels: boolean;
-  /// A provider was added, removed or made active, so the model list the
-  /// composer draws is stale — the app re-reads it.
-  onProvidersChanged?: () => void;
+  /// Opens an agent's Access tab (the spend rows on Usage & limits), closing this.
+  onOpenAgentAccess?: (agentId: string) => void;
 }) {
   const { settings, setAnalyticsEnabled } = useAppSettings(open);
   const transcription = useTranscriptionSettings(open);
-  const automations = useAutomations(open);
-  // Both reads are owned here rather than by the sections that draw them, and
-  // that is only so they can start when this dialog opens: a body is built when
-  // the reader reaches its tab, so a read living there left the tab blank for as
-  // long as its children take. `useProviders` says the same thing at length.
-  const providers = useProviders(open, onProvidersChanged);
+  // Starts when the dialog opens, not when its tab is reached: a body is built on
+  // arrival, and a read started there would leave the tab blank meanwhile.
   const sourceControl = useSourceControl(open);
 
   return (
@@ -217,99 +171,73 @@ export default function SettingsDialog({
 
         <SettingsSections initialTab={initialTab}>
           {{
-            // The read started when this dialog opened, not when the reader
-            // reached the tab — see `useProviders`. `onChanged` is the same call
-            // as the refresh: both mean the composer's model list is stale.
-            providers: (
-              <ProviderSettings
-                {...providers}
-                models={models}
-                loadingModels={loadingModels}
-                onRefreshModels={onProvidersChanged}
+            profile: <ProfileSettings />,
+            prefs: (
+              <PreferencesSettings
+                extras={{
+                  // The palettes the old Appearance page offered, kept under the
+                  // mode picker: Theme above is light/dark/system, this is which
+                  // colours.
+                  appearance: (
+                    <>
+                      <ThemeRow />
+                      <Section title="Font size">
+                        <FontSizeRows />
+                      </Section>
+                    </>
+                  ),
+                  apps: (
+                    <>
+                      <Section title="Apps">
+                        <OpenFilesRow />
+                        <BrowserRow />
+                      </Section>
+                      <Section title="Dictation">
+                        <TranscriptionSettings
+                          status={transcription.status}
+                          downloads={transcription.downloads}
+                          onDownload={transcription.download}
+                          onCancelDownload={transcription.cancelDownload}
+                          onDelete={transcription.remove}
+                          onSelectModel={transcription.selectModel}
+                          onSelectDevice={transcription.selectDevice}
+                          onSetMute={transcription.setMute}
+                        />
+                      </Section>
+                    </>
+                  ),
+                  about: (
+                    <>
+                      <Section title="About hz">
+                        <UpdatesRow
+                          status={updateStatus}
+                          manual={updateManual}
+                          blocked={updateBlocked}
+                          onCheck={onCheckUpdates}
+                          onInstall={onInstallUpdate}
+                        />
+                        <BetaUpdatesRow channel={updateChannel} onChange={onUpdateChannelChange} />
+                        <AnalyticsRow view={settings} onChange={setAnalyticsEnabled} />
+                      </Section>
+                      <Section title="Feedback">
+                        <ContactBlock />
+                      </Section>
+                    </>
+                  ),
+                }}
               />
             ),
-            appearance: (
-              <>
-                <Section>
-                  <ThemeRow />
-                  <ModeRow />
-                </Section>
-                <Section title="Font size">
-                  <FontSizeRows />
-                </Section>
-              </>
-            ),
-            shortcuts: <ShortcutsSettings />,
-            spaces: (
-              <SpacesSettings
-                projects={projects}
-                spaces={spaces}
-                startNaming={startNamingSpace}
-                onSetProjectSpace={onSetProjectSpace}
-                onRemoveProject={onRemoveProject}
-                onCreateSpace={onCreateSpace}
-                onRenameSpace={onRenameSpace}
-                onRemoveSpace={onRemoveSpace}
-                onMoveSpace={onMoveSpace}
+            workspace: <WorkspaceSettings />,
+            defaults: <DefaultsSettings />,
+            usage: <UsageSettings onOpenAccess={(id) => onOpenAgentAccess?.(id)} />,
+            clis: (
+              <ClisSettings
+                extras={
+                  <>
+                    <SourceControlSettings {...sourceControl} />
+                  </>
+                }
               />
-            ),
-            transcription: (
-              <TranscriptionSettings
-                status={transcription.status}
-                downloads={transcription.downloads}
-                onDownload={transcription.download}
-                onCancelDownload={transcription.cancelDownload}
-                onDelete={transcription.remove}
-                onSelectModel={transcription.selectModel}
-                onSelectDevice={transcription.selectDevice}
-                onSetMute={transcription.setMute}
-              />
-            ),
-            automations: (
-              <AutomationsSettings
-                automations={automations.automations}
-                models={models}
-                projects={projects}
-                error={automations.error}
-                onCreate={automations.create}
-                onRemove={automations.remove}
-                onSetEnabled={automations.setEnabled}
-              />
-            ),
-            sourceControl: <SourceControlSettings {...sourceControl} />,
-            integrations: (
-              <Section>
-                <OpenFilesRow />
-                <BrowserRow />
-                {/* Draws nothing until something is connected, which is why it
-                    carries no heading of its own — a heading left standing over
-                    nothing names a group the reader cannot reach. Connecting
-                    happens on the issues page. */}
-                <IssueTrackerRow {...integrations} />
-              </Section>
-            ),
-            about: (
-              <>
-                <Section>
-                  <UpdatesRow
-                    status={updateStatus}
-                    manual={updateManual}
-                    blocked={updateBlocked}
-                    onCheck={onCheckUpdates}
-                    onInstall={onInstallUpdate}
-                  />
-                  <BetaUpdatesRow
-                    channel={updateChannel}
-                    onChange={onUpdateChannelChange}
-                  />
-                  <AnalyticsRow view={settings} onChange={setAnalyticsEnabled} />
-                </Section>
-                {/* The one block here with no label of its own, so it is the one
-                    that still wants a heading over it. */}
-                <Section title="Feedback">
-                  <ContactBlock />
-                </Section>
-              </>
             ),
           }}
         </SettingsSections>
@@ -425,7 +353,7 @@ function ThemeRow() {
   );
 
   return (
-    <SettingRow id={id} asGroup stacked label="Theme">
+    <SettingRow id={id} asGroup stacked label="Colour theme">
       <div
         role="radiogroup"
         aria-labelledby={id}
@@ -545,7 +473,7 @@ function OpenFilesRow() {
               {/* "None" rather than "Finder" where nothing was detected: off
                   macOS the reveal is some other file manager, and naming
                   Finder there would be a control lying about what it does. */}
-              <span className="truncate">{pick?.name ?? "None"}</span>
+              {apps === null ? <Skeleton className="h-3 w-20" /> : <span className="truncate">{pick?.name ?? "None"}</span>}
             </span>
             <ChevronDown className="size-3 shrink-0 opacity-60" />
           </Button>
@@ -584,91 +512,6 @@ function OpenFilesRow() {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-    </SettingRow>
-  );
-}
-
-/// Set *and* order, so a mode added later is one entry. System leads because it is
-/// the answer for anyone who has already told their OS once.
-const MODES: { id: ThemeMode; label: string }[] = [
-  { id: "system", label: "System" },
-  { id: "light", label: "Light" },
-  { id: "dark", label: "Dark" },
-];
-
-/// Three segments rather than a switch, because there are three answers.
-///
-/// A switch can only ask light-or-dark, which leaves `system` — the one most people
-/// want, and the only one that keeps following the OS after it is set — reachable
-/// from nowhere. Driven off `mode` as *chosen*, never `resolvedMode`: the whole point
-/// of System is that it reads Dark today and Light tonight, and a control drawn from
-/// what is on screen would show Dark and lose the distinction.
-///
-/// The group disables whole on a dark-only theme rather than dropping its light
-/// segments. Two segments where there were three reads as the control being broken,
-/// and it would still be lying — `system` is not offerable either, since the OS can
-/// resolve it to light. `modeFor` already forces dark, so the selected segment is
-/// honest about what is rendering.
-function ModeRow() {
-  const id = useId();
-  const { theme, mode, setMode } = useTheme();
-  const available = hasLightMode(theme);
-
-  const index = MODES.findIndex((m) => m.id === mode);
-  const { refs, onKeyDown } = useRovingGroup(MODES.length, index, (next) =>
-    setMode(MODES[next].id),
-  );
-
-  return (
-    <SettingRow
-      id={id}
-      asGroup
-      stacked
-      label="Mode"
-      // Nothing to say while it works — the segments name themselves. The one
-      // sentence here is the reason it does not, which is the whole of why a
-      // setting that cannot apply is disabled rather than hidden.
-      description={
-        available ? undefined : "This theme is dark only for now — the others carry both."
-      }
-    >
-      <div
-        role="radiogroup"
-        aria-labelledby={id}
-        onKeyDown={available ? onKeyDown : undefined}
-        // Track and thumb, the way a segmented control reads everywhere: the
-        // selected one is a raised card sitting *in* a recessed rail, so the
-        // group says "one of these" before any label is read.
-        className={cn(
-          "inline-flex w-fit gap-0.5 rounded-lg bg-muted p-0.5",
-          !available && "opacity-50",
-        )}
-      >
-        {MODES.map(({ id: value, label }, i) => (
-          <button
-            key={value}
-            ref={(el) => {
-              refs.current[i] = el;
-            }}
-            type="button"
-            role="radio"
-            aria-checked={mode === value}
-            disabled={!available}
-            tabIndex={mode === value ? 0 : -1}
-            onClick={() => setMode(value)}
-            className={cn(
-              "rounded-[calc(var(--radius)-4px)] px-3 py-1 text-ui transition-colors",
-              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-              available && "cursor-pointer",
-              mode === value
-                ? "bg-card text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
     </SettingRow>
   );
 }
@@ -970,11 +813,18 @@ function SourceControlSettings({
   if (!state) {
     return (
       <Section>
-        <p className="text-ui text-muted-foreground">
-          {error
-            ? `Could not read what is installed — ${error}`
-            : "Reading what is installed…"}
-        </p>
+        {error ? (
+          <p className="text-ui text-muted-foreground">{`Could not read what is installed — ${error}`}</p>
+        ) : (
+          <SkeletonRegion label="Reading what is installed" className="flex items-center gap-3">
+            <Skeleton className="size-5 rounded-[5px]" />
+            <div className="flex flex-col gap-1.5">
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-2.5 w-52" />
+            </div>
+            <Skeleton className="ml-auto h-7 w-16 rounded-md" />
+          </SkeletonRegion>
+        )}
       </Section>
     );
   }
@@ -1219,80 +1069,6 @@ function BrowserRow() {
   );
 }
 
-/// The connected issue tracker — and **only** when there is one.
-///
-/// Connecting happens on the issues page, not here. That page is the surface
-/// with nothing to show without a key, so it is where the field that fixes it
-/// belongs; a second copy in this dialog would be a second form for one slot,
-/// and a settings row offering to connect something the reader has never seen
-/// is a row they cannot judge. What is left here is what settings are actually
-/// for: seeing what is connected, and taking it back.
-function IssueTrackerRow({
-  integrations,
-  busy,
-  error,
-  disconnect,
-}: ReturnType<typeof useIntegrations>) {
-  const id = useId();
-  /// The button arms a confirm that replaces it — the same shape the sidebar's
-  /// delete and the PR panel's merge use. Asked for because the key is not
-  /// recoverable from here: taking it back means finding the tracker's own
-  /// settings page and minting a new one, which is a long way to be sent by a
-  /// button pressed on the way to somewhere else.
-  const [confirming, setConfirming] = useState(false);
-
-  const account = integrations?.linear ?? null;
-
-  // Nothing connected is nothing to say. The reader is not missing a control:
-  // the Issues page in the sidebar is where this starts.
-  if (!account) return null;
-
-  return (
-    <div className="flex flex-col gap-2">
-        <SettingRow
-          id={id}
-          label="Issue tracker"
-          description={
-            confirming
-              ? "Hyze Code will forget the key. Sessions keep the issues they are tagged with."
-              : // The mark rather than the word, since the word is already the row's
-                // subject — and it is what makes this row findable at a glance in a
-                // dialog of sentences.
-                <span className="flex items-center gap-1.5">
-                  <LinearIcon className="size-3.5" />
-                  {account.orgName}, as {account.userName}
-                </span>
-          }
-        >
-          {confirming ? (
-            <div className="flex items-center gap-1.5">
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={busy}
-                onClick={async () => {
-                  await disconnect();
-                  setConfirming(false);
-                }}
-              >
-                Disconnect
-              </Button>
-            </div>
-          ) : (
-            <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>
-              Disconnect
-            </Button>
-          )}
-        </SettingRow>
-
-      {error && <p className="text-ui text-destructive">{error}</p>}
-    </div>
-  );
-}
-
 /// Two ways out of the app, and deliberately not a `SettingRow`.
 ///
 /// Nothing here is a setting — there is no state to read back — so the label a row
@@ -1340,44 +1116,28 @@ function Section({ title, children }: { title?: string; children: ReactNode }) {
   );
 }
 
-/// Set *and* order, so a group added later is one entry plus one body.
-const SETTINGS_TABS = [
-  "appearance",
-  "spaces",
-  "transcription",
-  // After the two setup screens and before the connections: an automation is
-  // something a reader turns on once they know what they want repeated, which is
-  // later than either of those and earlier than wiring a tracker up.
-  "automations",
-  // Beside Integrations rather than inside it: both are "things that leave the
-  // machine", and this one is what the pull-request screens run on. It is the
-  // only place that can answer why they will not load.
-  "sourceControl",
-  // After Transcription, among the occasional setup rather than heading the
-  // rail: connecting a provider is done once and then left alone, and the
-  // reader who has never done it is sent here by the empty model picker rather
-  // than by looking down this list. Named for the providers rather than for the
-  // agent: it is the only screen in here that is about *what the agent runs
-  // on*, and "Agent" said nothing about what the reader was going to do on it.
-  "providers",
-  "integrations",
-  "shortcuts",
-  "about",
-] as const;
+/// Set *and* order, so a page added later is one entry plus one body. Grouped
+/// the way the mockup's rail is: the reader, then the workspace, then the app.
+const SETTINGS_TABS = ["profile", "prefs", "workspace", "defaults", "usage", "clis"] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 const TAB_LABELS: Record<SettingsTab, string> = {
-  providers: "Providers",
-  appearance: "Appearance",
-  shortcuts: "Shortcuts",
-  spaces: "Spaces",
-  transcription: "Transcription",
-  automations: "Automations",
-  sourceControl: "Source control",
-  integrations: "Integrations",
-  about: "About",
+  profile: "Profile",
+  prefs: "Preferences",
+  workspace: "Workspace",
+  defaults: "Agent defaults",
+  usage: "Usage & limits",
+  clis: "CLIs",
 };
+
+/// The rail's headings: the second is the workspace's own name, filled in where
+/// the rail is drawn.
+const TAB_GROUPS: { heading: "Account" | "workspace" | "App"; tabs: readonly SettingsTab[] }[] = [
+  { heading: "Account", tabs: ["profile", "prefs"] },
+  { heading: "workspace", tabs: ["workspace", "defaults", "usage"] },
+  { heading: "App", tabs: ["clis"] },
+];
 
 /// A nav rail down one side and the section's rows in the pane beside it — the
 /// shape a settings surface takes once it owns the window.
@@ -1416,6 +1176,7 @@ function SettingsSections({
   // That is also what keeps "the pick resets on close" true.
   const [section, setSection] = useState<SettingsTab>(initialTab);
 
+  const workspaceName = useWorkspaces().active?.name ?? "Workspace";
   const index = SETTINGS_TABS.indexOf(section);
   const { refs, onKeyDown } = useRovingGroup(SETTINGS_TABS.length, index, (next) =>
     setSection(SETTINGS_TABS[next]),
@@ -1439,36 +1200,44 @@ function SettingsSections({
         </DialogHeader>
 
         <div className="flex flex-col gap-0.5 px-2">
-          {SETTINGS_TABS.map((value, i) => {
-            const Icon = SECTION_ICONS[value];
-            const active = section === value;
-            return (
-              <button
-                key={value}
-                ref={(el) => {
-                  refs.current[i] = el;
-                }}
-                type="button"
-                role="tab"
-                id={`${id}-${value}`}
-                aria-selected={active}
-                aria-controls={`${id}-panel`}
-                tabIndex={active ? 0 : -1}
-                onClick={() => setSection(value)}
-                className={cn(
-                  "flex h-8 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-ui outline-none transition-colors",
-                  // The app's one selected-row token, so a lit section reads the
-                  // same as a lit session or a lit file.
-                  active
-                    ? "bg-sidebar-accent text-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4 shrink-0" aria-hidden />
-                <span className="truncate">{TAB_LABELS[value]}</span>
-              </button>
-            );
-          })}
+          {TAB_GROUPS.map((group) => (
+            <Fragment key={group.heading}>
+              <div className="px-2.5 pt-3.5 pb-1.5 text-[11.5px] font-medium text-ink4 first:pt-1">
+                {group.heading === "workspace" ? workspaceName : group.heading}
+              </div>
+              {group.tabs.map((value) => {
+                const i = SETTINGS_TABS.indexOf(value);
+                const Icon = SECTION_ICONS[value];
+                const active = section === value;
+                return (
+                  <button
+                    key={value}
+                    ref={(el) => {
+                      refs.current[i] = el;
+                    }}
+                    type="button"
+                    role="tab"
+                    id={`${id}-${value}`}
+                    aria-selected={active}
+                    aria-controls={`${id}-panel`}
+                    tabIndex={active ? 0 : -1}
+                    onClick={() => setSection(value)}
+                    className={cn(
+                      "flex h-8 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-ui outline-none transition-colors",
+                      // The app's one selected-row token, so a lit section reads the
+                      // same as a lit session or a lit file.
+                      active
+                        ? "bg-sidebar-accent text-foreground"
+                        : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="size-4 shrink-0" aria-hidden />
+                    <span className="truncate">{TAB_LABELS[value]}</span>
+                  </button>
+                );
+              })}
+            </Fragment>
+          ))}
         </div>
       </div>
 
@@ -1511,15 +1280,12 @@ function SettingsSections({
 /// these are the reader's questions (`Keyboard` for what key does what, `Mic`
 /// for the thing that listens), not the internals behind them.
 const SECTION_ICONS: Record<SettingsTab, LucideIcon> = {
-  providers: Server,
-  appearance: Palette,
-  spaces: Layers,
-  transcription: Mic,
-  automations: Timer,
-  sourceControl: GitBranch,
-  integrations: Plug,
-  shortcuts: Keyboard,
-  about: Info,
+  profile: User,
+  prefs: Settings2,
+  workspace: Building2,
+  defaults: Users,
+  usage: Gauge,
+  clis: SquareTerminal,
 };
 
 /// Label and control on the top line, reason at full width underneath — and

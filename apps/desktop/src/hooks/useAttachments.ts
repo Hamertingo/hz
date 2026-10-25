@@ -11,7 +11,7 @@ import type { Attachment } from "@/types/events";
 /// a fresh one. Anything held in component state would be lost on that switch.
 ///
 /// Module-level also because there are two writers in two places. The `+` button
-/// lives in `ComposerToolbar`, which is passed to `ChatInput` as an opaque
+/// lives in the composer's own toolbar, which is passed to `ChatInput` as an opaque
 /// `ReactNode`, so the two cannot pass props to each other — they share this
 /// instead, and neither has to know the other exists.
 ///

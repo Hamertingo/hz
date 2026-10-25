@@ -31,7 +31,7 @@ let unwatch: (() => void) | null = null;
 /// Laziness is load-bearing, not tidiness: `init` stamps `document`, so importing
 /// this module used to have a side effect. That was invisible while only components
 /// reached it, and broke the moment [Orb](../components/Orb.tsx) put `useTheme` into
-/// `Sidebar`'s import graph — the pure-logic tests import `sortSessions` from there
+/// the sidebar's import graph — the pure-logic tests import `sortSessions` from there
 /// and run with no DOM, so merely resolving the import threw. Nothing is lost by
 /// waiting: the first read happens during the first render, and the pre-paint script
 /// in index.html has already stamped the document by then.

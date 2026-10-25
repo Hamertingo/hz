@@ -36,7 +36,8 @@ use std::path::PathBuf;
 /// ## What earned each bump
 ///
 /// `v2` = `from`, `v3` = `issues` and `LinkIssues`, `v4` = `LinkIssues.identifiers`
-/// renamed to `issues`, `v5` = `Browser`, `v6` = `fast`, **`v7` = [`Envelope::id`]**.
+/// renamed to `issues`, `v5` = `Browser`, `v6` = `fast`, `v7` = [`Envelope::id`],
+/// **`v8` = `LinkIssues` and `issues` removed with the Issues surface**.
 ///
 /// v7 is the first bump for a field whose *absence* is the hazard rather than a
 /// wrong default. An app that ignores `id` runs the request — exactly as it does
@@ -44,7 +45,7 @@ use std::path::PathBuf;
 /// the side effect happens twice with nothing anywhere saying so. The advice is
 /// what is new and it is unkeepable below v7, which is the "wrong work that
 /// looks like right work" this constant exists for.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Where the app listens, unless [`endpoint`] is overridden.
 pub const SOCKET_NAME: &str = "hz.sock";
@@ -118,7 +119,6 @@ pub enum Request {
     CreateSession(CreateSession),
     ListSessions(ListSessions),
     SendMessage(SendMessage),
-    LinkIssues(LinkIssues),
     Browser(BrowserRequest),
 }
 
@@ -326,14 +326,6 @@ pub struct CreateSession {
     /// business learning how a session's branch is named.
     #[serde(default)]
     pub from: Option<String>,
-    /// Issue identifiers (`DRA-53`) the new session's work is against.
-    ///
-    /// Resolved by the app, not here: the CLI holds no key and has no business
-    /// learning what a tracker is. Each one becomes a link on the session and a
-    /// line in the prompt — identifier and title, nothing more, since the agent
-    /// has the tracker's own MCP server for the rest.
-    #[serde(default)]
-    pub issues: Vec<String>,
     /// Whether the session runs at its harness's faster, dearer tier.
     ///
     /// `None` inherits the parent's, and only within one harness — the same
@@ -353,42 +345,6 @@ pub struct CreateSession {
 
 /// Tagging a session that already exists — or untagging it.
 ///
-/// One request with a flag rather than two, because the halves differ by a
-/// single word and every field is otherwise the same.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LinkIssues {
-    pub session_id: String,
-    pub issues: Vec<IssueInput>,
-    /// Remove these links instead of adding them. Only `identifier` is read.
-    #[serde(default)]
-    pub unlink: bool,
-}
-
-/// One issue to tag a session with, as the caller already knows it.
-///
-/// **The app writes this down and asks the tracker nothing.** A link is a local
-/// record — this session is about that work — and making it depend on a
-/// reachable tracker meant a link could fail for reasons that have nothing to
-/// do with what it records. The caller is an agent that has just read the issue
-/// through the tracker's own MCP server, so it has the title and the URL in
-/// hand; asking a second system for what the caller already holds is a round
-/// trip that can only introduce a way to fail.
-///
-/// `title` and `url` are optional because a bare identifier is still a usable
-/// link: the tag reads `#DRA-53` with no title after it, and stays plain text
-/// rather than becoming a link to nowhere.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IssueInput {
-    /// As a person writes it; case is the app's to normalize.
-    pub identifier: String,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub url: Option<String>,
-}
-
 /// A prompt sent into a session that already exists.
 ///
 /// Both directions on purpose: a spawned session reporting a summary back to
@@ -441,9 +397,6 @@ pub enum Response {
         base_ref: Option<String>,
     },
     Listed { sessions: Vec<SessionSummary> },
-    /// Every issue the session carries *after* the change, so the caller sees
-    /// the result rather than a diff it has to apply to what it believed.
-    Linked { issues: Vec<IssueLink> },
     /// `queued` when the target had a turn in flight, so the prompt is held
     /// until it reaches a boundary rather than being dropped or interrupting.
     Sent { queued: bool },
@@ -484,19 +437,6 @@ pub struct SessionSummary {
     /// from the composer or from a terminal, and for one since detached.
     #[serde(default)]
     pub parent_session_id: Option<String>,
-}
-
-/// One issue a session is tagged with, as the CLI prints it.
-///
-/// A deliberate subset of the app's own `IssueRef`, for [`SessionSummary`]'s
-/// reason: that type carries ts-rs derives and a tracker enum, neither of which
-/// this side has any use for.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IssueLink {
-    pub identifier: String,
-    pub title: String,
-    pub url: String,
 }
 
 /// Where to reach the app: `HZ_ENDPOINT` if set, else the socket under the

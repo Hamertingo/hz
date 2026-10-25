@@ -1,14 +1,5 @@
-import {
-  GitCompare,
-  GitPullRequest,
-  GitPullRequestDraft,
-  Maximize2,
-  Minimize2,
-  RefreshCw,
-} from "lucide-react";
+import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 
-import OpenInButton from "@/components/OpenInButton";
-import TabButton from "@/components/TabButton";
 import PanelRightIcon from "@/components/icons/PanelRightIcon";
 import { Button } from "@/components/ui/button";
 import ShortcutKeys from "@/components/ShortcutKeys";
@@ -18,323 +9,63 @@ import { cn } from "@/lib/utils";
 
 /// The header button that opens and closes the pane. Lives here rather than in
 /// `App` so the toggle and the thing it toggles stay in one file, and outside
-/// [RightPanel] itself because the pane doesn't exist before a session does —
-/// the button has to outlive it. Mirrors `SidebarToggle` on the far side.
-export function PanelToggle({
-  onToggle,
-  open,
-  changes = false,
-  pr = false,
-  draft = false,
-}: {
-  onToggle: () => void;
-  open: boolean;
-  /// The last turn left the tree changed. Swaps the glyph for a git one while
-  /// the pane is closed, so one button both says there is something to see and
-  /// is the way to it — which is the whole of the quick-access rail that was
-  /// otherwise going to sit beside it. Nothing to say once the pane is open:
-  /// the changes are on screen, and the toggle goes back to being a toggle.
-  changes?: boolean;
-  /// Every one of this session's open pull requests is a draft. Draws the draft
-  /// glyph rather than the plain one — the mark still appears, because a draft
-  /// is still somewhere for the work to land, and it keeps `--accent-add` so it
-  /// still reads as content rather than as dimmed chrome. Shape carries the
-  /// distinction, colour carries the "there is something here".
-  draft?: boolean;
-  /// This session has an open pull request, which outranks `changes`. A draft
-  /// counts — GitHub reports one as `OPEN` with `isDraft` set.
-  ///
-  /// The two indicators are the same promise — "there is something here, and
-  /// this is the way to it" — so only one can be drawn, and the PR is the one
-  /// worth drawing: it is the tab that opens first, it is the state of the
-  /// work rather than of the last turn, and it is the one that survives the
-  /// next prompt landing. Green, matching the merge button it leads to.
-  pr?: boolean;
-}) {
-  const indicating = (pr || changes) && !open;
-
+/// [RightPanel] itself because the pane does not exist until something is open
+/// in it — the button has to outlive it.
+export function PanelToggle({ onToggle, open }: { onToggle: () => void; open: boolean }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        {/* Held back at rest — it's chrome, not content — and brought to full
-            strength under the cursor. The indicator is content, so it skips
-            the fade rather than announcing itself at 80%. */}
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={onToggle}
-          aria-label={
-            indicating ? (pr ? "Show pull request" : "Show changes") : "Toggle panel"
-          }
-          className={cn(
-            // `shrink-0` because this is the way back out of a pane dragged
-            // wide: everything else in that header may give up width or clip,
-            // this may not.
-            "shrink-0 transition-opacity",
-            indicating ? "opacity-100" : "opacity-80 hover:opacity-100",
-          )}
+          aria-label="Toggle panel"
+          className={cn("shrink-0 transition-opacity", open ? "opacity-100" : "opacity-80 hover:opacity-100")}
         >
-          {indicating ? (
-            // Smaller than the panel glyph so it reads the same size: these run
-            // corner to corner of their 24 box while the panel icon is 14 units
-            // tall in the same box, so matching the numbers makes them the
-            // visibly larger of the two. Stroke 1.5 to match the hand-drawn
-            // chrome around it; lucide draws at 2. The colour is on the glyph
-            // rather than the button because `ghost` sets `hover:text-
-            // foreground`, which would grey it out under the cursor.
-            pr ? (
-              // `--accent-merge` is a button *fill* — dark enough to carry white
-              // text — and at 1.5px stroke on a dark background it all but
-              // disappeared. This is `--accent-add`, which the open-PR glyph uses in the
-              // panel itself, so the mark and the thing it points at match.
-              draft ? (
-                <GitPullRequestDraft
-                  className="size-4 text-accent-add"
-                  strokeWidth={1.5}
-                />
-              ) : (
-                <GitPullRequest className="size-4 text-accent-add" strokeWidth={1.5} />
-              )
-            ) : (
-              // Plain foreground, not the command yellow it started as. Yellow
-              // is the app's "this is for you" — the colour of a session
-              // standing still behind a question — and a turn having touched
-              // files is neither a warning nor a thing to answer. It read as
-              // one, every turn, which is a lot of alarm for a fact.
-              <GitCompare className="size-4 text-foreground" strokeWidth={1.5} />
-            )
-          ) : (
-            <PanelRightIcon className="size-4.5" dim={!open} />
-          )}
+          <PanelRightIcon className="size-4.5" dim={!open} />
         </Button>
       </TooltipTrigger>
       <TooltipContent side="left">
-        {indicating
-          ? pr
-            ? draft
-              ? "Draft pull request"
-              : "Open pull request"
-            : "Last turn's changes"
-          : "Toggle Panel"}
-        <ShortcutKeys ids={["panel.toggle"]} />
+        Toggle Panel
       </TooltipContent>
     </Tooltip>
   );
 }
 
-/// Which body the right panel is showing. This is the set, not the order —
-/// see `tabOrder`.
-///
-/// No `subagents`: a session's delegated runs are rows under its own row in the
-/// sidebar now, and one of them opens onto its own conversation in the main
-/// column. A pane of the same list was a second way to reach work that already
-/// had a place, and the viewer could only ever be the narrower one.
-export const PANEL_TABS = ["changes", "browser", "files", "todo", "pr", "issue", "docs", "skill"] as const;
-
-export type PanelTab = (typeof PANEL_TABS)[number];
-
-const LABELS: Record<PanelTab, string> = {
-  // "Diff" rather than "Changes": this is the session's whole repository, the
-  // same reading the sidebar's mark and the handoff row take, and the shorter
-  // word is the one a reader asks for. The turn-scoped list that used to carry
-  // "Changes" is gone — its files are the repository's own uncommitted ones
-  // whenever nothing else has touched the tree.
-  changes: "Diff",
-  // The session's browser lives here. Always drawn, unlike PR or Docs: its
-  // empty state is a URL bar, which is a place to start rather than a
-  // sentence saying there is nothing.
-  browser: "Browser",
-  // Always drawn, for the browser's reason: its empty state is the project's
-  // own tree, which is a place to start rather than a sentence.
-  files: "Files",
-  // Not "Todos": the app already calls this a plan everywhere it speaks about
-  // one — the strip's own line, `planLine`, the panel's header — and the tool's
-  // wire name is not something a reader ever sees.
-  todo: "Plan",
-  // Singular, and not "Linear": the panel is about the work's issue whoever
-  // tracks it, and a session usually carries one.
-  issue: "Issue",
-  // Plural where Issue is singular: a session takes up one piece of tracked
-  // work and opens as many files as it takes to read it.
-  docs: "Docs",
-  // Not "Pull Request": the short form is what anyone working on one calls it,
-  // and the long one is the widest label in a row of three.
-  pr: "PR",
-  // The plugins page's detail, and only ever that: no session has a Skill tab,
-  // so this never joins a session's strip. `heading` names the pane there, and
-  // this is what it would be called if a strip ever drew it.
-  skill: "Skill",
-};
-
-/// Which tabs exist, and in what order.
-///
-/// The PR tab leads wherever it is drawn, and its place does not move with the
-/// pull request's state. It used to: merging one sent the tab to the end, so
-/// the row reshuffled under the cursor at the exact moment the reader was
-/// looking at what they had just done, and ⌘⇧[ / ⌘⇧] then stepped a different
-/// order than the one they had learned. A tab's position is where it is found,
-/// not a ranking.
-///
-/// Which tab the pane *opens* onto still follows the PR's state — see `App`'s
-/// `defaultTab`. That one can change freely, because it decides a first look
-/// rather than where the eye goes back to.
-///
-/// The PR tab is absent entirely for a session that has no PR to show — see
-/// `prTabVisible`. A tab whose only content is "there is nothing here" is one
-/// the eye has to skip past on every session that will never have one.
-export function tabOrder({
-  pr,
-  docs,
-  issue,
-  todo,
-}: {
-  pr: boolean;
-  /// At least one markdown file is open in the pane — see
-  /// [useDocs](../hooks/useDocs.ts). Absent otherwise, for the PR tab's reason.
-  docs: boolean;
-  issue: boolean;
-  /// This session has a plan — some agent opened a todo list on it. Absent
-  /// otherwise, for the same reason: most sessions never have one, and a tab
-  /// whose only content is "there is nothing here" is one the eye skips.
-  todo: boolean;
-}): readonly PanelTab[] {
-  // The three that are always drawn lead, in the order the main column used to
-  // carry them: the two windows onto the session's own state, then what it can
-  // read. PR ahead of them wherever it is drawn, per the rule above.
-  const tabs: PanelTab[] = pr
-    ? ["pr", "changes", "browser", "files"]
-    : ["changes", "browser", "files"];
-  // Hard against the three above, since a plan is about the work this session is
-  // doing rather than something it read: the windows onto the session's own
-  // state come first, and what it picked up along the way follows.
-  if (todo) tabs.push("todo");
-  // After Changes, which is where the reading order has always put it.
-  if (docs) tabs.push("docs");
-  // Last of the three conditional ones, so the row's order is the same one
-  // ⌘⇧[ steps whether or not a session has an issue on it.
-  if (issue) tabs.push("issue");
-
-  return tabs;
+/// One body kept mounted while another is showing, so switching does not refetch.
+export function TabBody({ active, children }: { active: boolean; children: React.ReactNode }) {
+  return <div className={cn("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}>{children}</div>;
 }
 
 type RightPanelProps = {
-  /// Closed hides the pane rather than unmounting it — its state, caches, and
-  /// rendered diffs survive, so reopening is one class flip instead of a
-  /// remount that refetches and re-highlights everything it just showed.
+  /// Closed hides the pane rather than unmounting it, so its state and its
+  /// rendered reads survive a trip out and back.
   open: boolean;
-  tab: PanelTab;
-  onTabChange: (tab: PanelTab) => void;
-  /// Rendered beside its tab's label. Only shown above zero — a tab reading
-  /// "Plan 0" says the same thing as the empty state one click away.
-  counts?: Partial<Record<PanelTab, number>>;
-  /// There is a pull request tab to draw at all — see `prTabVisible`.
-  pr?: boolean;
-  /// At least one markdown file is open in the pane.
-  docs?: boolean;
-  /// This session is tagged with at least one issue. Absent otherwise, for the
-  /// PR tab's reason: a tab whose only content is "there is nothing here" is one
-  /// the eye skips past on every session that will never have one.
-  issue?: boolean;
-  /// This session has a plan. Absent otherwise, for the same reason.
-  todo?: boolean;
-  /// Re-reads whatever the active tab is showing, drawn at the far end of the
-  /// tab row. One button rather than one per panel: it means the same thing
-  /// everywhere, so it belongs to the frame and always sits in the same place.
-  /// Absent for a tab with nothing to re-read.
+  /// Re-reads what the pane is showing, drawn at the far end of the top strip.
   refresh?: { onRefresh: () => void; loading: boolean } | null;
-  /// Where this session's agent runs, for the button that hands it to an editor
-  /// or Finder. In the tab row rather than in the Changes body because the
-  /// working directory belongs to the *session*, not to one tab's answer about
-  /// it — a reader on the PR tab wanting their editor should not have to go via
-  /// Changes to find the way there.
-  ///
-  /// Absent on the issues page, which is showing somebody else's issue and has
-  /// no working directory of its own.
-  cwd?: string | null;
-  /// Drawn at the far end of the top strip, ahead of Open and Refresh. For an
-  /// action belonging to whatever the pane is showing rather than to one tab —
-  /// the issues page's "Work on it" is the only one today.
+  /// Drawn at the far end of the top strip, ahead of Refresh.
   actions?: React.ReactNode;
-  /// A word in the top strip in place of the tab row.
-  ///
-  /// For a pane with one thing in it and no second thing to switch to. A row of
-  /// one tab is a control that cannot do anything, and the keycaps beside it
-  /// name a chord that would step between one place and itself — but an empty
-  /// strip is worse than either, since it reads as chrome that failed to load.
-  /// So the row keeps its height, loses its controls, and says what the pane is.
-  ///
-  /// It also loses its bottom rule. That line separates a row of *controls* from
-  /// what they act on; over a heading belonging to the thing underneath it, it
-  /// cuts a title off its own body.
+  /// A word in the top strip in place of the tab row, for a pane with one thing
+  /// in it and nothing to switch to.
   heading?: string;
-  /// Drawn ahead of the tab row, at the window's left edge.
-  ///
-  /// For the one thing that lives out there rather than in this pane: a
-  /// collapsed sidebar renders nothing, so the traffic lights land on whatever
-  /// reaches the window's left — the app header normally, and this pane's row
-  /// while it is wide. Only set while wide, or the control would be drawn twice.
+  /// Drawn ahead of the tab row, at the window's left edge. Only set while wide,
+  /// so the traffic-light clearance is not drawn twice.
   lead?: React.ReactNode;
-  /// The pane has taken the main column, so the transcript is behind it and
-  /// there is no width to drag — see `onToggleWide`.
+  /// The pane has taken the main column, so there is no width to drag.
   wide?: boolean;
-  /// Swaps between the pane's two sizes: beside the transcript at the width the
-  /// reader dragged, or over it at whatever the column has.
-  ///
-  /// A tab here rather than in the window's titlebar because the pane is what
-  /// got cramped: the reader looking at a diff that does not fit reaches for
-  /// the control that is *on* it. Absent on the panes that already own the
-  /// column — the issues, pull-request and plugins pages have nothing to
-  /// expand into.
+  /// Swaps between the pane's two sizes.
   onToggleWide?: () => void;
-  /// A strip of the caller's own tabs, drawn in place of the heading or the
-  /// session's row.
-  ///
-  /// **The frame owns the row; the caller brings what goes in it.** This pane's
-  /// tabs are the session's *views*, which the frame builds itself — but the
-  /// pull-requests page is the one pane whose tabs are not views at all: they
-  /// are the pull requests the reader has opened, and only that page knows what
-  /// they are. Everything around them stays the frame's — the drag region this
-  /// row is, the resize handle on its edge, the actions at its far end — and
-  /// `tab`/`onTabChange` are ignored while it is set, since there is no shared
-  /// row left to switch.
+  /// The caller's own strip of tabs, in place of the heading. The frame owns the
+  /// row; the caller brings what goes in it.
   tabs?: React.ReactNode;
   children: React.ReactNode;
 };
 
-/// One tab's body, kept mounted while the other tab is showing. Same reasoning
-/// as `open` above: switching tabs used to unmount the changes list, so coming
-/// back re-ran every fetch and every Shiki pass. The wrapper repeats the
-/// aside's flex column so bodies written as direct flex children keep working.
-export function TabBody({ active, children }: { active: boolean; children: React.ReactNode }) {
-  return (
-    <div className={cn("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}>
-      {children}
-    </div>
-  );
-}
-
-/// The frame every right-hand inspector shares: one border, one row of tabs.
-/// Bodies render inside it and own no chrome of their own, so adding a view is a
-/// tab and a component rather than another panel competing for the same slot.
-///
-/// No close button: [PanelToggle] and ⌘E both close it, and a third affordance
-/// for the same action inside the thing it dismisses is the one the eye has to
-/// skip past on every read.
-///
-/// No titlebar spacer either, unlike the main column. This pane reaches the top
-/// of the window and its tab row is what sits there; the traffic lights are on
-/// the far side, so nothing needs clearing.
+/// The frame the pull-requests page draws its detail in: one border, one top
+/// strip, and the bodies inside it.
 export default function RightPanel({
   open,
-  tab,
-  onTabChange,
-  counts,
-  pr = false,
-  docs = false,
-  issue = false,
-  todo = false,
   refresh,
-  cwd,
   actions,
   heading,
   lead,
@@ -343,7 +74,6 @@ export default function RightPanel({
   tabs,
   children,
 }: RightPanelProps) {
-  const sessionTabs = tabOrder({ pr, docs, issue, todo });
   // 32rem, the width this pane opened at before it could be dragged.
   const { style, handle } = useResizable({
     storageKey: "hz.rightPanelWidth",
@@ -351,37 +81,24 @@ export default function RightPanel({
     min: 320,
     edge: "left",
     label: "Resize the panel",
-    // Dropped while closed, for the sidebar's reason: this pane hides rather
-    // than unmounting, so it would go on holding width the sidebar could not
-    // bid for while nothing of it is on screen. And dropped while wide, where
-    // its width is the column's rather than the reader's — publishing that
-    // would read as the pane bidding for the whole window.
+    // Dropped while closed and while wide, for the sidebar's reason: a hidden
+    // pane must not hold width the sidebar could not bid for, and a wide pane's
+    // width is the column's rather than the reader's.
     pane: open && !wide ? "panel" : undefined,
   });
 
   return (
     <aside
-      // No width style while wide: `flex-1` takes what the transcript gave up.
       style={wide ? undefined : style}
       className={cn(
         "relative min-w-0 flex-col bg-sidebar",
-        // Conditional `flex` rather than `flex` plus `hidden`: both set
-        // `display`, so stacking them leaves the winner to stylesheet order.
         open ? "flex" : "hidden",
-        // Exclusive rather than stacked: `flex-1` and `shrink-0` both set
-        // `flex-shrink`, and which wins would be stylesheet order. Wide, the
-        // pane takes the column, so it draws no edge between it and a
-        // transcript that is not there — the sidebar's own right border is the
-        // one border left.
         wide ? "flex-1" : "shrink-0 border-l border-border",
       )}
     >
       {!wide && handle}
       <div
         className={cn(
-          // `overflow-hidden` for the reason the app header carries it: this
-          // pane can be dragged narrow, and what runs out of room has to clip
-          // at its own edge rather than draw over the transcript beside it.
           "flex h-(--titlebar-h) shrink-0 items-center gap-0.5 overflow-hidden px-2",
           !heading && "border-b border-border",
         )}
@@ -390,93 +107,12 @@ export default function RightPanel({
         {lead}
 
         {tabs ? (
-          // **The frame owns the row; the caller brings what goes in it.** The
-          // pane's own tabs are this session's views, which is what the frame
-          // draws — but the pull-requests page is the one pane whose tabs are
-          // not views at all, and it is the only thing that knows what they are.
-          // Everything around them stays the frame's: the drag region this row
-          // is, the resize handle on its edge, the actions at its far end.
-          //
-          // Scrolled rather than wrapped, the way the session's own row scrolled
-          // before the keycaps made wrapping necessary: a strip of open pull
-          // requests is a list the reader scrolled through to build, and a
-          // second line of tabs would move the pane's contents every time one
-          // was opened.
-          <div className="scrollbar-none flex h-full min-w-0 items-center gap-1 overflow-x-auto">
-            {tabs}
-          </div>
+          <div className="scrollbar-none flex h-full min-w-0 items-center gap-1 overflow-x-auto">{tabs}</div>
         ) : heading ? (
-          // Padded to sit where a tab's label would, so the pane's first line
-          // lands on the same baseline whichever frame it is wearing.
           <span className="px-2 py-1 text-ui font-medium">{heading}</span>
-        ) : (
-          // A wrapping row clipped to one line, which sheds the keycaps when
-          // they stop fitting and never a tab sooner — the CSS answer to a
-          // question a resize observer would otherwise have to measure.
-          //
-          // Flex breaks a line between items, never through one, so the caps go
-          // whole where `overflow-hidden` alone would leave half of one on
-          // screen. `h-full` on **both** items is what holds the line open: a
-          // line is only as tall as what is left on it, so caps carrying the
-          // height alone took it with them when they wrapped and the second
-          // line surfaced in the slack. `content-start` pins the first line to
-          // the top, or two lines would centre and clip the tabs.
-          <div className="flex h-full min-w-0 flex-wrap content-start items-center gap-0.5 overflow-hidden">
-            {/* Their own scroll, so a row still too long after the caps have
-                gone gives way here rather than pushing Open and Refresh past
-                the edge: those are reached for by position, where a tab can
-                still be scrolled to. */}
-            <div className="flex h-full min-w-0 items-center gap-0.5 overflow-x-auto">
-              {sessionTabs.map((value) => (
-                <TabButton
-                  key={value}
-                  active={tab === value}
-                  onClick={() => onTabChange(value)}
-                >
-                  {LABELS[value]}
-                  {!!counts?.[value] && (
-                    <span className="ml-1 text-muted-foreground">{counts[value]}</span>
-                  )}
-                </TabButton>
-              ))}
-            </div>
+        ) : null}
 
-            {/* Beside the tabs rather than at the far end, and with no label:
-                next to the thing it acts on, the caps read as belonging to the
-                row without a word saying so. Drawn at all — rather than hidden
-                in a tooltip the way the rest of the app's shortcuts are —
-                because a chord for a row of two or three tabs is one nobody
-                goes looking for.
-
-                Last in the row and the only thing allowed to wrap: the hint is
-                the one element here that does nothing, so it is the one to give
-                up — but only when the row cannot afford it, never at a tab
-                count guessed in advance.
-
-                Three caps, not four: `[ ]` is one key with two ends rather than
-                two alternatives, so splitting it reads as a chord wanting
-                both. */}
-            {/* `dark:` on the opacity, because holding a keycap back means
-                different things in the two modes. Opacity fades the group toward
-                the page, and a cap's fill is a veil running the page's opposite
-                way: in dark it moves from white toward black and the box softens,
-                which is what was wanted. In light it moves from black toward
-                white and the glyphs wash out while the box stays — a hint that is
-                somehow both faint and still the loudest thing in the row. So
-                light takes no opacity at all; the caps there are already quieter
-                than their dark twins, `--muted` being a black veil on a near-white
-                page rather than a white one on near-black. */}
-            <ShortcutKeys ids={["panel.tab.prev", "panel.tab.next"]} className="ml-1.5 h-full shrink-0 dark:opacity-50" />
-          </div>
-        )}
-
-        {/* The far end of the row, and one group rather than two `ml-auto`s:
-            Refresh draws on some tabs and not on others, and the Open button is
-            gone off a session, so whichever survives has to hold the same edge. */}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {/* Leading the group because it acts on the *frame* where every
-              control after it acts on the pane's contents — and because it
-              never comes and goes the way Refresh and Open do. */}
           {onToggleWide && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -487,36 +123,18 @@ export default function RightPanel({
                   onClick={onToggleWide}
                   aria-label={wide ? "Restore the panel" : "Expand the panel"}
                 >
-                  {wide ? (
-                    <Minimize2 className="size-3.5" />
-                  ) : (
-                    <Maximize2 className="size-3.5" />
-                  )}
+                  {wide ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="left">
                 {wide ? "Restore the panel" : "Expand the panel"}
-                <ShortcutKeys ids={["panel.expand"]} />
               </TooltipContent>
             </Tooltip>
           )}
 
           {actions}
 
-          {/* Ahead of Refresh, and outside the tab row's own logic: it acts on
-              the session rather than on whatever tab is open, so unlike Refresh
-              it does not change meaning from one tab to the next. */}
-          {cwd && <OpenInButton path={cwd} />}
-
-          {/* Absent on a tab with nothing to re-read. It reserved its width back
-              when the keycaps sat to its right and would have slid on that one
-              tab; with them anchored to the tabs there is nothing left to hold
-              still, and an empty box on the far edge is a slot for a button the
-              reader is not waiting for. */}
           {refresh && (
-            // A real tooltip rather than the `title` this used to carry: the
-            // chord has to be shown somewhere, and the app puts shortcuts in
-            // tooltips everywhere else.
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

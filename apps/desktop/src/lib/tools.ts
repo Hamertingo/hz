@@ -412,3 +412,13 @@ export function isRoutineError(text: string | undefined): boolean {
   if (!text) return false;
   return ROUTINE_ERRORS.some((pattern) => pattern.test(text));
 }
+
+/// Which of the team's own tools a call is, or `null` for any other tool. The
+/// name arrives as `mcp__team__team_message`; matching on the end rather than the
+/// whole keeps it working under whatever prefix a CLI gives an MCP tool.
+export function teamTool(name: string): "team_message" | "team_ask" | "team_list" | null {
+  if (/(^|__)team__team_message$/.test(name)) return "team_message";
+  if (/(^|__)team__team_ask$/.test(name)) return "team_ask";
+  if (/(^|__)team__team_list$/.test(name)) return "team_list";
+  return null;
+}

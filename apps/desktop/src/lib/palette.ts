@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
+
 import type { ShortcutId } from "@/lib/shortcuts";
-import type { ContentMatch } from "@/types/events";
 
 /// One row in the palette.
 ///
@@ -12,7 +13,19 @@ export type PaletteItem = {
   /// go: the reader typed a word they remember and the row is where it was said.
   /// `content` is the same thing said about a *file* — one line of the project the
   /// session runs in, which is where the work actually is.
-  kind: "action" | "session" | "project" | "space" | "match" | "content";
+  kind:
+    | "action"
+    | "session"
+    | "channel"
+    | "project"
+    | "space"
+    | "match"
+    | "content"
+    | "agent"
+    | "inbox"
+    | "memory"
+    | "routine"
+    | "plugin";
   /// Unique across the list — a session id, a project path, a shortcut id.
   id: string;
   label: string;
@@ -21,6 +34,8 @@ export type PaletteItem = {
   /// Drawn as keycaps where the row has one. Read from the registry, so a
   /// rebinding moves the caps without the palette knowing.
   shortcut?: ShortcutId;
+  /// The row's leading mark: an agent's face, a plugin's brand, a glyph.
+  icon?: ReactNode;
   /// What the row does. Called after the palette has closed.
   run: () => void;
 };
@@ -30,6 +45,7 @@ export type PaletteItem = {
 const KIND_LABEL: Record<PaletteItem["kind"], string> = {
   action: "action",
   session: "session",
+  channel: "channel",
   project: "project",
   space: "space",
   // "message" rather than "match": the row is a sentence somebody wrote, and
@@ -38,6 +54,11 @@ const KIND_LABEL: Record<PaletteItem["kind"], string> = {
   // "code" rather than "line": the reader is looking at a file, and the line is
   // only how the row points at one.
   content: "code",
+  agent: "agent",
+  inbox: "needs you",
+  memory: "note",
+  routine: "routine",
+  plugin: "plugin",
 };
 
 export function kindLabel(kind: PaletteItem["kind"]): string {
@@ -90,29 +111,6 @@ export function matchItems(items: PaletteItem[], query: string): PaletteItem[] {
 /// other search boxes narrow by typing, and so does this one.
 export const CONTENT_ROWS = 8;
 
-/// The file hits a query found, as palette rows.
-///
-/// **The row is the line.** A palette row is one line of text and a match is one
-/// line of a file, so the label is the line itself and the detail says which file
-/// and where in it — the reader recognises the sentence they were looking for, and
-/// the path is what tells two files with one basename apart.
-///
-/// Pure, and `open` is passed in rather than reached for, so what a row *does* is
-/// the shell's business: the palette has no idea which session is on screen.
-export function contentRows(
-  matches: readonly ContentMatch[],
-  open: (hit: ContentMatch) => void,
-): PaletteItem[] {
-  return matches.slice(0, CONTENT_ROWS).map((hit) => ({
-    kind: "content",
-    // File *and* line: two hits in one file are two rows, and either half alone
-    // collides with the other.
-    id: `${hit.path}:${hit.line}`,
-    label: hit.text,
-    detail: `${hit.relative}:${hit.line}`,
-    run: () => open(hit),
-  }));
-}
 
 /// Where a query's own characters sit inside a row, for the run the palette draws
 /// in the accent colour.
@@ -139,4 +137,78 @@ export function highlight(
     match: text.slice(at, at + query.length),
     after: text.slice(at + query.length),
   };
+}
+
+/// The groups Jump to draws, in the order the mockup lists them, and then the
+/// ones the older palette had that still make sense.
+export const GROUPS = [
+  "Agents",
+  "Channels",
+  "Needs you",
+  "In memory",
+  "Routines",
+  "Plugins",
+  "Do",
+  "Sessions",
+  "Messages",
+  "Code",
+  "Projects",
+  "Workspaces",
+] as const;
+
+export type PaletteGroup = (typeof GROUPS)[number];
+
+const GROUP_OF: Record<PaletteItem["kind"], PaletteGroup> = {
+  agent: "Agents",
+  channel: "Channels",
+  inbox: "Needs you",
+  memory: "In memory",
+  routine: "Routines",
+  plugin: "Plugins",
+  action: "Do",
+  session: "Sessions",
+  match: "Messages",
+  content: "Code",
+  project: "Projects",
+  space: "Workspaces",
+};
+
+export function groupOf(item: PaletteItem): PaletteGroup {
+  return GROUP_OF[item.kind];
+}
+
+/// How many rows of a group show before the reader types anything.
+export const PER_GROUP = 4;
+
+/// The rows to draw: filtered by the query, then gathered under their group in
+/// the fixed order, and with nothing typed only the first few of each group so
+/// the box opens on a map of what is here rather than on a wall.
+export function arrange(items: PaletteItem[], query: string): PaletteItem[] {
+  const rows = matchItems(items, query);
+  const rank = (item: PaletteItem) => GROUPS.indexOf(groupOf(item));
+  // Array#sort is stable, so within a group the caller's order survives.
+  const grouped = [...rows].sort((a, b) => rank(a) - rank(b));
+  if (query.trim()) return grouped;
+
+  const seen = new Map<PaletteGroup, number>();
+  return grouped.filter((item) => {
+    const group = groupOf(item);
+    const n = (seen.get(group) ?? 0) + 1;
+    seen.set(group, n);
+    return n <= PER_GROUP;
+  });
+}
+
+/// The name "Create an agent called …" would use for a query that matched
+/// nothing, or `null` for a query that is not a name (empty, or `>` actions mode).
+export function suggestedName(query: string): string | null {
+  const name = query.trim();
+  if (!name || isActionMode(name)) return null;
+  return name.slice(0, 60);
+}
+
+/// A note's file name as a title: `pricing-pro.md` is "Pricing pro".
+export function noteTitle(file: string): string {
+  const words = file.replace(/\.md$/i, "").replace(/[-_]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : file;
 }

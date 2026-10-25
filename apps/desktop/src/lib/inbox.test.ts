@@ -1,189 +1,140 @@
 import { describe, expect, it } from "vitest";
 
-import { groupInbox, inboxItems } from "@/lib/inbox";
-import type { Issue, IssueStateKind, PrListItem } from "@/types/events";
+import {
+  diffOf,
+  firstOpen,
+  groupItems,
+  inboxCounts,
+  inboxOrder,
+  keyAction,
+  openCount,
+  readApproval,
+  stepFrom,
+  verdictCopy,
+} from "@/lib/inbox";
+import type { InboxItem } from "@/types/events";
 
-/// Both fixtures are built from a base and cast, the way the transcript tests
-/// build an event: every field the rules do not read is noise per row, and one
-/// that *is* read is named at the case that reads it.
-const prRow = (over: Partial<PrListItem> & { cwd?: string } = {}) =>
-  ({
-    number: 1,
-    title: "a pull request",
-    url: "https://example.test/pr/1",
-    state: "OPEN",
-    isDraft: false,
-    author: "someone",
-    avatar: null,
-    headRefName: "feature",
-    baseRefName: "main",
-    updatedAt: "2026-09-01T00:00:00Z",
-    createdAt: "2026-08-01T00:00:00Z",
-    additions: 1,
-    deletions: 1,
-    changedFiles: 1,
-    reviewDecision: null,
-    mergeable: "MERGEABLE",
-    mergeStateStatus: "CLEAN",
-    checksState: "CLEAR",
-    reviewRequests: [],
-    labels: [],
-    cwd: "/repo",
-    ...over,
-  }) as PrListItem & { cwd: string };
+const item = (p: Partial<InboxItem> & Pick<InboxItem, "id" | "kind">): InboxItem => ({
+  agentId: "ada",
+  title: p.id,
+  sub: "",
+  payload: {},
+  why: null,
+  created: 100,
+  state: "open",
+  resolution: null,
+  ok: false,
+  resolvedAt: null,
+  sent: false,
+  archived: false,
+  sessionId: "s",
+  ref: null,
+  channel: null,
+  ...p,
+});
 
-const issueRow = (over: Partial<Issue> = {}) =>
-  ({
-    tracker: "linear",
-    id: "uuid",
-    identifier: "DRA-53",
-    title: "an issue",
-    url: "https://example.test/DRA-53",
-    state: { id: "s", name: "Todo", kind: "unstarted" as IssueStateKind, color: "#fff" },
-    priority: "medium",
-    assignee: { name: "me", avatar: null },
-    labels: [],
-    team: "DRA",
-    project: null,
-    updatedAt: "2026-09-01T00:00:00Z",
-    ...over,
-  }) as Issue;
+const ITEMS = [
+  item({ id: "a1", kind: "approval", created: 10 }),
+  item({ id: "a2", kind: "approval", created: 30 }),
+  item({ id: "q1", kind: "question", created: 20 }),
+  item({ id: "m1", kind: "mention", created: 40 }),
+  item({ id: "d1", kind: "done", state: "done", resolution: "FINISHED", ok: true, created: 5, resolvedAt: 50 }),
+  item({ id: "r1", kind: "approval", state: "done", resolution: "ALLOWED", ok: true, created: 1, resolvedAt: 60 }),
+  item({ id: "x1", kind: "approval", archived: true }),
+];
 
-describe("inboxItems", () => {
-  it("carries both trackers, each keyed so the two cannot collide", () => {
-    const items = inboxItems([prRow({ number: 12 })], [issueRow({ identifier: "DRA-53" })], "me");
-    expect(items.map((item) => item.key).sort()).toEqual(["issue:linear:DRA-53", "pr:/repo#12"]);
+describe("grouping", () => {
+  it("puts decisions, mentions and settled rows in their own groups, newest first", () => {
+    const g = groupItems(ITEMS, "all");
+    expect(g.map((x) => x.key)).toEqual(["needs", "mentions", "done"]);
+    expect(g[0].items.map((i) => i.id)).toEqual(["a2", "q1", "a1"]);
+    expect(g[1].items.map((i) => i.id)).toEqual(["m1"]);
+    expect(g[2].items.map((i) => i.id)).toEqual(["r1", "d1"]);
   });
 
-  // The pull-requests page's own rule, carried across: the thing that wants
-  // doing is the thing somebody asked you for.
-  it("files a pull request you were asked to review under Waiting, authored or not", () => {
-    const mine = prRow({ author: "me", reviewRequests: ["me"] });
-    const [item] = inboxItems([mine], [], "me");
-    expect(item.group).toBe("waiting");
+  it("never lists an archived row", () => {
+    expect(inboxOrder(groupItems(ITEMS, "all")).some((i) => i.id === "x1")).toBe(false);
   });
 
-  it("files your own under Yours and a stranger's under Others", () => {
-    const items = inboxItems(
-      [prRow({ number: 1, author: "me" }), prRow({ number: 2, author: "them" })],
-      [],
-      "me",
-    );
-    expect(items.map((item) => item.group).sort()).toEqual(["others", "yours"]);
+  it("a filter keeps one group, and the tabs count each", () => {
+    expect(groupItems(ITEMS, "mentions").map((x) => x.key)).toEqual(["mentions"]);
+    expect(inboxCounts(ITEMS)).toEqual({ all: 6, needs: 3, mentions: 1, done: 2 });
   });
 
-  /// `gh` would not say who we are, so nothing is ours *by name* — the honest
-  /// answer rather than filing everything under Yours.
-  it("claims nothing for the reader when the viewer is unknown", () => {
-    const items = inboxItems([prRow({ author: "me", reviewRequests: ["me"] })], [], null);
-    expect(items[0].group).toBe("others");
-  });
-
-  // The one signal Linear gives that outranks the queue.
-  it("treats an urgent issue as waiting on you and the rest as yours", () => {
-    const items = inboxItems(
-      [],
-      [issueRow({ identifier: "DRA-1", priority: "urgent" }), issueRow({ identifier: "DRA-2" })],
-      "me",
-    );
-    expect(items.find((i) => i.key.endsWith("DRA-1"))?.group).toBe("waiting");
-    expect(items.find((i) => i.key.endsWith("DRA-2"))?.group).toBe("yours");
-  });
-
-  /// **The order is the logic**, and these are the pairs where it shows.
-  it("answers a conflict before a failing check, and a failing check before a review", () => {
-    const [conflict] = inboxItems(
-      [prRow({ mergeable: "CONFLICTING", checksState: "FAILING", reviewDecision: "CHANGES_REQUESTED" })],
-      [],
-      "me",
-    );
-    expect(conflict.reason?.label).toBe("Conflict");
-
-    const [failing] = inboxItems(
-      [prRow({ checksState: "FAILING", reviewDecision: "CHANGES_REQUESTED" })],
-      [],
-      "me",
-    );
-    expect(failing.reason?.label).toBe("Checks failing");
-  });
-
-  it("calls a cleared, approved pull request ready to merge", () => {
-    const [item] = inboxItems(
-      [prRow({ checksState: "CLEAR", reviewDecision: "APPROVED" })],
-      [],
-      "me",
-    );
-    expect(item.reason).toEqual({ label: "Ready to merge", tone: "good" });
-  });
-
-  it("calls a draft a draft rather than waiting on a reviewer", () => {
-    const [item] = inboxItems([prRow({ isDraft: true, reviewDecision: "REVIEW_REQUIRED" })], [], "me");
-    expect(item.group).not.toBe("waiting");
-    // And wears nothing: the row draws the draft glyph, and a word repeating it
-    // would spend the scarce end of the line on a fact already on screen.
-    expect(item.reason).toBeNull();
-  });
-
-  it("does not call a suite that is still running ready", () => {
-    const [item] = inboxItems(
-      [prRow({ checksState: "RUNNING", reviewDecision: "APPROVED" })],
-      [],
-      "me",
-    );
-    expect(item.reason).toBeNull();
-  });
-
-  it("draws nothing for a clean, open pull request nobody has to act on", () => {
-    const [item] = inboxItems([prRow()], [], "me");
-    expect(item.reason).toBeNull();
-  });
-
-  it("wears a chip only where there is something to say", () => {
-    const items = inboxItems(
-      [],
-      [
-        issueRow({ identifier: "DRA-1", priority: "urgent" }),
-        issueRow({ identifier: "DRA-2", state: { id: "s", name: "Shipping", kind: "started", color: "#fff" } }),
-      ],
-      "me",
-    );
-    expect(items.find((i) => i.key.endsWith("DRA-1"))?.reason).toEqual({
-      label: "Urgent",
-      tone: "bad",
-    });
-    // An issue that is merely assigned: the glyph carries its state, so the row
-    // says nothing rather than saying it twice.
-    expect(items.find((i) => i.key.endsWith("DRA-2"))?.reason).toBeNull();
+  it("the badge counts what waits on you and ignores finished notes", () => {
+    expect(openCount(ITEMS)).toBe(4);
+    expect(openCount(ITEMS, new Set(["bob"]))).toBe(0);
   });
 });
 
-describe("groupInbox", () => {
-  it("keeps the three in the order attention reaches them and drops an empty one", () => {
-    const items = inboxItems(
-      [prRow({ number: 2, author: "them" })],
-      [issueRow({ identifier: "DRA-1", priority: "urgent" })],
-      "me",
-    );
-    expect(groupInbox(items).map((group) => group.key)).toEqual(["waiting", "others"]);
+describe("walking the list", () => {
+  const order = inboxOrder(groupItems(ITEMS, "all"));
+
+  it("J and K wrap at both ends", () => {
+    expect(stepFrom(order, order.at(-1)!.id, 1)).toBe(order[0].id);
+    expect(stepFrom(order, order[0].id, -1)).toBe(order.at(-1)!.id);
+    expect(stepFrom(order, "a2", 1)).toBe("q1");
   });
 
-  it("orders the whole list by the newest stamp across both trackers", () => {
-    const items = inboxItems(
-      [prRow({ number: 1, author: "me", updatedAt: "2026-01-01T00:00:00Z" })],
-      [issueRow({ updatedAt: "2026-09-01T00:00:00Z" })],
-      "me",
-    );
-    expect(items[0].kind).toBe("issue");
+  it("with nothing selected J lands on the first and K on the last", () => {
+    expect(stepFrom(order, null, 1)).toBe(order[0].id);
+    expect(stepFrom(order, null, -1)).toBe(order.at(-1)!.id);
+    expect(stepFrom([], null, 1)).toBeNull();
   });
 
-  /// A stamp neither side can parse sorts last rather than throwing the order
-  /// away — `NaN` through the comparator would leave the list as it fell.
-  it("sorts an unreadable stamp last instead of scrambling the list", () => {
-    const items = inboxItems(
-      [prRow({ number: 1, author: "me", updatedAt: "not a date" })],
-      [issueRow({ updatedAt: "2026-01-01T00:00:00Z" })],
-      "me",
-    );
-    expect(items.map((item) => item.kind)).toEqual(["issue", "pr"]);
+  it("after a decision the next row is the first still open", () => {
+    expect(firstOpen(order)).toBe("a2");
+    expect(firstOpen(order.filter((i) => i.state !== "open"))).toBeNull();
+  });
+});
+
+describe("keys", () => {
+  const cmd = item({ id: "c", kind: "approval", payload: { form: "cmd", command: "git push" } });
+  const post = item({ id: "p", kind: "approval", payload: { form: "post", posts: ["a"] } });
+  const ask = item({ id: "q", kind: "question", payload: { question: "?", choices: ["Yes", "No"] } });
+
+  it("A allows and D denies; E means nothing on a command", () => {
+    expect(keyAction(cmd, "a")).toEqual({ type: "resolve", verdict: "ALLOWED" });
+    expect(keyAction(cmd, "D")).toEqual({ type: "resolve", verdict: "DENIED" });
+    expect(keyAction(cmd, "e")).toBeNull();
+  });
+
+  it("a post asks 'not now' and offers edit first", () => {
+    expect(keyAction(post, "d")).toEqual({ type: "resolve", verdict: "NOT NOW" });
+    expect(keyAction(post, "e")).toEqual({ type: "edit" });
+  });
+
+  it("digits pick a choice, up to as many as there are", () => {
+    expect(keyAction(ask, "2")).toEqual({ type: "answer", choice: "No" });
+    expect(keyAction(ask, "3")).toBeNull();
+    expect(keyAction(ask, "d")).toEqual({ type: "resolve", verdict: "SKIPPED" });
+  });
+
+  it("a settled decision answers to no key, and a finished note archives on D", () => {
+    expect(keyAction({ ...cmd, state: "done" }, "a")).toBeNull();
+    expect(keyAction(item({ id: "d", kind: "done", state: "done" }), "d")).toEqual({ type: "archive" });
+    expect(keyAction(item({ id: "m", kind: "mention" }), "d")).toEqual({ type: "resolve", verdict: "READ" });
+  });
+});
+
+describe("payloads", () => {
+  it("reads an approval defensively", () => {
+    const a = readApproval(item({ id: "z", kind: "approval", payload: { form: "weird", posts: ["x", 3] } }));
+    expect(a.form).toBe("tool");
+    expect(a.posts).toEqual(["x"]);
+    expect(a.options).toEqual([]);
+  });
+
+  it("builds a diff from an Edit and from a Write", () => {
+    const edit = diffOf({ file_path: "/a/b.ts", old_string: "a\nb", new_string: "a\nc" })!;
+    expect(edit.path).toBe("/a/b.ts");
+    expect(edit.lines.map((l) => l.kind)).toEqual(["same", "del", "add"]);
+    expect(diffOf({ path: "/n.md", content: "x\ny" })!.lines.every((l) => l.kind === "add")).toBe(true);
+    expect(diffOf({ command: "ls" })).toBeNull();
+  });
+
+  it("says a verdict in words", () => {
+    expect(verdictCopy("DENIED", "Ada")).toEqual(["Denied", "Ada was told no."]);
+    expect(verdictCopy("ALLOWED", "Mila", "post")[0]).toBe("Approved");
   });
 });

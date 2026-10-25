@@ -1,15 +1,28 @@
+import claudeIcon from "@lobehub/icons-static-svg/icons/claude.svg?raw";
+import codexIcon from "@lobehub/icons-static-svg/icons/codex.svg?raw";
+import opencodeIcon from "@lobehub/icons-static-svg/icons/opencode.svg?raw";
+
+import { pathsOf } from "@/lib/modelBrand";
 import { cn } from "@/lib/utils";
 import type { Harness } from "@/types/events";
 
-/// The agent's own mark, drawn wherever a session's harness is named.
+/// The marks of the three CLIs hz runs on the reader's own install.
 ///
-/// **A monogram of its name, and that is not a placeholder.** The agent is this
-/// app's own build, so there is no vendor mark to carry and no second one to
-/// tell it apart from; a glyph traced from somebody's brand would be claiming an
-/// identity that is not that brand's to give. `Hz` is what it is called.
+/// Their vendors' own artwork, from the same MIT icon set the model picker draws
+/// from, and for the same reason: it names what is about to run, which is what a
+/// vendor mark is for. Monochrome in `currentColor`, so a row of them reads as a
+/// column rather than as three brand colours.
+const MARKS: Partial<Record<Harness, { paths: string[]; label: string }>> = {
+  "claude-acp": { paths: pathsOf(claudeIcon), label: "Claude" },
+  "codex-acp": { paths: pathsOf(codexIcon), label: "Codex" },
+  opencode: { paths: pathsOf(opencodeIcon), label: "OpenCode" },
+};
+
+/// The agent hz used to ship, drawn for the sessions it wrote.
 ///
-/// `currentColor`, so it sits in a row of muted chrome rather than shouting over
-/// it — the same reason [`LinearIcon`](./LinearIcon.tsx) does.
+/// **A monogram of its name, and that is not a placeholder.** It was this app's
+/// own build, so there is no vendor mark to carry; a glyph traced from somebody's
+/// brand would be claiming an identity that is not that brand's to give.
 function HzAgentIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -32,17 +45,24 @@ function HzAgentIcon({ className }: { className?: string }) {
 export default function AgentIcon({
   harness,
   className,
-  brand = false,
 }: {
   harness: Harness;
   className?: string;
-  brand?: boolean;
 }) {
-  // One agent, so there is nothing to switch on: the other four marks went with
-  // the harnesses that named them. `brand` is kept in the signature because
-  // every caller passes it and a mark with no second colour treats it the same
-  // as any other corner of muted chrome.
-  void harness;
-  void brand;
-  return <HzAgentIcon className={className} />;
+  const mark = MARKS[harness];
+  if (!mark) return <HzAgentIcon className={className} />;
+
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={cn("size-4 shrink-0 fill-current", className)}
+      fillRule="evenodd"
+      role="img"
+      aria-label={mark.label}
+    >
+      {mark.paths.map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  );
 }

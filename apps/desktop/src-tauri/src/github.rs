@@ -10,7 +10,7 @@ use anyhow::Result;
 use serde_json::json;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path, process::Stdio, sync::LazyLock};
+use std::{collections::{HashMap, HashSet}, path::Path, process::Stdio, sync::LazyLock};
 use tokio::{process::Command, sync::Mutex};
 use ts_rs::TS;
 
@@ -319,7 +319,8 @@ fragment pr on PullRequest{
 /// long enough ago to fall past the hundredth loses its mark, which is the
 /// right way round — those are the sessions already dealt with.
 const QUERY_MARKS: &str = r#"
-query($owner:String!,$repo:String!){
+query($owner:String!,$repo:String!,$requested:String!){
+ requested: search(query:$requested,type:ISSUE,first:100){nodes{... on PullRequest{number}}}
  repository(owner:$owner,name:$repo){
   open: pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
    number headRefName isDraft mergeable mergeStateStatus
@@ -1404,6 +1405,11 @@ pub struct PrMark {
     /// reads that as *unknown* rather than as ready — see `mergeVerdict`.
     pub mergeable: Option<String>,
     pub merge_state_status: Option<String>,
+    /// Whether the reader is a requested reviewer. Read from one repo-wide
+    /// `search` alias rather than a `reviewRequests` connection nested under each
+    /// pull request: nested, the mark query would cost roughly ten points a poll
+    /// against the GraphQL budget, and this costs one.
+    pub review_requested: bool,
 }
 
 /// What CI on the tip commit has to say, cut to the two things a row can show.
@@ -1497,6 +1503,27 @@ struct MarksRepository {
     merged: Option<Nodes<RawPrMark>>,
 }
 
+/// The whole answer, because the `requested` alias sits beside `repository`
+/// under `data` and [`Response`] only reads `repository`.
+#[derive(Deserialize)]
+struct MarksAnswer {
+    data: Option<MarksData>,
+    #[serde(default)]
+    errors: Vec<GraphQlError>,
+}
+
+#[derive(Deserialize)]
+struct MarksData {
+    repository: Option<MarksRepository>,
+    requested: Option<Nodes<RequestedNode>>,
+}
+
+#[derive(Deserialize)]
+struct RequestedNode {
+    #[serde(default)]
+    number: Option<u64>,
+}
+
 /// Every pull request in the repo `cwd` sits in that a sidebar row can be
 /// marked with — open ones and merged ones.
 ///
@@ -1514,6 +1541,9 @@ pub async fn pr_marks(cwd: String) -> Result<Vec<PrMark>, PrUnavailable> {
 async fn pr_marks_inner(cwd: &str) -> Result<Vec<PrMark>, String> {
     let (owner, repo) = repo_slug(cwd).await?;
 
+    // Qualified by repo, so `review-requested:@me` cannot reach another
+    // repository's pull requests through the same alias.
+    let requested = format!("repo:{owner}/{repo} is:pr is:open review-requested:@me");
     let out = gh(
         cwd,
         &[
@@ -1523,6 +1553,8 @@ async fn pr_marks_inner(cwd: &str) -> Result<Vec<PrMark>, String> {
             &format!("owner={owner}"),
             "-f",
             &format!("repo={repo}"),
+            "-f",
+            &format!("requested={requested}"),
             "-f",
             &format!("query={QUERY_MARKS}"),
         ],
@@ -1534,10 +1566,22 @@ async fn pr_marks_inner(cwd: &str) -> Result<Vec<PrMark>, String> {
 
 /// Splits parsing off the spawn, like [`read_prs`].
 fn read_pr_marks(out: &str) -> Result<Vec<PrMark>, String> {
-    let response: Response<MarksRepository> =
+    let answer: MarksAnswer =
         serde_json::from_str(out).map_err(|e| format!("could not read GitHub's answer: {e}"))?;
+    // Same rule as `Response::repository`: errors before data.
+    if let Some(first) = answer.errors.first() {
+        return Err(first.message.clone());
+    }
+    let data = answer.data;
+    let requested: HashSet<u64> = data
+        .as_ref()
+        .and_then(|d| d.requested.as_ref()?.nodes.as_ref())
+        .into_iter()
+        .flatten()
+        .filter_map(|node| node.number)
+        .collect();
 
-    let (open, merged) = match response.repository()? {
+    let (open, merged) = match data.and_then(|d| d.repository) {
         Some(r) => (Nodes::take(r.open), Nodes::take(r.merged)),
         None => (Vec::new(), Vec::new()),
     };
@@ -1554,6 +1598,7 @@ fn read_pr_marks(out: &str) -> Result<Vec<PrMark>, String> {
             state,
             mergeable: pr.mergeable,
             merge_state_status: pr.merge_state_status,
+            review_requested: requested.contains(&pr.number),
         })
         .collect())
 }
@@ -1868,361 +1913,6 @@ async fn viewer_login(cwd: &str) -> Option<String> {
     login
 }
 
-/// One workflow run, as the Actions row draws it.
-///
-/// **A row's worth and no more.** Which step failed, what artifact it left and
-/// how long each job took are all one `gh run view` away, and a page that read
-/// them for thirty runs would be thirty spawns for facts nobody scrolls past —
-/// the same bargain [`PrListItem`] makes against [`PullRequest`].
-///
-/// `status` and `conclusion` ride GitHub's own words rather than a fold, because
-/// there is nothing to fold: one run has one of each, and the mapping to a glyph
-/// and a colour is the frontend's — the split [`PrListItem::state`] makes.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export, export_to = "events.ts")]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRun {
-    /// GitHub's own id for the run: what a re-run or a cancel would address, and
-    /// what the row is keyed by. Not the number, which is unique only within its
-    /// workflow.
-    pub id: u64,
-    /// The run's number within its workflow — the `#70` GitHub's own page shows.
-    pub number: u64,
-    /// Which attempt this is. A re-run increments it, so `2` is a run that failed
-    /// once and was asked again; drawn only above one.
-    pub attempt: u64,
-    /// The workflow's name as the repository declares it (`Release`, `Warm
-    /// cache`).
-    pub workflow: String,
-    /// What the run is about: the commit subject it was started for, or the
-    /// workflow's own name for a run GitHub starts on its own behalf
-    /// (`pages build and deployment`).
-    pub title: String,
-    pub branch: String,
-    pub sha: String,
-    /// What asked for it — `push`, `pull_request`, `workflow_dispatch`,
-    /// `schedule`, or `dynamic` for GitHub's own.
-    pub event: String,
-    /// `queued`, `in_progress`, `completed`, as GitHub spells them.
-    pub status: String,
-    /// `success`, `failure`, `cancelled`, `skipped`, `timed_out`… and `None`
-    /// while the run has not finished, which is not the same fact as a
-    /// conclusion nobody has given.
-    pub conclusion: Option<String>,
-    pub created_at: String,
-    /// When a runner picked it up. `None` while it is still queued, which is the
-    /// whole difference between waiting for a machine and running on one.
-    pub started_at: Option<String>,
-    /// When it last moved — the end of the run, for one that has finished.
-    pub updated_at: String,
-    pub url: String,
-}
-
-/// Everything `gh run view` knows about one run, which is a row plus its jobs.
-///
-/// **One extra spawn, and only for the run the reader asked about.** Which step
-/// failed is the question a red row raises, and the answer is a job list the
-/// listing does not carry: thirty of those would be thirty `gh run view` calls
-/// for a pane that shows one.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export, export_to = "events.ts")]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowRunDetail {
-    pub run: WorkflowRun,
-    pub jobs: Vec<WorkflowJob>,
-}
-
-/// One job in a run, and how far it got.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export, export_to = "events.ts")]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowJob {
-    pub id: u64,
-    /// The job's key in the workflow file, which is also what GitHub's own page
-    /// heads the block with (`build`, `release`).
-    pub name: String,
-    pub status: String,
-    pub conclusion: Option<String>,
-    /// When a runner picked it up. **Not a proxy for "it ran"** — a job skipped
-    /// by its own `if:` carries a stamp here too, and its empty step list is what
-    /// says it did nothing.
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    /// **Empty is a fact, not a gap.** A job skipped by an `if:` has no steps at
-    /// all, and a list that drew it as "no steps reported" would be guessing at
-    /// which of the two it was.
-    pub steps: Vec<WorkflowStep>,
-}
-
-/// One step of a job. Steps are not addressable — nothing re-runs or cancels one
-/// — so this is the number the run's own page shows, and nothing else.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export, export_to = "events.ts")]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowStep {
-    pub number: u64,
-    pub name: String,
-    pub status: String,
-    pub conclusion: Option<String>,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-}
-
-/// The fields a run's own page is built from, as `gh run view --json` names them.
-/// The run's scalars are the listing's own — one shape, two calls.
-const RUN_VIEW_FIELDS: &str = "attempt,conclusion,createdAt,databaseId,displayTitle,event,headBranch,headSha,jobs,name,number,startedAt,status,updatedAt,url";
-
-/// The fields an Actions row is built from, as `gh run list --json` names them.
-///
-/// `name` is the workflow's *display* name, which is what a row shows; the
-/// sibling `workflowName` is the file-derived one (`pages-build-deployment`),
-/// kept out because the two differ only where the display name is the better of
-/// them.
-const RUN_FIELDS: &str = "attempt,conclusion,createdAt,databaseId,displayTitle,event,headBranch,headSha,name,number,startedAt,status,updatedAt,url";
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawRun {
-    #[serde(default)]
-    database_id: u64,
-    #[serde(default)]
-    number: u64,
-    #[serde(default)]
-    attempt: u64,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    display_title: String,
-    #[serde(default)]
-    head_branch: String,
-    #[serde(default)]
-    head_sha: String,
-    #[serde(default)]
-    event: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    conclusion: Option<String>,
-    #[serde(default)]
-    created_at: String,
-    #[serde(default)]
-    started_at: Option<String>,
-    #[serde(default)]
-    updated_at: String,
-    #[serde(default)]
-    url: String,
-    /// Only ever present on `gh run view` — the listing asks for no jobs, and
-    /// `None` is that absence rather than an empty list.
-    #[serde(default)]
-    jobs: Option<Vec<RawJob>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawJob {
-    #[serde(default)]
-    database_id: u64,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    conclusion: Option<String>,
-    #[serde(default)]
-    started_at: Option<String>,
-    #[serde(default)]
-    completed_at: Option<String>,
-    #[serde(default)]
-    steps: Option<Vec<RawStep>>,
-}
-
-impl RawJob {
-    fn map(self) -> WorkflowJob {
-        WorkflowJob {
-            id: self.database_id,
-            name: self.name,
-            status: self.status,
-            conclusion: self.conclusion.filter(|c| !c.is_empty()),
-            started_at: self.started_at.filter(|s| !s.is_empty()),
-            completed_at: self.completed_at.filter(|s| !s.is_empty()),
-            steps: self.steps.unwrap_or_default().into_iter().map(RawStep::map).collect(),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawStep {
-    #[serde(default)]
-    number: u64,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    conclusion: Option<String>,
-    #[serde(default)]
-    started_at: Option<String>,
-    #[serde(default)]
-    completed_at: Option<String>,
-}
-
-impl RawStep {
-    fn map(self) -> WorkflowStep {
-        WorkflowStep {
-            number: self.number,
-            name: self.name,
-            status: self.status,
-            conclusion: self.conclusion.filter(|c| !c.is_empty()),
-            started_at: self.started_at.filter(|s| !s.is_empty()),
-            completed_at: self.completed_at.filter(|s| !s.is_empty()),
-        }
-    }
-}
-
-impl RawRun {
-    fn map(self) -> WorkflowRun {
-        // Bound before the literal, which moves both: the fallback title is the
-        // workflow's own name, so the name has to outlive being taken.
-        let workflow = self.name;
-        let title = if self.display_title.is_empty() {
-            workflow.clone()
-        } else {
-            self.display_title
-        };
-
-        WorkflowRun {
-            id: self.database_id,
-            number: self.number,
-            // Never zero: the field is absent on an older `gh`, and "attempt 0"
-            // is a sentence no run has ever been.
-            attempt: self.attempt.max(1),
-            workflow,
-            // A run whose title `gh` would not give still says which workflow it
-            // is, and a nameless row is worse than a repeated one.
-            title,
-            branch: self.head_branch,
-            sha: self.head_sha,
-            event: self.event,
-            status: self.status,
-            // `gh` answers an empty string where GitHub has given no conclusion —
-            // a run still going, or one cancelled before it started. Both are the
-            // absence of a verdict rather than a verdict of "".
-            conclusion: self.conclusion.filter(|c| !c.is_empty()),
-            created_at: self.created_at,
-            started_at: self.started_at.filter(|s| !s.is_empty()),
-            updated_at: self.updated_at,
-            url: self.url,
-        }
-    }
-}
-
-/// The recent runs of every repository the page is pointed at.
-#[tauri::command]
-pub async fn list_workflow_runs(
-    cwd: String,
-    branch: Option<String>,
-) -> Result<Vec<WorkflowRun>, PrUnavailable> {
-    list_workflow_runs_inner(&cwd, branch)
-        .await
-        .map_err(unavailable)
-}
-
-/// `branch` narrows at the host, because it is the one question about CI the
-/// host can answer for us: `--branch` is server-side, and "did what I just
-/// pushed pass" is the question a reader actually arrives with. Every other
-/// narrowing the page offers — status, event, workflow — is a filter over rows
-/// already in hand, the bargain the pull request list makes with its own filters.
-async fn list_workflow_runs_inner(
-    cwd: &str,
-    branch: Option<String>,
-) -> Result<Vec<WorkflowRun>, String> {
-    let mut args = vec!["run", "list", "--limit", "40", "--json", RUN_FIELDS];
-
-    let branch = branch.unwrap_or_default();
-    let branch = branch.trim();
-    if !branch.is_empty() {
-        args.extend(["--branch", branch]);
-    }
-
-    let out = gh(cwd, &args).await?;
-    let raw: Vec<RawRun> = serde_json::from_str(&out)
-        .map_err(|e| format!("could not read that run list: {e}"))?;
-
-    Ok(raw.into_iter().map(RawRun::map).collect())
-}
-
-/// The pull-request page's listing: every pull request one repository has, in
-/// whatever state the filter asks for.
-///
-/// `gh pr list` rather than the GraphQL query the panel uses, and the difference
-/// is the question: the panel asks about *one branch* and wants every comment on
-/// it, where a page asks about a repository and wants the rows. `gh`'s own
-/// subcommand pages, filters and searches for us, which is a query language on a
-/// page that has a search box.
-/// One run, with its jobs and their steps.
-#[tauri::command]
-pub async fn get_workflow_run(cwd: String, id: u64) -> Result<WorkflowRunDetail, PrUnavailable> {
-    get_workflow_run_inner(&cwd, id).await.map_err(unavailable)
-}
-
-async fn get_workflow_run_inner(cwd: &str, id: u64) -> Result<WorkflowRunDetail, String> {
-    let out = gh(cwd, &["run", "view", &id.to_string(), "--json", RUN_VIEW_FIELDS]).await?;
-    let mut raw: RawRun = serde_json::from_str(&out)
-        .map_err(|e| format!("could not read that run: {e}"))?;
-
-    let jobs = raw.jobs.take().unwrap_or_default();
-
-    Ok(WorkflowRunDetail {
-        run: raw.map(),
-        jobs: jobs.into_iter().map(RawJob::map).collect(),
-    })
-}
-
-/// A run's log, whole, as `gh` prints it: `job<TAB>step<TAB>timestamp message`
-/// per line.
-///
-/// **A string, and the string is the wire format.** The only structure in it is
-/// the `##[group]` / `##[error]` markers GitHub wrote into the message itself,
-/// and which of those belong to which step is a display rule — so it is parsed
-/// where the display rules live, in [logs.ts](../..), and this is one call that
-/// carries bytes and nothing else.
-///
-/// **Read on demand and never in the listing.** This is the biggest thing this
-/// app asks GitHub for — a failed release is ~190KB — and a pane that fetched it
-/// to draw a row would be paying for it thirty times a page.
-#[tauri::command]
-pub async fn get_run_log(cwd: String, id: u64) -> Result<String, PrUnavailable> {
-    let id = id.to_string();
-    gh(&cwd, &["run", "view", &id, "--log"])
-        .await
-        .map_err(unavailable)
-}
-
-/// Asks GitHub to run it again.
-///
-/// **The one write this page has, and it is the reader's own press.** CI is the
-/// place a retry is the whole answer — a flake, a runner that died, a transient
-/// dependency — and the alternative is a trip to a browser for one button.
-///
-/// `failed_only` re-runs the jobs that failed rather than the whole workflow,
-/// which is what a reader who watched one job go red is asking for: the rest of
-/// the run already told them what it had to say, and re-running it spends their
-/// minutes and the repository's.
-///
-/// Answers nothing but `Ok`: `gh` prints its own progress, and the page re-reads
-/// the run afterwards, which is where the new state is read.
-#[tauri::command]
-pub async fn rerun_workflow(cwd: String, id: u64, failed_only: bool) -> Result<(), PrUnavailable> {
-    let id = id.to_string();
-    let mut args = vec!["run", "rerun", id.as_str()];
-    if failed_only {
-        args.push("--failed");
-    }
-
-    gh(&cwd, &args).await.map(|_| ()).map_err(unavailable)
-}
-
 #[tauri::command]
 pub async fn list_pull_requests(
     cwd: String,
@@ -2292,6 +1982,125 @@ pub async fn pull_request_by_number(
         .map_err(|e| unavailable(format!("could not read pull request #{number}: {e}")))?;
 
     Ok(raw.map())
+}
+
+/// A pull request's unified diff, for the chat's PR card.
+///
+/// Cut at 400 KB: a sheet that draws a whole monorepo bump is a sheet that hangs,
+/// and the end of the text says it was cut so the reader is sent to GitHub for
+/// the rest.
+#[tauri::command]
+pub async fn pr_diff(cwd: String, number: u64) -> Result<String, String> {
+    const CAP: usize = 400_000;
+    let mut diff = gh(&cwd, &["pr", "diff", &number.to_string(), "--color", "never"]).await?;
+    if diff.len() > CAP {
+        let mut cut = CAP;
+        while !diff.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        diff.truncate(cut);
+        diff.push_str("\n\n… diff cut here; the rest is on GitHub.\n");
+    }
+    Ok(diff)
+}
+
+/// Opens a pull request that undoes a merged one — the Undo the merge toast offers.
+///
+/// GitHub has no revert endpoint and `gh` none either, so this does the work in a
+/// throwaway detached worktree: branch from the base, `git revert` the merge
+/// commit, push the branch and open the PR. The worktree is removed on every
+/// path; the branch and PR are the only things left, and both are the reader's to
+/// close. Returns the new PR's URL.
+#[tauri::command]
+pub async fn revert_pr(cwd: String, number: u64) -> Result<String, String> {
+    let arg = number.to_string();
+    let out = gh(
+        &cwd,
+        &["pr", "view", &arg, "--json", "state,mergeCommit,baseRefName,title"],
+    )
+    .await?;
+    let v: serde_json::Value =
+        serde_json::from_str(&out).map_err(|e| format!("could not read GitHub's answer: {e}"))?;
+
+    if v["state"].as_str() != Some("MERGED") {
+        return Err("Only a merged pull request can be reverted.".into());
+    }
+    let oid = v["mergeCommit"]["oid"]
+        .as_str()
+        .ok_or("GitHub did not report the merge commit.")?
+        .to_string();
+    let base = v["baseRefName"].as_str().ok_or("GitHub did not report the base branch.")?.to_string();
+    let title = v["title"].as_str().unwrap_or("").to_string();
+    let branch = format!("revert-pr-{number}-{}", &oid[..oid.len().min(7)]);
+
+    let dir = std::env::temp_dir().join(format!("hz-revert-{number}-{}", std::process::id()));
+    let dir_s = dir.to_string_lossy().into_owned();
+
+    git_in(&cwd, &["fetch", "origin", &base]).await?;
+    git_in(&cwd, &["worktree", "add", "--detach", &dir_s, &format!("origin/{base}")]).await?;
+
+    let result = revert_in(&cwd, &dir_s, &oid, &branch, &base, number, &title).await;
+
+    // Removed on success and failure alike, or the next revert finds the path taken.
+    let _ = git_in(&cwd, &["worktree", "remove", "--force", &dir_s]).await;
+    result
+}
+
+async fn revert_in(
+    cwd: &str,
+    dir: &str,
+    oid: &str,
+    branch: &str,
+    base: &str,
+    number: u64,
+    title: &str,
+) -> Result<String, String> {
+    git_in(dir, &["checkout", "-b", branch]).await?;
+
+    // A merge commit reverts against its first parent — the side the PR was
+    // merged into. A squash or rebase merge has one parent and needs no flag.
+    let parents = git_in(dir, &["rev-list", "--parents", "-n", "1", oid]).await?;
+    let mut revert = vec!["revert", "--no-edit"];
+    if parents.split_whitespace().count() > 2 {
+        revert.extend(["-m", "1"]);
+    }
+    revert.push(oid);
+    git_in(dir, &revert).await?;
+
+    git_in(dir, &["push", "-u", "origin", &format!("HEAD:{branch}")]).await?;
+
+    let pr_title = format!("Revert \"{title}\"");
+    let body = format!("Reverts #{number}.");
+    gh(
+        cwd,
+        &[
+            "pr", "create", "--base", base, "--head", branch, "--title", &pr_title, "--body",
+            &body,
+        ],
+    )
+    .await
+    .map(|url| url.trim().to_string())
+}
+
+/// Runs git in `dir` and returns stdout, the error text on failure. The write
+/// paths here need the failure reason, which `git::exec` does not expose.
+async fn git_in(dir: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git")
+        .hide_console()
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            format!("git {} failed", args[0])
+        } else {
+            err
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Deletes a merged or closed PR's head branch from the remote, and nothing
@@ -3213,6 +3022,23 @@ mod tests {
         assert!(!prs[1].is_draft);
     }
 
+    /// The needs-you count is the viewer's review requests, read from a search
+    /// alias that answers by number. A pull request missing from that alias is
+    /// not asked of the reader, so the default has to be false, not an error.
+    #[test]
+    fn pr_marks_read_review_requests_from_the_search_alias() {
+        let out = r#"{"data":{
+            "requested":{"nodes":[{"number":9},{}]},
+            "repository":{
+              "open":{"nodes":[
+                {"number":9,"headRefName":"fix/a","isDraft":false},
+                {"number":8,"headRefName":"fix/b","isDraft":false}]},
+              "merged":{"nodes":[]}}}}"#;
+        let prs = read_pr_marks(out).expect("pr marks parse");
+        assert!(prs[0].review_requested);
+        assert!(!prs[1].review_requested);
+    }
+
     /// The merge fields ride the open half alone, so the merged half answers
     /// `None` for them. The frontend has to read that as *not knowing* rather
     /// than as nothing standing in the way — a merged mark reporting itself
@@ -3308,101 +3134,4 @@ mod tests {
         assert_eq!(MergeMethod::Merge.flag(), "--merge");
     }
 
-    /// A real capture: `gh run list --json` against this repository, ten runs of
-    /// three workflows — a push-triggered release, a cache warmer, and the
-    /// `dynamic` run GitHub starts for Pages on its own behalf.
-    const RUNS: &str = include_str!("fixtures/gh_run_list.json");
-
-    fn runs() -> Vec<WorkflowRun> {
-        let raw: Vec<RawRun> = serde_json::from_str(RUNS).expect("fixture parses");
-        raw.into_iter().map(RawRun::map).collect()
-    }
-
-    #[test]
-    fn a_run_carries_what_its_row_draws() {
-        let first = runs().into_iter().next().expect("a run");
-        assert_eq!(first.number, 70);
-        assert_eq!(first.event, "dynamic");
-        assert_eq!(first.status, "completed");
-        assert_eq!(first.conclusion.as_deref(), Some("success"));
-        assert_eq!(first.attempt, 1);
-        assert!(first.url.starts_with("https://github.com/"));
-        assert!(first.id > 0, "the run's own id, not its number");
-    }
-
-    /// **The display name, not the file's.** The Pages workflow declares
-    /// `pages-build-deployment` and draws `pages build and deployment`, and the
-    /// row shows what the repository's own page shows.
-    #[test]
-    fn a_workflow_is_named_the_way_github_names_it() {
-        assert!(runs().iter().any(|run| run.workflow.contains(' ')));
-    }
-
-    /// A real capture of a run that **failed**: `gh run view --json` against a
-    /// release that went red, which is the shape worth pinning — two jobs, one
-    /// of them with fourteen steps and a failure among them, and one skipped by
-    /// its own `if:` with no steps at all.
-    const RUN_VIEW: &str = include_str!("fixtures/gh_run_view.json");
-
-    #[test]
-    fn a_failed_run_carries_its_jobs_and_their_steps() {
-        let mut raw: RawRun = serde_json::from_str(RUN_VIEW).expect("fixture parses");
-        let jobs: Vec<WorkflowJob> = raw
-            .jobs
-            .take()
-            .expect("a view carries jobs")
-            .into_iter()
-            .map(RawJob::map)
-            .collect();
-        let run = raw.map();
-
-        assert_eq!(run.conclusion.as_deref(), Some("failure"));
-        assert_eq!(jobs.len(), 2);
-
-        let build = &jobs[0];
-        assert_eq!(build.name, "build");
-        assert_eq!(build.conclusion.as_deref(), Some("failure"));
-        assert_eq!(build.steps.len(), 14);
-        assert!(build.steps.iter().any(|step| step.conclusion.as_deref() == Some("failure")));
-        // Numbered from one, and in the order the workflow declares them — the
-        // run's own page numbers them the same way.
-        assert_eq!(build.steps[0].number, 1);
-        assert!(build.started_at.is_some());
-
-        // **Empty is a fact, not a gap.** A skipped job has no steps, and that
-        // — not its timestamps — is how you tell it from one that ran: this one
-        // carries a start time, which the capture is what settled.
-        let skipped = &jobs[1];
-        assert_eq!(skipped.conclusion.as_deref(), Some("skipped"));
-        assert!(skipped.steps.is_empty());
-        assert!(skipped.started_at.is_some());
-    }
-
-    /// A run in flight has no verdict and no start time. **Hand-written because
-    /// no capture holds one** — nothing was in flight when the fixture was
-    /// taken, and the difference between "waiting for a machine" and "running on
-    /// one" is exactly the `startedAt` that is absent here.
-    #[test]
-    fn a_run_that_has_not_finished_carries_no_conclusion() {
-        let raw: RawRun = serde_json::from_str(
-            r#"{"databaseId":1,"number":2,"name":"CI","displayTitle":"","headBranch":"main",
-                "headSha":"abc","event":"push","status":"queued","conclusion":"",
-                "startedAt":null,"createdAt":"2026-01-01T00:00:00Z",
-                "updatedAt":"2026-01-01T00:00:00Z","url":"https://example.test/1"}"#,
-        )
-        .expect("a queued run parses");
-        let run = raw.map();
-
-        assert_eq!(run.status, "queued");
-        // An empty string is GitHub's "not yet", and `Some("")` would be a
-        // verdict of nothing.
-        assert_eq!(run.conclusion, None);
-        assert_eq!(run.started_at, None);
-        // An absent `attempt` is the first one, never zero: no run has ever been
-        // the zeroth attempt.
-        assert_eq!(run.attempt, 1);
-        // A run whose title `gh` would not give falls back to the workflow's own
-        // name, since a nameless row is worse than a repeated one.
-        assert_eq!(run.title, "CI");
-    }
 }

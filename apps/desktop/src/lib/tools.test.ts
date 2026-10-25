@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { groupLabel, isRoutineError, mcpCall, skillBrief, streamingLabel, subagentBrief, toolLabel, toolSummary } from "./tools";
+import { groupLabel, isRoutineError, mcpCall, skillBrief, streamingLabel, subagentBrief, teamTool, toolLabel, toolSummary } from "./tools";
 
 // Every input here is a real `Skill` call taken out of `~/.hz/sessions`. The
 // harness classifies the tool as `other` and leaves `title` null, so the name
@@ -210,5 +210,14 @@ describe("subagentBrief", () => {
     expect(subagentBrief({ request: { action: "run", task: "   " } })).toBeNull();
     expect(subagentBrief({ request: "run" })).toBeNull();
     expect(subagentBrief(null)).toBeNull();
+  });
+});
+
+describe("teamTool", () => {
+  it("names the team's own tools and nothing else", () => {
+    expect(teamTool("mcp__team__team_message")).toBe("team_message");
+    expect(teamTool("mcp__team__team_list")).toBe("team_list");
+    expect(teamTool("mcp__other__team_message")).toBeNull();
+    expect(teamTool("Bash")).toBeNull();
   });
 });

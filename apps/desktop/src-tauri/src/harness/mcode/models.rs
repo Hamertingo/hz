@@ -38,35 +38,66 @@
 
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::sync::LazyLock;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::harness::ProbeCache;
+use crate::harness::{Harness, ProbeCache};
 use crate::models::{Effort, Model, ModelId};
 
 use super::parser::{ConfigOptions, ModelRef, NewSessionResult};
 use super::rpc::RpcClient;
-use crate::proc::HideConsole as _;
 
 /// How long a reading is trusted. Long, because a model list changes when the
 /// reader installs something or picks a different provider in the TUI, and the
 /// probe costs a session record in their history.
 const FRESH_FOR: Duration = Duration::from_secs(600);
 
-/// The one probe in flight at a time, keyed by nothing: mcode's list is global
-/// to the machine's configuration, not per project.
+/// One reading per harness, keyed by its wire name. Each agent's list is the
+/// machine's own — a login, not a project — but it is *that agent's*: Claude's
+/// `sonnet` is not OpenCode's `opencode/big-pickle`, and one shared slot would
+/// show whichever agent was read last.
 static CACHE: LazyLock<ProbeCache<Vec<Model>>> = LazyLock::new(|| ProbeCache::new(FRESH_FOR));
 
+/// One gate per harness, held by whatever is **starting that agent**.
+///
+/// A park and a model read both want the same agent at the same moment, and
+/// starting two Claudes at once was measured at 12s for the second's handshake
+/// against 4s for one. The park holds the gate while it opens; a read that finds
+/// the cache cold waits here, and by the time it gets in the park has filled the
+/// cache — so it never launches anything. Per harness, because Claude starting
+/// has nothing to say to OpenCode starting.
+pub fn launch_gate(harness: Harness) -> Arc<tokio::sync::Mutex<()>> {
+    static GATES: LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Default::default);
+
+    GATES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entry(harness.wire_name())
+        .or_default()
+        .clone()
+}
+
 /// Every model the agent offers, from the last reading or a fresh probe.
-pub async fn all() -> Vec<Model> {
-    if let Some(cached) = CACHE.peek("models") {
+pub async fn all(harness: Harness) -> Vec<Model> {
+    let key = harness.wire_name();
+    if let Some(cached) = CACHE.peek(&key) {
         return cached;
     }
 
-    match probe().await {
+    // Behind whoever is starting this agent, then looked at again: the one that
+    // held the gate has very likely answered the question already.
+    let gate = launch_gate(harness);
+    let _starting = gate.lock().await;
+    if let Some(cached) = CACHE.peek(&key) {
+        return cached;
+    }
+
+    match probe(harness).await {
         Ok(models) if !models.is_empty() => {
-            CACHE.insert("models", models.clone());
+            CACHE.insert(&key, models.clone());
             models
         }
         // An unreadable probe is not a reason to draw nothing: the reader still
@@ -77,11 +108,29 @@ pub async fn all() -> Vec<Model> {
 }
 
 /// The row an id names, if the last reading has it.
-pub async fn find(id: &ModelId) -> Option<Model> {
+pub async fn find(harness: Harness, id: &ModelId) -> Option<Model> {
     if id.is_unset() {
         return None;
     }
-    all().await.into_iter().find(|m| &m.id == id)
+    all(harness).await.into_iter().find(|m| &m.id == id)
+}
+
+/// The row an id names **if a reading is already in hand**, and never a probe.
+///
+/// For the park, which must not pay for a second child to find a model: it is the
+/// park itself that fills the cache (every session reply restates the list), and
+/// the send that adopts it applies whatever the reader picked in the meantime. A
+/// cold cache here means "open on the agent's own default", and that is the
+/// honest answer rather than a 2.5-second wait for a process that exists only to
+/// say so.
+pub fn find_cached(harness: Harness, id: &ModelId) -> Option<Model> {
+    if id.is_unset() {
+        return None;
+    }
+    CACHE
+        .peek(&harness.wire_name())?
+        .into_iter()
+        .find(|m| &m.id == id)
 }
 
 /// Drops the cached answer, so the next read probes again.
@@ -102,25 +151,32 @@ pub fn forget() {
 /// A reply that names no model is ignored rather than stored: an empty list
 /// would blank a picker that already has a good answer, which is the same
 /// direction [`all`] takes when its probe fails.
-pub fn remember_configs(configs: &ConfigOptions) {
-    let models = from_configs(configs);
+pub fn remember_configs(harness: Harness, configs: &ConfigOptions) {
+    let models = from_configs(harness, configs);
     if models.is_empty() {
         return;
     }
-    CACHE.insert("models", models);
+    CACHE.insert(&harness.wire_name(), models);
 }
 
 /// The models a session's own `configOptions` state.
 ///
 /// Pure, so a test can hand it a reply and the picker logic is pinned without a
 /// child. `efforts` is filled on the active row alone — see the module note.
-pub fn from_configs(configs: &ConfigOptions) -> Vec<Model> {
+pub fn from_configs(harness: Harness, configs: &ConfigOptions) -> Vec<Model> {
+    // mcode's rows carry provider and variant in the value itself
+    // (`m:<provider>:<model>:v:<variant>`). The three agents hz runs on the
+    // reader's own install do not: a row is a plain id and a name.
+    if harness != Harness::Mcode {
+        return from_acp(harness, configs);
+    }
+
     let Some(option) = configs.option("model") else {
         return Vec::new();
     };
 
     let active = configs.model();
-    let active_efforts = effort_levels(configs).unwrap_or_default();
+    let active_efforts = effort_levels(harness, configs).unwrap_or_default();
 
     option
         .options
@@ -232,6 +288,65 @@ pub fn from_configs(configs: &ConfigOptions) -> Vec<Model> {
         .collect()
 }
 
+/// The models a Claude, Codex or OpenCode session states, off its `model` option.
+///
+/// Plain on purpose. Each row is an id and the agent's own name for it, and that
+/// is all the three give: no context window, no per-row ladder. The ladder is the
+/// *running* model's, stated by the session's own effort option, so it is filled on
+/// that row alone — a pick re-reads it from the reply to the pick itself.
+///
+/// OpenCode spells a row `provider/model`, which is the only structure any of them
+/// carries, so the provider is taken off the front of it for the picker to group
+/// by. Every row takes images: the three advertise `image: true` at `initialize`.
+fn from_acp(harness: Harness, configs: &ConfigOptions) -> Vec<Model> {
+    let Some(option) = configs.option("model") else {
+        return Vec::new();
+    };
+
+    let active = configs.model();
+    let ladder = effort_levels(harness, configs).unwrap_or_default();
+    let on = super::dialect::options(harness)
+        .effort
+        .and_then(|id| configs.current(id))
+        .and_then(Effort::from_arg);
+
+    option
+        .options
+        .iter()
+        .filter(|choice| !choice.value.is_empty())
+        .map(|choice| {
+            let running = Some(choice.value.as_str()) == active;
+            let provider = choice
+                .value
+                .split_once('/')
+                .map(|(provider, _)| provider.to_string())
+                .unwrap_or_default();
+
+            Model {
+                id: ModelId::new(&choice.value),
+                label: if choice.name.is_empty() {
+                    choice.value.clone()
+                } else {
+                    choice.name.clone()
+                },
+                base_id: String::new(),
+                variant: String::new(),
+                context_window: None,
+                max_tokens: None,
+                efforts: if running { ladder.clone() } else { Vec::new() },
+                default_effort: if running { on } else { None },
+                arg: choice.value.clone(),
+                provider,
+                accepts_images: true,
+                secondary: false,
+                // Codex alone has a `fast-mode` option, and it is the session's,
+                // not a model's — so every row offers it or none does.
+                supports_fast: harness == Harness::Codex,
+            }
+        })
+        .collect()
+}
+
 /// The levels a row's own `_meta` states, in the agent's order.
 ///
 /// Filtered the way the session's ladder is: a rung this app cannot spell is
@@ -276,8 +391,11 @@ fn landing_effort(stated: Option<&str>, ladder: &[Effort]) -> Option<Effort> {
 /// in the union was stated by the agent for this session either way, so offering
 /// it back cannot ask for something the model refuses — it is the level already
 /// running.
-pub fn effort_levels(configs: &ConfigOptions) -> Option<Vec<Effort>> {
-    let levels = configs.levels("thinkingEffort")?;
+pub fn effort_levels(harness: Harness, configs: &ConfigOptions) -> Option<Vec<Effort>> {
+    // `None` for an agent with no effort option at all (OpenCode), which reads
+    // as "this model does not reason", the same answer an absent option gives.
+    let id = super::dialect::options(harness).effort?;
+    let levels = configs.levels(id)?;
     Some(
         levels
             .into_iter()
@@ -297,22 +415,20 @@ pub fn effort_levels(configs: &ConfigOptions) -> Option<Vec<Effort>> {
 /// bound to the `cwd` it is opened in, and a probe has no business owning a
 /// tree it did not choose. The child is closed either way — a probe that leaks
 /// one would keep a session alive for the life of the app.
-pub async fn probe() -> Result<Vec<Model>> {
-    let bin = crate::binpath::mcode().await;
-    let scratch = std::env::temp_dir().join("hz-mcode-probe");
+pub async fn probe(harness: Harness) -> Result<Vec<Model>> {
+    let scratch = std::env::temp_dir().join(format!("hz-{}-probe", harness.wire_name()));
     let _ = std::fs::create_dir_all(&scratch);
 
-    let mut command = tokio::process::Command::new(&bin).hide_console();
-    crate::harness::agent_env(&mut command, &bin).await;
-    let mut child = command
-        .arg("acp")
-        .current_dir(&scratch)
+    // Started exactly as a session's own child is, so a probe cannot succeed on a
+    // launch no session would use.
+    let mut child = super::child_command(harness, &scratch.to_string_lossy())
+        .await?
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .context("could not start mcode acp")?;
+        .with_context(|| format!("could not start {}", harness.label()))?;
 
     let stdin = child.stdin.take().context("mcode has no stdin")?;
     let stdout = child.stdout.take().context("mcode has no stdout")?;
@@ -365,7 +481,7 @@ pub async fn probe() -> Result<Vec<Model>> {
     // Answer nothing and read nothing else: the reply to `session/new` is the
     // whole of what a probe wants, and the session is closed by closing the
     // child.
-    let models = from_configs(&NewSessionResult::of(&started).configs());
+    let models = from_configs(harness, &NewSessionResult::of(&started).configs());
 
     client.close();
     let _ = child.start_kill();
@@ -389,7 +505,7 @@ async fn the_shipped_agent_opens_a_session() {
     let bin = crate::binpath::mcode().await;
     assert!(bin.is_absolute(), "the agent resolved to {bin:?}");
 
-    let models = probe().await.expect("the shipped agent answers");
+    let models = probe(Harness::Mcode).await.expect("the shipped agent answers");
     assert!(!models.is_empty(), "the agent listed no models: {models:?}");
 }
 
@@ -417,7 +533,7 @@ mod tests {
     /// account's four are not among them.**
     #[test]
     fn the_model_option_becomes_the_pickers_rows() {
-        let models = from_configs(&configs());
+        let models = from_configs(Harness::Mcode, &configs());
 
         // The capture is a real session's list: 41 models, four of which are
         // the agent's own account. Those four are what this drops, so the count
@@ -466,7 +582,7 @@ mod tests {
             }]
         });
 
-        let models = from_configs(&ConfigOptions::of(&reply));
+        let models = from_configs(Harness::Mcode, &ConfigOptions::of(&reply));
 
         assert_eq!(models[0].base_id, models[1].base_id);
         assert_eq!(models[0].variant, "");
@@ -494,15 +610,15 @@ mod tests {
             }]
         });
 
-        assert!(from_configs(&ConfigOptions::of(&reply)).is_empty());
+        assert!(from_configs(Harness::Mcode, &ConfigOptions::of(&reply)).is_empty());
     }
 
     /// mcode takes no images at all, so no row may claim it does — an image
     /// tray that offers to attach a screenshot to a model that cannot read one
     /// fails at the send with a sentence the reader cannot act on.
     #[test]
-    fn no_row_claims_to_take_an_image() {        assert!(from_configs(&configs()).iter().all(|m| !m.accepts_images));
-        assert!(from_configs(&configs()).iter().all(|m| !m.supports_fast));
+    fn no_row_claims_to_take_an_image() {        assert!(from_configs(Harness::Mcode, &configs()).iter().all(|m| !m.accepts_images));
+        assert!(from_configs(Harness::Mcode, &configs()).iter().all(|m| !m.supports_fast));
     }
 
     /// The ladder stated is the active model's, and no other row may borrow it —
@@ -511,8 +627,8 @@ mod tests {
     fn only_the_active_row_carries_a_ladder() {
         // The capture's model is a BYOK one with no `effortOptions`, so mcode
         // sent no `thinkingEffort` option at all.
-        assert_eq!(effort_levels(&configs()), None);
-        assert!(from_configs(&configs()).iter().all(|m| m.efforts.is_empty()));
+        assert_eq!(effort_levels(Harness::Mcode, &configs()), None);
+        assert!(from_configs(Harness::Mcode, &configs()).iter().all(|m| m.efforts.is_empty()));
     }
 
     /// A ladder is read off the option when there is one, with the level in use
@@ -550,14 +666,14 @@ mod tests {
         // it is the level the session is on, and a picker that cannot draw where
         // it is draws a row with no effort at all.
         assert_eq!(
-            effort_levels(&configs),
+            effort_levels(Harness::Mcode, &configs),
             Some(vec![Effort::Low, Effort::Medium, Effort::High])
         );
 
         // The active row carries that ladder and names the level in force; no
         // other row carries either, since one reading cannot know what a model
         // it is not running takes.
-        let models = from_configs(&configs);
+        let models = from_configs(Harness::Mcode, &configs);
         assert_eq!(models[0].efforts, vec![Effort::Low, Effort::Medium, Effort::High]);
         assert_eq!(models[0].default_effort, Some(Effort::Medium));
     }
@@ -588,7 +704,7 @@ mod tests {
             ]
         });
 
-        let models = from_configs(&ConfigOptions::of(&reply));
+        let models = from_configs(Harness::Mcode, &ConfigOptions::of(&reply));
 
         assert_eq!(models[0].efforts, vec![Effort::High]);
         assert_eq!(models[0].default_effort, Some(Effort::High));
@@ -631,7 +747,7 @@ mod tests {
             ]
         });
 
-        let models = from_configs(&ConfigOptions::of(&reply));
+        let models = from_configs(Harness::Mcode, &ConfigOptions::of(&reply));
 
         assert_eq!(
             models[0].efforts,
@@ -684,7 +800,7 @@ mod tests {
             ]
         });
 
-        let models = from_configs(&ConfigOptions::of(&reply));
+        let models = from_configs(Harness::Mcode, &ConfigOptions::of(&reply));
 
         // The row the session runs keeps the session's own statement, which is
         // the ladder unioned with the level it sits on.
@@ -728,14 +844,145 @@ mod tests {
                 }
             ]
         });
-        remember_configs(&ConfigOptions::of(&reply));
+        remember_configs(Harness::Mcode, &ConfigOptions::of(&reply));
 
-        let listed = all().await;
+        let listed = all(Harness::Mcode).await;
 
         assert_eq!(listed.len(), 1);
         assert_eq!(
             listed[0].id,
             ModelId::new("m:custom_provider%3Aopencode-go:minimax-m3:v:thinking")
         );
+    }
+}
+
+/// Starts each agent the way a session would and asks for its model list, with a
+/// clock. Ignored by default: it launches the reader's own CLIs (and installs the
+/// two adapters into `~/.hz/adapters` the first time) and reads their login, so it runs on request and not in CI.
+#[tokio::test]
+#[ignore = "starts the reader's own Claude, Codex and OpenCode"]
+async fn live_each_agent_answers_a_model_list() {
+    for harness in [Harness::OpenCode, Harness::Claude, Harness::Codex] {
+        let started = std::time::Instant::now();
+        let listed = tokio::time::timeout(Duration::from_secs(90), probe(harness)).await;
+        eprintln!("[live probe] {} {:?} {:.2}s", harness.label(), listed.as_ref().map(|r| r.as_ref().map(Vec::len)), started.elapsed().as_secs_f64());
+        let models = listed.expect("the probe never answered").expect("the probe failed");
+        assert!(!models.is_empty(), "{harness:?} listed no models");
+    }
+}
+
+/// The three agents hz runs on the reader's own install, read off **real**
+/// `session/new` replies (`fixtures/*_new_session.jsonl`). Nothing is built by
+/// hand here: the point of these is that the shapes are the adapters' own.
+#[cfg(test)]
+mod acp_tests {
+    use super::*;
+
+    const CLAUDE: &str = include_str!("fixtures/claude_new_session.jsonl");
+    const CODEX: &str = include_str!("fixtures/codex_new_session.jsonl");
+    const OPENCODE: &str = include_str!("fixtures/opencode_new_session.jsonl");
+
+    /// The `result` of the reply to request 2, which is `session/new` in every
+    /// capture.
+    fn configs(capture: &str) -> ConfigOptions {
+        let reply = capture
+            .lines()
+            .filter_map(|line| line.strip_prefix("<< "))
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|value| value["id"] == 2)
+            .expect("the capture holds a reply to session/new");
+        NewSessionResult::of(&reply["result"]).configs()
+    }
+
+    #[test]
+    fn claude_lists_its_models_and_states_the_running_ones_ladder() {
+        let configs = configs(CLAUDE);
+        let models = from_configs(Harness::Claude, &configs);
+
+        assert!(models.iter().any(|m| m.id.to_string() == "opus"));
+        let running = models.iter().find(|m| m.id.to_string() == "sonnet").expect("sonnet");
+        // `default` is on the adapter's list and is not a rung this app can send.
+        assert_eq!(
+            running.efforts,
+            [Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh, Effort::Max]
+        );
+        assert_eq!(running.default_effort, Some(Effort::Medium));
+        // A ladder belongs to the model it was stated for.
+        assert!(models.iter().filter(|m| m.id.to_string() != "sonnet").all(|m| m.efforts.is_empty()));
+        assert!(!running.supports_fast);
+    }
+
+    #[test]
+    fn codex_has_the_ladder_up_to_ultra_and_offers_fast_mode() {
+        let configs = configs(CODEX);
+        let models = from_configs(Harness::Codex, &configs);
+
+        assert_eq!(models.len(), 7);
+        let running = models.iter().find(|m| m.id.to_string() == "gpt-6.1-sol").expect("the running model");
+        assert_eq!(
+            running.efforts,
+            [Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh, Effort::Max, Effort::Ultra]
+        );
+        assert_eq!(running.default_effort, Some(Effort::High));
+        assert!(models.iter().all(|m| m.supports_fast));
+    }
+
+    #[test]
+    fn opencode_has_no_effort_at_all_and_groups_rows_by_provider() {
+        let configs = configs(OPENCODE);
+        let models = from_configs(Harness::OpenCode, &configs);
+
+        assert_eq!(models.len(), 40);
+        // No `thought_level` option: the answer is "none", not an empty ladder.
+        assert_eq!(effort_levels(Harness::OpenCode, &configs), None);
+        assert!(models.iter().all(|m| m.efforts.is_empty() && m.default_effort.is_none()));
+
+        let running = models.iter().find(|m| m.id.to_string() == "opencode/big-pickle").expect("running");
+        assert_eq!(running.provider, "opencode");
+        assert!(models.iter().any(|m| m.provider == "opencode-go"));
+    }
+
+    #[test]
+    fn every_row_takes_images_because_every_agent_said_so() {
+        for (harness, capture) in [
+            (Harness::Claude, CLAUDE),
+            (Harness::Codex, CODEX),
+            (Harness::OpenCode, OPENCODE),
+        ] {
+            let models = from_configs(harness, &configs(capture));
+            assert!(!models.is_empty(), "{harness:?} listed nothing");
+            assert!(models.iter().all(|m| m.accepts_images));
+        }
+    }
+
+    #[test]
+    fn the_park_finds_a_model_in_hand_and_never_starts_an_agent_to_look() {
+        remember_configs(Harness::Claude, &configs(CLAUDE));
+
+        let sonnet = ModelId::new("sonnet");
+        assert!(find_cached(Harness::Claude, &sonnet).is_some());
+        // Codex was never read in this process: cold means `None` at once, where
+        // `find` would have launched an adapter for it.
+        assert!(find_cached(Harness::Codex, &ModelId::new("gpt-6.1-sol")).is_none());
+        // And an unset pick names nothing, warm cache or not.
+        assert!(find_cached(Harness::Claude, &ModelId::default()).is_none());
+    }
+
+    #[test]
+    fn starting_one_agent_does_not_wait_on_another_but_waits_on_itself() {
+        assert!(Arc::ptr_eq(&launch_gate(Harness::Claude), &launch_gate(Harness::Claude)));
+        assert!(!Arc::ptr_eq(&launch_gate(Harness::Claude), &launch_gate(Harness::Codex)));
+    }
+
+    #[test]
+    fn a_cache_slot_per_harness_keeps_the_lists_apart() {
+        remember_configs(Harness::Claude, &configs(CLAUDE));
+        remember_configs(Harness::OpenCode, &configs(OPENCODE));
+
+        let claude = CACHE.peek(&Harness::Claude.wire_name()).expect("claude's slot");
+        let opencode = CACHE.peek(&Harness::OpenCode.wire_name()).expect("opencode's slot");
+        assert!(claude.iter().any(|m| m.id.to_string() == "sonnet"));
+        assert!(!claude.iter().any(|m| m.id.to_string().contains('/')));
+        assert_eq!(opencode.len(), 40);
     }
 }

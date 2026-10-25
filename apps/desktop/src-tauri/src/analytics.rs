@@ -74,8 +74,8 @@ fn host() -> &'static str {
 /// is a task outliving the thing it was reporting about.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Shared, because a `Client` owns the connection pool — the same reason
-/// `linear.rs` keeps one.
+/// Shared, because a `Client` owns the connection pool and a fresh one per
+/// call would open a new pool every time.
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 

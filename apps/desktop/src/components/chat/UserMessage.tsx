@@ -1,4 +1,3 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Image, Paperclip } from "lucide-react";
 import { memo, type CSSProperties } from "react";
 
@@ -17,13 +16,18 @@ import {
   withLineBreaks,
   withPaths,
 } from "@/lib/highlight";
-import { issueUrl, parseIdentifier } from "@/lib/issue";
 import { openLink } from "@/lib/openLink";
 import { commandBrand } from "@/lib/pluginBrand";
-import { stripSenderPrefix } from "@/lib/relay";
+import MessageShell, { PersonFace } from "@/components/chat/MessageShell";
+import TeamReceived from "@/components/chat/TeamReceived";
+import { useAgentChatActions } from "@/hooks/useAgentChat";
+import { useMe } from "@/hooks/useMe";
+import { clockTime } from "@/lib/format";
+import { isHiddenPrompt } from "@/lib/intro";
+import { stripSenderPrefix, teamBody } from "@/lib/relay";
 import { shortenPath } from "@/lib/tools";
 import { cn } from "@/lib/utils";
-import type { ImageRef, IssueRef, MessageSender } from "@/types/events";
+import type { ImageRef, MessageSender, ReplyTo } from "@/types/events";
 
 /// The user's own text, echoed from the event log rather than local state — the
 /// backend synthesizes and persists it, so this renders the same live or replayed.
@@ -48,12 +52,6 @@ import type { ImageRef, IssueRef, MessageSender } from "@/types/events";
 /// back off here, since the row above already says who is talking — safe to
 /// mute precisely because the field, not the prose, is what draws it.
 ///
-/// An issue tag is the one coloured run that is also a *link*: it opens the
-/// issue in the tracker, where the reader can act on it rather than only read
-/// it. The URL comes off the event's own `issues` and never out of the text, so
-/// a tag naming an issue that never resolved stays coloured and inert instead
-/// of becoming a link to nowhere.
-///
 /// Memoised, and the row it protects is the most expensive of the small ones:
 /// every render re-runs the mention, path, line-break and brand scans over the
 /// prompt. All of its props are the prompt's own fields — strings, and the two
@@ -64,17 +62,16 @@ import type { ImageRef, IssueRef, MessageSender } from "@/types/events";
 function UserMessage({
   text,
   images = [],
-  issues = [],
   from = null,
   cwd: writtenIn = null,
+  ts = "",
+  eventId,
+  seq,
+  replyTo = null,
   onOpenSession,
 }: {
   text: string;
   images?: ImageRef[];
-  /// What this prompt was tagged with. Not drawn — the tags are already in the
-  /// sentence — but it is where a tag's link comes from, since a URL recovered
-  /// from prose would be a guess.
-  issues?: IssueRef[];
   /// The session that relayed this, or `null` for a prompt the user typed.
   from?: MessageSender | null;
   /// The working directory this prompt was written in, where it is not the
@@ -85,13 +82,27 @@ function UserMessage({
   /// Opens the sending session. Absent where nothing can navigate, which draws
   /// the attribution as a plain line rather than hiding it.
   onOpenSession?: (sessionId: string) => void;
+  /// When it was sent, for a teammate's message, which is drawn as a dated line.
+  ts?: string;
+  /// The event this message is, which keys its reactions.
+  eventId?: string;
+  /// Its place in the log, which a reply to it points at.
+  seq?: number;
+  /// What this prompt answers, when the reader used Reply.
+  replyTo?: ReplyTo | null;
 }) {
   // The recorded one wins where there is one. A fork carries its parent's
   // conversation into a different tree, so a mention resolved against the
   // session's own cwd there would open the fork's copy of the file rather than
   // the one this message named.
   const { cwd: sessionCwd } = useChatSession();
+  const chat = useAgentChatActions();
+  const me = useMe();
+  const inAgentChat = chat !== null;
   const cwd = writtenIn ?? sessionCwd;
+  // A teammate's message is a card of its own, not a bubble: it is not the
+  // reader's words, and the agent's name is the point of it.
+  const team = teamBody(text, from);
   const body = withLineBreaks(stripSenderPrefix(text, from));
   const segments = withPaths(highlightSegments(body));
 
@@ -104,8 +115,14 @@ function UserMessage({
   // those, so this row is what is left to say about them.
   const missing = images.filter((image) => !image.path && !image.url);
 
-  return (
-    <div className="flex flex-col items-end gap-1.5">
+  if (from && team !== null) return <TeamReceived from={from} text={team} ts={ts} />;
+
+  // The agent's opening prompt is for the model alone: the chat starts with its
+  // greeting, not with a request nobody typed.
+  if (isHiddenPrompt(text)) return null;
+
+  const content = (
+    <div className={cn("flex flex-col gap-1.5", inAgentChat ? "items-start" : "items-end")}>
       {/* Topmost, above even the attachments: who is talking is read before
           anything they sent. The mark is generated from the session's id rather
           than fetched — a session is not an account and has no picture — so it
@@ -136,7 +153,14 @@ function UserMessage({
         // this sits *in* the transcript rather than floating at the window's
         // edge, and the crisper one read as an edge cut under it.
         <div
-          className="user-bubble max-w-[85%] rounded-xl bg-card px-3 py-2 text-card-foreground shadow-(--shadow-card)"
+          className={cn(
+            // In an agent chat the reader's words are a row like everyone's, not a
+            // raised bubble on the right — so it also goes without `user-bubble`,
+            // whose palette rules would fill it.
+            inAgentChat
+              ? "max-w-full text-foreground"
+              : "user-bubble max-w-[85%] rounded-xl bg-card px-3 py-2 text-card-foreground shadow-(--shadow-card)",
+          )}
           // The colour rides in and App.css paints it — a palette that fills
           // this bubble has to answer differently to one that doesn't, and only
           // the palette knows which it is. `data-brand` is what the rules match
@@ -170,8 +194,7 @@ function UserMessage({
                 const { name } = splitMention(segment.text);
                 const raw = segment.text.slice(1);
                 // Written against the agent's own working directory, which is
-                // what the context carries. Inert without one, the same resting
-                // state an unresolved issue tag has.
+                // what the context carries. Inert without one.
                 const path = absolutePath(raw, cwd);
 
                 if (!path) {
@@ -239,37 +262,6 @@ function UserMessage({
                 );
               }
 
-              if (segment.kind === "issue") {
-                const identifier = parseIdentifier(segment.text.slice(1));
-                const url = identifier ? issueUrl(issues, identifier) : null;
-
-                // Inert without a link, which is the resting state of a tag
-                // whose issue never resolved — a button that opens nothing is
-                // worse than a word that was never one.
-                if (!url) {
-                  return (
-                    <span key={i} className={SEGMENT_COLOR.issue}>
-                      {segment.text}
-                    </span>
-                  );
-                }
-
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    title={`Open ${identifier} in ${new URL(url).hostname}`}
-                    // Underlined on hover rather than at rest: the colour
-                    // already sets it apart from the sentence, and a permanent
-                    // underline through a prompt reads as a correction.
-                    className={cn(SEGMENT_COLOR.issue, "cursor-pointer hover:underline")}
-                    onClick={() => void openUrl(url)}
-                  >
-                    {segment.text}
-                  </button>
-                );
-              }
-
               if (segment.kind === "url") {
                 return (
                   <button
@@ -329,6 +321,23 @@ function UserMessage({
       ))}
 
     </div>
+  );
+
+  if (!inAgentChat) return content;
+
+  return (
+    <MessageShell
+      face={<PersonFace />}
+      name={me.name || "You"}
+      time={clockTime(ts)}
+      copy={body || undefined}
+      reactKey={chat?.sessionId && eventId ? `${chat.sessionId}:${eventId}` : undefined}
+      seq={seq}
+      author="me"
+      quote={replyTo}
+    >
+      {content}
+    </MessageShell>
   );
 }
 

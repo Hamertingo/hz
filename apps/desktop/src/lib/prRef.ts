@@ -11,7 +11,7 @@
 /// `#7 is up`, and every sentence that names the thing on the second mention.
 /// The cost is stated — `step #7` is drawn as a reference that opens nothing,
 /// which is the same coin GitHub spends.
-import { OPENERS } from "@/lib/issue";
+import { OPENERS } from "@/lib/highlight";
 
 /// A reference and the run of text it occupies.
 export type PrRef = {
@@ -37,10 +37,10 @@ function endsTheRun(text: string, i: number): boolean {
 
 /// Every pull request a message names.
 ///
-/// The `#` has to open a word, the same rule [issue.ts](./issue.ts) states for a
-/// tag and for the same reason: an email, a colour and a markdown heading are
-/// all a `#` in the middle of something else. Bracketing punctuation counts as
-/// opening one, so `(#7)` is a reference inside a sentence.
+/// The `#` has to open a word, for the reason a mention does: an email, a colour
+/// and a markdown heading are all a `#` in the middle of something else.
+/// Bracketing punctuation counts as opening one, so `(#7)` is a reference inside
+/// a sentence.
 export function findPrRefs(text: string): PrRef[] {
   const out: PrRef[] = [];
 

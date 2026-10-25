@@ -15,6 +15,8 @@ import {
 import { clearStash } from "@/hooks/useStash";
 import { clearFanOut, fanOutModels } from "@/hooks/useModelFanOut";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
+import { isHiddenSession } from "@/lib/sessionRoute";
+import { isSessionMuted, rosterClaim, useRoster } from "@/lib/roster";
 import { canFanOut, fanOutPlan } from "@/lib/fanOut";
 import { changeRange } from "@/lib/changes";
 import { compactingOf } from "@/lib/compaction";
@@ -29,11 +31,10 @@ import { isActive } from "@/lib/subagent";
 import { isProvisional, nextMainSeq, provisionalId, retireOldestProvisional } from "@/lib/provisional";
 import { tracked } from "@/lib/slow";
 import { playNotification } from "@/lib/sound";
-import { activeSpace, allowedInSpace, SPACE_KEY, SPACE_LIST_KEY } from "@/lib/space";
 import type { QuestionAnswer } from "@/lib/questionnaire";
 import { pendingAsksOf, prependOlderPage } from "@/lib/transcript";
 import { isWorkspaceRoot, sessionTargetPath } from "@/lib/target";
-import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, IssueRef, Model, ModelId, Project, QueuedMessage, RepoSummary, SendOutcome, Goal, GoalEvent, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
+import type { AgentEvent, ApprovalPolicy, Attachment, BackgroundTask, BranchList, ContextWindow, DelegatedMember, DelegationEvent, Effort, Harness, ImageRef, Model, ModelId, Project, QueuedMessage, RepoSummary, ReplyTo, SendOutcome, Goal, GoalEvent, SessionIndexItem, SessionSnapshot, SessionStatus, SessionStatusEvent, SessionTitleEvent, SlashCommand, SlashCommandsEvent } from "../types/events";
 
 const DEFAULT_EFFORT: Effort = "high";
 
@@ -455,7 +456,11 @@ const effort: Effort | null = model
 // The Agent a new session runs *as*, or `null` for the runtime's own default.
 // Held as one sticky pref rather than derived: there is nothing to resolve it
 // against, and the pick *is* the value.
-const agentName = prefs.agentName;
+// The roster agent the next session is for. The three CLIs have no agent
+// picker of their own, so the field that carried mcode's carries the agent's id:
+// it is part of the park's identity, which keeps one agent's reserved session
+// from being adopted by another.
+const agentName = useRoster().pendingId;
 
 const setAgentName = (next: string | null) => {
   setPrefs({ ...prefs, agentName: next });
@@ -549,6 +554,50 @@ const handleAttachProject = async () => {
   }
 };
 
+// Picks a folder and answers its path, for the new-agent dialog: the agent
+// carries the folder, so the dialog has to know which one was chosen where the
+// composer's own attach just selects it.
+const pickProjectFolder = async (): Promise<string | null> => {
+  const picked = await open({ directory: true, multiple: false });
+  if (typeof picked !== "string") return null;
+
+  try {
+    setProjects(await invoke<Project[]>("add_project", { path: picked }));
+    return picked;
+  } catch (e) {
+    setError(String(e));
+    return null;
+  }
+};
+
+// Puts the composer on an agent's own target in one step: its CLI, its model and
+// its folder. One call rather than `setHarness` then `handleModelChange`, since
+// each reads the prefs of the render it ran in and the second would undo the
+// first's write. A model of `null` keeps that CLI's remembered pick.
+const applyAgent = (agent: {
+  harness: Harness;
+  modelId: ModelId | null;
+  effort: Effort | string | null;
+  projectPath: string | null;
+  permission: ApprovalPolicy | null;
+}) => {
+  setHarnessState(agent.harness);
+  const nextModel = agent.modelId ?? rememberedModel(prefs.modelByHarness, agent.harness);
+  setModelId(nextModel);
+  const modelByHarness = { ...prefs.modelByHarness, [agent.harness]: nextModel };
+  if (agent.effort) {
+    const nextEfforts = { ...effortByModel, [nextModel]: agent.effort as Effort };
+    setEffortByModel(nextEfforts);
+    setPrefs({ harness: agent.harness, modelByHarness, effortByModel: nextEfforts });
+  } else {
+    setPrefs({ harness: agent.harness, modelByHarness });
+  }
+  if (agent.projectPath) handleSelectProject(agent.projectPath);
+  if (agent.permission) setPermissionMode(stanceFor(agent.harness, agent.permission));
+  // An agent runs in its folder, not in a tree of its own.
+  setUseWorktree(false);
+};
+
 // Detaches a project. Sessions that ran in it keep their own recorded paths and
 // stay in the sidebar — this is the picker's list, not the work. The composer
 // moves to whatever is left, since a pick nothing lists can still be sent in.
@@ -562,34 +611,9 @@ const handleRemoveProject = async (path: string) => {
   }
 };
 
-// Files a project under a space, or clears it with `null`. Settings is the only
-// caller: the sidebar's switcher moves the reader between spaces, never a
-// project between them.
-const setProjectSpace = async (path: string, space: string | null) => {
-  try {
-    setProjects(await invoke<Project[]>("set_project_space", { path, space }));
-  } catch (e) {
-    setError(String(e));
-  }
-};
-
-// Moves every project in one space to another, or out of any space with `null`.
-// One call, so a rename or a removal cannot half-happen: answers `false` where
-// nothing was written, which is what lets the caller keep its own record of
-// which spaces exist in step with the tags.
-const retagSpace = async (from: string, to: string | null) => {
-  try {
-    setProjects(await invoke<Project[]>("retag_space", { from, to }));
-    return true;
-  } catch (e) {
-    setError(String(e));
-    return false;
-  }
-};
-
-// `null` is no project at all, which a space holding none is — and it has to be
-// reachable, since a stale pick still sends: the picker draws "Attach project"
-// while `send_msg` runs happily in the project the reader just walked away from.
+// `null` is no project at all, and it has to be reachable: a stale pick still
+// sends, since the picker draws "Attach project" while `send_msg` runs happily in
+// the project the reader just walked away from.
 const handleSelectProject = (path: string | null) => {
   setProjectPath(path);
   if (path === null) return;
@@ -730,6 +754,7 @@ const provisionalPrompt = (
   ts: string,
   // A new session holds no events and starts at 0.
   seq = 0,
+  replyTo: ReplyTo | null = null,
 ): AgentEvent => ({
   id,
   sessionId,
@@ -742,10 +767,10 @@ const provisionalPrompt = (
     type: "user_message",
     text,
     images: imagesOf(attachments),
-    issues: [],
     baseline: null,
     queued: false,
     from: null,
+    replyTo,
     cwd: null,
   },
   raw: null,
@@ -780,10 +805,13 @@ const upsertSession = (snapshot: SessionSnapshot) =>
 ///
 /// One ref for one child, because the id has to reach the **spawn**: `spawn` is
 /// where `HZ_SESSION_ID` is fixed, and the hz CLI reads it as the default session
-/// for `hz issue link` for the rest of that child's life. So the composer mints
-/// it early and the send reuses it — minting a second one would leave the parked
-/// process orphaned and pay the boot anyway.
-const preparedRef = useRef<{ id: string; cwd: string } | null>(null);
+/// for the rest of that child's life. So the composer mints it early and the send
+/// reuses it — minting a second one would leave the parked process orphaned and
+/// pay the boot anyway.
+/// How long the model list waits for a park before reading on its own.
+const PARK_PATIENCE_MS = 8000;
+
+const preparedRef = useRef<{ id: string; cwd: string; harness: Harness } | null>(null);
 
 /// The same id, in state, for the one reader a ref cannot serve: the composer's
 /// command menu. A park runs the whole handshake, so the agent pushes its
@@ -793,7 +821,15 @@ const [preparedId, setPreparedId] = useState<string | null>(null);
 
 /// Whether the park for the composer's current target has answered — landed or
 /// failed, either way it is no longer in flight. Read by `modelsWaitingNow`.
-const [parkLanded, setParkLanded] = useState(false);
+// **Which park has landed, not whether one has.** A bare boolean read `true` for
+// the first render after the reader moved the composer to another agent — the old
+// agent's park had landed, the new one's had not started — and the model list went
+// out in that gap, starting a second child beside the park it should have waited
+// for. Two Claude adapters launching at once through `npx` took 12s to answer
+// where one takes 4.
+const [parkedFor, setParkedFor] = useState<string | null>(null);
+const parkKey = `${harness}|${targetPath}`;
+const parkLanded = parkedFor === parkKey;
 
 /// Whether the project list has been read, which is what tells the wait
 /// "no park is coming" apart from "the pick is not known yet".
@@ -803,13 +839,22 @@ useEffect(() => {
   // Only for a prompt that will *create* a session: a resume re-opens its own
   // child, and there is nothing to park for it.
   if (selectedSessionId || !targetPath) return;
-  if (preparedRef.current?.cwd === targetPath) return;
+  // A park is a live child of *one* agent, so a reader who moves the composer to
+  // another one needs a new park — the old one is reaped by the backend when the
+  // new one takes its slot.
+  if (preparedRef.current?.cwd === targetPath && preparedRef.current.harness === harness) return;
 
   const id = crypto.randomUUID();
-  preparedRef.current = { id, cwd: targetPath };
+  preparedRef.current = { id, cwd: targetPath, harness };
   setPreparedId(id);
   // A park is on its way, so the model read waits for it — see `waitingOnPark`.
-  setParkLanded(false);
+  const key = `${harness}|${targetPath}`;
+  setParkedFor(null);
+  // **A park that never answers must not hold the model list.** The read waits for
+  // the park so it does not boot a second child beside it, and that is worth a
+  // few seconds — not an unbounded spinner. After this it goes ahead and, at
+  // worst, pays for a second child.
+  const giveUp = setTimeout(() => setParkedFor(key), PARK_PATIENCE_MS);
   // Quiet on purpose. `send_msg` spawns its own child when nothing is parked, so
   // a failure here costs the reader the boot they were going to pay regardless.
   //
@@ -825,6 +870,7 @@ useEffect(() => {
     effort,
     permissionMode: stanceFor(harness, permissionMode),
     agentName,
+    harness,
     // **The Agent is a dep, and the other picks deliberately are not.** A model
     // or a stance the reader changes after parking is reconciled on the adopted
     // child by `mcode::init` for three round trips; the Agent cannot be, because
@@ -835,8 +881,11 @@ useEffect(() => {
     .catch(() => {})
     // Landed or failed, the model read is free to go: a park that failed also
     // leaves no child to ask, so waiting longer would only delay the probe.
-    .finally(() => setParkLanded(true));
-}, [selectedSessionId, targetPath, agentName]);
+    .finally(() => {
+      clearTimeout(giveUp);
+      setParkedFor(key);
+    });
+}, [selectedSessionId, targetPath, agentName, harness]);
 
 /// Whether the model read has to wait — for the project list that says whether a
 /// park is coming, and then for the park itself. The rule and its reasoning are
@@ -927,6 +976,9 @@ const handleSendMsg = async (
   // Only what the draft still *names*: an attachment is a token in the text, so
   // one that was backspaced is not in this list at all — see `attachmentToken`.
   attachments: Attachment[] = [],
+  // The message the reader chose Reply on. Rides the send, is written onto the
+  // prompt event by the backend, and is told to the agent as a quoted line.
+  replyTo: ReplyTo | null = null,
 ) => {
   const attachmentPaths = attachments.map((a) => a.path);
   // Whatever the reader sent is what goes down. Nothing is assembled here any
@@ -1052,10 +1104,15 @@ const handleSendMsg = async (
     // been booting since the composer opened — that is the 2.9s `initialize`
     // costs a cold child — so this send adopts it instead of starting another
     // and waiting behind it.
-    const prepared = preparedRef.current?.cwd === targetPath ? preparedRef.current : null;
+    const prepared =
+      preparedRef.current?.cwd === targetPath && preparedRef.current.harness === harness
+        ? preparedRef.current
+        : null;
     preparedRef.current = null;
     setPreparedId(null);
     sessionId = prepared?.id ?? crypto.randomUUID();
+    // The Agent whose composer this was, if one is pending, now owns the session.
+    rosterClaim(sessionId);
     // Claimed alongside the selection everywhere it moves, or a read still out
     // from an earlier click can land afterwards and roll this one away.
     selectionRequestRef.current = sessionId;
@@ -1097,7 +1154,7 @@ const handleSendMsg = async (
 
   if (isNewSession) {
     const shell: SessionSnapshot = {
-      events: [provisionalPrompt(provisional, sessionId, harness, prompt, attachments, sentAt)],
+      events: [provisionalPrompt(provisional, sessionId, harness, prompt, attachments, sentAt, 0, replyTo)],
       sessionId,
       harness,
       cwd,
@@ -1118,7 +1175,6 @@ const handleSendMsg = async (
       status: "in_progress",
       forkFrom: null,
       threadId: null,
-      issues: [],
       parentSessionId: null,
       hasOlder: false,
       created: new Date().toISOString(),
@@ -1145,6 +1201,7 @@ const handleSendMsg = async (
                   attachments,
                   sentAt,
                   nextMainSeq(s.events),
+                  replyTo,
                 ),
               ],
             }
@@ -1186,6 +1243,7 @@ const handleSendMsg = async (
       // The reader's clock, not this process's. A send is stamped where Enter
       // landed; the app may not write it until a cold child is up.
       sentAt,
+      replyTo,
     });
 
     // A turn was already running, so the prompt is held rather than sent. It
@@ -1193,20 +1251,6 @@ const handleSendMsg = async (
     // an ordinary `user_message` and retires it below. The status is already
     // `in_progress` and stays that way — the turn it was queued onto is the one
     // still running.
-    // Applied on every path below, queued included. A `#DRA-53` is expanded
-    // and recorded whether the prompt is sent or held, so the panel's Issue tab
-    // must not wait on a boundary — or on a reselect — to show what the session
-    // is now about. The backend answers with the list *as written*, because
-    // re-tagging replaces an entry rather than appending one.
-    const applySentIssues = () => {
-      setSessionIndexItems((prev) =>
-        prev.map((i) => (i.sessionId === sessionId ? { ...i, issues: outcome.issues } : i)),
-      );
-      setSessions((prev) =>
-        prev.map((s) => (s.sessionId === sessionId ? { ...s, issues: outcome.issues } : s)),
-      );
-    };
-
     if (outcome.queued) {
       const queued = outcome.queued;
       // The prompt is held, and the queue draws its own pending row — so the
@@ -1216,7 +1260,6 @@ const handleSendMsg = async (
         ...prev,
         [sessionId]: [...(prev[sessionId] ?? []), { message: queued, attachments }],
       }));
-      applySentIssues();
       return;
     }
 
@@ -1243,7 +1286,6 @@ const handleSendMsg = async (
           : i,
       ),
     );
-    applySentIssues();
   } catch (e) {
     // A rejected invoke means the turn never started, so nothing will arrive to
     // clear the status — release it here rather than leaving the composer stuck.
@@ -1650,32 +1692,6 @@ const setSessionFlags = async (
   }
 };
 
-// Applies whatever a link write answered with to both copies of the session.
-//
-// Two copies, for `setSessionFlags`' reason: the sidebar reads the index items
-// and the open transcript holds its own flattened copy, which is what the panel
-// and its tab are drawn from. Leaving either behind shows an issue that is no
-// longer linked, or hides one that is.
-const applyIssues = (sessionId: string, issues: IssueRef[]) => {
-  setSessionIndexItems((prev) =>
-    prev.map((i) => (i.sessionId === sessionId ? { ...i, issues } : i)),
-  );
-  setSessions((prev) =>
-    prev.map((s) => (s.sessionId === sessionId ? { ...s, issues } : s)),
-  );
-};
-
-// Removes one. `key` is the tracker's own id from the row that was clicked; the
-// backend also accepts the human identifier, which is what the CLI passes.
-const unlinkIssue = async (sessionId: string, key: string) => {
-  const fail = failUnlessLeft();
-  try {
-    applyIssues(sessionId, await invoke<IssueRef[]>("unlink_issue", { sessionId, key }));
-  } catch (e) {
-    fail(e);
-  }
-};
-
 // The half of the removal that can only run once git has answered: the
 // relocated entry, applied to both copies of the session.
 const applyWorktreeRemoval = (sessionId: string, updated: SessionIndexItem) => {
@@ -1735,10 +1751,6 @@ const applyWorktreeRemoval = (sessionId: string, updated: SessionIndexItem) => {
 // a cure: the entry is only cleared by that last step, so the settled bar is
 // still carrying the control that runs the rest, whichever end it stopped at.
 const reportWorktreeFailure = (sessionId: string, title: string, reason: string) => {
-  // The removal is started and not awaited, so this can land in a space the
-  // reader has since left — and `subject` is the session's own title.
-  if (!canAnnounce(sessionId)) return;
-
   pushNotice({
     sessionId,
     kind: "worktree-failed",
@@ -2374,10 +2386,6 @@ selectedSessionIdRef.current = selectedSessionId;
 // the live statuses to answer "is the one on screen still unread".
 const sessionIndexItemsRef = useRef(sessionIndexItems);
 sessionIndexItemsRef.current = sessionIndexItems;
-// A space is a tag on the project, so `announce` needs the live project list to
-// answer whether the session that just spoke is one the reader has put away.
-const projectsRef = useRef(projects);
-projectsRef.current = projects;
 const statusBySessionRef = useRef(statusBySession);
 statusBySessionRef.current = statusBySession;
 const tasksBySessionRef = useRef(tasksBySession);
@@ -2575,40 +2583,14 @@ const markSessionRead = (sessionId: string) => {
 /// stack beside every other app's, so it has to name the session and the
 /// project or it says nothing; the in-app card is the only card on screen next
 /// to a sidebar already marking the row, so it needs the verb and nothing else.
-/// Whether a session may say anything at all right now — the space rule, asked
-/// once for every channel.
-///
-/// Exported from the hook because the cards raised outside `announce` are the
-/// ones most able to break it: both worktree notices land after an `await`, so
-/// the reader can be in another space by the time one arrives, and both carry
-/// the session's own **title**. Read at the call, since these listeners and
-/// handlers are registered once and a held copy would be the space the app
-/// launched in.
-///
-/// Both lists, since the index holds one side of the archived split at a time.
-/// `allowedInSpace` is what refuses a session neither can name — see its own
-/// note for why that direction.
-const canAnnounce = (sessionId: string): boolean => {
-  const space = activeSpace(
-    projectsRef.current,
-    readLocalStorage<string | null>(SPACE_KEY, null),
-    readLocalStorage<string[]>(SPACE_LIST_KEY, []),
-  );
-  const projectPath =
-    sessionIndexItemsRef.current.find((i) => i.sessionId === sessionId)?.projectPath ??
-    sessionsRef.current.find((s) => s.sessionId === sessionId)?.projectPath ??
-    null;
-
-  return allowedInSpace(projectsRef.current, space, projectPath);
-};
-
 const announce = (sessionId: string, kind: NoticeKind, label: string): boolean => {
-  const item = sessionIndexItemsRef.current.find((i) => i.sessionId === sessionId);
+  // A muted agent raises nothing, on screen or off: that is what muting it says.
+  if (isSessionMuted(sessionId)) return false;
 
-  // A session in another space keeps running; it just has no channel here.
-  // Both channels name the session out loud, and naming a personal one over a
-  // shared screen is the thing spaces exist to stop.
-  if (!canAnnounce(sessionId)) return false;
+  const item = sessionIndexItemsRef.current.find((i) => i.sessionId === sessionId);
+  // A channel thread is the app's errand, not somebody's chat: nothing about it
+  // is news, and a card's button would open a page that does not exist.
+  if (isHiddenSession(item)) return false;
 
   if (!isWindowFocused()) {
     // Same order as the card: the verb first, because *what is wanted* is the
@@ -2657,6 +2639,9 @@ selectSessionRef.current = handleSelectSessionIndexItem;
 // only thing left is to go to the session it was about.
 useEffect(() => {
   const listenerPromise = listen<string>("notification_activated", (event) => {
+    // A banner about a channel thread (a mention in it) has no page to open.
+    const item = sessionIndexItemsRef.current.find((i) => i.sessionId === event.payload);
+    if (isHiddenSession(item)) return;
     void selectSessionRef.current(event.payload);
   });
 
@@ -2697,9 +2682,14 @@ useEffect(() => {
       }
     }
 
-    // Finishing in front of the reader is read the moment it does; everything
-    // else is announced.
-    if (status === "completed" && announce(sessionId, "completed", "Task finished")) {
+    // Finishing in front of the reader is read the moment it does. Out of sight
+    // it is the agent's unread dot in the sidebar and the Inbox's done note, and
+    // no card or banner: the old "Task finished" toast is gone.
+    if (
+      status === "completed" &&
+      isWindowFocused() &&
+      onScreen(sessionId)
+    ) {
       markSessionRead(sessionId);
       return;
     }
@@ -3134,6 +3124,6 @@ const slashCommands = selectedSessionId
     ? slashCommandsBySession[preparedId] ?? null
     : null;
 
-return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, goalsBySession, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, failUnlessLeft, handleModelChange, setPermissionMode, handleAttachProject, handleSelectProject, handleRemoveProject, setProjectSpace, retagSpace, canAnnounce, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, unlinkIssue, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
+return {harness, setHarness, sessions, selectedSessionId, selectedSession, streamingContentBlock, sessionIndexItems, statusBySession, askingSessions, showArchived, setShowArchived, slashCommands, goalsBySession, models, refreshModels, reloadModels, loadingModels, modelId, effort, fast, setFast, fastNote, permissionMode, agentName, setAgentName, projects, projectPath, repos, repoPath, setRepoPath, atWorkspaceRoot, targetPath, branches, branch, useWorktree, busy, working, backgroundTasks, liveTaskIds, tasksBySession, compacting, apiRetry, contextUsage, error, setError, failUnlessLeft, handleModelChange, setPermissionMode, handleAttachProject, pickProjectFolder, applyAgent, handleSelectProject, handleRemoveProject, handleSelectBranch, pendingBranch, setPendingBranch, runCheckout, setUseWorktree, handleSendMsg, startSecondOpinion, handleInterrupt, handleSendNow, queuedMessages, pendingAsks, handleCancelQueued, handleRespondPermission, handleAnswerQuestions, handleCancelQuestion, handleSelectSessionIndexItem, handleNewSession, setSessionFlags, forkSession, detachSession, deleteSession, removeWorktree, ensureLoaded, loadOlderEvents, setOnScreen, paneState, delegations, delegationsBySession, refreshDelegations, stopDelegations, indexSide};
 
 }

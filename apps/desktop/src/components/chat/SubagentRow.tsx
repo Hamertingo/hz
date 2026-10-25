@@ -1,13 +1,12 @@
 import { memo } from "react";
-import { ChevronRight } from "lucide-react";
 import BloubAvatar from "@/components/BloubAvatar";
 
 import type { SubagentRun } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
 
 /// The subagent's place in the main conversation: one compact row. It never
-/// expands inline — clicking opens the run's own conversation, which takes the
-/// column the way a selected session does.
+/// expands inline, and it opens nothing: a run has no conversation of its own in
+/// the app, only the row and what its spawning call says.
 ///
 /// The row says what the agent is doing and nothing else. Its tool name is
 /// harness vocabulary ("Task", "local_bash") that names the mechanism rather
@@ -18,13 +17,7 @@ import { cn } from "@/lib/utils";
 /// changes exactly when the run reports something, which is when the row must
 /// redraw. A comparator would be comparing a run's whole event list to answer
 /// what identity answers.
-function SubagentRow({
-  run,
-  onOpen,
-}: {
-  run: SubagentRun;
-  onOpen: (id: string) => void;
-}) {
+function SubagentRow({ run }: { run: SubagentRun }) {
   // While running, `status` is rewritten per progress event, so it reads as a
   // live status line without opening anything. The label is the floor — a run
   // that reported no description still needs something clickable.
@@ -38,11 +31,7 @@ function SubagentRow({
   const running = !run.done && !run.background;
 
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(run.id)}
-      className="group flex w-full cursor-pointer items-center gap-2 text-left text-chat"
-    >
+    <div className="flex w-full items-center gap-2 text-chat">
       {/* **The run's own face.** The bot is derived from the agent the spawning
           call named, so a row says *which* subagent this is rather than only that
           one exists — and it animates while the run does, which is the one place
@@ -67,8 +56,7 @@ function SubagentRow({
         {detail}
       </span>
 
-      <ChevronRight className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-    </button>
+    </div>
   );
 }
 

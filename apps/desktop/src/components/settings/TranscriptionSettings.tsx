@@ -1,3 +1,4 @@
+import { Skeleton, SkeletonRegion } from "@/components/ui/skeleton";
 import { useState } from "react";
 
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -308,7 +309,17 @@ export default function TranscriptionSettings({
 
   if (!status) {
     return (
-      <p className="text-ui text-muted-foreground">Reading transcription settings…</p>
+      <SkeletonRegion label="Reading transcription settings" className="flex flex-col gap-2">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex items-center gap-3 rounded-lg border border-border/60 px-3.5 py-3">
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-2.5 w-52" />
+            </div>
+            <Skeleton className="h-7 w-20 rounded-md" />
+          </div>
+        ))}
+      </SkeletonRegion>
     );
   }
 

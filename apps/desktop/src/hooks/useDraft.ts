@@ -13,7 +13,7 @@ import { channel } from "@/lib/channel";
 ///
 /// Module-level *also* because there are now two writers in two places, exactly
 /// as in `useAttachments`: the textarea is in `ChatInput`, and the mic button
-/// is in `ComposerToolbar`, which reaches `ChatInput` as an opaque `ReactNode`.
+/// is in the composer's own toolbar, which reaches `ChatInput` as an opaque `ReactNode`.
 /// A transcript has to land in the draft without those two sharing props.
 ///
 /// Deliberately not persisted. A draft is what you were in the middle of

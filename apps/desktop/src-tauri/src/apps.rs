@@ -415,7 +415,7 @@ pub async fn open_login_terminal(harness: Harness, cwd: String) -> Result<(), St
 
 /// Writes the script at `0700` on the *create*, never by a `chmod` after.
 ///
-/// Same reading the tracker key's own write records (`issues.rs`): `fs::write`
+/// Same reading the other secret writes here take: `fs::write`
 /// creates at the process umask, so any other order leaves a window where the
 /// file is world-readable — and this one is also world-*executable*, which is a
 /// file Terminal will run. `create_new` beside it because a leftover from a

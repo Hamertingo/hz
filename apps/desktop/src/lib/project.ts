@@ -41,3 +41,10 @@ export function containingProject(projects: Project[], path: string): Project | 
 export function projectKey(projects: Project[], path: string): string {
   return containingProject(projects, path)?.path ?? path;
 }
+
+/// A path as the settings list draws it. The leading slash is the one segment
+/// every absolute path on this machine shares, so it separates nothing and only
+/// costs the rest of the path a character of width.
+export function displayPath(path: string): string {
+  return path.replace(/^\//, "");
+}

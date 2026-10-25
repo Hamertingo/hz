@@ -18,6 +18,14 @@ const notice = (sessionId: string, kind: Notice["kind"]): Notice => ({
 const keys = () => getNotices().map(noticeKey);
 
 describe("the notice stack", () => {
+  // The old "Task finished" card is gone for good: a finished turn is the
+  // agent's unread dot and the Inbox's done note, and a card's View opened a
+  // raw session page.
+  it("has no kind for a finished turn", () => {
+    const kinds: Notice["kind"][] = ["asking", "worktree", "pr", "worktree-failed"];
+    expect(kinds).not.toContain("completed");
+  });
+
   // Module state, so each test drains what the last one left.
   beforeEach(() => {
     for (const { sessionId } of [...getNotices()]) dismissNotice(sessionId);
@@ -43,15 +51,15 @@ describe("the notice stack", () => {
   // Each card's countdown dismisses that card. Left keyed on the session, one
   // card's bar running out would take the other down with it.
   it("dismisses by kind without touching the session's other card", () => {
-    pushNotice(notice("a", "completed"));
+    pushNotice(notice("a", "asking"));
     pushNotice(notice("a", "pr"));
 
-    dismissNotice("a", "completed");
+    dismissNotice("a", "asking");
     expect(keys()).toEqual(["a:pr"]);
   });
 
   it("dismisses every kind when none is named", () => {
-    pushNotice(notice("a", "completed"));
+    pushNotice(notice("a", "asking"));
     pushNotice(notice("a", "pr"));
     pushNotice(notice("b", "pr"));
 
@@ -64,7 +72,6 @@ describe("the notice stack", () => {
   // at the session, and stays ready after they look away. Its own countdown is
   // what retires it.
   it("leaves the pull request card out of what opening a session answers", () => {
-    pushNotice(notice("a", "completed"));
     pushNotice(notice("a", "asking"));
     pushNotice(notice("a", "pr"));
 
@@ -89,7 +96,7 @@ describe("the notice stack", () => {
     pushNotice(notice("a", "pr"));
     const before = getNotices();
 
-    dismissNotice("a", "completed");
+    dismissNotice("a", "asking");
     dismissNotice("b");
     expect(getNotices()).toBe(before);
   });

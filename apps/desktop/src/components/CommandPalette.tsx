@@ -1,9 +1,10 @@
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import ShortcutKeys from "@/components/ShortcutKeys";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { highlight, kindLabel, matchItems, type PaletteItem } from "@/lib/palette";
+import { Skeleton, SkeletonRegion } from "@/components/ui/skeleton";
+import { arrange, groupOf, highlight, suggestedName, type PaletteItem } from "@/lib/palette";
 import { cn } from "@/lib/utils";
 
 /// One box over the window: jump to a session, switch project or space, run
@@ -22,22 +23,30 @@ export default function CommandPalette({
   open,
   onOpenChange,
   items,
-  onQueryChange,
+  workspaceName,
+  onCreateAgent,
+  loading = false,
 }: {
   open: boolean;
+  /// Routines, plugins and notes are still being read; their rows are coming.
+  loading?: boolean;
   onOpenChange: (open: boolean) => void;
   items: PaletteItem[];
+  /// Named in the footer, so the reader knows whose agents these are.
+  workspaceName: string;
+  /// A search that found nothing offers to make an agent with that name.
+  onCreateAgent: (name: string) => void;
   /// Every keystroke, for a caller that has to go and look something up. The
   /// rows above cannot answer a question about the *contents* of a session —
   /// that is a read over every log the app has kept, and it belongs to whoever
   /// can debounce it.
-  onQueryChange?: (query: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const rows = useMemo(() => matchItems(items, query), [items, query]);
+  const rows = useMemo(() => arrange(items, query), [items, query]);
+  const suggestion = suggestedName(query);
 
   // Reset on open rather than on close: the box is a fresh question every time,
   // and clearing it on the way out would flicker the list back to everything
@@ -59,7 +68,7 @@ export default function CommandPalette({
   // nobody can see. `nearest` rather than centring, so stepping through a list
   // that already fits does not scroll it.
   useEffect(() => {
-    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
+    listRef.current?.querySelectorAll("[data-row]")[active]?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   const run = (item: PaletteItem) => {
@@ -78,22 +87,21 @@ export default function CommandPalette({
         // there the moment ⌘K lands rather than a moment after.
         animated={false}
         showClose={false}
-        className="top-[12vh]! max-w-xl! translate-y-0! gap-0! overflow-hidden! p-0!"
+        className="top-[12vh]! w-[620px]! max-w-[calc(100vw-32px)]! translate-y-0! gap-0! overflow-hidden! p-0!"
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
 
-        <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
-          <Search className="size-4 shrink-0 text-muted-foreground" />
+        <div className="flex items-center gap-2.5 border-b border-line px-4 py-3.5">
+          <Search className="size-[15px] shrink-0 text-ink3" />
           <input
             autoFocus
             value={query}
             onChange={(e) => {
               setQuery(e.currentTarget.value);
-              onQueryChange?.(e.currentTarget.value);
-            }}
-            placeholder="Search sessions, messages, files, projects and actions — or type > for actions"
+                      }}
+            placeholder="Jump to an agent, a channel, a note, an action…"
             aria-label="Command palette"
-            className="min-w-0 flex-1 bg-transparent text-chat outline-none placeholder:text-muted-foreground"
+            className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-ink3"
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -107,68 +115,121 @@ export default function CommandPalette({
                 e.preventDefault();
                 run(rows[active]);
               }
+              if (e.key === "Enter" && rows.length === 0 && suggestion) {
+                e.preventDefault();
+                onOpenChange(false);
+                queueMicrotask(() => onCreateAgent(suggestion));
+              }
             }}
           />
+          <kbd className="rounded-[5px] bg-s3 px-[5px] text-[11px] leading-4 text-ink3">ESC</kbd>
         </div>
 
-        {rows.length === 0 ? (
-          <p className="px-3 py-6 text-ui text-muted-foreground">Nothing matches that.</p>
+        {rows.length === 0 && loading ? (
+          <PaletteSkeleton rows={4} />
+        ) : rows.length === 0 ? (
+          <p className="px-6 py-6 text-center text-ui text-ink3">
+            {suggestion ? (
+              <>
+                Nothing called {"\u201C"}
+                {suggestion}
+                {"\u201D"}.{" "}
+                <button
+                  type="button"
+                  className="cursor-pointer text-ink underline underline-offset-2"
+                  onClick={() => {
+                    onOpenChange(false);
+                    queueMicrotask(() => onCreateAgent(suggestion));
+                  }}
+                >
+                  Create an agent called {suggestion}
+                </button>
+              </>
+            ) : (
+              "Nothing matches that."
+            )}
+          </p>
         ) : (
           // Capped and scrolled: a palette that grows to the window edge is a
           // list the reader has to look around the box to read.
-          <div ref={listRef} className="max-h-[50vh] overflow-y-auto py-1">
+          <div ref={listRef} className="max-h-[430px] overflow-y-auto p-1.5">
             {rows.map((item, i) => {
               // **Where the row says what was typed.** A palette row is found by
               // its words, and the accent is what tells the reader *which* words
-              // answered — the same service the search box does for the file it
-              // found. `null` where the row matched on its detail instead (a
-              // session's project, a file's path) and there is nothing to mark in
-              // the label.
+              // answered. `null` where the row matched on its detail instead.
               const marked = highlight(item.label, query);
+              const group = groupOf(item);
+              const heading = i === 0 || groupOf(rows[i - 1]) !== group;
 
               return (
-              <button
-                key={`${item.kind}:${item.id}`}
-                type="button"
-                // The pointer is the other way in, and it moves the highlight
-                // rather than running: a menu that fires on hover is one you
-                // cannot read.
-                onMouseMove={() => setActive(i)}
-                onClick={() => run(item)}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui",
-                  i === active ? "bg-surface-selected" : "hover:bg-surface-selected/50",
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">
-                  {marked ? (
-                    <>
-                      {marked.before}
-                      <span className="text-accent-mention">{marked.match}</span>
-                      {marked.after}
-                    </>
-                  ) : (
-                    item.label
+                <Fragment key={`${item.kind}:${item.id}`}>
+                  {heading && (
+                    <div className="px-2.5 pt-2.5 pb-[5px] text-[11.5px] font-medium text-ink4">{group}</div>
                   )}
-                </span>
-                {item.detail && (
-                  <span className="min-w-0 max-w-[40%] truncate text-muted-foreground">
-                    {item.detail}
-                  </span>
-                )}
-                {/* The kind, not a heading. A heading over a run of one row is a
-                    heading for a single row, and a session list is nearly all
-                    sessions — so the word belongs on the row that needs it. */}
-                <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/60 uppercase">
-                  {kindLabel(item.kind)}
-                </span>
-                {item.shortcut && <ShortcutKeys ids={[item.shortcut]} />}
-              </button>
+                  <button
+                    type="button"
+                    data-row
+                    // The pointer is the other way in, and it moves the highlight
+                    // rather than running: a menu that fires on hover is one you
+                    // cannot read.
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => run(item)}
+                    className={cn(
+                      "flex w-full cursor-pointer items-center gap-[11px] rounded-(--r2) px-2.5 py-[7px] text-left text-ui",
+                      i === active && "bg-active",
+                    )}
+                  >
+                    {item.icon && <span className="grid w-[22px] shrink-0 place-items-center text-ink3">{item.icon}</span>}
+                    <span className="shrink-0">
+                      {marked ? (
+                        <>
+                          {marked.before}
+                          <span className="text-accent-mention">{marked.match}</span>
+                          {marked.after}
+                        </>
+                      ) : (
+                        item.label
+                      )}
+                    </span>
+                    {item.detail && (
+                      <span className="min-w-0 truncate text-xs text-ink3">{item.detail}</span>
+                    )}
+                    {item.shortcut && (
+                      <span className="ml-auto shrink-0">
+                        <ShortcutKeys ids={[item.shortcut]} />
+                      </span>
+                    )}
+                  </button>
+                </Fragment>
               );
             })}
+            {loading && <PaletteSkeleton rows={2} />}
           </div>
         )}
+
+        <div className="flex gap-3.5 border-t border-line px-3.5 py-[9px] text-[11.5px] text-ink4">
+          <span>{"\u2191\u2193"} move</span>
+          <span>{"\u21B5"} open</span>
+          <span className="ml-auto">{workspaceName}</span>
+        </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/// Rows for the groups still being read: a heading, then an icon, a label and a
+/// detail, as the real rows draw them.
+function PaletteSkeleton({ rows }: { rows: number }) {
+  return (
+    <SkeletonRegion label="Reading notes, routines and plugins" className="p-1.5">
+      <Skeleton className="mx-2.5 mt-2.5 mb-2 h-2.5 w-14" />
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-[11px] px-2.5 py-[9px]">
+          <Skeleton className="size-[15px] rounded-[4px]" />
+          <Skeleton className={i % 2 ? "h-3 w-28" : "h-3 w-40"} />
+          <Skeleton className="h-2.5 w-20" />
+        </div>
+      ))}
+    </SkeletonRegion>
   );
 }

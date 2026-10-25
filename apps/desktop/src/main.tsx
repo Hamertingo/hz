@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import "streamdown/styles.css";
 import App from "./App";
 import RenderErrorBoundary from "@/components/RenderErrorBoundary";
+import { Toaster } from "@/components/ui/toast";
 import { adoptPreviousStorageKeys } from "@/hooks/useLocalStorage";
 import { trackActiveDay } from "@/lib/analytics";
 import { onFocusChange } from "@/lib/focus";
@@ -40,6 +41,7 @@ void (async () => {
       <RenderErrorBoundary>
         <App />
       </RenderErrorBoundary>
+      <Toaster />
     </React.StrictMode>,
   );
 })();

@@ -16,9 +16,12 @@ macro_rules! fail {
     };
 }
 
+pub mod agentkit;
+mod kit_cmds;
 pub mod analytics;
 mod automations;
-pub mod search;
+mod routine_hooks;
+mod routines;
 pub mod apps;
 pub mod attachments;
 pub mod binpath;
@@ -47,13 +50,32 @@ pub mod github;
 #[path = "harness/harness.rs"]
 pub mod harness;
 pub mod identity;
-#[path = "issues/issues.rs"]
-pub mod issues;
 #[path = "models/models.rs"]
 pub mod models;
 pub mod notifications;
+pub mod agents;
+pub mod inbox;
+pub mod channels;
+pub mod agent_activity;
+pub mod agent_profile;
+pub mod budget;
+pub mod clis;
+pub mod fallback;
+pub mod limits;
+pub mod spend;
+pub mod studio;
+pub mod tidy;
+pub mod memory_mcp;
+pub mod pty;
+pub mod workspaces;
 pub mod orchestration;
+pub mod team;
 pub mod plugins;
+pub mod keychain;
+pub mod mcp_client;
+pub mod plugin_oauth;
+pub mod plugin_proxy;
+pub mod plugin_store;
 pub mod proc;
 pub mod projects;
 pub mod quit;
@@ -150,6 +172,8 @@ async fn send_msg(
     // reaches this function, and the transcript is asked for the wait, not for
     // the part of it that happened after the process was up.
     sent_at: Option<String>,
+    // The message the reader chose Reply on, or `None` for an ordinary prompt.
+    reply_to: Option<crate::events::ReplyTo>,
     app: AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<SendOutcome, String> {
@@ -175,12 +199,6 @@ async fn send_msg(
                 session_id,
                 prompt,
                 attachment_paths: &attachment_paths,
-                // Nothing named, ever: the app tags its issues in the prompt
-                // text, the composer's `#` picker being the only route, so there
-                // is one rule on this side of the bridge. `--issue` on the CLI
-                // is the other caller, and it names them because a flag is not
-                // prose.
-                issue_ids: &[],
                 harness,
                 model,
                 effort,
@@ -196,7 +214,9 @@ async fn send_msg(
                 is_new_session,
                 parent_session_id: parent_session_id.as_deref(),
                 from: None,
+                reply_to,
                 sent_at: sent_at.as_deref(),
+                purpose: None,
             },
             &app,
         )
@@ -329,13 +349,27 @@ struct AgentAvailability {
 /// ordinary state, and the picker draws its own empty row for it.
 #[tauri::command]
 async fn list_models(harness: Option<harness::Harness>) -> Vec<Model> {
+    let harness = harness.unwrap_or(harness::Harness::Mcode);
+    let started = std::time::Instant::now();
+    let listed = list_models_for(harness).await;
+    eprintln!("[models] {} listed {} in {:.2}s", harness.label(), listed.len(), started.elapsed().as_secs_f64());
+    listed
+}
+
+async fn list_models_for(harness: harness::Harness) -> Vec<Model> {
     // Defaulted rather than required so a caller that predates the argument
     // still gets a list.
-    match harness.unwrap_or(harness::Harness::Mcode) {
+    match harness {
         // The agent's own answer, read live off a short session and cached — an
         // empty list on a machine that has never run it, which the picker draws
         // as "mcode names the model until you pick one".
-        harness::Harness::Mcode => harness::mcode::models::all().await,
+        // The agents hz runs on the reader's own install answer the same way: a
+        // list read live off a short session, since it depends on their login.
+        // `Other` has none, which `models_for` says by being empty.
+        which @ (harness::Harness::Mcode
+        | harness::Harness::Claude
+        | harness::Harness::Codex
+        | harness::Harness::OpenCode) => harness::mcode::models::all(which).await,
         other => models::models_for(other),
     }
 }
@@ -355,9 +389,9 @@ async fn refresh_models() {
 ///
 /// **The session id is named here because the child has to carry it.** `spawn`
 /// is where `HZ_SESSION_ID` is fixed, and the hz CLI reads it as the default
-/// session for `hz issue link` for the rest of that child's life — so a child
-/// parked without one would quietly lose that. The frontend mints the id when
-/// the composer first has something in it and hands the same one to `send_msg`.
+/// session for the rest of that child's life, so a child parked without one
+/// would quietly lose that. The frontend mints the id when the composer first
+/// has something in it and hands the same one to `send_msg`.
 ///
 /// **A hint, not a step.** Nothing is created here — no index entry, no session
 /// record — and `send_msg` spawns its own child when nothing is parked. So a
@@ -368,6 +402,9 @@ async fn refresh_models() {
 /// the `session/new`, and the Agent is composed into a session at that moment — so
 /// a park made under one Agent cannot be adopted by a send asking for another, and
 /// `mcode::init` refuses the mismatch and pays a spawn.
+// Eight, and each is something the composer holds and `mcode::prepare` needs: a
+// struct would be this list under a name, built in the one place that calls it.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn prepare_session(
     session_id: String,
@@ -376,17 +413,26 @@ async fn prepare_session(
     effort: Option<Effort>,
     permission_mode: ApprovalPolicy,
     agent_name: Option<String>,
+    // Absent from a composer that predates the three agents, which meant mcode.
+    harness: Option<Harness>,
     app: AppHandle,
 ) -> Result<(), String> {
-    // The same resolution the send does, so a park is opened on the model the
-    // composer is showing rather than on a spelling of it this build invented.
-    // A pick that is not in the live list is `None`, which leaves the CLI on its
-    // own default — the same answer `send_msg` gives, and the diff in
-    // `mcode::init` is what corrects it if the reader picks something else
-    // before sending.
-    let spec = harness::mcode::models::find(&model).await;
+    let harness = harness.unwrap_or(Harness::Mcode);
+    // Settings → CLIs → Warm up. Off, the first prompt pays for the boot.
+    if !studio::read().await.warm_up {
+        return Ok(());
+    }
+    let started = std::time::Instant::now();
+    // Resolved from what is already known and **never by starting an agent to
+    // ask**: a probe here was a whole second child (2.5s on Claude) in front of the
+    // park, which is the very boot the park exists to hide. A pick that is not in
+    // hand is `None`, which leaves the CLI on its own default — and the diff in
+    // `mcode::init` applies the reader's pick when they send.
+    let spec = harness::mcode::models::find_cached(harness, &model);
+    eprintln!("[park] {} model resolved in {:.2}s", harness.label(), started.elapsed().as_secs_f64());
 
     harness::mcode::prepare(
+        harness,
         &session_id,
         &cwd,
         spec.as_ref(),
@@ -396,64 +442,9 @@ async fn prepare_session(
         &app,
     )
     .await
+    .inspect(|_| eprintln!("[park] {} ready in {:.2}s", harness.label(), started.elapsed().as_secs_f64()))
+    .inspect_err(|e| eprintln!("[park] {} failed after {:.2}s: {e:#}", harness.label(), started.elapsed().as_secs_f64()))
     .map_err(|e| format!("{e:#}"))
-}
-
-/// Where models come from, as Settings draws it.
-///
-/// The agent's own provider list, read live rather than cached: a provider
-/// added in another window, or by the CLI itself, is one the reader will expect
-/// to see the moment they open the form. **Only the providers hz manages** —
-/// the CLI's own MiniMax account entries are dropped in
-/// [`providers::list`](harness::mcode::providers::list), since this app has no
-/// screen that could sign in to one.
-#[tauri::command]
-async fn list_providers() -> Result<Vec<harness::mcode::providers::Provider>, String> {
-    harness::mcode::providers::list()
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// The providers this build can set up for the reader in one step.
-///
-/// Fetched rather than hardcoded in the frontend: the URL and the dialect are
-/// facts about the agent's own gateway wiring, so they live beside the code
-/// that talks to it.
-#[tauri::command]
-async fn list_provider_presets() -> Vec<harness::mcode::providers::ProviderPreset> {
-    harness::mcode::providers::presets()
-}
-
-/// Adds a provider and hands back the list as it stands after.
-///
-/// The list rather than a bare `()` because the CLI mints the id from the name
-/// — `custom_provider:<slug>` — and a caller that guessed the slug would be
-/// guessing a rule the vendor owns. It also drops the cached model list on the
-/// way through, so the picker is drawn from the providers that exist now.
-#[tauri::command]
-async fn add_provider(
-    provider: harness::mcode::providers::NewProvider,
-) -> Result<Vec<harness::mcode::providers::Provider>, String> {
-    harness::mcode::providers::add(&provider)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-async fn remove_provider(
-    provider_id: String,
-) -> Result<Vec<harness::mcode::providers::Provider>, String> {
-    harness::mcode::providers::remove(&provider_id)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Tests a provider, handing back the CLI's own sentence about what happened.
-#[tauri::command]
-async fn test_provider(provider_id: String, model: Option<String>) -> Result<String, String> {
-    harness::mcode::providers::test(&provider_id, model.as_deref())
-        .await
-        .map_err(|e| format!("{e:#}"))
 }
 
 /// What the settings dialog draws about **reporting**; the other rows it draws
@@ -667,22 +658,6 @@ async fn fork_session(
     Ok(snapshot)
 }
 
-/// The agent's own reading of what its context window holds.
-///
-/// **The command, not a computed estimate.** `/context` is the agent's, it is
-/// answered inside the agent (no model call), and its answer carries the six
-/// categories — System prompt, Memory, Tools, Skills, Messages, Other — that its
-/// own TUI draws and that ACP does not otherwise send. `None` where there is
-/// nothing to report: no child up, or a child whose runtime has not counted a run
-/// yet.
-#[tauri::command]
-async fn context_snapshot(
-    session_id: String,
-    manager: State<'_, SessionManager>,
-) -> Result<Option<crate::context::ContextSnapshot>, String> {
-    manager.context_snapshot(&session_id).await
-}
-
 /// The agent's own roster of the subagents this session started.
 ///
 /// **Live only, and read on the session's own child.** The agent pushes the same
@@ -709,29 +684,6 @@ async fn stop_session_delegations(
     manager.stop_delegations(&session_id).await
 }
 
-/// A delegated child's own session, as this app's events.
-///
-/// **Polled while the child runs, and that is the design rather than a shortcut.**
-/// A delegated Session is separate, its stream never reaches the parent's, and the
-/// agent reports only its status — so a reader watching one is watching a read,
-/// not a subscription. The read attaches nothing on the agent's side, which is
-/// what makes repeating it free of consequence.
-///
-/// **It answers in the app's own event vocabulary**, which is what lets a subagent
-/// be drawn by the transcript's own components rather than by a second renderer
-/// written for it.
-#[tauri::command]
-async fn session_delegation_messages(
-    session_id: String,
-    member_session_id: String,
-    limit: Option<u64>,
-    manager: State<'_, SessionManager>,
-) -> Result<Vec<crate::events::AgentEvent>, String> {
-    manager
-        .delegation_transcript(&session_id, &member_session_id, limit)
-        .await
-}
-
 /// The goal this session is chasing, or `None` where it has none.
 ///
 /// **Read on demand for the one case the push cannot cover** — a goal set before
@@ -745,214 +697,6 @@ async fn session_goal(
     manager: State<'_, SessionManager>,
 ) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
     manager.goal(&session_id).await
-}
-
-/// Starts a goal on this session, with a token budget where the reader set one.
-#[tauri::command]
-async fn create_session_goal(
-    session_id: String,
-    objective: String,
-    token_budget: Option<u64>,
-    manager: State<'_, SessionManager>,
-    app: tauri::AppHandle,
-) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
-    manager
-        .create_goal(&session_id, &objective, token_budget, &app)
-        .await
-}
-
-/// Pauses or resumes this session's goal. The two moves a control offers; the
-/// other three statuses are the agent's own verdicts and are not sendable.
-#[tauri::command]
-async fn move_session_goal(
-    session_id: String,
-    move_: crate::harness::mcode::goal::GoalMove,
-    manager: State<'_, SessionManager>,
-) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
-    manager.move_goal(&session_id, move_).await
-}
-
-/// Rewrites this session's goal — its objective and its budget together, which is
-/// what the dialog that edits one owns.
-#[tauri::command]
-async fn edit_session_goal(
-    session_id: String,
-    objective: String,
-    token_budget: Option<u64>,
-    manager: State<'_, SessionManager>,
-) -> Result<Option<crate::harness::mcode::goal::Goal>, String> {
-    manager
-        .edit_goal(&session_id, &objective, token_budget)
-        .await
-}
-
-/// Drops this session's goal.
-#[tauri::command]
-async fn clear_session_goal(
-    session_id: String,
-    manager: State<'_, SessionManager>,
-) -> Result<(), String> {
-    manager.clear_goal(&session_id).await
-}
-
-/// Every Skill the agent holds, the switched-off ones included.
-///
-/// **A management read, not the runtime one.** The list the *model* is told about
-/// leaves out a Skill that is switched off, so a screen built on it could switch
-/// one off and then have no row left to switch it back on. The child this is asked
-/// through is the one [`plugins`] keeps — that module says why it is kept rather
-/// than opened per press.
-#[tauri::command]
-async fn list_plugin_skills() -> Result<crate::plugins::SkillRoster, String> {
-    crate::plugins::skills().await.map_err(|e| format!("{e:#}"))
-}
-
-/// Switches one Skill, answering whether the registry took it.
-#[tauri::command]
-async fn set_plugin_skill_enabled(
-    name: String,
-    enabled: bool,
-    location_uri: Option<String>,
-) -> Result<crate::plugins::SkillToggle, String> {
-    crate::plugins::set_skill_enabled(name, enabled, location_uri)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// One Skill's own text, or `None` for one the registry cannot find.
-#[tauri::command]
-async fn read_plugin_skill(
-    name: String,
-    location_uri: Option<String>,
-) -> Result<Option<String>, String> {
-    crate::plugins::read_skill(name, location_uri)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Every Agent this machine holds, the built-in roles included.
-///
-/// **A definition, not a Session.** An Agent is what a Session is started
-/// *under*; the roster says nothing about what is running, which the delegation
-/// events answer instead. Read through the child [`plugins`] keeps, the same one
-/// the Skill and MCP screens ask.
-#[tauri::command]
-async fn list_plugin_agents() -> Result<Vec<crate::plugins::PluginAgent>, String> {
-    crate::plugins::agents().await.map_err(|e| format!("{e:#}"))
-}
-
-/// One Agent with its stored prompt, or `None` for one that is gone.
-#[tauri::command]
-async fn get_plugin_agent(name: String) -> Result<Option<crate::plugins::AgentDetail>, String> {
-    crate::plugins::agent(name)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Writes a new Agent down, or refuses in the agent's own words.
-#[tauri::command]
-async fn create_plugin_agent(
-    draft: crate::plugins::AgentDraft,
-) -> Result<crate::plugins::AgentDetail, String> {
-    crate::plugins::create_agent(draft)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Rewrites an Agent's identity and prompt.
-#[tauri::command]
-async fn update_plugin_agent(
-    name: String,
-    draft: crate::plugins::AgentDraft,
-) -> Result<crate::plugins::AgentDetail, String> {
-    crate::plugins::update_agent(name, draft)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Removes an Agent definition, answering whether the store took it.
-#[tauri::command]
-async fn delete_plugin_agent(name: String) -> Result<bool, String> {
-    crate::plugins::delete_agent(name)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Every MCP server this machine has written down, the switched-off ones included.
-///
-/// **The reader's own store, not what a session can reach.** The agent's other MCP
-/// list is what a *session* can reach, and a server switched off is absent from it
-/// — so a screen built on that one could switch a server off and never see it again
-/// to switch it back on.
-///
-/// The read carries **no configuration**: `env` and `headers` are credentials, and
-/// they arrive only through [`get_plugin_mcp_server`], one server at a time.
-#[tauri::command]
-async fn list_plugin_mcp_servers(
-    keyword: Option<String>,
-) -> Result<Vec<crate::plugins::PluginMcpServer>, String> {
-    crate::plugins::mcp_servers(keyword)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// One server's whole configuration, or `None` for one that is gone.
-#[tauri::command]
-async fn get_plugin_mcp_server(
-    name: String,
-) -> Result<Option<crate::plugins::McpServerDetail>, String> {
-    crate::plugins::mcp_server(name)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Writes a server down. Refusals arrive in the agent's own words — a duplicate
-/// name, a missing command, a transport that does not take these fields.
-#[tauri::command]
-async fn create_plugin_mcp_server(
-    name: String,
-    config: crate::plugins::McpConfig,
-) -> Result<crate::plugins::McpServerDetail, String> {
-    crate::plugins::create_mcp_server(name, config)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Rewrites a server that is already written down.
-#[tauri::command]
-async fn update_plugin_mcp_server(
-    name: String,
-    config: crate::plugins::McpConfig,
-) -> Result<crate::plugins::McpServerDetail, String> {
-    crate::plugins::update_mcp_server(name, config)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-async fn delete_plugin_mcp_server(name: String) -> Result<bool, String> {
-    crate::plugins::delete_mcp_server(name)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-async fn set_plugin_mcp_server_enabled(
-    name: String,
-    enabled: bool,
-) -> Result<crate::plugins::PluginMcpServer, String> {
-    crate::plugins::set_mcp_server_enabled(name, enabled)
-        .await
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Connects once and answers what happened — apart from saving, because an entry
-/// can be written down cleanly and still be unreachable.
-#[tauri::command]
-async fn test_plugin_mcp_server(name: String) -> Result<crate::plugins::McpTestResult, String> {
-    crate::plugins::test_mcp_server(name)
-        .await
-        .map_err(|e| format!("{e:#}"))
 }
 
 /// Stops the in-flight turn without killing the session — the CLI aborts its
@@ -1148,10 +892,31 @@ pub fn run() {
                 }
             });
 
+            // The team's MCP server. Like orchestration, a side channel: without
+            // it agents still work, they just cannot reach each other.
+            tauri::async_runtime::spawn(inbox::load(app.handle().clone()));
+            tauri::async_runtime::spawn(channels::load(app.handle().clone()));
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = team::serve(handle).await {
+                    eprintln!("[team err] {e:#}");
+                }
+            });
+
             // Prompts that run themselves. A task in this process rather than a
             // daemon — an automation nobody can watch run is one the reader finds
             // out about by reading a diff they did not expect. See `automations`.
             automations::start(app.handle().clone());
+            tidy::start(app.handle().clone());
+            clis::start_daily_check(app.handle().clone());
+            // The local endpoint a service's webhook is pointed at. Like the
+            // team server, a side channel: without it schedules still run.
+            let hooks = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = routine_hooks::serve(hooks).await {
+                    eprintln!("[hooks err] {e:#}");
+                }
+            });
 
             // Returns immediately: consent is read, and the id minted, inside
             // the task `track` spawns — so nothing on screen waits on a file
@@ -1168,25 +933,73 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             send_msg,
+            kit_cmds::kit_review,
+            kit_cmds::kit_speech,
+            kit_cmds::kit_cost,
+            kit_cmds::kit_drafts_list,
+            kit_cmds::kit_draft_new,
+            kit_cmds::kit_draft_act,
+            kit_cmds::kit_page_history,
+            kit_cmds::kit_page_update,
+            kit_cmds::kit_page_restore,
+            kit_cmds::kit_watch_add,
+            kit_cmds::kit_watch_poll,
+            kit_cmds::kit_payments_get,
+            kit_cmds::kit_e2e_status,
+            kit_cmds::kit_e2e_create,
+            kit_cmds::kit_takeover,
+            kit_cmds::kit_takeover_state,
             read_attachments,
             write_pasted_text,
             write_pasted_image,
             list_models,
-            list_providers,
-            list_provider_presets,
-            add_provider,
-            remove_provider,
-            test_provider,
             refresh_models,
-            git::undo_turn,
             prepare_session,
+            agents::agents_sync,
+            agents::agents_load,
+            agents::agent_memory_list,
+            agents::agent_memory_read,
+            agents::agent_memory_write,
+            github::pr_diff,
+            github::revert_pr,
+            pty::pty_open,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_close,
+            agents::agent_glances,
+            agents::agent_briefing_layers,
+            agent_profile::agent_instr_list,
+            agent_profile::agent_instr_read,
+            agent_profile::agent_instr_save,
+            agent_profile::agent_instr_restore,
+            agent_profile::agent_memory_usage,
+            agent_profile::agent_memory_forget,
+            agent_profile::agent_memory_restore,
+            agent_profile::agent_memory_tidy,
+            agent_profile::agent_memory_tidied,
+            agent_activity::agent_activity,
+            budget::agent_spend,
+            budget::agent_budget_changed,
+            workspaces::workspaces_list,
+            workspaces::workspace_create,
+            workspaces::workspace_update,
+            workspaces::workspace_delete,
+            workspaces::workspace_set_logo,
+            workspaces::workspace_clear_logo,
+            settings::get_me,
+            settings::set_me,
+            settings::me_set_photo,
+            settings::me_clear_photo,
             agent_availability,
-            automations::list_automations,
-            automations::create_automation,
-            automations::delete_automation,
-            automations::set_automation_enabled,
-            search::search_transcripts,
-            search::search_content,
+            automations::routines_list,
+            automations::routine_save,
+            automations::routine_set_on,
+            automations::routine_delete,
+            automations::routine_restore,
+            automations::routine_duplicate,
+            automations::routine_skip,
+            automations::routine_run_now,
+            automations::routine_hook_info,
             #[cfg(all(feature = "cef", target_os = "macos"))]
             cef::browser_open,
             #[cfg(all(feature = "cef", target_os = "macos"))]
@@ -1227,7 +1040,6 @@ pub fn run() {
             files::search_files,
             files::resolve_named_path,
             files::write_text_file,
-            files::list_dir,
             files::read_file,
             store::list_session_index_items,
             store::get_session_by_id,
@@ -1236,16 +1048,12 @@ pub fn run() {
             projects::add_project,
             projects::remove_project,
             projects::set_last_selected_project,
-            projects::set_project_space,
-            projects::retag_space,
             git::list_branches,
             git::checkout_branch,
             git::project_repos,
             git::changes_since,
             git::file_change,
             head_tree,
-            git::log_commits,
-            git::log_branch_commits,
             work_status,
             store::set_session_flags,
             store::detach_session,
@@ -1255,55 +1063,68 @@ pub fn run() {
             remove_session_worktree,
             mark_session_idle,
             interrupt_session,
-            context_snapshot,
             session_delegations,
             stop_session_delegations,
-            session_delegation_messages,
             session_goal,
-            create_session_goal,
-            move_session_goal,
-            edit_session_goal,
-            clear_session_goal,
-            list_plugin_skills,
-            set_plugin_skill_enabled,
-            read_plugin_skill,
-            list_plugin_mcp_servers,
-            get_plugin_mcp_server,
-            create_plugin_mcp_server,
-            update_plugin_mcp_server,
-            delete_plugin_mcp_server,
-            set_plugin_mcp_server_enabled,
-            test_plugin_mcp_server,
-            list_plugin_agents,
-            get_plugin_agent,
-            create_plugin_agent,
-            update_plugin_agent,
-            delete_plugin_agent,
+            plugin_store::plugins_list,
+            plugin_store::plugin_test,
+            plugin_store::plugin_retest,
+            plugin_store::plugin_add_custom,
+            plugin_store::plugin_connect,
+            plugin_store::plugin_connect_cancel,
+            plugin_store::plugin_reconnect,
+            plugin_store::plugin_disconnect,
+            plugin_store::plugin_set_policy,
+            plugin_store::plugin_configure,
+            plugin_store::plugin_set_grant,
+            plugin_store::skill_save,
+            plugin_store::skill_delete,
             cancel_queued,
             steer_queued,
             respond_permission,
+            inbox::inbox_list,
+            inbox::inbox_viewing,
+            inbox::inbox_resolve,
+            inbox::inbox_undo,
+            inbox::inbox_archive,
+            inbox::inbox_mark_mentions_read,
+            inbox::inbox_rule_remove,
+            inbox::inbox_trail,
+            channels::channels_list,
+            channels::channel_create,
+            channels::channel_update,
+            channels::channel_archive,
+            channels::channel_member,
+            channels::channel_get,
+            channels::channel_post,
+            channels::channel_react,
+            channels::channel_read,
+            channels::channel_tasks,
+            channels::channel_task,
+            channels::channel_stop,
+            channels::channel_retry,
+            channels::channel_export,
             answer_questions,
             cancel_question,
             notifications::notify_session,
+            notifications::notify_test,
+            limits::plan_limits,
+            spend::usage_spend,
+            spend::usage_export_csv,
+            clis::cli_info,
+            clis::cli_check_updates,
+            clis::cli_update,
+            clis::cli_sign_in,
+            clis::cli_sign_out,
+            clis::cli_install_adapter,
+            workspaces::workspace_set_defaults,
+            workspaces::workspace_set_order,
             updater::check_update,
             updater::install_update,
-            issues::get_integrations,
-            issues::connect_linear,
-            issues::disconnect_linear,
-            issues::list_issues,
-            issues::get_issue,
-            issues::fetch_issue_asset,
-            issues::list_issue_filters,
-            issues::unlink_issue,
-            issues::update_issue,
             github::prs_for_branch,
             github::pr_marks,
             github::list_pull_requests,
             github::pull_request_by_number,
-            github::list_workflow_runs,
-            github::get_workflow_run,
-            github::rerun_workflow,
-            github::get_run_log,
             github::merge_pr,
             github::delete_branch,
             github::reopen_pr,
@@ -1319,8 +1140,6 @@ pub fn run() {
             quit::confirm_quit,
             quit::dismiss_quit,
             docs::read_doc,
-            docs::save_doc,
-            docs::watch_docs,
             apps::list_open_apps,
             apps::open_in_app,
             apps::open_login_terminal,

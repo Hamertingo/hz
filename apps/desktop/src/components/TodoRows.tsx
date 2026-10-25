@@ -1,21 +1,19 @@
-import IssueStateIcon from "@/components/IssueStateIcon";
+import StateGlyph, { type StateKind } from "@/components/StateGlyph";
 import { cn } from "@/lib/utils";
 import { activeLabel, type TodoPlan, type TodoTask } from "@/lib/todo";
 
 /// The three pieces every plan surface is built from: the mark a task carries,
 /// the ring the plan as a whole carries, and the rows themselves.
 ///
-/// **The marks are [IssueStateIcon]'s, not a second set of glyphs.** A todo is a
-/// work item with a state, and the app already draws those — hollow ring for not
-/// started, half wedge for in progress, a disc with a check punched out for
-/// done — for the tracked work in the panel next door. A reader who has learned
-/// one has learned the other, and a lucide stand-in would be a second vocabulary
-/// for the same three words.
+/// **The marks are [StateGlyph]'s, not a second set of glyphs.** A todo is a
+/// work item with a state: a hollow ring for not started, half a ring for in
+/// progress, a disc with a check punched out for done. A lucide stand-in would be
+/// a second vocabulary for the same three words.
 ///
 /// Colour is the caller's, and that is the whole of the difference between the
 /// surfaces: the plan's own greens and greys, not Linear's state palette.
 export function TodoGlyph({ task, className }: { task: TodoTask; className?: string }) {
-  const kind =
+  const kind: StateKind =
     task.status === "completed"
       ? "completed"
       : task.status === "in_progress"
@@ -31,7 +29,7 @@ export function TodoGlyph({ task, className }: { task: TodoTask; className?: str
         ? "var(--foreground)"
         : "var(--muted-foreground)";
 
-  return <IssueStateIcon kind={kind} color={color} className={className} />;
+  return <StateGlyph kind={kind} color={color} className={className} />;
 }
 
 /// The plan's own ring: a share of the circle filled by how much is done.

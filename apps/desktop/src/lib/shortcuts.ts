@@ -48,7 +48,6 @@ export const SHORTCUTS = [
   { id: "visit.forward", label: "Forward to the next session", group: "Sessions", chord: k("]") },
   { id: "group.prev", label: "Previous project", group: "Sessions", chord: k("ArrowUp", { alt: true }) },
   { id: "group.next", label: "Next project", group: "Sessions", chord: k("ArrowDown", { alt: true }) },
-  { id: "search", label: "Search", group: "Sessions", chord: k("f") },
   { id: "pane.1", label: "Focus pane 1", group: "Sessions", chord: k("1") },
   { id: "pane.2", label: "Focus pane 2", group: "Sessions", chord: k("2") },
   { id: "pane.3", label: "Focus pane 3", group: "Sessions", chord: k("3") },
@@ -61,44 +60,26 @@ export const SHORTCUTS = [
   { id: "tab.close", label: "Close tab or pane", group: "Sessions", chord: k("w") },
 
   { id: "sidebar.toggle", label: "Toggle sidebar", group: "Panels and views", chord: k("b") },
-  { id: "panel.toggle", label: "Toggle right panel", group: "Panels and views", chord: k("e") },
   // The same letter with one more modifier, since it is the same control's
   // other half — ⌘E says whether the pane is up, this says how much room it
   // takes. Not ⌘⇧E, which is `effort.next`.
-  { id: "panel.expand", label: "Expand right panel", group: "Panels and views", chord: k("e", { alt: true }) },
-  { id: "panel.tab.prev", label: "Previous panel tab", group: "Panels and views", chord: k("{", { shift: true, code: "BracketLeft" }) },
-  { id: "panel.tab.next", label: "Next panel tab", group: "Panels and views", chord: k("}", { shift: true, code: "BracketRight" }) },
   { id: "panel.refresh", label: "Refresh panel", group: "Panels and views", chord: k("r") },
-  { id: "doc.save", label: "Save doc", group: "Panels and views", chord: k("s") },
-  { id: "subtab.prev", label: "Previous tab in the view or panel", group: "Panels and views", chord: k("ArrowLeft", { shift: true }) },
-  { id: "subtab.next", label: "Next tab in the view or panel", group: "Panels and views", chord: k("ArrowRight", { shift: true }) },
   // One per view rather than by position, since a rebinding names the view and
   // not its slot in the row. Three, because the transcript is not a view the
   // reader switches to — it is what the column shows otherwise.
-  { id: "view.changes", label: "Diff view", group: "Panels and views", chord: k("1", { alt: true, code: "Digit1" }) },
-  { id: "view.browser", label: "Browser view", group: "Panels and views", chord: k("2", { alt: true, code: "Digit2" }) },
-  { id: "view.files", label: "Files view", group: "Panels and views", chord: k("3", { alt: true, code: "Digit3" }) },
   { id: "chat.bottom", label: "Scroll chat to bottom", group: "Panels and views", chord: k("ArrowDown") },
   { id: "inbox.open", label: "Open inbox", group: "Panels and views", chord: k("i", { shift: true }) },
-  { id: "issues.open", label: "Open issues", group: "Panels and views", chord: k("i") },
   { id: "prs.open", label: "Open pull requests", group: "Panels and views", chord: k("l", { shift: true }) },
   // Not ⌘⇧P, which is the one that reads like the name and already belongs to
   // `project.next`: two ids cannot share a default, and moving an unrelated chord
   // to free this one is a behaviour change nobody asked for.
   { id: "plugins.open", label: "Open plugins", group: "Panels and views", chord: k("u", { shift: true }) },
-  { id: "usage.open", label: "Open usage", group: "Panels and views", chord: k("u") },
-  { id: "issues.search", label: "Search issues", group: "Panels and views", chord: k("f", { shift: true }) },
 
   { id: "dictate", label: "Dictate", group: "Composer", chord: k("d") },
   { id: "attach", label: "Attach files", group: "Composer", chord: k("o", { alt: true }) },
-  { id: "model.next", label: "Next model", group: "Composer", chord: k("Tab", { meta: false, shift: true }) },
-  { id: "effort.next", label: "Next effort level", group: "Composer", chord: k("e", { shift: true }) },
-  { id: "worktree.toggle", label: "Toggle worktree", group: "Composer", chord: k("t", { shift: true }) },
-  { id: "project.next", label: "Next project in picker", group: "Composer", chord: k("p", { shift: true }) },
   { id: "queue.send", label: "Send queued prompts now", group: "Composer", chord: k("Enter") },
   // Not ⌘S, which is the Docs panel's own save — two ids cannot share a default,
   // and the doc panel's is the older owner of that chord.
-  { id: "stash.prompt", label: "Stash the draft", group: "Composer", chord: k("s", { shift: true }) },
 
   { id: "notice.take", label: "Open the notification", group: "Notifications", chord: k("g") },
   { id: "notice.delete", label: "Delete worktree from notification", group: "Notifications", chord: k("d", { shift: true }) },

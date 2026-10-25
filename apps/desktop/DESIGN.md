@@ -11,9 +11,60 @@ load-bearing for correctness — the traps that break the app silently live in C
 
 Same writing rules as CLAUDE.md: why, not what. Cut any word doing no work.
 
+## The Studio language
+
+The mockup ([design/studio/](design/studio/)) is the spec; this section is what of it is law. It replaces the older pixel-label look: **pixel lives in identity only** (faces, banners, tiles), and labels, icons, buttons and type are plain Geist in sentence case. Silkscreen and caps went on purpose.
+
+**Tokens derive from the theme, never from a second palette.** `--ink..ink4`, `--s1..s3`, `--line..line3`, `--hover`, `--active` are mixes of `--foreground` into `--background` in [App.css](src/App.css), so a ported theme, light mode and vibrancy follow with no block of their own, and the shadcn names stay the source of truth for screens not yet rebuilt. Tailwind sees them as `text-ink2`, `bg-s2`, `border-line`. The one rule is that no component writes a hex. What is fixed: `--amber --green --red --blue` (a state keeps its meaning across themes, light mode gets darker values), the radii, and `--paper` under a brand mark.
+
+**Four radii.** `--r1` 6 for rows and small controls, `--r2` 9 for buttons and fields, `--r3` 12 for menus and cards, `--r4` 16 for sheets. A confirm dialog is 18, the one step above, since it floats over a sheet. Use `rounded-(--r2)`. `Button`'s `size` variants still carry the old `--radius` rungs until a screen is rebuilt on them, and an icon button needs no radius class.
+
+**One panel, two homes** ([ui/sheet.tsx](src/components/ui/sheet.tsx)). `docked` hangs off the right edge for something read beside the chat. `centered` is wider, with a full-screen toggle, for something configured. `bare` drops the header for a body that brings its own banner, leaving the close and expand buttons floating over it (dark glass chips, since the banner is arbitrary colour). Rejected: two components, because the mockup moves one panel between homes and the behaviour (Escape, scroll, footer) must not drift.
+
+**Layers close one at a time.** Sheet, confirm and menus are Radix, so Escape closes the topmost only and there is no stack of our own to keep in step. z: sheet 60, confirm 70, menus 80, toasts 130. **A toast is outside a sheet to Radix**, so clicking Undo would dismiss the sheet behind it; both panels ignore any target inside `[data-toaster]`.
+
+**Toasts are a pill at the bottom centre**, with an optional action (Undo, Open). `toast()` is imperative on purpose: the thing that wants Undo is a handler, not a render. It dismisses itself after 3.4s.
+
+**Menus** (`ui/dropdown-menu`): sections are `DropdownMenuLabel` in ink4, a check sits at the right edge, a hint (`DropdownMenuHint`) pushes to it, and destructive is red text with a red wash. Icons inherit ink3.
+
+**Confirm with type-to-confirm** ([ui/confirm-dialog.tsx](src/components/ui/confirm-dialog.tsx)) for what cannot be undone and takes more than itself with it (a workspace, an agent with its memory). The button is disabled, not hidden, until the text matches exactly.
+
+**Faces are one canvas helper.** [lib/dither.ts](src/lib/dither.ts) is the mockup's ordered dither; `AgentTile`, `PixelBanner` and `Dither` draw on it, and `AgentAvatar` is the old name for `AgentTile`. Cells are canvas pixels scaled with `image-rendering: pixelated`, so the cell count is the resolution. Seeded from the id, so an agent looks the same every time.
+
+**Default dark is the mockup's greys, written out, not derived.** `--bg #121213`, side `#0e0e0f`, surfaces white at 2.5 / 4.5 / 7%, lines at 6 / 9 / 14%, ink `#ececea / #a3a3a0 / #71716e / #4b4b49` sit in the `default`/dark block of App.css. The derived ramp landed within a few percent and a side-by-side check cannot forgive "within". Every other theme still derives.
+
+**Default light is the same bargain, on warm paper.** The page is `--paper`, panels are pure white, and the card's step above the page is the whole of what separates them. The values sit in the `default`/light block, written out like the dark ones:
+
+| Token | Light | Why |
+|---|---|---|
+| `--background`, `--paper` | `#f4f3ef` | the page, and the paper under a brand mark |
+| `--surface-card` | `#ffffff` | panels, composer, menus |
+| `--surface-raised` | `#ebeae5` | inset `<pre>` wells; sits *below* the page, since a light page can only be cut down into |
+| `--muted`, `--surface-selected` | `#e9e8e3`, `#e6e5e0` | secondary fills; the selected row |
+| `--side` | `#e6e5e0` | the sidebar, a step darker than the page |
+| `--foreground`, `--ink` | `#1b1b1a` | body text, 15:1 on the page |
+| `--ink2` | `#5c5c58` | secondary text, 6.1:1 |
+| `--ink3` | `#66665f` | meta text the reader reads (a role, a count, a hint), 4.8:1. The mockup's `#8a8a85` measures 3.1:1 |
+| `--ink4` | `#8f8f89` | tertiary: timestamps and group labels, about 3:1. Short of AA on purpose, since the mockup's `#b4b4ae` was 1.9:1. Placeholders and disabled controls are exempt |
+| `--line`, `--line2`, `--line3` | black 7 / 10 / 16% | hairlines |
+| `--s1`, `--s2`, `--s3` | black 2.5 / 4.5 / 7% | fills |
+| `--amber`, `--green`, `--red`, `--blue` | `#a8741a`, `#2f8a58`, `#c0494c`, `#4a67d0` | darker than dark mode, so each is legible on white |
+| `--on-signal` | `#ffffff` | ink on a signal fill (dark mode: `#111111`) |
+| `--code-well` | black 4.5% | the well behind code and terminal output (dark: black 30%) |
+
+Two rules came out of checking it on screen. Agent-coloured text goes through `inkTint`, which mixes toward `--foreground`, because `mixHex` toward white is a washout on paper. Pixel banners keep the agent's colour down to a dark tone (`bannerTones(color, "light")`), and their faces are drawn in ink, since a white face vanishes on a pale sky. `--side` is its own token (a darker step than the page) and the sidebar paints it at `--vibrancy-alpha`, so glass still shows through.
+
+**Button, Switch, Segmented follow `.btn`, `.tog`, `.seg`.** `outline` is the plain `.btn` (faint fill, hairline inside); `solid` is the ink fill for the one action a screen is about; `ghost` is ink2 text that lights on hover; `bad` (and `destructive`) is red words on a red wash, never a red fill. Default size is 30 tall and `sm` 26. A Switch is a 30x18 pill that goes **green** when on, the signal colour for "running". `ui/segmented` is a radio group, arrows move the choice, one Tab stop. `fieldClassName` is `.fld` for the new screens; the older `Input` box stays where it is.
+
+**The sidebar is the mockup's, in this order.** Workspace switcher (logo, name, "N agents · M working"), Jump to (opens ⌘K), Inbox with a count, Routines, Pull requests, Plugins, Channels, Agents, then you. An agent row is face, name, role, and one right-hand mark by priority: **Working** chip in its colour, **Needs you** in amber, a blue unread dot, else the time. The second line shimmers while it works. The status menu hangs off your card (Available, Focus, Away, then Profile, Settings) and opens upward. Usage left the nav, since the mockup puts it in settings.
+
+**Workspace logo and your face are the same two choices**: a generated dither tile or an uploaded image. Picking a face clears a photo; picking *Generate* clears a logo. Delete is a typed confirm and is disabled, with its reason in the row, when it is the only workspace.
+
+[demo-studio.html](demo-studio.html) renders every primitive in both sheet homes.
+
 ## Window, chrome and the radius scale
 
-**Almost everything is a rounded square.** Not sharp rectangle, not pill. One radius scale from `--radius: 0.625rem` in [App.css](src/App.css): composer card + drop overlay `rounded-2xl`, dialogs + cards `rounded-xl`, menus + buttons `rounded-lg`, menu items + small tiles `rounded-md`. `Button`'s `size` variants already carry right rung — `icon-sm` = `rounded-[min(var(--radius-md),12px)]` — so **icon button need no radius class at all**, and `rounded-full` on one make it single circle in row of squares.
+**Older surfaces keep the `--radius` scale until they are rebuilt.** One scale from `--radius: 0.625rem` in [App.css](src/App.css): composer card + drop overlay `rounded-2xl`, dialogs + cards `rounded-xl`, menus + buttons `rounded-lg`, menu items + small tiles `rounded-md`. `Button`'s `size` variants already carry right rung — `icon-sm` = `rounded-[min(var(--radius-md),12px)]` — so **icon button need no radius class at all**, and `rounded-full` on one make it single circle in row of squares.
 
 **Filled button carry shadow; chrome don't.** `--shadow-button` = `0 1px 4px` straight down, no spread, on `default` variant only — on dark palette filled button and its background = two flat fields, so without it only thing saying "button" is fill. x offset zero deliberately: horizontal offset read as light source rest of app don't have. `ghost` and `outline` stay flat.
 
@@ -199,30 +250,11 @@ Glyph sit **beside rail, ahead of title**, and take **no room when absent** — 
 
 ## The inbox
 
-**A source row with marks and counts, and it is the plugins page's own row.** Ghost buttons whose active one takes `--sidebar-selected`, a count in a smaller tabular face, and no track — a well with a thumb is for a *mode* inside one surface, where this is a place to go. What is new here is only the mark: a logo is the one thing that says *which* half of a two-tracker list you are in before the word is read, and everywhere else in the app the host is deliberately unsaid. The counts belong on this row for the plugins page's reason — it is the only row on screen under all three lists — and they are read in **one** place, by the shell, or the same row would say three different things on three screens.
+**A reading pane, one decision at a time**, from the mockup's `inbox.js`. Left, a 340px list: faces with a 15px kind glyph on the corner (amber shield, blue question, grey at, green check once settled), a two-line row, time at the right edge, a settled row dimmed to 60% on its face. Right, a 640px reader that is a column and not a card: who and what they want, a kind pill tinted at 12%, a 24px title, a quiet sub line, the context (a command in mono on `--s1`, post cards, choices as full-width rows with a numbered key chip, a quote), the *why* line with a lock, and a collapsed **How it got here** on a hairline rule. The action bar under it is the one place a decision is made: the solid button is the yes, a red wash is the no and sits far right, and the letter each answers to is drawn on it.
 
-**The merged row is the pull-requests row, widened.** Two lines, the same card, the same `--surface-selected` hover, the same dot-separated meta line and the same hover-revealed external link, because a reader who has read one of these lists has read the other. What differs is what the first line's right edge holds: the pull-requests page puts a *verdict* there (a glyph for an approval, a word for a change request) and the inbox puts the one thing that made the row worth drawing — a chip, tinted with `--destructive` or `--accent-add` on a hairline, never filled. It is the only coloured thing on a row, and most rows wear none.
+**The motion is the feedback.** The reader slides up on arrival (`read-in`), fades up and out when decided (`read-out`), and a 52px check in the verdict's colour pops in its place (`settle`) for a beat before the next item comes up. No spinner, no modal. Undo that cannot happen is drawn disabled with "Already sent", not hidden.
 
-**A row says nothing where there is nothing to say.** A draft's own glyph, an issue's state glyph and an open pull request nobody has to act on all leave a bare right edge — the pull-requests list's "review required is the absence of a verdict" rule, one field over. So does an issue that is merely assigned: its state is already the glyph at the row's left, and a word repeating it spends the scarcest strip on the row. Checks still running are the sidebar's own dashed arc at its own 3s turn, one fact in one shape across the app.
-
-**A note replaces the empty sentence rather than sitting over one.** A tracker that could not be read says nothing about whether work is in flight, so "Nothing is in flight" under a banner naming the failure is a claim that banner has just contradicted. A narrowing with nothing left in it is a third sentence again — "Nothing matches that." — because an empty list and an emptied list send the reader to different places.
-
-**Both states are drawn from the real row's own boxes.** The waiting placeholders are its title bar and its meta bar, ragged, in `em` against `text-ui`, so the rows land in the space the wait already took; the empty state is the list's own glyph above one centred sentence, muted a step below it so the words are still what is read.
-
-## Actions
-
-**GitHub's run page, in one column, because that is the layout the data has.** The shape is theirs: a header that leads with the *commit*, a rail of jobs with their steps hanging off it, and the log as a pane of its own with a toolbar. Each of those is a decision about reading rather than about drawing — a run is something that happened to a commit, its life is a tree of jobs and steps, and its output is a record you scroll.
-
-- **The rail is what makes a list of jobs read as one run.** A node per job with a line running to the next, the failing one's steps hanging off it — the one visual device here that says "these are parts of one thing" rather than "here are two cards". The version that framed each job in its own border was the thing that made them read as unrelated.
-- **The log belongs to the job, and its toggle is on the job's row.** Not a shortcut: a step with a `name:` is titled in the log by its *command*, so there is no per-step log to show — and a disclosure per step therefore opened the same log under every row the reader tried. A chevron that opens another step's answer is worse than no chevron.
-- **Every line carries its number, and a shut group carries the number of its first line.** That pair is GitHub's own device and it is the whole reason the numbers are there: a folded block reading `2 Runner Image Provisioner` then `4 Run actions/checkout@v4` says it holds lines 2 and 3 without being opened. The column is dim and `select-none` — a reader copying a log wants the lines, and a column of counters in the clipboard is not a log.
-- **The search is what makes a four-thousand-line job readable**, and it answers flat rather than grouped: a hunt for a word is not a reading of the structure the headings describe. It keeps each hit's own line number, and the count in the toolbar says how many.
-- **The toolbar says the job's name once, and not here.** It is on the row the `Log` toggle sits under, one line above; repeating it is the same word twice in one place — and it is also what stopped the search fitting a 320px pane. `aria-label` carries it for a reader who cannot see.
-- **The log's groups are the reading aid, and they start shut.** A runner wraps everything it does in `##[group]`, so the block is drawn as the headings it wrote, each with a line count and a chevron — a 900-line job reads as the list of things it did rather than as a wall of output with its own headings buried in it, which is what an open log is. GitHub's own default, and the reason is the same one.
-- **The timestamps are a switch in the toolbar, and they start off.** GitHub shows them; a thirty-character stamp on the left of a pane that can be 320px wide costs more than it says. Switched on they are a *column* — `HH:MM:SS` alone, since the date belongs to the run and the header already says it.
-- **The `##[error]` lines are lifted above the log, not left in it.** It is one line in four hundred, the log scrolls in its own box, and an answer that takes a thousand lines of scrolling to reach is an answer that is not read. The band names the step the job went red on as well as the runner's own sentence — which is a thing GitHub's page does not do, and it can here because the step list is one field away.
-- **A toolbar is what a log pane wears.** The job's name, the two switches, and Copy, on a hairline row above the record. The panel itself has **no fill**: `--surface-raised` means "cut into the page" and lands as a slab on a ported palette whose card is lighter than its editor (One Dark Pro: `#323842` against `#23272e`), and `--surface-well` is a black scrim, which is the same mistake darker.
-- **A step is a line and a job is a row that opens.** The step rows carry no chevron because they open nothing; the job rows carry one because they open their steps. Every row's duration sits in the same right-aligned column, and a skipped one has no duration at all — it carries a start and an end like any other, so measuring it would print `0s` on a row nobody ran.
+**Zero is a state with the team in it**: five overlapping faces, "You're all caught up", the day's count and a pill per agent.
 
 ## The pull-requests list
 
@@ -236,7 +268,7 @@ Glyph sit **beside rail, ahead of title**, and take **no room when absent** — 
 
 **Approval is a glyph and a change request is a word.** "Review required" is the *absence* of a verdict, so a row saying it spends the scarce end of the line on nothing. The glyph is the one somebody actually gave; the word is the one the reader has to act on.
 
-**The external link is revealed by the row's hover and its box is reserved either way** — `IssueRow`'s "Work on it" bargain, or a control appearing under the cursor moves the line that revealed it.
+**The external link is revealed by the row's hover and its box is reserved either way** — the bargain the list rows made, or a control appearing under the cursor moves the line that revealed it.
 
 **A read with nothing behind it draws the rows, not a spinner.** Bars built from the real row's own boxes, in `em` against `text-ui`, the same pairing the providers list makes: a lone arc over an empty pane reads as the page having failed to draw.
 
@@ -265,32 +297,6 @@ Glyph sit **beside rail, ahead of title**, and take **no room when absent** — 
 **Library spacing dialled down from outside, through its shadow root.** `--diffs-gap-block` (8px padding above/below code) and `--diffs-gap-style` (2px rule between gutter and code, which in split view draw channel down middle wide enough to read as two halve drifting apart) both read *inside* shadow DOM with those name — and custom property cross that boundary, so setting them on any ancestor = whole override. `DIFF_SPACING` in [DiffPane](src/components/changes/DiffPane.tsx). Pane itself carry no padding either: its border = frame.
 
 **History drill in, not third column.** Window can't hold commit list, file list *and* split diff without diff becoming narrowest of three. Selecting commit replace list with its files under back-header; selection kept on step back, so long history don't lose reader's place.
-
-## Handoff row
-
-**Composer = occluder, not a clip.** Buttons sit full height in reserve fraction as tall (`h-1` against their `h-7`), so most of each run past it and **behind card** — card opaque and paint later. Sliver deliberately tiny: enough to say something under there, not enough to read as row of buttons composer happen to be covering. Hover slide whole row clear (`-translate-y-7`). Clip instead leave same picture and different lie: button end where card start rather than continue behind it.
-
-**Hover zone and thing it move = separate element, and have to be.** With one element, box travel with buttons — so cursor that opened row sit on its edge moment it open, row shut under it and reopen, forever. Zone stay put (`-top-7 pt-7`, turning 4px target into 32px one); only inner row translate, and it translate *within* zone, so cursor never outside it. `w-fit` keep that invisible box off rest of transcript's bottom edge, where full-width strip would swallow click and text selection.
-
-**Row order = order work move in**: Commit, Create PR. `px-3` on reserve match card's own inner padding.
-
-**Row have a width, and that what set the count.** Composer `max-w-3xl` but shrink with its column, so right panel open leave it near 415px — 391px inside padding. Five labelled `size="sm"` button = ~523px, and zone `absolute w-fit` bound by nothing, so overflow don't clip: it draw **over right panel**. Four ran over too (~411px). So **Commit & push, Draft PR and Push all dropped**, and **Run server follow them**, leaving these two with room to spare. None put anything out of reach — committing leave clean tree, draft and bare push both = sentence in composer like every other button here already is, and Create PR push on the way regardless. Wrap rejected: zone's `-top-7 pt-7` cover exactly one row height, so second line open *outside* hover zone and row flicker shut. Icon-only rejected too — save ~108px and still overrun.
-
-Read that as the row's standing budget: **two button**. Third want re-measuring, not eyeballing.
-
-**Three fact, each a bug obvious version have:**
-
-- Reserve = **fixed height**, row positioned out of flow inside it. In flow, row push composer down and transcript up every time cursor cross it on way to input.
-- Buttons carry **opaque fill** — `secondary`, never `outline`. Outline = `bg-input/30` in dark palette, so transcript read straight through part meant to be hidden. No `default` variant either: primary fill near-white on this palette. Order carry priority instead.
-- They take **no pointer events until row open**. Visible quarter sit directly above composer, so without this a click aimed at input and landing few px high send a commit.
-
-**Composer card take own token, `--composer`, and that vibrancy fix not colour change.** Start as copy of `--card`. Was the one raised surface staying a **fill** on glass, since handoff row park behind it and veil there show buttons it exist to hide — row clip itself now, so composer take `--veil-float` and blur like every other floating surface. Own token not borrowed `--popover` still: composer not a popover, and next change to floating surface should not have to wonder whether composer wanted it too.
-
-Inline variant — same button along toolbar row, ghost and dimmed — built as mockup and **rejected**. Permanent-but-quiet still permanent: it spend width every turn on thing wanted at end of one.
-
-Icon for `pr` = same one sidebar row and panel toggle draw, so mark and thing it lead to match everywhere.
-
-Hover delay symmetric (150ms): keep cursor merely passing through from popping row open, and let one overshooting on way out come back without it having closed.
 
 ## Worktree notice and confirm dialog
 
@@ -376,55 +382,25 @@ Card name its subject — it and `worktree-failed` the only two that do — brea
 
 **`SettingRow` grew `asGroup`, and it about `htmlFor` reaching nothing.** Label only bind to labelable element, so theme's radio group have to be pointed other way — label carry id, group carry `aria-labelledby`. Switch rows unchanged.
 
-## Providers
+## Settings pages
 
-**One list of gateways, and that is the whole vocabulary.** A gateway is either connected — and the card says what it holds — or it is not, and the same card opens the one field that changes that. It was two groups of identically-built cards, the reader's working setup above a second group headed *add*, which put the thing already done between them and the thing not done. Nothing here is added, so there is one place to look for either answer.
+**Rows are the mockup's `.prow`**: the label and its reason at 210px on the left, the control filling the rest, a hairline under each. Groups start with a quiet `h5`-sized heading ([StudioRow.tsx](apps/desktop/src/components/settings/StudioRow.tsx)), separated by space, not rules. The older `SettingRow` stays for the rows that moved in from the old pages, so a page can hold both until they are redrawn.
 
-**With nothing connected the list is preceded by a sentence**, not drawn empty: that reader has just come from a model picker with nothing in it, and they are the one person here who has to be told what this screen is for.
+**The rail has three headings**, the middle one being the workspace's own name, so Workspace, Agent defaults and Usage & limits read as that team's and the two outside it as yours and the app's.
 
-**The form opens inside the row, not in a dialog.** Picking a gateway *is* the click that opens it — the reader has already decided — so a modal between the two is a second confirmation for one decision, and it takes the list away at the moment the row under the cursor is the thing being explained. The row keeps its shape while it is open and takes `border-ring/60`, the signal a focused field gives, so nothing below it moves and the card being typed into is the one that looks focused. One shape, two contents: a preset asks for the key alone — its URL and dialect are facts hz holds, stated above the field — and the manual form is every field the CLI takes. Both keep their labels, which an inline stack of placeholder-only inputs never had.
+**The theme is chosen by looking**: three 120px previews (a sidebar and a canvas in each mode's greys, System split down the middle), with the five palettes below as swatches. Light and System are disabled, with a tooltip, on a palette that has no light block.
 
-**Order does not move as things connect.** A row that jumped to the top under the reader's cursor would take the form they are typing into with it, so the presets keep the order the backend gives them and a hand-written gateway goes last, where a gateway with no preset belongs.
+**A limit is thirty cells, not a gauge.** The bars are the same hard-edged cells as the spend bars and the dither, amber from 80%. A measured figure is plain (`62%`); one hz sized itself is `~62%` and the card says "estimated"; a window with no number is a dash. **Never a bar that reads zero because nothing was read.** A CLI with no limit says so in the header and draws no bars.
 
-**A hand-written gateway is a line of text until it opens, then the same card.** It is the rare case — the reader came to connect the gateways above it — and a third card of equal weight would read as a third recommendation. So it is a `+ Connect another gateway` line with no frame about it, and opening it gives the row the same mark tile, header and divider the presets wear: the reader is in that flow now, and a form floating under a link reads as something that fell out of the list.
+**A CLI row is one card with a fixed meta grid** (Version, Path, Account, Talks over, in monospace), the primary action at the right and **one** primary at a time: Set up adapter, else Update, else Check. A run in flight draws its last line of output under a rule, in red if it failed. The two CLIs hz cannot drive are dimmed with a disabled Install and the words "Not available yet", not hidden.
 
-**A card states its state in a chip and its facts in a line.** The chip is the only coloured thing on a row — green *Connected*, red *No models* — which is what makes the column scannable for which of these is done; the facts are one muted line of what a reader would ask about it (`api.commandcode.ai · OpenAI chat completions · 41 models · sk-c****9F2A`). They were one `·`-joined string — "Key stored · 12 models · gpt-5, o3, claude" — which truncated the model list mid-id and made a test result read like one more inventory field. `No models` is a chip rather than a colour on that line because the sentence is the same length either way, and the key shown is the CLI's own redaction, never the secret.
+**Jump to is the mockup's palette**: 620px, the field over the list with an ESC cap, group headings in `ink4`, a 22px mark on every row (an agent's own face, a hash, a note, a clock, the plugin's brand), subtitle in `ink3`, a footer with the keys and the workspace's name. Four rows per group until the reader types. Nothing found says what was typed and offers to make an agent called that.
 
-**The mark is the gateway's; the tile is the app's.** Both vendors ship their logo inside a padded square plate, and drawn at that size the mark sat at two thirds of the tile it was given — so the viewBox is the glyph's own bounding box rather than the file's. Both are drawn in `currentColor` on `bg-muted`, the rule `ModelMark` states for models: a mark that brought its own black plate would go invisible on a dark page, which is the one thing a logo may not do. A gateway with no mark gets its initial in the same tile, so the column reads as one system rather than a list of logos with holes between them.
+## Sidebar drag, and skeletons
 
-**The connect card is the button.** A `Connect` button beside it would be a second control saying the same thing at a different distance from the cursor; the word and the chevron are what say the click opens something underneath rather than doing it in place, and the word flips to `Cancel` once it has.
+**The sidebar is a set of handles, not a fixed list.** A row, a channel or a section header lifts after a 150 ms hold; the ghost is the row itself on `popover` with `shadow-lg`, nudged down-right so the row it hovers stays readable. A reorder shows a 2px blue line before or after the target, a drop onto a channel highlights the whole row. Rejected: a grip icon on every row (a column of dots for a gesture most readers never need), and HTML5 drag (never fires under Tauri's file-drop handler). Order is never only a gesture: every row's menu has Move up / Move down.
 
-**A connected card opens on the same gesture, onto its models.** The question after "is it connected" is "which of these do I actually want in the picker", and the answer is every model the provider serves — forty rows on the gateway this was built against, which is why they are behind a click rather than always drawn. **The two actions about the *provider* rather than about its models — test it, forget it — ride in the footer of what opens**, because the header is the button and a button inside a button is neither. Cost, stated: forgetting a provider is one click further away than it was.
-
-**A switch per model, and the row is the switch.** A real `Switch` inside a clickable row is a button inside a button — two hit areas where the reader sees one — so the row carries `role="switch"` and the track is its picture, the bargain `WorktreeToggle` already makes. The track is not the t3code one borrowed: it is the same control this app draws everywhere, which is the point of borrowing the *idea* rather than the markup.
-
-**The switch decides whether the picker draws the model at all.** Not a favourite, not a lead — a row that is off is gone from the composer's menu and from what ⇧Tab cycles. That is the one thing the reader can be told without a sentence, so the description the old dialog carried is gone with it; what is left is the state, drawn per row.
-
-**The count lives on the card, not in the toolbar.** How many models a provider serves and how many are switched off is a summary the collapsed card owes — a switched-off model is otherwise invisible until the card is opened. Once it *is* open the rows say the same thing, so the toolbar carries no count at all rather than a second copy of the same string eight pixels below the first.
-
-**A switched-off row goes muted and stays put.** Not sunk to the bottom of the list, which is what t3code does and what this app's own rule refuses: a row that moves under the cursor on the click that moved it is a list the reader has to re-find. The muting and the track's own state are what say which is which.
-
-**The dialog this replaces is deleted, not left standing.** A second surface holding the same switches is a second place for them to disagree, and the picker keeps only what the composer cannot do without — one `Refresh models` row, since the list is a read of the agent's own account and goes stale one screen away.
-
-**Group headings name the provider, and a name is not an id.** The wire spells a group `custom_provider:opencode-go` and nothing on it carries "OpenCode Go", so the picker reads a cache the settings screen fills as a side effect of the `provider list` it already makes, and falls back to the id's own slug prettified. The trade is stated: until settings has been opened once, a group reads `Opencode Go` — a worse name than the vendor's and a much better one than the id.
-
-**Waiting is drawn as the rows, not as a spinner.** The list is one CLI call, so the wait is a blink or a second, and a lone 14px arc at the top of an otherwise empty pane reads as the page having failed to draw — the one thing a loading state must not look like. Two placeholder rows hold the space the real ones will take, built from the real card's own boxes: the 36px mark tile, then a name line and a facts line. That is what keeps the list from moving everything below it when it lands. Both text bars are `1.4em` rather than a pinned height, because that is the token's own line height — so they track the interface size the reader picked instead of being right only at the default.
-
-**Progress belongs inside the control that was pressed.** The spinner replaces the glyph in the button that started the work rather than floating beside the row's name — the bargain the dictation control makes — and `disabled:opacity-100` keeps the arc from being dimmed to invisible while it runs. Both buttons go inert, since one action at a time is the whole of a row's state, and a mutation that succeeded writes no note: the row that changed is the answer.
-
-## The composer's own furniture
-
-**One row for everything riding on the draft, and it is chips — not tiles.** An attachment, a quotation, and the `@path` a file becomes on send are one thing at three moments, so they are one shape: a pill with the file's own coloured mark, the name, and the way off. They were 56px tiles with a border each, which read as a second, smaller list sitting on top of the message — the eye went to the files rather than to the sentence being written. Both trays render into the composer's row with `contents`, so a quotation and a file wrap together rather than as two rows that happen to be adjacent.
-
-**The pill is measured in `em` and its height is pinned.** What sits inside one varies — a mark and a name, or a glyph, a label, a pencil and an × — and a row of them has to come out level whatever it holds, so the height is set rather than left to the contents. In `em`, because the reader can raise the composer's own size and a pinned pixel height would stop growing with the words beside it.
-
-**The hue is mixed from the accent the run will take, never declared.** A file wears `--accent-mention`, because that is what `@path` is coloured when the prompt lands; a quotation wears `--accent-issue`. `color-mix` over a token that already knows its mode is the only version that cannot drift from the text it turns into — and there are twenty-odd palettes in `App.css`, none of which would survive a second copy of "blue". **A quotation is a chip above the box, never a thing inside the text:** the composer is a textarea with a coloured mirror over it, and that mirror is only in register because every glyph in the draft is still in the textarea underneath. A chip that is not literally in the text would put the caret somewhere the reader can see and cannot click. The alternative — a rich text editor in the composer — is what t3code does and a rewrite of the one component whose whole design is that invariant.
-
-**One Enter legend, and it says what the press will do.** `Press ⏎ to send` becomes `…to 3 models` when a fan-out is set, and the picker's own trigger says `3 models` rather than naming one of them: a button that names one model while the press starts three is a lie about the control. The fan-out set is marked on the row by tinting the model's *name* rather than adding a second glyph — a row can be both the current pick and in the set, and one check for two facts is one word too many.
-
-**A held prompt's way out is not a stop.** The queued bubble's `Now` hands the sentence into the running turn instead of ending it, and the label stayed as it was — `Now` beside `Esc to cancel` never promised a stop, and this is the first release of that promise that does not throw work away.
-
-**Paste is left to the browser until it is too big to be a draft.** Over 32KiB the paste becomes a file and a chip appears in the row; under it the browser inserts the text as it always did, which is what keeps undo and the spelling checker honest. The ceiling on a draft is drawn as a sentence under the box rather than folded into the send button's disabled state, because the button's disabled state already means "this will stop the turn" during a running one — one control cannot say two things.
+**A skeleton mirrors the final layout.** Card outlines, a 30-cell track, avatar circles with two lines, a lane with its cards. Same boxes, same gaps, so nothing moves when the data lands. One `.skeleton` sweep, no per-site pulse. A spinner on its own is only for an action in flight; a re-read with data on screen keeps the data and puts a 12px spinner in the card header. Rejected: a centred "Loading…" (reads as a page that failed to draw) and one full-page skeleton for pages whose cards arrive separately.
 
 ## Asks beside the composer
 

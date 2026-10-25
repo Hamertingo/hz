@@ -7,8 +7,8 @@ import {
   sessionRows,
   sessionUnits,
   sortSessions,
-} from "@/components/Sidebar";
-import type { LiveSessions } from "@/components/Sidebar";
+} from "@/lib/sessionOrder";
+import type { LiveSessions } from "@/lib/sessionOrder";
 import type { DelegatedMember, Project, SessionIndexItem } from "@/types/events";
 
 /// Only the fields the ordering reads. Everything else on the index item is

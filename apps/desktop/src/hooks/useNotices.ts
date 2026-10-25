@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from "react";
 
 /// What the notice is about. It picks the action label and how long the card
-/// stays: `completed` is news that will keep, while `asking` is an agent
-/// standing still until the reader answers, so it is given twice as long to be
+/// stays. There is no `completed`: a finished turn is the agent's unread dot in
+/// the sidebar and the Inbox's done note, never a card or a banner. `asking` is
+/// an agent standing still until the reader answers, so it is given time to be
 /// noticed.
 ///
 /// `worktree` is the odd one and breaks two of this store's habits on purpose.
@@ -26,12 +27,10 @@ import { useSyncExternalStore } from "react";
 /// the opposite reason: they have already seen the wrong answer. See `announce`
 /// in [useSessions](./useSessions.ts) for the split the first three make.
 export type NoticeKind =
-  | "completed"
   | "asking"
   | "worktree"
   | "pr"
-  | "worktree-failed"
-  | "issue-failed";
+  | "worktree-failed";
 
 /// How long each kind stays on screen. Read by the card to time its own progress
 /// bar, which is also what dismisses it — see [NoticeStack](../components/NoticeStack.tsx).
@@ -40,20 +39,15 @@ export type NoticeKind =
 /// reader is being asked to decide something irreversible they did not go
 /// looking for, and ten seconds is not long enough to read a cost and weigh it.
 export const NOTICE_TTL_MS: Record<NoticeKind, number> = {
-  completed: 10_000,
   asking: 15_000,
   worktree: 15_000,
-  // News that will keep, like a finished turn: the pull request stays ready,
-  // and the card is a shortcut to it rather than the only way to find it.
+  // News that will keep: the pull request stays ready, and the card is a
+  // shortcut to it rather than the only way to find it.
   pr: 10_000,
   // The long window for `worktree`'s reason once more: this one carries git's
   // own sentence, which is the only thing naming why the removal was refused,
   // and a reason nobody had time to read is a reason nobody was given.
   "worktree-failed": 15_000,
-  // Linear's own sentence, for the same reason — and this card answers a menu
-  // the reader clicked expecting it to just work, so it has to survive the
-  // moment they spend looking somewhere else.
-  "issue-failed": 15_000,
 };
 
 /// One in-app notice — something happened in a session the reader was not
@@ -63,11 +57,7 @@ export type Notice = {
   /// What it reports on. With `kind`, its identity — a second event of the same
   /// kind replaces the first rather than stacking a duplicate row.
   ///
-  /// A session for every kind but `issue-failed`, which holds the issue's
-  /// identifier instead. Widened rather than renamed: the field is the notice's
-  /// *subject*, and the two vocabularies cannot be confused — a session id is a
-  /// UUID and an identifier is `DRA-128`. Only the navigating kinds read it as
-  /// a session, and `issue-failed` is deliberately not one of them.
+  /// The session the notice is about.
   ///
   /// The session *alone* used to be the key, on the grounds that a session
   /// cannot both be blocked on a question and have finished its turn. That held
@@ -169,7 +159,6 @@ export function dismissNotice(sessionId: string, kind?: NoticeKind | NoticeKind[
 /// later has to be placed here on purpose instead of inheriting a default that
 /// may not suit it.
 export const ANSWERED_BY_OPENING: NoticeKind[] = [
-  "completed",
   "asking",
   "worktree",
   "worktree-failed",

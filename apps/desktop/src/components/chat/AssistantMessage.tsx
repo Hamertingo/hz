@@ -17,6 +17,10 @@ function AssistantMessage({
   text: string;
   streaming?: boolean;
 }) {
+  // An empty preview would still mount a block-level wrapper, which is a gap
+  // (and, inside a list, a bare bar) with no words in it.
+  if (!text.trim()) return null;
+
   return (
     // `data-answer` marks the one region a text selection may be quoted from —
     // see `AssistantSelectionToolbar`. On a wrapper rather than on the markdown,

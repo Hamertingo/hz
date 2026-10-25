@@ -24,7 +24,7 @@ pub use usage::{ContextWindow, ModelUsage, RateLimit, Usage, UsageRecord};
 
 // `Harness` is a harness concept, not an event one; it lives in `crate::harness`
 // and is used here only as a field type.
-use crate::{harness::Harness, issues::IssueRef};
+use crate::harness::Harness;
 
 /// One normalized event: an envelope (who, when, what order, which conversation)
 /// wrapping a [`payload`](Self::payload) (what happened).
@@ -127,16 +127,6 @@ pub enum AgentEventPayload {
         text: String,
         #[serde(default)]
         images: Vec<ImageRef>,
-        /// The issues this prompt was tagged with, resolved against the tracker
-        /// as it was sent.
-        ///
-        /// A field rather than something to be parsed back out of `text`, for
-        /// the reason `from` below gives: the block appended to the prompt is
-        /// prose, and a transcript that recovered it with a pattern would fail
-        /// silently the first time the wording moved. The bubble rebuilds the
-        /// exact string from *these* and drops it only if the text ends with it.
-        #[serde(default)]
-        issues: Vec<IssueRef>,
         /// The working tree as it stood when this prompt was sent, as a git
         /// tree id — the "before" side the changes panel diffs against.
         ///
@@ -168,6 +158,9 @@ pub enum AgentEventPayload {
         /// a thing the model can forge.
         #[serde(default)]
         from: Option<MessageSender>,
+        /// The message this prompt answers, when the reader used Reply.
+        #[serde(default)]
+        reply_to: Option<ReplyTo>,
         /// The working directory this prompt was written in, when it is not the
         /// one the session runs in now.
         ///
@@ -790,6 +783,38 @@ pub struct MessageSender {
     pub title: String,
 }
 
+/// The message a prompt answers, as the reader chose it with Reply.
+///
+/// Kept on the `user_message` itself, so a quote survives a restart and still
+/// knows what to jump to. `agent` is a roster agent's id, or `"me"` for the
+/// reader's own words: an id and not a name so that, in a channel, answering an
+/// agent's message can address that agent without anyone parsing prose.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyTo {
+    /// The `seq` of the event quoted, which is what the quote scrolls to.
+    pub seq: u64,
+    /// The quoted words, already cut to a line by the composer.
+    pub text: String,
+    pub agent: String,
+}
+
+impl ReplyTo {
+    /// The line put in front of the text the agent receives, so it knows what
+    /// the reader is answering. The log keeps the reader's words alone: the quote
+    /// is drawn from `reply_to`, and a copy in `text` would show it twice.
+    pub fn wire_prefix(&self, author: Option<&str>) -> String {
+        let one_line: String = self.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let quoted: String = one_line.chars().take(200).collect();
+        match (self.agent.as_str(), author) {
+            ("me", _) => format!("> Replying to your own earlier message: \"{quoted}\"\n\n"),
+            (_, Some(name)) => format!("> Replying to {name}'s message: \"{quoted}\"\n\n"),
+            _ => format!("> Replying to an earlier message: \"{quoted}\"\n\n"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "camelCase")]
@@ -994,7 +1019,7 @@ mod tests {
             serde_json::from_str(r#"{"type":"user_message","text":"hi"}"#).unwrap();
         assert!(matches!(
             v,
-            // `baseline`, `queued`, `from`, `issues` and `cwd` default too:
+            // `baseline`, `queued`, `from` and `cwd` default too:
             // every prompt logged before each of those existed must not fail
             // the line.
             AgentEventPayload::UserMessage {
@@ -1003,15 +1028,15 @@ mod tests {
                 ref baseline,
                 queued,
                 ref from,
-                ref issues,
+                ref reply_to,
                 ref cwd,
             } if text == "hi"
+                && reply_to.is_none()
                 && images.is_empty()
                 && baseline.is_none()
                 && cwd.is_none()
                 && !queued
                 && from.is_none()
-                && issues.is_empty()
         ));
 
         let v: AgentEventPayload = serde_json::from_str(
@@ -1149,6 +1174,43 @@ mod tests {
                 chrono::DateTime::parse_from_rfc3339(&at).is_ok(),
                 "{stamp:?} produced {at}, which nothing can read back"
             );
+        }
+    }
+    /// The quote the agent is given names who said it, collapses the line breaks
+    /// and cuts a long message, so one reply cannot become a second prompt.
+    #[test]
+    fn a_reply_reaches_the_agent_as_one_short_quoted_line() {
+        let reply = ReplyTo { seq: 7, text: "first\nsecond   third".into(), agent: "a1".into() };
+        assert_eq!(
+            reply.wire_prefix(Some("Atlas")),
+            "> Replying to Atlas's message: \"first second third\"\n\n"
+        );
+        assert!(reply.wire_prefix(None).starts_with("> Replying to an earlier message"));
+
+        let own = ReplyTo { seq: 1, text: "mine".into(), agent: "me".into() };
+        assert!(own.wire_prefix(Some("ignored")).starts_with("> Replying to your own"));
+
+        let long = ReplyTo { seq: 1, text: "x".repeat(900), agent: "me".into() };
+        assert!(long.wire_prefix(None).len() < 300);
+    }
+
+    /// A prompt logged before Reply existed reads back with no target, and one
+    /// with a target keeps it through the log.
+    #[test]
+    fn a_user_message_reads_with_and_without_a_reply_target() {
+        let old: AgentEventPayload =
+            serde_json::from_str(r#"{"type":"user_message","text":"hi"}"#).unwrap();
+        assert!(matches!(old, AgentEventPayload::UserMessage { reply_to: None, .. }));
+
+        let new: AgentEventPayload = serde_json::from_str(
+            r#"{"type":"user_message","text":"hi","replyTo":{"seq":4,"text":"q","agent":"me"}}"#,
+        )
+        .unwrap();
+        match new {
+            AgentEventPayload::UserMessage { reply_to: Some(r), .. } => {
+                assert_eq!((r.seq, r.agent.as_str()), (4, "me"));
+            }
+            other => panic!("lost the reply target: {other:?}"),
         }
     }
 }

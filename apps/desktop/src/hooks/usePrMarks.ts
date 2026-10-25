@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
 
@@ -297,7 +297,21 @@ export function usePrMarks(repoPaths: string[]) {
     return () => clearInterval(id);
   }, [openKey, load]);
 
+  // Open pull requests the reader is asked to review, across every repo this
+  // hook has read. Counted from the marks already in hand, so it costs no read.
+  const needsYou = useMemo(() => {
+    let count = 0;
+    for (const marks of byRepo.values()) {
+      for (const mark of marks.values()) {
+        if (mark.state === "OPEN" && mark.reviewRequested) count += 1;
+      }
+    }
+    return count;
+  }, [byRepo]);
+
   return {
+    /// Open pull requests waiting on the reader; see `needsYou` above.
+    needsYou,
     /// The pull request a session's row is marked with, or nothing. Takes the
     /// repo *and* the branch, since a branch name says nothing about which
     /// checkout it belongs to. Already narrowed to one per branch — see

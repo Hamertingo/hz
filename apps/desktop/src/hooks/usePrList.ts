@@ -283,9 +283,8 @@ export function knownPr(
 /// it names a pull request or a priority, and GitHub resolves that the only way
 /// it can be resolved — by asking. This asks the listing the app has already
 /// read, so it costs nothing, and `#1 priority` in a repository that has
-/// answered without a #1 stays the words it was written as. [issue.ts](../lib/issue.ts)
-/// states the same rule for a tag whose issue never resolved: a button that
-/// opens nothing is worse than a word that was never one.
+/// answered without a #1 stays the words it was written as. A button that opens
+/// nothing is worse than a word that was never one.
 ///
 /// A repository that has **not** answered is the other side of that rule, and
 /// it is the one this errs on: nothing is known, so the chip is offered. Read

@@ -1,0 +1,45 @@
+import { useSyncExternalStore } from "react";
+
+import type { PendingAsk } from "@/lib/transcript";
+
+/// The one panel a chat has open beside it: a document, a pull request, the two
+/// messages of an exchange between agents, the details of a request, or a shell.
+export type ChatSheet =
+  | { kind: "file"; path: string; agentId: string }
+  | { kind: "pr"; number: number; repo: string; url: string; agentId: string }
+  | {
+      kind: "exchange";
+      from: string;
+      to: string;
+      ask: string;
+      answer: string | null;
+      ts: string;
+    }
+  | { kind: "approval"; ask: PendingAsk & { type: "permission_requested" } }
+  | { kind: "terminal"; agentId: string; cwd: string };
+
+let current: ChatSheet | null = null;
+const listeners = new Set<() => void>();
+
+function set(next: ChatSheet | null) {
+  current = next;
+  for (const l of listeners) l();
+}
+
+export function openSheet(sheet: ChatSheet) {
+  set(sheet);
+}
+
+export function closeSheet() {
+  set(null);
+}
+
+export function useChatSheet(): ChatSheet | null {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => current,
+  );
+}

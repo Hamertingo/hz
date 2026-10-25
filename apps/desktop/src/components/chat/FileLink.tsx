@@ -3,7 +3,8 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import { useChatSession } from "@/hooks/useChatSession";
-import { openPath } from "@/hooks/useDocs";
+import { useAgentChat } from "@/hooks/useAgentChat";
+import { openSheet } from "@/lib/chatSheets";
 import { openFile } from "@/lib/openWith";
 import { cn } from "@/lib/utils";
 
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 /// what keeps the two apart, and it has to happen on the key as well as on the
 /// click.
 ///
-/// Underlined on hover rather than at rest, matching the issue tag beside it: a
+/// Underlined on hover rather than at rest, matching the PR reference beside it: a
 /// permanent underline through a sentence reads as a correction, and in an
 /// agent's prose it would mark up every path it mentions.
 ///
@@ -61,7 +62,8 @@ export default function FileLink({
   // belongs in. Read from context rather than passed down: three components in
   // between would carry an id they never look at, and the transcript that drew
   // the link is the right answer even where it is not the selected session.
-  const { sessionId, cwd, projectPath } = useChatSession();
+  const { cwd, projectPath } = useChatSession();
+  const agent = useAgentChat();
 
   /// Where this link's file actually is, before anything is opened.
   ///
@@ -88,13 +90,12 @@ export default function FileLink({
   const open = (e: MouseEvent | KeyboardEvent) => {
     e.stopPropagation();
     // ⌘-click (Ctrl elsewhere) means "out there, not here" — the same thing it
-    // means on an issue row and in the link dialog — so it goes straight to the
-    // reader's own editor, line and all. A plain click stays in the app:
-    // markdown in the Docs panel, everything else in the Files view.
+    // means in the link dialog — so it goes straight to the reader's own editor,
+    // line and all. A plain click stays in the app, in the chat's file sheet.
     const outThere = e.metaKey || e.ctrlKey;
     void locate().then((resolved) => {
-      if (outThere) return void openFile(resolved, line);
-      openPath(sessionId, resolved, line);
+      if (outThere || !agent) return void openFile(resolved, line);
+      openSheet({ kind: "file", path: resolved, agentId: agent.id });
     });
   };
 

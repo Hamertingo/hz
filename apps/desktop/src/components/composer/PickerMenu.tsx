@@ -33,8 +33,8 @@ export type PickerGroup<T> = {
 ///
 /// Three, and of uneven width: a row is an icon, a short fixed-width token and a
 /// title, so equal bars would read as a table rather than as a list about to
-/// arrive. Shaped after the issue row deliberately — the point of a skeleton is
-/// that nothing moves when the real rows replace it.
+/// arrive. The point of a skeleton is that nothing moves when the real rows
+/// replace it.
 const SKELETON_WIDTHS = ["w-44", "w-28", "w-36"];
 
 function Skeleton() {

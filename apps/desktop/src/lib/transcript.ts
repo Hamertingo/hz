@@ -1,5 +1,5 @@
 import { todoTimeline, type TodoPlan, type TodoSource, type TodoTask } from "@/lib/todo";
-import { toolSummary } from "@/lib/tools";
+import { teamTool, toolSummary } from "@/lib/tools";
 import type { AgentEvent, FileEdit, ToolResult, Usage } from "@/types/events";
 
 export type SubagentRun = {
@@ -361,6 +361,9 @@ function groupKey(
   if (payload.toolType === "subagent_spawn") return null;
   if (subagentIds.has(payload.callId)) return null;
   if (withImages.has(payload.callId)) return null;
+  // Each message to a teammate is its own card: "team_message, 2 calls" hides
+  // who was written to and what was said, which is the whole of it.
+  if (teamTool(payload.name)) return null;
   return payload.name;
 }
 

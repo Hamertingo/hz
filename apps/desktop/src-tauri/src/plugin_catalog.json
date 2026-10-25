@@ -1,0 +1,338 @@
+[
+ {
+  "id": "github",
+  "slug": "github",
+  "name": "GitHub",
+  "category": "Code",
+  "color": "#8957e5",
+  "mark": "GH",
+  "description": "Pull requests, issues, reviews and comments.",
+  "transport": {
+   "kind": "http",
+   "url": "https://api.githubcopilot.com/mcp/"
+  },
+  "auth": {
+   "kind": "token",
+   "label": "Personal access token",
+   "hint": "Create one at github.com/settings/tokens. It stays in your Keychain.",
+   "target": "bearer"
+  },
+  "support": "end_to_end",
+  "note": "GitHub's official remote server. It has no client registration, so you sign in with a personal access token instead of a browser.",
+  "tools": []
+ },
+ {
+  "id": "linear",
+  "slug": "linear",
+  "name": "Linear",
+  "category": "Work",
+  "color": "#5e6ad2",
+  "mark": "L",
+  "description": "Read and update issues, cycles and projects.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.linear.app/mcp"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Linear's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "postgres",
+  "slug": "postgresql",
+  "name": "Postgres",
+  "category": "Data",
+  "color": "#4f7be8",
+  "mark": "PG",
+  "description": "Read-only queries against a database you point it at.",
+  "transport": {
+   "kind": "stdio",
+   "command": "npx",
+   "args": [
+    "-y",
+    "@modelcontextprotocol/server-postgres"
+   ]
+  },
+  "auth": {
+   "kind": "token",
+   "label": "Connection string",
+   "hint": "postgresql://user:password@host:5432/db. It stays in your Keychain.",
+   "target": "arg"
+  },
+  "support": "end_to_end",
+  "note": "Runs the reference Postgres server with npx. Needs Node. That package is no longer maintained upstream.",
+  "tools": []
+ },
+ {
+  "id": "stripe",
+  "slug": "stripe",
+  "name": "Stripe",
+  "category": "Data",
+  "color": "#635bff",
+  "mark": "S",
+  "description": "Revenue, customers and disputes.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.stripe.com"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Stripe's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "browser",
+  "slug": null,
+  "name": "Browser",
+  "category": "Work",
+  "color": "#4fb0c4",
+  "mark": "WW",
+  "description": "A real browser each agent can drive: open pages, click, fill and read.",
+  "transport": {
+   "kind": "stdio",
+   "command": "npx",
+   "args": [
+    "-y",
+    "@playwright/mcp@latest"
+   ]
+  },
+  "auth": {
+   "kind": "none"
+  },
+  "support": "end_to_end",
+  "note": "Microsoft's Playwright MCP server, run with npx. It opens its own browser, not hz's embedded one, so there is no take-over.",
+  "tools": []
+ },
+ {
+  "id": "slack",
+  "slug": "slack",
+  "name": "Slack",
+  "category": "Talk",
+  "color": "#e01e5a",
+  "mark": "SL",
+  "description": "Let agents read and answer in your Slack channels.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.slack.com/mcp"
+  },
+  "auth": {
+   "kind": "oauth_own",
+   "label": "Slack app",
+   "hint": "Slack does not register clients for you. Create a Slack app and paste its client ID and secret.",
+   "scopes": [
+    "channels:history",
+    "channels:read",
+    "chat:write",
+    "search:read.public"
+   ]
+  },
+  "support": "own_client",
+  "note": "Slack's official remote server. It needs a Slack app you register; hz has not signed in to it.",
+  "tools": []
+ },
+ {
+  "id": "drive",
+  "slug": "googledrive",
+  "name": "Google Drive",
+  "category": "Work",
+  "color": "#1fa463",
+  "mark": "D",
+  "description": "Search, read and save documents and sheets.",
+  "transport": {
+   "kind": "http",
+   "url": "https://drivemcp.googleapis.com/mcp/v1"
+  },
+  "auth": {
+   "kind": "oauth_own",
+   "label": "Google OAuth client",
+   "hint": "Google does not register clients for you. Create a Desktop OAuth client in Google Cloud and paste its ID and secret.",
+   "scopes": [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file"
+   ]
+  },
+  "support": "own_client",
+  "tools": [
+   "copy_file",
+   "create_file",
+   "download_file_content",
+   "get_file_metadata",
+   "get_file_permissions",
+   "list_recent_files",
+   "read_file_content",
+   "search_files"
+  ],
+  "note": "Google's official remote server. Its tool list is public; signing in needs your own Google OAuth client."
+ },
+ {
+  "id": "figma",
+  "slug": "figma",
+  "name": "Figma",
+  "category": "Work",
+  "color": "#f24e1e",
+  "mark": "F",
+  "description": "Read frames and comments from your files.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.figma.com/mcp"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Figma's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "notion",
+  "slug": "notion",
+  "name": "Notion",
+  "category": "Work",
+  "color": "#e2a440",
+  "mark": "N",
+  "description": "Pages and databases as agent memory you can read.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.notion.com/mcp"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Notion's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "sentry",
+  "slug": "sentry",
+  "name": "Sentry",
+  "category": "Code",
+  "color": "#7c5cd6",
+  "mark": "SE",
+  "description": "Errors and releases, with stack traces.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.sentry.dev/mcp"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Sentry's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "vercel",
+  "slug": "vercel",
+  "name": "Vercel",
+  "category": "Code",
+  "color": "#38a3f1",
+  "mark": "V",
+  "description": "Deploys, logs and preview links.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.vercel.com"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Vercel's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "supabase",
+  "slug": "supabase",
+  "name": "Supabase",
+  "category": "Data",
+  "color": "#3ecf8e",
+  "mark": "SB",
+  "description": "Tables, auth and storage for your project.",
+  "transport": {
+   "kind": "http",
+   "url": "https://mcp.supabase.com/mcp"
+  },
+  "auth": {
+   "kind": "oauth"
+  },
+  "support": "end_to_end",
+  "note": "Supabase's official remote server, with OAuth and dynamic client registration.",
+  "tools": []
+ },
+ {
+  "id": "gmail",
+  "slug": "gmail",
+  "name": "Gmail",
+  "category": "Talk",
+  "color": "#ea4335",
+  "mark": "G",
+  "description": "Read threads and draft replies. It cannot send.",
+  "transport": {
+   "kind": "http",
+   "url": "https://gmailmcp.googleapis.com/mcp/v1"
+  },
+  "auth": {
+   "kind": "oauth_own",
+   "label": "Google OAuth client",
+   "hint": "Google does not register clients for you. Create a Desktop OAuth client in Google Cloud and paste its ID and secret.",
+   "scopes": [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose"
+   ]
+  },
+  "support": "own_client",
+  "tools": [
+   "create_draft",
+   "list_drafts",
+   "get_draft",
+   "get_thread",
+   "get_message",
+   "search_threads",
+   "list_labels",
+   "create_label",
+   "label_thread",
+   "trash_thread"
+  ],
+  "note": "Google's official remote server. Its tool list is public; signing in needs your own Google OAuth client."
+ },
+ {
+  "id": "calendar",
+  "slug": "googlecalendar",
+  "name": "Google Calendar",
+  "category": "Talk",
+  "color": "#4285f4",
+  "mark": "C",
+  "description": "Find free time and draft invites.",
+  "transport": {
+   "kind": "http",
+   "url": "https://calendarmcp.googleapis.com/mcp/v1"
+  },
+  "auth": {
+   "kind": "oauth_own",
+   "label": "Google OAuth client",
+   "hint": "Google does not register clients for you. Create a Desktop OAuth client in Google Cloud and paste its ID and secret.",
+   "scopes": [
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events"
+   ]
+  },
+  "support": "own_client",
+  "tools": [
+   "list_events",
+   "get_event",
+   "list_calendars",
+   "suggest_time",
+   "create_event",
+   "update_event",
+   "delete_event",
+   "respond_to_event",
+   "search_events"
+  ],
+  "note": "Google's official remote server. Its tool list is public; signing in needs your own Google OAuth client."
+ }
+]

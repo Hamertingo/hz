@@ -9,16 +9,19 @@ import type { AgentEvent, Harness, Model, ModelId } from "@/types/events";
 /// this one decides whether the reader is offered the switch at all, so a
 /// disagreement is a control that does nothing or a setting with no control.
 ///
-/// - `in-place` — Claude Code. `apply_flag_settings` moves a running child.
-/// - `on-spawn` — Codex. `serviceTier` rides the spawn, so a change respawns.
-/// - `at-creation` — fx. It reads `fast_mode` out of its settings at
-///   `session/new` and stamps it onto its own session record, which a resume
-///   then honours whatever the file says since — so nothing, not even a
-///   respawn, can move a session that already exists.
-/// - `none` — pi and omp, neither of which has a route to one.
+/// - `in-place` — Codex. Its adapter offers a `fast-mode` config option (`off`,
+///   `on`), written with `session/set_config_option` on a running session.
+/// - `none` — Claude and OpenCode: Claude Code has a fast mode but its adapter
+///   exposes no option for it, and OpenCode has none.
+/// - `on-spawn` and `at-creation` are kept for an agent that rides the spawn or
+///   stamps it at `session/new`; none of the three here does.
 export type FastModeSupport = "none" | "in-place" | "on-spawn" | "at-creation";
 
 export const FAST_MODE_BY_HARNESS: Record<Harness, FastModeSupport> = {
+  // Read off each adapter's own `session/new`, not assumed.
+  "claude-acp": "none",
+  "codex-acp": "in-place",
+  opencode: "none",
   // **None at all.** `serviceTier` is not a thing on this CLI and ACP carries no
   // field for a tier — measured against `mcode acp` 0.4.12, whose capabilities
   // answer nothing about one. So the row is never drawn on any of its models,

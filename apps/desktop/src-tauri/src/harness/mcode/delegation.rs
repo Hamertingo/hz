@@ -246,10 +246,10 @@ fn expand(member_session_id: &str, turns: &[Value]) -> Vec<AgentEvent> {
                 .unwrap_or_default()
                 .to_string(),
             images: Vec::new(),
-            issues: Vec::new(),
             baseline: None,
             queued: false,
             from: None,
+            reply_to: None,
             cwd: None,
         });
         // **Stamped with the child's own clock, not this read's.** The turn's

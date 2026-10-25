@@ -1,193 +1,199 @@
-import { isAuthored, isWaiting } from "@/lib/prList";
-import type { Issue, PrListItem } from "@/types/events";
+import { formatClock } from "@/lib/clock";
+import { lineDiff, type DiffLine } from "@/lib/lineDiff";
+import type { InboxItem, PermissionOption } from "@/types/events";
 
-/// The three runs the list is drawn in, in the order attention reaches them.
-///
-/// **The pull-requests page's own three, carried across both trackers.** A
-/// reader who has used that page already knows what they mean, and inventing a
-/// second vocabulary for the same question is how two lists that answer one
-/// thing start disagreeing. What is added is that an *issue* can be waiting on
-/// you too — the tracker's word for it is `urgent`, which is the only signal
-/// Linear gives that outranks the queue.
-export type InboxGroupKey = "waiting" | "yours" | "others";
+export type InboxFilter = "all" | "needs" | "mentions" | "done";
 
-export const GROUP_LABEL: Record<InboxGroupKey, string> = {
-  waiting: "Waiting on you",
-  yours: "Yours",
-  others: "Others",
+export const INBOX_FILTERS: readonly { key: InboxFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "needs", label: "Needs you" },
+  { key: "mentions", label: "Mentions" },
+  { key: "done", label: "Done" },
+];
+
+export type InboxGroup = { key: Exclude<InboxFilter, "all">; label: string; items: InboxItem[] };
+
+const isOpen = (i: InboxItem) => i.state === "open";
+
+/// The newest activity on a row: when it was settled, else when it arrived.
+const touched = (i: InboxItem) => i.resolvedAt ?? i.created;
+
+/// The rows of a filter as the mockup groups them: what needs a decision, the
+/// mentions, then everything settled — newest first within each, so the thing
+/// that just arrived is on top. Archived rows never reach here; the backend
+/// leaves them out.
+export function groupItems(items: readonly InboxItem[], filter: InboxFilter): InboxGroup[] {
+  const live = items.filter((i) => !i.archived);
+  const newest = (a: InboxItem, b: InboxItem) => touched(b) - touched(a);
+  const groups: InboxGroup[] = [
+    { key: "needs", label: "Needs you", items: live.filter((i) => isOpen(i) && i.kind !== "mention").sort(newest) },
+    { key: "mentions", label: "Mentions", items: live.filter((i) => isOpen(i) && i.kind === "mention").sort(newest) },
+    { key: "done", label: "Earlier today", items: live.filter((i) => !isOpen(i)).sort(newest) },
+  ];
+  return filter === "all" ? groups : groups.filter((g) => g.key === filter);
+}
+
+/// The counts on the filter tabs.
+export function inboxCounts(items: readonly InboxItem[]): Record<InboxFilter, number> {
+  const groups = groupItems(items, "all");
+  const by = (k: string) => groups.find((g) => g.key === k)?.items.length ?? 0;
+  return { all: items.filter((i) => !i.archived).length, needs: by("needs"), mentions: by("mentions"), done: by("done") };
+}
+
+/// The rows in the order they are read, which is the order J and K walk.
+export function inboxOrder(groups: readonly InboxGroup[]): InboxItem[] {
+  return groups.flatMap((g) => g.items);
+}
+
+/// What the sidebar's badge counts: the items waiting on the reader. A finished
+/// note is information, not a debt, so it never adds to the number.
+export function openCount(items: readonly InboxItem[], agentIds?: ReadonlySet<string>): number {
+  return items.filter((i) => isOpen(i) && !i.archived && (!agentIds || agentIds.has(i.agentId))).length;
+}
+
+/// The row J or K lands on, wrapping at both ends. `null` for an empty list.
+export function stepFrom(order: readonly InboxItem[], currentId: string | null, delta: number): string | null {
+  if (!order.length) return null;
+  const at = order.findIndex((i) => i.id === currentId);
+  const next = at < 0 ? (delta > 0 ? 0 : order.length - 1) : (at + delta + order.length) % order.length;
+  return order[next].id;
+}
+
+/// The first row still waiting on a decision, for after one is settled.
+export function firstOpen(order: readonly InboxItem[]): string | null {
+  return order.find(isOpen)?.id ?? null;
+}
+
+export type ApprovalPayload = {
+  form: "cmd" | "edit" | "post" | "tool" | "auto";
+  tool: string;
+  command: string | null;
+  path: string | null;
+  posts: string[];
+  input: Record<string, unknown>;
+  options: PermissionOption[];
+  always: string | null;
 };
 
-const GROUP_ORDER: readonly InboxGroupKey[] = ["waiting", "yours", "others"];
+const obj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 
-/// A read that could not be made, in the row both pages use for one.
-///
-/// **Tone varies on *what* failed**: a machine with no `gh`, or a tracker with no
-/// key, is a state the reader can fix and the sentence names the cure, where a
-/// refusal or a crash is something going wrong.
-export type InboxNote = { tone: "bad" | "muted"; text: string };
+export function readApproval(item: InboxItem): ApprovalPayload {
+  const p = item.payload;
+  const form = p.form === "cmd" || p.form === "edit" || p.form === "post" || p.form === "auto" ? p.form : "tool";
+  return {
+    form,
+    tool: str(p.tool) ?? "",
+    command: str(p.command),
+    path: str(p.path),
+    posts: Array.isArray(p.posts) ? p.posts.filter((x): x is string => typeof x === "string") : [],
+    input: obj(p.input),
+    options: Array.isArray(p.options) ? (p.options as PermissionOption[]) : [],
+    always: str(p.always),
+  };
+}
 
-/// What a row says at its right edge: why it is where it is.
-///
-/// **A word, always, and a tone beside it rather than instead of it.** Colour
-/// alone is what this palette can least afford to make load-bearing — red is
-/// also the app's destructive, and green is already the sidebar's unread mark —
-/// so the sentence carries the meaning and the tone only agrees with it.
-///
-/// `null` is the ordinary answer and the one most rows give. The pull-requests
-/// page's own rule, carried across: "Review required" is the *absence* of a
-/// verdict, so a row saying it spends the scarce end of the line on nothing.
-/// Here that covers every state the row already draws — a draft's own glyph, an
-/// issue's state glyph, an open pull request nothing is wrong with — and what is
-/// left is the short list of things that want the reader or will move on their
-/// own.
-export type InboxReason = { label: string; tone: "bad" | "good" };
+export function readQuestion(item: InboxItem): { question: string; choices: string[]; answer: string | null } {
+  const p = item.payload;
+  return {
+    question: str(p.question) ?? item.title,
+    choices: Array.isArray(p.choices) ? p.choices.filter((c): c is string => typeof c === "string") : [],
+    answer: str(p.answer),
+  };
+}
 
-const CONFLICT: InboxReason = { label: "Conflict", tone: "bad" };
-const CHECKS_FAILING: InboxReason = { label: "Checks failing", tone: "bad" };
-const CHANGES_REQUESTED: InboxReason = { label: "Changes requested", tone: "bad" };
-const READY: InboxReason = { label: "Ready to merge", tone: "good" };
-const URGENT: InboxReason = { label: "Urgent", tone: "bad" };
+export function readMention(item: InboxItem): { text: string; place: string } {
+  return { text: str(item.payload.text) ?? item.title, place: str(item.payload.place) ?? "their chat" };
+}
 
-/// One row, from either tracker.
-///
-/// A tagged union rather than a row shape with both fields on it: what the click
-/// does with the row is the whole of what the list is for, and a `pr` that is
-/// null on half the rows is a `?` at every read.
-export type InboxItem<P extends PrListItem = PrListItem> =
-  | {
-      kind: "pr";
-      key: string;
-      group: InboxGroupKey;
-      reason: InboxReason | null;
-      title: string;
-      updatedAt: string;
-      row: P;
-    }
-  | {
-      kind: "issue";
-      key: string;
-      group: InboxGroupKey;
-      reason: InboxReason | null;
-      title: string;
-      updatedAt: string;
-      row: Issue;
-    };
+export function readDone(item: InboxItem): { summary: string; steps: number; durationMs: number | null } {
+  const p = item.payload;
+  return {
+    summary: str(p.summary) ?? item.title,
+    steps: typeof p.steps === "number" ? p.steps : 0,
+    durationMs: typeof p.durationMs === "number" ? p.durationMs : null,
+  };
+}
 
-/// Why a pull request is where it is, or `null` where it is simply still open.
-///
-/// **The order is the logic**, and it is the same order `readyTier` reads: a
-/// conflict outranks a failing check, because the reader can do nothing about
-/// the checks until the branch merges cleanly; a review that asked for changes
-/// outranks one that has not answered yet. Checks still running are absent
-/// deliberately — the row draws the sidebar's own arc for those, one fact in one
-/// shape across the app, where a word for it would be the same fact a second
-/// time.
-function prReason(item: PrListItem): InboxReason | null {
-  if (item.mergeable === "CONFLICTING" || item.mergeStateStatus === "DIRTY") return CONFLICT;
-  if (item.checksState === "FAILING") return CHECKS_FAILING;
-  if (item.reviewDecision === "CHANGES_REQUESTED") return CHANGES_REQUESTED;
-  if (item.reviewDecision === "APPROVED" && item.checksState === "CLEAR") return READY;
+/// What a file-editing call changes, as lines to draw. Claude's Edit carries
+/// both sides; a Write carries only the new text, so every line is an addition.
+/// `null` for a call whose input holds neither.
+export function diffOf(input: Record<string, unknown>): { path: string | null; lines: DiffLine[] } | null {
+  const path = str(input.file_path) ?? str(input.path);
+  const before = str(input.old_string);
+  const after = typeof input.new_string === "string" ? input.new_string : null;
+  if (before !== null && after !== null) return { path, lines: lineDiff(before, after) };
+  const content = str(input.content);
+  if (content !== null) return { path, lines: content.split("\n").map((text) => ({ kind: "add" as const, text })) };
   return null;
 }
 
-/// Why an issue is where it is.
-///
-/// Priority and nothing else. Everything the issues page reads is already
-/// assigned to the reader, so the state word would be the row's own glyph said
-/// again in the scarcest strip on it — and `urgent` is the one signal Linear
-/// gives that outranks the queue the reader is working down.
-function issueReason(issue: Issue): InboxReason | null {
-  return issue.priority === "urgent" ? URGENT : null;
-}
+/// What a key does on the open item, or `null`. The same letters the buttons
+/// wear: A allows, D declines, E edits first (a post only), 1–3 pick a choice.
+export type KeyAction =
+  | { type: "resolve"; verdict: string }
+  | { type: "answer"; choice: string }
+  | { type: "edit" }
+  | { type: "archive" };
 
-/// Which run a row belongs to.
-///
-/// **A row in two groups goes to the first that claims it**, the rule the
-/// pull-requests page already follows: a pull request you opened and were then
-/// asked to review on is someone waiting on you, which is the thing to do. An
-/// issue's only claim is the priority — everything here is already the reader's,
-/// so "yours" is the resting state rather than news.
-function groupOf(
-  item: { kind: "pr"; row: PrListItem } | { kind: "issue"; row: Issue },
-  viewer: string | null,
-): InboxGroupKey {
-  if (item.kind === "issue") return item.row.priority === "urgent" ? "waiting" : "yours";
-  if (isWaiting(item.row, viewer)) return "waiting";
-  return isAuthored(item.row, viewer) ? "yours" : "others";
-}
-
-/// Both trackers merged into one list, newest first inside each group.
-///
-/// Generic over the pull request's own row type so a caller's — the page's,
-/// which carries the checkout it came from — survives the walk; widening to
-/// `PrListItem` here would compile and then lose the field the click needs. The
-/// `cwd` is required rather than optional because the key is built from it.
-export function inboxItems<P extends PrListItem & { cwd: string }>(
-  prs: P[],
-  issues: Issue[],
-  viewer: string | null,
-): InboxItem<P>[] {
-  const rows: InboxItem<P>[] = [];
-
-  for (const row of prs) {
-    rows.push({
-      kind: "pr",
-      // The checkout as well as the number: two clones of one repository are two
-      // rows to the page that lists them, and the number alone would collide.
-      key: `pr:${row.cwd}#${row.number}`,
-      group: groupOf({ kind: "pr", row }, viewer),
-      reason: prReason(row),
-      title: row.title,
-      updatedAt: row.updatedAt,
-      row,
-    });
+export function keyAction(item: InboxItem, key: string): KeyAction | null {
+  if (item.state !== "open" && item.kind !== "done") return null;
+  const k = key.toLowerCase();
+  switch (item.kind) {
+    case "approval": {
+      const post = readApproval(item).form === "post";
+      if (k === "a") return { type: "resolve", verdict: "ALLOWED" };
+      if (k === "d") return { type: "resolve", verdict: post ? "NOT NOW" : "DENIED" };
+      if (k === "e" && post) return { type: "edit" };
+      return null;
+    }
+    case "question": {
+      const n = Number(k);
+      const choices = readQuestion(item).choices;
+      if (Number.isInteger(n) && n >= 1 && n <= choices.length) return { type: "answer", choice: choices[n - 1] };
+      if (k === "d") return { type: "resolve", verdict: "SKIPPED" };
+      return null;
+    }
+    case "mention":
+      return k === "d" ? { type: "resolve", verdict: "READ" } : null;
+    case "done":
+      return k === "d" ? { type: "archive" } : null;
   }
+}
 
-  for (const row of issues) {
-    rows.push({
-      kind: "issue",
-      // The tracker as well as the identifier: a second tracker is a module
-      // plus a variant on `IssueTracker`, and its identifiers will not be
-      // Linear's.
-      key: `issue:${row.tracker}:${row.identifier}`,
-      group: groupOf({ kind: "issue", row }, viewer),
-      reason: issueReason(row),
-      title: row.title,
-      updatedAt: row.updatedAt,
-      row,
-    });
+/// A verdict as a word and the sentence under it, the way the settled check and
+/// the toast say it.
+export function verdictCopy(verdict: string, name: string, form?: ApprovalPayload["form"]): [string, string] {
+  switch (verdict) {
+    case "ALLOWED":
+      return form === "post" ? ["Approved", `${name} is posting it now.`] : ["Allowed", `${name} is carrying on.`];
+    case "DENIED":
+      return ["Denied", `${name} was told no.`];
+    case "NOT NOW":
+      return ["Not now", `${name} holds off.`];
+    case "ANSWERED":
+      return ["Answered", `${name} picks the task back up.`];
+    case "REPLIED":
+      return ["Replied", `Your reply is in ${name}'s chat.`];
+    case "READ":
+      return ["Read", ""];
+    case "SKIPPED":
+      return ["Skipped", `${name} goes on without an answer.`];
+    case "EXPIRED":
+      return ["Expired", `${name} is no longer waiting on this.`];
+    case "AUTO":
+      return ["Allowed by rule", ""];
+    default:
+      return ["Finished", ""];
   }
-
-  return newestFirst(rows);
 }
 
-/// The rows split into the runs the page draws, empty ones dropped.
-///
-/// An empty group is not drawn, for the pull-requests page's reason: an empty
-/// "Waiting on you" is the ordinary state, and a heading saying so is a heading
-/// over nothing.
-export function groupInbox<P extends PrListItem & { cwd: string }>(
-  items: InboxItem<P>[],
-): { key: InboxGroupKey; label: string; items: InboxItem<P>[] }[] {
-  return GROUP_ORDER.map((key) => ({
-    key,
-    label: GROUP_LABEL[key],
-    items: items.filter((item) => item.group === key),
-  })).filter((group) => group.items.length > 0);
+/// HH:MM, the clock the rows and the action bar use.
+export function clockTime(ms: number): string {
+  return formatClock(new Date(ms));
 }
 
-/// Most recently touched first, which is the order both trackers' own listings
-/// arrive in — and comparing their stamps is what makes one list out of two.
-///
-/// A stamp neither side can parse sorts last rather than throwing the order
-/// away: the row is still worth drawing, and `NaN` reaching the comparator would
-/// leave the whole list in whatever order the sort happened to leave it.
-function newestFirst<P extends PrListItem & { cwd: string }>(
-  rows: InboxItem<P>[],
-): InboxItem<P>[] {
-  const at = (iso: string) => {
-    const ms = Date.parse(iso);
-    return Number.isNaN(ms) ? -Infinity : ms;
-  };
-  return rows.sort((a, b) => at(b.updatedAt) - at(a.updatedAt));
+/// "5 posts" and friends, for the "+N more" under a post preview.
+export function morePosts(total: number, shown: number): number {
+  return Math.max(0, total - shown);
 }

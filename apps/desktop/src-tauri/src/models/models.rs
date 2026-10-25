@@ -150,6 +150,9 @@ pub fn default_model_for(harness: Harness) -> Option<ModelId> {
         // A wrapper overriding that is presumptuous, and a first run failing
         // with "model not found" for a model nobody picked is worse.
         Harness::Mcode => None,
+        // Each CLI's own default is the reader's own choice, made in that CLI. A
+        // constant named here would be a model they may not have access to.
+        Harness::Claude | Harness::Codex | Harness::OpenCode => None,
         Harness::Other(_) => None,
     }
 }
@@ -420,6 +423,9 @@ pub fn models_for(harness: Harness) -> Vec<Model> {
         // the agent and read live off a session, so it arrives from
         // [`crate::harness::mcode::models`] rather than from here.
         Harness::Mcode => Vec::new(),
+        // Read live off a session's `configOptions`, like mcode's — not listed
+        // here, since each reader's list depends on their login.
+        Harness::Claude | Harness::Codex | Harness::OpenCode => Vec::new(),
         // Empty rather than a guess: this build cannot say what that harness
         // runs, and offering another harness's list would let a picker set a
         // model the session's own agent has never heard of.
@@ -452,6 +458,9 @@ pub fn runs_on(id: &ModelId, harness: Harness) -> bool {
         // a Claude alias off an mcode spawn — and the CLI's own "model not
         // found" names anything narrower.
         Harness::Mcode => find_model(id).is_none(),
+        // The agent refuses a model it does not have when it is asked to move to
+        // it, and that refusal is more accurate than any list kept here.
+        Harness::Claude | Harness::Codex | Harness::OpenCode => true,
         // Nothing runs on a harness this build cannot spawn, and `false` is
         // the safe direction: it refuses a model rather than recording one
         // against a session that could never use it.

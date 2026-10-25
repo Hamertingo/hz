@@ -29,9 +29,8 @@
 ///
 /// Everything below owns that second store. The two readers a plain module uses
 /// — `readLocalStorage` and `writeLocalStorage` — answer a moved key from the
-/// durable side instead: `useSessions`' `canAnnounce` reads the active space
-/// outside React, from a listener registered once, and a space that is up is not
-/// something a helper can be wrong about.
+/// durable side instead, so a key read outside React sees the value the webview
+/// was given at launch.
 
 import { useCallback, useState } from "react";
 

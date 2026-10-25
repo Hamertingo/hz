@@ -15,14 +15,13 @@
 
 use crate::{
     events::{ApprovalPolicy, MessageSender},
-    issues::{self, IssueRef, IssueTracker},
     models::{default_model_for, id_for_arg, models_for, runs_on, Effort, ModelId},
     session::{Harness, SessionManager},
     store::{self, SessionIndexItem},
 };
 use anyhow::{bail, Context, Result};
 use hz_proto::{
-    encode_line, CreateSession, Envelope, IssueLink, LinkIssues, ListSessions, Request, Response,
+    encode_line, CreateSession, Envelope, ListSessions, Request, Response,
     SendMessage, SessionSummary, MAX_LINE, PROTOCOL_VERSION,
 };
 use std::{
@@ -398,7 +397,6 @@ async fn dispatch(request: Request, app: &AppHandle) -> Result<Response> {
         Request::CreateSession(create) => create_session(create, app).await,
         Request::ListSessions(list) => list_sessions(list).await,
         Request::SendMessage(send) => send_message(send, app).await,
-        Request::LinkIssues(link) => link_issues(link).await,
         Request::Browser(browser) => browse(browser).await,
     }
 }
@@ -424,74 +422,6 @@ async fn browse(request: hz_proto::BrowserRequest) -> Result<Response> {
         let _ = request;
         Ok(Response::error("this build of Hyze Code has no browser"))
     }
-}
-
-/// Tags a session that already exists, or untags it.
-///
-/// **Written down as given, with nothing asked of the tracker.** A link is a
-/// local record — this session is about that work — so making it depend on a
-/// reachable Linear and a stored key meant it could fail for reasons that have
-/// nothing to do with what it records. The caller is an agent that has just
-/// read the issue through the tracker's own MCP server and holds the title and
-/// the URL already; asking a second system for what the caller has in hand is a
-/// round trip whose only contribution is a way to fail.
-///
-/// Every issue is applied in turn and the *whole* resulting list comes back, so
-/// a caller sees what the session carries rather than a diff it has to apply to
-/// what it believed. One that fails stops the run: a partial tagging reported
-/// as a success is the shape of failure this protocol exists to avoid, and the
-/// ones already applied are on the session the answer names.
-async fn link_issues(link: LinkIssues) -> Result<Response> {
-    if link.issues.is_empty() {
-        bail!("name at least one issue, like DRA-53");
-    }
-
-    // An unknown session is answered before anything is written, so a typo in
-    // the id cannot half-apply a list.
-    //
-    // Through the address funnel because this is the command an agent reaches
-    // for with no id at all: `hz issue link DRA-53` takes the session out of its
-    // environment, which is the agent's own name for it.
-    resolved_session(Some(&link.session_id))
-        .await
-        .with_context(|| format!("no session {}", link.session_id))?;
-
-    let mut linked = Vec::new();
-    for input in &link.issues {
-        let identifier = issues::parse_identifier(&input.identifier)
-            .with_context(|| format!("{} is not an issue identifier", input.identifier))?;
-
-        linked = if link.unlink {
-            store::unlink_session_issue(&link.session_id, &identifier).await?
-        } else {
-            store::link_session_issue(
-                &link.session_id,
-                IssueRef {
-                    tracker: IssueTracker::Linear,
-                    // No tracker call, so no stable tracker id to record. The
-                    // identifier stands in: `unlink_session_issue` already
-                    // matches on either, so a link made here is removable by
-                    // the panel's button and by `hz issue unlink` alike.
-                    id: identifier.clone(),
-                    identifier,
-                    title: input.title.clone().unwrap_or_default(),
-                    url: input.url.clone().unwrap_or_default(),
-                },
-            )
-            .await?
-        };
-    }
-
-    Ok(Response::Linked {
-        issues: linked
-            .into_iter()
-            .map(|issue| IssueLink {
-                identifier: issue.identifier,
-                title: issue.title,
-                url: issue.url,
-            })
-            .collect(),
-    })
 }
 
 async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Response> {
@@ -553,7 +483,6 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
                 session_id: &session_id,
                 prompt: &create.prompt,
                 attachment_paths: &[],
-                issue_ids: &create.issues,
                 harness,
                 model,
                 effort,
@@ -590,8 +519,10 @@ async fn create_session(create: CreateSession, app: &AppHandle) -> Result<Respon
                 // brief, not a message relayed into a conversation already under
                 // way.
                 from: None,
+                reply_to: None,
                 // Nobody pressed send; the socket did. Stamped now, like a relay.
                 sent_at: None,
+                purpose: None,
             },
             app,
         )
@@ -812,19 +743,34 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
     }
 
     let prompt = attribute(&send.prompt, from.as_ref());
+    let queued = deliver(&target, from, &prompt, app).await?;
 
+    Ok(Response::Sent { queued })
+}
+
+/// Hands `prompt` to an existing session as a message from `from`, and answers
+/// whether it was queued behind a turn in flight.
+///
+/// The one door every relayed message goes through — `hz send` and the team's
+/// `team_message` alike — so what a relay may *not* change about the session it
+/// arrives at is stated once.
+pub(crate) async fn deliver(
+    target: &SessionIndexItem,
+    from: Option<MessageSender>,
+    prompt: &str,
+    app: &AppHandle,
+) -> Result<bool> {
     let manager = app.state::<SessionManager>();
     let outcome = manager
         .send_msg(
             crate::session::SendRequest {
                 session_id: &target.session_id,
-                prompt: &prompt,
+                prompt,
                 attachment_paths: &[],
                 // None named: a relayed message carries whatever it tags in its
                 // own text, and must not re-aim the session it arrives at.
-                issue_ids: &[],
                 harness: target.harness,
-                model: target.model,
+                model: target.model.clone(),
                 effort: target.effort,
                 permission_mode: target.permission_mode,
                 // The target's own, like everything beside it: a relayed message
@@ -843,17 +789,111 @@ async fn send_message(send: SendMessage, app: &AppHandle) -> Result<Response> {
                 is_new_session: false,
                 parent_session_id: None,
                 from,
+                reply_to: None,
                 // Nothing pressed Enter: an agent called this, and its own clock
                 // is not the reader's. Stamped now, which is when it arrived.
                 sent_at: None,
+                purpose: None,
             },
             app,
         )
         .await?;
 
-    Ok(Response::Sent {
-        queued: outcome.queued.is_some(),
-    })
+    Ok(outcome.queued.is_some())
+}
+
+/// Opens a roster agent's one conversation with `prompt` as its first message.
+///
+/// For a teammate's message to an agent that has never been written to: the
+/// agent exists, its conversation does not, and failing the send would make
+/// "ask Mavis" depend on whether the reader had said hello to her first. The
+/// webview learns the new session from `agent_session_bound` and binds it.
+pub(crate) async fn start_agent_session(
+    agent: &crate::agents::AgentRecord,
+    prompt: &str,
+    from: Option<MessageSender>,
+    app: &AppHandle,
+) -> Result<SessionIndexItem> {
+    let session_id = uuid::Uuid::now_v7().to_string();
+    let item = open_agent_session(agent, &session_id, prompt, from, None, app).await?;
+
+    crate::agents::set_session(&agent.id, &item.session_id);
+    app.emit(SESSION_CREATED, &item).ok();
+    app.emit(
+        "agent_session_bound",
+        serde_json::json!({"agentId": agent.id, "sessionId": item.session_id}),
+    )
+    .ok();
+    Ok(item)
+}
+
+/// Opens one more conversation for a roster agent that is **not** its chat: a
+/// channel's thread. The caller names the session id so it can register for the
+/// turn's answer before the prompt is sent.
+///
+/// Deliberately skips what [`start_agent_session`] does after the open — no
+/// `set_session`, no `agent_session_bound` — because either would make the
+/// agent's own chat this conversation, and a channel's turns must stay out of it.
+pub(crate) async fn start_thread_session(
+    agent: &crate::agents::AgentRecord,
+    session_id: &str,
+    prompt: &str,
+    app: &AppHandle,
+) -> Result<SessionIndexItem> {
+    open_agent_session(agent, session_id, prompt, None, Some(crate::store::PURPOSE_CHANNEL), app).await
+}
+
+async fn open_agent_session(
+    agent: &crate::agents::AgentRecord,
+    session_id: &str,
+    prompt: &str,
+    from: Option<MessageSender>,
+    purpose: Option<&str>,
+    app: &AppHandle,
+) -> Result<SessionIndexItem> {
+    let harness = Harness::from_wire_name(&agent.harness)
+        .with_context(|| format!("{} runs on a CLI this build does not know", agent.name))?;
+    let cwd = agent
+        .project_path
+        .as_deref()
+        .with_context(|| format!("{} has no folder to work in", agent.name))?;
+
+    let manager = app.state::<SessionManager>();
+    let outcome = manager
+        .send_msg(
+            crate::session::SendRequest {
+                session_id,
+                prompt,
+                attachment_paths: &[],
+                harness,
+                model: ModelId::new(agent.model_id.clone().unwrap_or_default()),
+                effort: agent.effort.as_deref().and_then(Effort::from_arg),
+                permission_mode: ApprovalPolicy::default(),
+                fast: false,
+                cwd,
+                branch: None,
+                use_worktree: false,
+                worktree_name: None,
+                base_ref: None,
+                seed_tree: None,
+                // The agent's id, which is what the briefing, the team tools and
+                // the park's identity all key on for the three CLIs.
+                agent_name: Some(&agent.id),
+                is_new_session: true,
+                parent_session_id: None,
+                from,
+                reply_to: None,
+                sent_at: None,
+                purpose,
+            },
+            app,
+        )
+        .await?;
+
+    outcome
+        .snapshot
+        .map(|s| s.index_item)
+        .context("the conversation started but returned no index entry")
 }
 
 /// The prompt as the receiving *agent* will read it, with its sender named.
@@ -902,7 +942,7 @@ fn attribute(prompt: &str, from: Option<&MessageSender>) -> String {
 /// all, and for one whose session has since been deleted — one answer for both,
 /// so neither the relay prefix nor the transcript's card claims a session the
 /// index can no longer name.
-async fn resolved_session(named: Option<&str>) -> Option<SessionIndexItem> {
+pub(crate) async fn resolved_session(named: Option<&str>) -> Option<SessionIndexItem> {
     let named = named?;
     let items = store::read_index().await.ok()?;
     let id = store::session_named(&items, named)?.to_string();

@@ -1,0 +1,46 @@
+//! Features of an agent workspace that sit above the ACP session: what agents post, what they may do,
+//! the computer they use and the voice they speak with. One file per feature; see BOTS-PARITY.md.
+
+pub mod untrusted;
+pub mod secrets;
+pub mod reviewer;
+pub mod operations;
+pub mod payments;
+pub mod browser_guard;
+pub mod timings;
+pub mod drafts;
+pub mod pages;
+pub mod genui;
+pub mod plan;
+pub mod digest;
+pub mod group_triage;
+pub mod routine_suggest;
+pub mod watches;
+pub mod rotation;
+pub mod usage;
+pub mod onboarding;
+pub mod bot_factory;
+pub mod skills_teach;
+pub mod accounts;
+pub mod engine_updates;
+pub mod e2e;
+pub mod bark;
+pub mod onepassword;
+pub mod app_api;
+pub mod google;
+pub mod gmail_organize;
+pub mod composio;
+pub mod pdf;
+pub mod relay;
+pub mod frameio;
+pub mod takeover;
+pub mod screens;
+pub mod vm;
+pub mod screenshot;
+pub mod work_screen;
+pub mod cursor_buddy;
+pub mod call;
+pub mod speech;
+pub mod voice_memo;
+pub mod site_login;
+pub mod qr_login;

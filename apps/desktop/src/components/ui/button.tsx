@@ -36,25 +36,27 @@ const buttonVariants = cva(
         // move about the same distance.
         default:
           "bg-button-primary text-button-primary-foreground shadow-(--shadow-button) hover:bg-button-primary/90",
+        // The mockup's plain `.btn`: a faint fill with a hairline inside it.
         outline:
-          "bg-clip-padding border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
-        // `--shadow-surface`, not the `default` variant's `--shadow-button`: this
-        // fill is a few percent off the page it sits on, so what it needs is the
-        // edge a floating surface draws rather than the lift under a solid one.
-        // `none` in dark, where the fill is already lighter than everything
-        // around it and a shadow under it would fall on something darker still.
+          "bg-s2 text-ink shadow-[inset_0_0_0_1px_var(--line)] hover:bg-s3 aria-expanded:bg-s3 [&_svg]:text-ink2",
+        // `.btn.solid`: the ink fill, for the one action a screen is about.
+        solid:
+          "bg-ink text-background hover:bg-ink/90 [&_svg]:text-background",
         secondary:
           "bg-secondary text-secondary-foreground shadow-(--shadow-surface) hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
-          "hover:bg-muted/70 hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+          "text-ink2 hover:bg-hover hover:text-ink aria-expanded:bg-hover aria-expanded:text-ink",
+        // `.btn.bad`: red words on a red wash, never a red fill.
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+          "bg-red/[0.07] text-red shadow-[inset_0_0_0_1px_rgb(230_120_122/16%)] hover:bg-red/[0.13] focus-visible:ring-red/20",
+        bad:
+          "bg-red/[0.07] text-red shadow-[inset_0_0_0_1px_rgb(230_120_122/16%)] hover:bg-red/[0.13] focus-visible:ring-red/20",
       },
       size: {
         default:
-          "h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+          "h-[30px] gap-[7px] rounded-[9px] px-3 text-[12.5px] has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5",
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-[26px] gap-1.5 rounded-md px-[9px] text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         icon: "size-8",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",

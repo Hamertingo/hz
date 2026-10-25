@@ -148,44 +148,13 @@ describe("highlightSegments", () => {
     expect(highlightSegments("look at @")).toEqual([{ kind: "text", text: "look at @" }]);
   });
 
-  it("marks an issue tag", () => {
-    expect(highlightSegments("start on #DRA-53 today")).toEqual([
-      { kind: "text", text: "start on " },
-      { kind: "issue", text: "#DRA-53" },
-      { kind: "text", text: " today" },
-    ]);
-  });
-
-  /// All three can share one sentence, which is why the three colours are
-  /// chosen far apart in hue — and why this case is pinned.
-  it("marks a command, a mention and a tag together", () => {
-    expect(highlightSegments("/review #DRA-53 @src/lib/issue.ts")).toEqual([
+  /// Both can share one sentence, which is why the two colours are chosen far
+  /// apart in hue — and why this case is pinned.
+  it("marks a command and a mention together", () => {
+    expect(highlightSegments("/review @src/lib/highlight.ts")).toEqual([
       { kind: "command", text: "/review" },
       { kind: "text", text: " " },
-      { kind: "issue", text: "#DRA-53" },
-      { kind: "text", text: " " },
-      { kind: "mention", text: "@src/lib/issue.ts" },
-    ]);
-  });
-
-  /// The tag stops at the number, so the punctuation after it stays part of the
-  /// sentence rather than being painted as an address.
-  it("stops a tag at the end of its number", () => {
-    expect(highlightSegments("see #DRA-53, then stop")).toEqual([
-      { kind: "text", text: "see " },
-      { kind: "issue", text: "#DRA-53" },
-      { kind: "text", text: ", then stop" },
-    ]);
-  });
-
-  /// Bracketed is still a tag, because the backend links it — the overlay and
-  /// the link have to agree about what a tag is, or a word is painted as an
-  /// address that nothing resolves, or the reverse.
-  it("marks a bracketed tag", () => {
-    expect(highlightSegments("see (#DRA-53) first")).toEqual([
-      { kind: "text", text: "see (" },
-      { kind: "issue", text: "#DRA-53" },
-      { kind: "text", text: ") first" },
+      { kind: "mention", text: "@src/lib/highlight.ts" },
     ]);
   });
 
