@@ -10,9 +10,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    context::ContextReading,
     events::{now_rfc3339, AgentEvent, AgentEventPayload, ApprovalPolicy, UsageRecord},
-    issues::IssueRef,
     models::{Effort, ModelId},
     session::Harness,
     Fail,
@@ -128,21 +126,19 @@ pub struct SessionIndexItem {
     /// written *before* the child answers. This is read by resume alone.
     #[serde(default)]
     pub thread_id: Option<String>,
-    /// The issues this session's work is against, newest link last.
-    ///
-    /// A list because one session really does carry several — three tags in one
-    /// prompt is the case this was built for — and a copy rather than an id,
-    /// so the panel's tab and the sidebar's row can be drawn with the tracker
-    /// unreachable. `serde(default)` so entries written before the field read
-    /// as untagged rather than failing the whole index.
-    #[serde(default)]
-    pub issues: Vec<IssueRef>,
     /// The session whose agent created this one, for a session created over the
     /// orchestration socket rather than by a person in the composer. `Some` is
     /// also what the depth guard reads: a session that was itself spawned may
     /// not spawn more.
     #[serde(default)]
     pub parent_session_id: Option<String>,
+    /// Why this session exists when it is not somebody's chat: `"channel"` for
+    /// an agent's thread in a channel. Such a session is silent everywhere the
+    /// old per-session surfaces would speak (toast, banner, unread dot, Inbox
+    /// note) and no page opens it; its answers live in the channel. `None` for
+    /// every chat and for entries written before the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
     /// The highest `seq` this session's log holds, as of the last append.
     ///
     /// Resume used to learn this by reading and JSON-parsing the whole `.jsonl`
@@ -540,7 +536,16 @@ fn filter_by_archived(items: Vec<SessionIndexItem>, archived: bool) -> Vec<Sessi
     items.into_iter().filter(|i| i.archived == archived).collect()
 }
 
+/// `SessionIndexItem::purpose` of an agent's thread inside a channel.
+pub const PURPOSE_CHANNEL: &str = "channel";
+
 impl SessionIndexItem {
+    /// Whether the session is an errand of the app's own rather than somebody's
+    /// chat, so nothing about it is news.
+    pub fn is_hidden(&self) -> bool {
+        self.purpose.is_some()
+    }
+
     /// Everything the index needs is known when the first prompt is sent, so a
     /// session appears in the list even if its process fails to start.
     ///
@@ -588,9 +593,9 @@ impl SessionIndexItem {
             permission_mode,
             fast,
             status: SessionStatus::default(),
-            issues: Vec::new(),
             fork_from: None,
             parent_session_id: parent_session_id.map(str::to_string),
+            purpose: None,
             // Nothing appended yet; the first event writes it.
             last_seq: None,
             // Nothing has asked the agent yet.
@@ -652,11 +657,8 @@ impl SessionIndexItem {
             // creation — but a fork there makes a *new* fx session, so the
             // inherited value is the one it is created with.
             fast: self.fast,
+            purpose: self.purpose.clone(),
             status: SessionStatus::default(),
-            // Inherited: a fork continues the same conversation, so it is
-            // against the same work. Tagging one afterwards leaves the other
-            // alone — the copy is a session, not a view of its source.
-            issues: self.issues.clone(),
             // Two facts in one field, and the second is why every fork sets
             // it whatever its harness. It is an *instruction* only where the
             // fork has a CLI half — Claude Code's conversation is forked lazily
@@ -1025,112 +1027,6 @@ pub async fn set_session_flags(
     Ok(Some(updated))
 }
 
-/// Records the newest context reading the agent gave for a session.
-///
-/// Written on the index rather than into the session's log because it is not
-/// something the conversation did — it is the newest answer to a question about
-/// it, and only the newest is worth keeping. `modified` is left alone for
-/// [`set_session_flags`]'s reason: it orders the sidebar, and reading the context
-/// must not jump the row to the top of it.
-///
-/// A session missing from the index is not an error. The answer arrived; there is
-/// simply nowhere to file it, and the panel already holds it in memory.
-pub async fn record_context_reading(session_id: &str, reading: ContextReading) -> Result<()> {
-    let _guard = INDEX_LOCK.lock().await;
-
-    let mut sessions = read_index().await?;
-    if !put_context_reading(&mut sessions, session_id, reading) {
-        return Ok(());
-    }
-
-    write_session_index(&sessions).await
-}
-
-/// Files a reading on the session it belongs to, answering whether the index
-/// held that one.
-///
-/// Split out from the write so the *matching* is testable without an `index.json`
-/// on disk: a reading filed against the wrong entry, or dropped because the id
-/// was compared wrongly, leaves the panel showing the estimate for a session the
-/// agent had just answered for — and nothing about the write would say so.
-fn put_context_reading(
-    sessions: &mut [SessionIndexItem],
-    session_id: &str,
-    reading: ContextReading,
-) -> bool {
-    let Some(item) = sessions.iter_mut().find(|i| i.session_id == session_id) else {
-        return false;
-    };
-
-    item.context_reading = Some(reading);
-    true
-}
-
-/// Records an issue against a session, answering with the list as written.
-///
-/// An issue already linked is *replaced* rather than appended: re-tagging is how
-/// a stale title gets refreshed, and the alternative is one issue drawn twice
-/// under two spellings of its name.
-///
-/// Matched on the tracker's own id **or** the human identifier, within a
-/// tracker — the same reading [`unlink_session_issue`] takes, and for a sharper
-/// reason. The two write different things into `id`: a resolved link carries
-/// Linear's UUID, while one written blind (`hz issue link`, or a tag no key
-/// could be found for) carries the identifier itself. Keyed on `id` alone,
-/// `DRA-53` linked blind and `DRA-53` resolved a moment later are two rows for
-/// one issue. Neither spelling can collide with the other — one is a UUID.
-///
-/// `modified` is left alone for [`set_session_flags`]'s reason — it orders the
-/// sidebar, and tagging must not jump the row to the top of it.
-pub async fn link_session_issue(session_id: &str, issue: IssueRef) -> Result<Vec<IssueRef>> {
-    let _guard = INDEX_LOCK.lock().await;
-
-    let mut sessions = read_index().await?;
-    let Some(item) = sessions.iter_mut().find(|i| i.session_id == session_id) else {
-        bail!("no such session: {session_id}");
-    };
-
-    match item.issues.iter_mut().find(|linked| {
-        linked.tracker == issue.tracker
-            && (linked.id == issue.id
-                || linked.identifier.eq_ignore_ascii_case(&issue.identifier))
-    }) {
-        Some(existing) => *existing = issue,
-        None => item.issues.push(issue),
-    }
-
-    let linked = item.issues.clone();
-    write_session_index(&sessions).await?;
-
-    Ok(linked)
-}
-
-/// Removes one link, matched on the tracker's own id *or* the human
-/// identifier.
-///
-/// Both, because the two callers hold different things: the panel has the whole
-/// [`IssueRef`] and passes its id, while a person at the CLI types `DRA-53`.
-/// Neither spelling can collide with the other — one is a UUID.
-///
-/// A key the session never carried is not an error: the caller asked for it to
-/// be gone, and it is.
-pub async fn unlink_session_issue(session_id: &str, key: &str) -> Result<Vec<IssueRef>> {
-    let _guard = INDEX_LOCK.lock().await;
-
-    let mut sessions = read_index().await?;
-    let Some(item) = sessions.iter_mut().find(|i| i.session_id == session_id) else {
-        bail!("no such session: {session_id}");
-    };
-
-    item.issues
-        .retain(|linked| linked.id != key && !linked.identifier.eq_ignore_ascii_case(key));
-    let linked = item.issues.clone();
-
-    write_session_index(&sessions).await?;
-
-    Ok(linked)
-}
-
 /// Drops one session from the index and deletes its `.jsonl` log. Returns
 /// whether the index held it — a `false` still means the log was removed if one
 /// was there, so an orphaned log can't outlive the entry that named it.
@@ -1165,6 +1061,16 @@ pub async fn delete_session(session_id: &str) -> Result<bool> {
     Ok(existed)
 }
 
+/// The status an entry is actually given: a hidden session never holds the
+/// unread mark.
+fn effective_status(item: &SessionIndexItem, status: SessionStatus) -> SessionStatus {
+    if status == SessionStatus::Completed && item.is_hidden() {
+        SessionStatus::Idle
+    } else {
+        status
+    }
+}
+
 /// Sets one entry's status. Returns the entry as written, or `None` if the id
 /// is unknown.
 ///
@@ -1182,6 +1088,9 @@ pub async fn set_session_status(
         return Ok(None);
     };
 
+    // A hidden session's finished turn is read the moment it ends: `Completed`
+    // is the unread mark, and nobody is ever meant to open it.
+    let status = effective_status(item, status);
     item.status = status;
     if status == SessionStatus::Completed {
         item.modified = now_rfc3339();
@@ -2140,9 +2049,10 @@ mod tests {
         // reads one of these.
         assert_eq!(item.model.as_str(), "gpt56_sol");
         assert_eq!(item.thread_id.as_deref(), Some("thread_01JABCDEF"));
-        assert_eq!(item.issues.len(), 1);
         assert!(item.worktree_removed);
-        assert_eq!(item.unknown.len(), 1);
+        // `issues` predates the Issues surface and is carried, not dropped: the
+        // catch-all keeps it on disk exactly as it was.
+        assert_eq!(item.unknown.len(), 2);
     }
 
     /// The model id is the field this slice changed, so every spelling on disk
@@ -2358,44 +2268,6 @@ mod tests {
         // Absent reads as the composer's own default, so an old session resumes
         // under the mode its picker would show.
         assert_eq!(item.permission_mode, ApprovalPolicy::Auto);
-    }
-
-    /// A reading lands on the session that asked for it, and on no other.
-    #[test]
-    fn a_reading_is_filed_against_the_session_that_asked() {
-        let mut sessions = vec![
-            test_index_item("one"),
-            test_index_item("two"),
-        ];
-        let reading = ContextReading {
-            ts: "2026-09-19T15:04:00.000Z".into(),
-            snapshot: crate::context::ContextSnapshot {
-                live: true,
-                model: "m".into(),
-                used: Some(21_243),
-                max: Some(1_000_000),
-                compaction: Some("never".into()),
-                components: vec![],
-            },
-        };
-
-        assert!(put_context_reading(&mut sessions, "two", reading.clone()));
-        assert_eq!(sessions[0].context_reading, None);
-        assert_eq!(sessions[1].context_reading, Some(reading));
-
-        // A session the index does not hold is nothing to file, not an error —
-        // the panel already has the answer in hand.
-        assert!(!put_context_reading(&mut sessions, "absent", ContextReading {
-            ts: "t".into(),
-            snapshot: crate::context::ContextSnapshot {
-                live: false,
-                model: "m".into(),
-                used: None,
-                max: None,
-                compaction: None,
-                components: vec![],
-            },
-        }));
     }
 
     fn test_index_item(id: &str) -> SessionIndexItem {
@@ -2867,10 +2739,10 @@ mod tests {
             event(AgentEventPayload::UserMessage {
                 text: "look at this".into(),
                 images: vec![image("/home/.hz/attachments/parent/a.png")],
-                issues: vec![],
                 baseline: None,
                 queued: false,
                 from: None,
+                reply_to: None,
                 cwd: None,
             }),
             // Already carried a cwd, so this copy is a fork of a fork. The
@@ -2879,10 +2751,10 @@ mod tests {
             event(AgentEventPayload::UserMessage {
                 text: "and this".into(),
                 images: vec![],
-                issues: vec![],
                 baseline: None,
                 queued: false,
                 from: None,
+                reply_to: None,
                 cwd: Some("/repo/grandparent".into()),
             }),
             event(AgentEventPayload::ToolCallCompleted {
@@ -3254,5 +3126,14 @@ mod tests {
         );
 
         assert_eq!(max_seq(""), None);
+    }
+
+    #[test]
+    fn a_hidden_sessions_finished_turn_is_never_unread() {
+        let mut item = test_index_item("t");
+        assert_eq!(effective_status(&item, SessionStatus::Completed), SessionStatus::Completed);
+        item.purpose = Some(PURPOSE_CHANNEL.to_string());
+        assert_eq!(effective_status(&item, SessionStatus::Completed), SessionStatus::Idle);
+        assert_eq!(effective_status(&item, SessionStatus::InProgress), SessionStatus::InProgress);
     }
 }

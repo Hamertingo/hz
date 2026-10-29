@@ -32,6 +32,17 @@ const HONOURED: Partial<Record<Harness, ApprovalPolicy[]>> = {
   // `permission_value_for` in `harness/mcode/mcode.rs` refuses them outright, so
   // offering one from this picker would be a stance that fails at the send.
   mcode: ["manual", "plan", "auto", "bypassPermissions"],
+  // Claude's own modes, off a live `session/new`: default, plan, auto and
+  // bypassPermissions. `dontAsk` is not among them, and the backend refuses it.
+  "claude-acp": ["manual", "plan", "auto", "bypassPermissions"],
+  // Codex's: read-only, agent and agent-full-access as a sandbox, plus plan as a
+  // second option. The four stances map one to one — see `dialect::stance`.
+  "codex-acp": ["manual", "plan", "auto", "bypassPermissions"],
+  // OpenCode's modes are `build` and `plan`: whether the agent may change
+  // things, not who approves. Approvals there are the reader's own
+  // `opencode.json`, so only plan and the ordinary stance are offered rather than
+  // two more that would both mean `build`.
+  opencode: ["plan", "auto"],
   // Empty for this slice, and it is a "not yet" rather than a "cannot" — omp
   // *does* have a native gate (`--approval-mode always-ask|write|yolo`) and
   // raises its own approval card, which hz already draws. What is missing is
@@ -47,6 +58,9 @@ const FALLBACK: Record<Harness, (mode: ApprovalPolicy) => ApprovalPolicy> = {
   // session forked from a build that had other harnesses — lands on `auto`,
   // which is the widest mcode can run without a bypass.
   mcode: () => "auto",
+  "claude-acp": () => "auto",
+  "codex-acp": () => "auto",
+  opencode: () => "auto",
 };
 
 /// Whether this harness honours this stance.
@@ -72,3 +86,19 @@ export function stanceFor(harness: Harness, mode: ApprovalPolicy): ApprovalPolic
   if (honoursMode(harness, mode)) return mode;
   return FALLBACK[harness](mode);
 }
+
+/// The stances an agent of this harness can be given, in the order they are
+/// offered: the narrowest first, so the safe ones are the first thing read.
+export function honouredModes(harness: Harness): ApprovalPolicy[] {
+  const order: ApprovalPolicy[] = ["manual", "plan", "auto", "bypassPermissions"];
+  return order.filter((mode) => honoursMode(harness, mode));
+}
+
+/// What a stance is called to a reader, and what it lets the agent do.
+export const MODE_COPY: Record<ApprovalPolicy, { label: string; hint: string }> = {
+  manual: { label: "Ask first", hint: "Asks before it edits or runs anything" },
+  plan: { label: "Plan", hint: "Reads and plans; changes nothing" },
+  auto: { label: "Auto", hint: "Asks only for risky actions" },
+  dontAsk: { label: "Don't ask", hint: "Does not ask" },
+  bypassPermissions: { label: "Full access", hint: "Never asks" },
+};

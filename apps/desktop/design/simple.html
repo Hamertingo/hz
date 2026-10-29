@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hz Simple</title>
+<!-- A calmer frame for the same agents: a list, a chat, a profile. Styles and behaviour live in ./simple/, one file per surface. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;550;600;650;700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="simple/simple.css">
+</head>
+<body>
+<div class="frame">
+  <div class="lights"><i></i><i></i><i></i></div>
+  <aside class="side" id="side"></aside>
+  <section class="main">
+    <header class="top" id="top"></header>
+    <div class="feed" id="feed"></div>
+    <div class="dock" id="dock"></div>
+  </section>
+  <aside class="panel" id="panel"></aside>
+</div>
+<div class="toasts" id="toasts"></div>
+<div class="mock" id="mock"></div>
+
+<script src="simple/icons.js"></script>
+<script src="simple/core.js"></script>
+<script src="simple/ui.js"></script>
+<script src="simple/chat.js"></script>
+<script src="simple/side.js"></script>
+<script src="simple/panel.js"></script>
+<script src="simple/modals.js"></script>
+<script src="simple/sheets.js"></script>
+<script src="simple/settings.js"></script>
+<script src="simple/more.js"></script>
+<script src="simple/vm.js"></script>
+<script src="simple/scan.js"></script>
+<script src="simple/app.js"></script>
+</body>
+</html>

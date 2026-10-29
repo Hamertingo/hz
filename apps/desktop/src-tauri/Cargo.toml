@@ -78,6 +78,13 @@ rubato = "0.16"
 # room". This is what actually raises the system prompt. See transcription/.
 tauri-plugin-macos-permissions = "2.3"
 futures-util = "0.3"
+# agentkit: AES-256-GCM for end-to-end encryption, regex for the command reviewer
+# and secret masking, shlex to split a shell command into its parts, url to read links.
+aes-gcm = "0.10"
+regex = "1"
+rand = "0.8"
+shlex = "2"
+url = "2"
 # Verifies a downloaded model against the catalog's hash. A partial file left by
 # a killed process is otherwise indistinguishable from a whole one.
 sha2 = "0.10"

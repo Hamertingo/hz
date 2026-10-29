@@ -10,8 +10,8 @@
 
 use clap::{Args, Parser, Subcommand};
 use hz_proto::{
-    encode_line, BrowserAction, BrowserRequest, CreateSession, Envelope, Get, Is, IssueInput,
-    LinkIssues, ListSessions, Locator, Request, Response, SendMessage, SessionSummary,
+    encode_line, BrowserAction, BrowserRequest, CreateSession, Envelope, Get, Is,
+    ListSessions, Locator, Request, Response, SendMessage, SessionSummary,
 };
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -62,9 +62,6 @@ enum Command {
     Ls(Ls),
     /// Send a message into a session that already exists.
     Send(Send),
-    /// Tag a session with the issue its work is against.
-    #[command(subcommand)]
-    Issue(IssueCommand),
     /// Drive this session's browser: open pages, read them, click and type.
     Browser(BrowserCommand),
     /// Upgrade this binary to the newest release.
@@ -104,9 +101,6 @@ struct New {
     #[arg(long, value_name = "SESSION|REF")]
     from: Option<String>,
 
-    /// The issue this work is against, like DRA-53. Repeat for several.
-    #[arg(long = "issue", value_name = "ISSUE")]
-    issues: Vec<String>,
 
     /// Run at the agent's faster tier, which costs more usage. Defaults to the
     /// calling session's setting when the agent is the same.
@@ -145,31 +139,6 @@ struct Ls {
     /// of the current directory.
     #[arg(long)]
     project: Option<PathBuf>,
-}
-
-#[derive(Subcommand)]
-enum IssueCommand {
-    /// Tag a session with one or more issues.
-    Link(IssueLinkArgs),
-    /// Remove issues from a session. The issues themselves are untouched.
-    Unlink(IssueLinkArgs),
-}
-
-#[derive(Args)]
-struct IssueLinkArgs {
-    /// Issue identifiers, like DRA-53, optionally preceded by the session they
-    /// belong to as printed by `hz ls`. Inside a hz session the session is
-    /// read from the environment, so the identifiers alone are enough.
-    #[arg(required = true, value_name = "SESSION | ISSUE")]
-    session_and_issues: Vec<String>,
-
-    /// The issue's title, so the tag reads as more than an identifier.
-    #[arg(long, value_name = "TITLE")]
-    title: Option<String>,
-
-    /// The issue's web address, so the tag becomes a link.
-    #[arg(long, value_name = "URL")]
-    url: Option<String>,
 }
 
 /// Every verb lands on the session's active tab; `open` makes one if none.
@@ -273,8 +242,6 @@ fn run() -> Result<(), String> {
         Command::New(args) => new(args),
         Command::Ls(args) => ls(args),
         Command::Send(args) => send_message(args),
-        Command::Issue(IssueCommand::Link(args)) => link_issues(args, false),
-        Command::Issue(IssueCommand::Unlink(args)) => link_issues(args, true),
         Command::Browser(args) => browser(args),
         Command::Update(args) => update(args),
         Command::Skill(SkillCommand::Install) => install_skill(),
@@ -290,7 +257,6 @@ fn new(args: New) -> Result<(), String> {
         harness: args.harness,
         parent_session_id: parent_session_id(),
         from: args.from,
-        issues: args.issues,
         // Absent rather than `false`, so leaving the flag off inherits the
         // parent's rather than turning fast mode *off* for a session spawned by
         // one running on it. clap has no other spelling for a bare flag.
@@ -317,55 +283,6 @@ fn new(args: New) -> Result<(), String> {
                     None => String::new(),
                 }
             );
-            Ok(())
-        }
-        Response::Error { message } => Err(message),
-        other => Err(unexpected(other)),
-    }
-}
-
-/// Tags or untags a session, printing what it carries afterwards.
-///
-/// The whole list rather than what changed, because that is what the app
-/// answers with — and a caller that tagged three issues wants to see three,
-/// not to reconcile a diff against what it believed.
-fn link_issues(args: IssueLinkArgs, unlink: bool) -> Result<(), String> {
-    let (session_id, identifiers) =
-        split_session_and_issues(args.session_and_issues, parent_session_id())?;
-
-    // One title belongs to one issue. Refused rather than applied to all of
-    // them or silently to the first: both are a wrong link that reads exactly
-    // like a right one, which is the failure this whole protocol is arranged
-    // to avoid.
-    if identifiers.len() > 1 && (args.title.is_some() || args.url.is_some()) {
-        return Err("--title and --url describe one issue, so name one".into());
-    }
-
-    let issues = identifiers
-        .into_iter()
-        .map(|identifier| IssueInput {
-            identifier,
-            title: args.title.clone(),
-            url: args.url.clone(),
-        })
-        .collect();
-
-    let request = Request::LinkIssues(LinkIssues {
-        session_id,
-        issues,
-        unlink,
-    });
-
-    match send(request)? {
-        Response::Linked { issues } => {
-            if issues.is_empty() {
-                eprintln!("No issues on this session.");
-                return Ok(());
-            }
-
-            for issue in issues {
-                println!("{}: {}  {}", issue.identifier, issue.title, issue.url);
-            }
             Ok(())
         }
         Response::Error { message } => Err(message),
@@ -882,50 +799,6 @@ fn send(request: Request) -> Result<Response, String> {
         .map_err(|e| uncertain(format!("could not parse the response: {e}")))
 }
 
-/// Splits `issue link`'s positionals into the session and the issues it names.
-///
-/// The session is optional so that the documented invocation can name no
-/// environment variable at all. The Claude Code harness refuses any command that
-/// names one inside a worktree-isolated session — which is every session `hz
-/// new` makes — so the documented `hz issue link "$HZ_SESSION_ID" DRA-53`
-/// was refused before it spawned, and refused silently: the agent read the
-/// refusal, carried on, and the issue was never linked.
-///
-/// Shape tells the two apart, and they cannot collide: a session id is a uuid,
-/// so five hyphen-separated groups, where an identifier is a team key and a
-/// number, so two. That keeps the old `<session> <ISSUE>...` form parsing, which
-/// it must — it is shipped, and an agent holding an older skill still emits it.
-fn split_session_and_issues(
-    mut given: Vec<String>,
-    from_environment: Option<String>,
-) -> Result<(String, Vec<String>), String> {
-    let session_id = if given.first().is_some_and(|first| is_session_id(first)) {
-        given.remove(0)
-    } else {
-        from_environment.ok_or(
-            "no session named, and HZ_SESSION_ID is not set: name the session, \
-             as printed by `hz ls`",
-        )?
-    };
-
-    if given.is_empty() {
-        return Err("name at least one issue, like DRA-53".into());
-    }
-
-    Ok((session_id, given))
-}
-
-/// Whether a positional is a session id rather than an issue identifier.
-///
-/// A uuid: 36 characters in groups of 8-4-4-4-12 hex. An identifier is a
-/// letter-leading team key and a number, so it has two groups and can never
-/// match this. The app reads Linear's own ids the same way, in `is_stable_id`.
-fn is_session_id(value: &str) -> bool {
-    value.len() == 36
-        && value.split('-').map(str::len).eq([8, 4, 4, 4, 12])
-        && value.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
-}
-
 /// Which session is making this call, if one is.
 ///
 /// **Injected into every tool child the agent spawns**, as the agent's own name
@@ -1117,103 +990,6 @@ mod tests {
     #[test]
     fn the_command_tree_is_well_formed() {
         Cli::command().debug_assert();
-    }
-
-    /// The title belongs to one issue. Applying it to all of them, or silently
-    /// to the first, is a wrong link that reads exactly like a right one.
-    #[test]
-    fn metadata_describes_one_issue() {
-        let args = Cli::try_parse_from([
-            "hz", "issue", "link", SESSION, "DRA-53", "DRA-54", "--title", "One",
-        ])
-        .unwrap();
-
-        let Command::Issue(IssueCommand::Link(args)) = args.command else {
-            panic!("expected an issue link");
-        };
-
-        assert!(link_issues(args, false).is_err());
-    }
-
-    /// A bare identifier is still a usable link — the tag just reads `#DRA-53`
-    /// with nothing after it. Refusing one would make the flags mandatory in
-    /// everything but name.
-    #[test]
-    fn identifiers_alone_are_accepted() {
-        assert!(
-            Cli::try_parse_from(["hz", "issue", "link", SESSION, "DRA-53", "DRA-54"]).is_ok()
-        );
-    }
-
-    /// The shipped form. An agent holding an older skill still emits it, so it
-    /// has to keep naming its own session and ignoring the environment.
-    #[test]
-    fn a_named_session_still_wins() {
-        let split = split_session_and_issues(
-            vec![SESSION.into(), "DRA-53".into(), "DRA-54".into()],
-            Some("some-other-session".into()),
-        );
-
-        assert_eq!(
-            split,
-            Ok((SESSION.into(), vec!["DRA-53".into(), "DRA-54".into()]))
-        );
-    }
-
-    /// The whole point: the documented invocation names no environment variable,
-    /// because the Claude Code harness refuses a command that does inside a
-    /// worktree — which is every session `hz new` makes.
-    #[test]
-    fn issues_alone_take_the_session_from_the_environment() {
-        let split =
-            split_session_and_issues(vec!["DRA-53".into(), "DRA-54".into()], Some(SESSION.into()));
-
-        assert_eq!(
-            split,
-            Ok((SESSION.into(), vec!["DRA-53".into(), "DRA-54".into()]))
-        );
-    }
-
-    /// The ambiguous case, and it is only apparent: a session id has five
-    /// hyphen-separated groups where an identifier has two, so a leading
-    /// `DRA-53` can never be read as the session it is being linked to.
-    #[test]
-    fn an_identifier_is_never_read_as_a_session() {
-        assert!(!is_session_id("DRA-53"));
-        assert!(!is_session_id(""));
-        assert!(!is_session_id("0198f0a2-1c5e-7000-8000-00000000000z"));
-        assert!(is_session_id(SESSION));
-
-        // A lone identifier is the whole issue list, never the session.
-        let split = split_session_and_issues(vec!["DRA-53".into()], Some(SESSION.into()));
-        assert_eq!(split, Ok((SESSION.into(), vec!["DRA-53".into()])));
-    }
-
-    /// Run from a person's own terminal there is no session in the environment,
-    /// so the refusal names the cure rather than linking to whatever it can find.
-    #[test]
-    fn without_a_session_anywhere_it_says_so() {
-        assert!(split_session_and_issues(vec!["DRA-53".into()], None).is_err());
-    }
-
-    /// A session with nothing after it names no work. Same sentence the app
-    /// answers with, so the two cannot drift into two ways of saying it.
-    #[test]
-    fn a_session_alone_is_refused() {
-        assert_eq!(
-            split_session_and_issues(vec![SESSION.into()], Some(SESSION.into())),
-            Err("name at least one issue, like DRA-53".into())
-        );
-    }
-
-    /// Both forms have to reach the parser before the split can see them, and
-    /// `unlink` shares the arguments so it gains the short form too.
-    #[test]
-    fn both_forms_parse() {
-        assert!(Cli::try_parse_from(["hz", "issue", "link", "DRA-53"]).is_ok());
-        assert!(Cli::try_parse_from(["hz", "issue", "unlink", "DRA-53"]).is_ok());
-        assert!(Cli::try_parse_from(["hz", "issue", "link", SESSION, "DRA-53"]).is_ok());
-        assert!(Cli::try_parse_from(["hz", "issue", "link"]).is_err());
     }
 
     #[test]

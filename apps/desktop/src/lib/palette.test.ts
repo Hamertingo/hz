@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CONTENT_ROWS,
-  contentRows,
+  arrange,
   highlight,
   isActionMode,
   kindLabel,
+  groupOf,
   matchItems,
+  noteTitle,
+  PER_GROUP,
   type PaletteItem,
+  suggestedName,
 } from "@/lib/palette";
-import type { ContentMatch } from "@/types/events";
 
 function item(kind: PaletteItem["kind"], label: string, detail?: string): PaletteItem {
   return { kind, id: `${kind}:${label}`, label, detail, run: () => undefined };
@@ -70,57 +72,6 @@ describe("kindLabel", () => {
   });
 });
 
-describe("contentRows", () => {
-  const hit = (over: Partial<ContentMatch> = {}): ContentMatch => ({
-    path: "/repo/src/lib/model.ts",
-    relative: "src/lib/model.ts",
-    line: 42,
-    text: "const slug = publisherless(name)",
-    ...over,
-  });
-
-  /// **The row is the line**, and the detail says where it came from. A reader
-  /// recognises the sentence they were looking for; the path is what tells two
-  /// files with one basename apart.
-  it("draws the line, and where it is", () => {
-    const rows = contentRows([hit()], () => {});
-    expect(rows).toEqual([
-      {
-        kind: "content",
-        id: "/repo/src/lib/model.ts:42",
-        label: "const slug = publisherless(name)",
-        detail: "src/lib/model.ts:42",
-        run: rows[0].run,
-      },
-    ]);
-    expect(kindLabel(rows[0].kind)).toBe("code");
-  });
-
-  /// Two hits in one file are two rows, and a row's id is what keeps them apart —
-  /// the path alone would key both to the same React child.
-  it("keys a row by the line, not by the file", () => {
-    const rows = contentRows([hit(), hit({ line: 43 })], () => {});
-    expect(rows.map((row) => row.id)).toEqual([
-      "/repo/src/lib/model.ts:42",
-      "/repo/src/lib/model.ts:43",
-    ]);
-  });
-
-  /// One word can be in a thousand lines of a lockfile, and the sessions the reader
-  /// might have meant instead are rows in this same list.
-  it("draws a handful, however many were found", () => {
-    const many = Array.from({ length: 40 }, (_, i) => hit({ line: i + 1 }));
-    expect(contentRows(many, () => {})).toHaveLength(CONTENT_ROWS);
-  });
-
-  it("runs the row's own hit", () => {
-    const seen: ContentMatch[] = [];
-    contentRows([hit()], (found) => seen.push(found))[0].run();
-    expect(seen).toHaveLength(1);
-    expect(seen[0].line).toBe(42);
-  });
-});
-
 describe("highlight", () => {
   /// Case-insensitively, because the search is: a row that matched `Needle` and
   /// drew none of it in the accent would look like it had matched some other way.
@@ -147,5 +98,49 @@ describe("highlight", () => {
   it("marks nothing where the label does not hold the query", () => {
     expect(highlight("Read the transcript twice", "model")).toBeNull();
     expect(highlight("anything", "   ")).toBeNull();
+  });
+});
+
+describe("arrange", () => {
+  const many = (kind: PaletteItem["kind"], n: number) =>
+    Array.from({ length: n }, (_, i) => item(kind, `${kind} ${i}`));
+
+  it("gathers rows under their groups in the fixed order, whatever order they came in", () => {
+    const rows = arrange([item("action", "Settings"), item("routine", "Nightly"), item("agent", "Ada")], "");
+    expect(rows.map(groupOf)).toEqual(["Agents", "Routines", "Do"]);
+  });
+
+  it("opens on the first few of each group, and a query lifts the cap", () => {
+    const all = [...many("agent", 9), ...many("action", 9)];
+    expect(arrange(all, "")).toHaveLength(PER_GROUP * 2);
+    expect(arrange(all, "agent")).toHaveLength(9);
+  });
+
+  it("filters over the title and the subtitle", () => {
+    const rows = arrange([item("agent", "Ada", "Developer"), item("agent", "Leo", "Research")], "devel");
+    expect(rows.map((r) => r.label)).toEqual(["Ada"]);
+  });
+
+  it("keeps the caller's order inside a group", () => {
+    const rows = arrange([item("channel", "#b"), item("channel", "#a")], "");
+    expect(rows.map((r) => r.label)).toEqual(["#b", "#a"]);
+  });
+});
+
+describe("suggestedName", () => {
+  it("offers what was typed as a name, trimmed and capped", () => {
+    expect(suggestedName("  Orion ")).toBe("Orion");
+    expect(suggestedName("x".repeat(80))).toHaveLength(60);
+  });
+  it("offers nothing for an empty query or actions mode", () => {
+    expect(suggestedName("   ")).toBeNull();
+    expect(suggestedName("> new")).toBeNull();
+  });
+});
+
+describe("noteTitle", () => {
+  it("turns a file name into words", () => {
+    expect(noteTitle("pricing-pro.md")).toBe("Pricing pro");
+    expect(noteTitle("como_o_gabriel_decide.md")).toBe("Como o gabriel decide");
   });
 });

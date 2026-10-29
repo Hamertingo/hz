@@ -3,9 +3,8 @@ import { getCurrentWebview, type Webview } from "@tauri-apps/api/webview";
 import { ArrowUp, CornerDownLeft, Paperclip, Square, X } from "lucide-react";
 
 import AttachmentTray from "@/components/composer/AttachmentTray";
-import { ComposerMascot } from "@/components/composer/ComposerMascot";
 import FileMentionMenu from "@/components/composer/FileMentionMenu";
-import IssueMentionMenu from "@/components/composer/IssueMentionMenu";
+import MentionMenu, { type MentionRow } from "@/components/composer/MentionMenu";
 import SlashCommandMenu from "@/components/composer/SlashCommandMenu";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,19 +20,18 @@ import { clearCitations, useCitations, type Citation } from "@/hooks/useCitation
 import { useDraft } from "@/hooks/useDraft";
 import { useFileSearch } from "@/hooks/useFileSearch";
 import { useHotkey } from "@/hooks/useHotkey";
-import { useIssueSearch } from "@/hooks/useIssueSearch";
-import { useFanOutModels } from "@/hooks/useModelFanOut";
 import { useRecentCommands } from "@/hooks/useRecentCommands";
-import { stashDraft } from "@/hooks/useStash";
-import { canFanOut } from "@/lib/fanOut";
 import { SEGMENT_COLOR, highlightSegments, splitMention } from "@/lib/highlight";
-import { applyIssue, issueSpan } from "@/lib/issue";
 import { overLimitNote, pasteBecomesFile } from "@/lib/composerLimits";
-import { registerComposer } from "@/lib/composerFocus";
+import { COMPOSER_INSERT, registerComposer } from "@/lib/composerFocus";
+import { filterMentions } from "@/lib/composerCommands";
+import type { RosterAgent } from "@/lib/roster";
 import { continueList } from "@/lib/list";
 import { applyMention, mentionSpan } from "@/lib/mention";
 import { insertQuote } from "@/lib/quote";
 import { recallMove, type Recall } from "@/lib/recall";
+import { IS_MAC } from "@/lib/platform";
+import { sendsOnKey, useStudio } from "@/lib/studio";
 import { cn } from "@/lib/utils";
 import {
   applyCommand,
@@ -42,7 +40,7 @@ import {
   parseSlashCommand,
   slashQuery,
 } from "@/lib/slash";
-import type { Attachment, FileMatch, Issue, QueuedMessage, SlashCommand } from "@/types/events";
+import type { Attachment, FileMatch, QueuedMessage, SlashCommand } from "@/types/events";
 
 type ChatInputProps = {
   /// `attachments` is what the tray held. Only paths cross the bridge — the
@@ -62,10 +60,6 @@ type ChatInputProps = {
   /// worktree session mentions paths inside its tree — the CLI resolves `@path`
   /// against the directory it was spawned in, and those are the same one.
   cwd?: string | null;
-  /// An issue tracker is connected, so `#` opens a picker. Drawn in the
-  /// placeholder and nowhere else — the picker itself simply finds nothing
-  /// without one.
-  issuesConnected?: boolean;
   /// Interrupts the running turn. Reachable while `busy` and the box is empty —
   /// with something typed the same button sends, since a prompt written during a
   /// turn is queued onto it rather than refused.
@@ -82,28 +76,36 @@ type ChatInputProps = {
   /// How many prompts are waiting. Only decides whether Esc is bound — the rows
   /// themselves are drawn by the transcript, above this component.
   queuedCount?: number;
-  /// How much rope the agent gets. Placed with the reading rather than among the
-  /// pickers: both are about *how this runs* rather than what it is, and the row
-  /// under the text is where the composer's least-touched answers go.
-  permission?: ReactNode;
-  /// The button that starts a goal, in the composer's row — drawn only where
-  /// there is no goal to show. Set through the agent's own Goal object, so what
-  /// it draws moves on its own.
-  goal?: ReactNode;
-  /// The live goal, above the card. A band rather than a row's worth of chip
-  /// because what it carries is state in motion: a status word, an elapsed count
-  /// and a token share, none of which fit a chip that has to share the row with
-  /// two other controls.
-  goalBand?: ReactNode;
-  /// What the session has spent of its window, drawn on the row under the text —
-  /// where a reading about this turn belongs, and the one place in both states that
-  /// is always below the input. The empty composer puts it on the send hint's own
-  /// line, which is otherwise most of a row of nothing.
-  meter?: ReactNode;
   /// Rendered outside the card — below it normally, above it on a new task. A
   /// node rather than the controls' own props, so this component keeps owning
   /// layout and measurement and nothing else.
   toolbar?: ReactNode;
+  /// Drawn at the start of the prompt's own row, before the text: where the `+`
+  /// lives, so nothing sits in a row of its own above the card.
+  leading?: ReactNode;
+  /// Whom the message is for. When present the card also carries a formatting row
+  /// under the text, which is how an agent's composer differs from a task box.
+  recipient?: ReactNode;
+  /// The strip over the text that says which message is being answered. A node,
+  /// since the reply store lives with the shell; absent for an ordinary box.
+  replyBar?: ReactNode;
+  /// Takes the reply back. Escape calls it when nothing nearer to the caret
+  /// (a picker, a recording) wants the key.
+  onCancelReply?: () => void;
+  /// Teammates the `@` list offers ahead of files. Absent keeps it files-only.
+  mentionAgents?: RosterAgent[];
+  /// A channel's members: they lead the `@` list, and the others are marked as
+  /// outside the channel, since naming one there does not bring it in.
+  mentionMembers?: readonly string[];
+  /// Which of those are mid-turn, for the word on their row.
+  workingAgents?: ReadonlySet<string>;
+  /// One sentence under the card about what applies to this message — what the
+  /// agent may do without asking — drawn in place of the send hint.
+  note?: string;
+  /// Above the card while something is under way: who is working, and a stop.
+  status?: ReactNode;
+  /// Replaces the prompt box's own placeholder, for a chat with a name to say.
+  placeholder?: string;
   /// The dictate button and, while recording, the level and its two buttons.
   ///
   /// A node like `toolbar`, and for the same reason: the recorder lives in
@@ -128,16 +130,8 @@ type ChatInputProps = {
   /// `true` where nothing says otherwise, which covers the model list not
   /// having landed and pi picking a model for itself — hz has no answer in
   /// either case, and a warning drawn on a guess is worse than none.
-  /// The "hand it back" actions, clipped to a sliver above the card and opening
-  /// on hover. A node for the toolbar's reason, and placed here rather than by
-  /// the shell so it sits inside the same column the composer uses and against the
-  /// card's own top edge — it clips itself to that edge, so nothing can come
-  /// between them. Absent on a new task: there is no session to send into.
-  handoff?: ReactNode;
-  /// Live work above the card: running subagents, the active plan. A node like
-  /// `handoff`, and placed for the same reason — same column, against the
-  /// card's top edge. Unlike the handoff row it is always fully drawn and
-  /// unmounts with nothing live, so the composer never moves for it.
+  /// Live work above the card: running subagents, the active plan. Unmounts with
+  /// nothing live, so the composer never moves for it.
   followup?: ReactNode;
   busy?: boolean;
   /// Which session's draft is in the box, and what the composer refocuses on
@@ -176,11 +170,9 @@ type ChatInputProps = {
   /// bar inherits the form's column and sits exactly where the card would.
   archived?: boolean;
   onUnarchive?: () => void;
-  /// Only set while the session still has a worktree on disk, which is what
-  /// retires the button: the removal clears `worktreeName`, so the control
-  /// goes away because the thing it acted on did.
-  onRemoveWorktree?: () => void;
 };
+
+const NO_WORKING: ReadonlySet<string> = new Set();
 
 const MAX_ROWS = 10;
 // The empty state has no transcript above it to crowd, so the box can take a lot
@@ -246,20 +238,24 @@ export default function ChatInput({
   commands = [],
   commandsLoading = false,
   cwd = null,
-  issuesConnected = false,
   onStop,
   onCancelQueued,
   onCancelRecording,
   queuedCount = 0,
-  meter,
-  permission,
-  goal,
-  goalBand,
   toolbar,
+  leading,
+  recipient,
+  replyBar,
+  onCancelReply,
+  mentionAgents,
+  mentionMembers,
+  workingAgents = NO_WORKING,
+  note,
+  status,
+  placeholder: placeholderOverride,
   dictation,
   dictating = false,
   notice,
-  handoff,
   followup,
   busy = false,
   sessionId = null,
@@ -271,20 +267,13 @@ export default function ChatInput({
   ask,
   archived = false,
   onUnarchive,
-  onRemoveWorktree,
-}: ChatInputProps) {
+  }: ChatInputProps) {
+  const [studio] = useStudio();
   const [message, setMessage] = useDraft(sessionId);
   const [resizeTick, setResizeTick] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
-  // The runner is mounted only while a turn is live, and stays mounted through
-  // the sprite's exit hop — it calls back once it has hopped off the rim.
-  const [runnerLive, setRunnerLive] = useState(false);
-  useEffect(() => {
-    if (busy) setRunnerLive(true);
-  }, [busy]);
-
   // Where the caret is, tracked so the picker can tell a command being typed
   // from a slash that has already been left behind.
   const [caret, setCaret] = useState(0);
@@ -304,7 +293,6 @@ export default function ChatInput({
   // What the send will fan out to. Read here for the one thing this component
   // says about it — the hint under an empty box — and read again by the send
   // itself; the store is the single copy either way.
-  const fanOut = useFanOutModels(sessionId);
   // A paste that could not be parked as a file. Local rather than handed up:
   // it is this control's own failure, and it is cleared by the next paste that
   // works rather than by moving away from the session.
@@ -324,7 +312,7 @@ export default function ChatInput({
   /// each other's work.
   ///
   /// Not in an event handler because two of the three routes have no handler
-  /// here: the `+` lives in `ComposerToolbar` and the selection toolbar lives in
+  /// here: the `+` lives in the composer's own toolbar and the selection toolbar lives in
   /// the transcript, and both reach this component as opaque nodes.
   useEffect(() => {
     if (!citations.length) return;
@@ -384,12 +372,16 @@ export default function ChatInput({
   // neither has to know the other exists.
   const mention = mentionSpan(message, caret);
   const files = useFileSearch(cwd, mention?.query ?? null);
-
-  // The third of the same shape, and mutually exclusive with the other two for
-  // the same reason: the caret sits in exactly one token, and a token opening
-  // with `#` is neither one opening with `@` nor a command at position zero.
-  const issue = issueSpan(message, caret);
-  const { issues, loading: issuesLoading } = useIssueSearch(issue?.query ?? null);
+  // Teammates come first in an agent's composer, and the two kinds are walked
+  // as one list so Enter and the arrows never disagree with what is drawn.
+  const mentionRows = useMemo<MentionRow[]>(() => {
+    if (!mention) return [];
+    const agents = mentionAgents ? filterMentions(mentionAgents, mention.query, { memberIds: mentionMembers }) : [];
+    return [
+      ...agents.map((agent): MentionRow => ({ kind: "agent", agent })),
+      ...files.map((file): MentionRow => ({ kind: "file", file })),
+    ];
+  }, [mention?.query, mentionAgents, mentionMembers, files]);
 
   // Flattened in render order, so arrowing through the list and drawing it
   // can't disagree about which row an index names.
@@ -398,7 +390,7 @@ export default function ChatInput({
   // Only the count is shared between the two pickers — the lists themselves stay
   // separate all the way to the pick, so nothing has to be narrowed back out of
   // a union that `mention` already decided.
-  const rowCount = mention ? files.length : issue ? issues.length : commandMatches.length;
+  const rowCount = mention ? mentionRows.length : commandMatches.length;
   // A harness that publishes none at all, as against a query matching none of
   // the ones it does — `/xyzzy` still shuts the picker quietly once the list is
   // in hand, since then the reader can see what it holds. Silence is only wrong
@@ -406,15 +398,10 @@ export default function ChatInput({
   // arrived at all: until `commandsLoading` clears, the agent has not said, and
   // "it has none" would be a claim about a child that has not spoken yet.
   const noCommands = query !== null && cwd !== null && !commandsLoading && commands.length === 0;
-  // Rows, or one of the two cases a picker is worth drawing empty: the `#`
-  // picker waiting on Linear, where placeholder rows say the list is coming
-  // rather than absent, and the `/` picker on an agent that published an empty
-  // list, where one sentence says it is never coming. The `@` picker reads an
-  // index and has neither state.
-  const menuOpen =
-    !dismissed &&
-    (rowCount > 0 || issuesLoading || noCommands) &&
-    (query !== null || mention !== null || issue !== null);
+  // Rows, or the case a picker is worth drawing empty: the `/` picker on an
+  // agent that published an empty list, where one sentence says it is never
+  // coming. The `@` picker reads an index and has no such state.
+  const menuOpen = !dismissed && (rowCount > 0 || noCommands) && (query !== null || mention !== null);
   // Clamped rather than trusted: both lists arrive asynchronously, so a list
   // that shrinks under an already-moved selection would otherwise index past
   // its end — and an undefined row only shows up as a crash on the keystroke
@@ -424,11 +411,10 @@ export default function ChatInput({
   // Keyed on the query text rather than on the span, which is a fresh object
   // every keystroke and would reset the selection on a bare cursor move.
   const mentionQuery = mention?.query ?? null;
-  const issueQuery = issue?.query ?? null;
   useEffect(() => {
     setActiveIndex(0);
-    if (query === null && mentionQuery === null && issueQuery === null) setDismissed(false);
-  }, [query, mentionQuery, issueQuery]);
+    if (query === null && mentionQuery === null) setDismissed(false);
+  }, [query, mentionQuery]);
 
   const pickCommand = (command: SlashCommand) => {
     const next = applyCommand(message, command.name);
@@ -446,10 +432,11 @@ export default function ChatInput({
     textareaRef.current?.focus();
   };
 
-  const pickIssue = (picked: Issue) => {
-    if (!issue) return;
+  const pickMention = (row: MentionRow) => {
+    if (!mention) return;
 
-    const next = applyIssue(message, issue, picked.identifier, picked.title);
+    // A teammate lands as `@Name`, a file as its path; the same replace either way.
+    const next = applyMention(message, mention, row.kind === "agent" ? row.agent.name : row.file.path);
     pendingCaretRef.current = next.caret;
     setMessage(next.text);
     textareaRef.current?.focus();
@@ -459,14 +446,8 @@ export default function ChatInput({
   /// functions directly, so the two routes cannot diverge.
   const pickRow = (index: number) => {
     if (mention) {
-      const file = files[index];
-      if (file) pickFile(file);
-      return;
-    }
-
-    if (issue) {
-      const picked = issues[index];
-      if (picked) pickIssue(picked);
+      const row = mentionRows[index];
+      if (row) pickMention(row);
       return;
     }
 
@@ -550,16 +531,24 @@ export default function ChatInput({
   // ⌥ as well as ⌘, so the chord can't collide with the webview's own ⌘O.
   useHotkey("attach", () => void pickAttachments(sessionId));
 
-  /// Puts the draft aside and empties the box. Nothing happens on an empty draft
-  /// — `stashDraft` refuses one, so the box is not cleared for a stash that was
-  /// never made, and there is nothing to press twice hoping for a different
-  /// answer.
-  useHotkey("stash.prompt", () => {
-    if (!stashDraft(sessionId, { text: message, attachments })) return;
-    setMessage("");
-    clearAttachments(sessionId);
-    setRecall(null);
-  });
+  // Text from outside the box — an emoji, the @ button — lands at the caret.
+  // Through the draft's own setter and the pending caret, so the picker state
+  // follows it the way it follows a typed character.
+  useEffect(() => {
+    const onInsert = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId: string | null; text: string }>).detail;
+      if (detail.sessionId !== sessionId) return;
+      const el = textareaRef.current;
+      const start = el?.selectionStart ?? message.length;
+      const end = el?.selectionEnd ?? start;
+      pendingCaretRef.current = start + detail.text.length;
+      setMessage(message.slice(0, start) + detail.text + message.slice(end));
+      el?.focus();
+    };
+    window.addEventListener(COMPOSER_INSERT, onInsert);
+    return () => window.removeEventListener(COMPOSER_INSERT, onInsert);
+  }, [message, sessionId, setMessage]);
+
 
   // What Esc does, wherever focus is. Held in a ref so the listener below can
   // register once and still read current state. Returns whether it consumed the
@@ -578,6 +567,13 @@ export default function ChatInput({
     // Shuts the picker without clearing what was typed.
     if (menuOpen) {
       setDismissed(true);
+      return true;
+    }
+
+    // Drops the message being answered, which is what the strip over the box
+    // offers with its own x.
+    if (replyBar && onCancelReply) {
+      onCancelReply();
       return true;
     }
 
@@ -688,7 +684,7 @@ export default function ChatInput({
   /// copies of a submit button is two things to keep in step, and the one that
   /// is wrong is the one nobody is looking at.
   const controls = (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="ml-auto flex shrink-0 items-center gap-1">
       {dictation}
 
       {/* One button, two jobs, and what is typed decides which. Stopping is what
@@ -725,7 +721,7 @@ export default function ChatInput({
               // Default light the two tokens are the same value, so this says
               // nothing there; on that palette it is what makes Send the
               // branded control and leaves every other filled button dark.
-              className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none disabled:opacity-100"
+              className="ml-1 size-[30px] rounded-full bg-primary text-primary-foreground shadow-none transition-[background,color,transform] hover:bg-primary/90 not-disabled:scale-[1.04] disabled:bg-s3 disabled:text-ink4 disabled:opacity-100"
             >
               {/* Both icons are mounted and stacked in one grid cell, so the
                   swap is a transition rather than a remount — React would
@@ -822,12 +818,6 @@ export default function ChatInput({
               ghost variant and sits inboard — the same "chrome doesn't lift"
               rule the toolbar's buttons follow. */}
           <span className="flex shrink-0 items-center gap-1">
-            {onRemoveWorktree && (
-              <Button variant="ghost" size="sm" onClick={onRemoveWorktree}>
-                Delete worktree
-              </Button>
-            )}
-
             <Button variant="secondary" size="sm" onClick={onUnarchive}>
               Unsettle
             </Button>
@@ -838,16 +828,16 @@ export default function ChatInput({
   }
 
   return (
-    <div className="px-4 pb-4">
+    <div className="px-7 pt-1 pb-4">
       {/* **An ask card is not part of the prompt being composed.** It answers
           the agent, not the composer, and the card is a `form` of its own — put
           inside this one it is nested markup, and a submit in it bubbles to the
           form below, which reads as the reader pressing send. Drawn above the
           form at the form's own measure, so the two still line up. */}
-      {ask && <div className="mx-auto max-w-3xl">{ask}</div>}
+      {ask && <div className="mx-auto max-w-[880px]">{ask}</div>}
 
       <form
-        className="mx-auto w-full max-w-3xl"
+        className="mx-auto w-full max-w-[880px]"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -924,18 +914,7 @@ export default function ChatInput({
           <div className="-ml-2.5 scrollbar-none overflow-x-auto pb-1.5">{toolbar}</div>
         )}
 
-        {/* Directly above the card and with no gap: the row runs on past its own
-            reserve and behind the card, which is the opaque thing that hides it.
-            Withheld entirely while the live-work strip is up — the two want the
-            same band, and this one only reads as *tucked behind* the composer
-            when the composer is what it tucks behind. A 4px slice of button top
-            above a strip is neither, and reads as debris stuck to it. */}
-        {/* Above the handoff peek, which sits against the card's top edge: the
-            band is the topmost thing in the column, as it is in the vendor's own
-            TUI, and the peek keeps its place when there is no goal to draw. */}
-        {!isNewTask && goalBand && <div className="pb-1.5">{goalBand}</div>}
-
-        {!isNewTask && handoff}
+        {!isNewTask && status}
 
         {!isNewTask && followup}
         {/* The picker anchors to this wrapper rather than to the card, and it has
@@ -956,9 +935,7 @@ export default function ChatInput({
             sitting *in* the page; this one floats at the window's edge over a
             transcript that scrolls under it, so it takes `--veil-float` and the
             blur that makes it readable — the same pair every menu and dialog
-            takes. It was the one raised surface that could never be glass, back
-            when it hid the handoff row by being opaque; [HandoffRow] clips
-            itself now, which is what freed it. */}
+            takes. */}
         <div className="relative">
           {/* Two separate consequences of the empty state, passed separately
               because they are separate things that happen to coincide. The
@@ -967,7 +944,16 @@ export default function ChatInput({
               it sits next to. And the card behind it has no fill or border, so
               the list drops its own to match. */}
           {menuOpen &&
-            (mention ? (
+            (mention && mentionAgents ? (
+              <MentionMenu
+                rows={mentionRows}
+                activeIndex={active}
+                onPick={pickMention}
+                onHover={setActiveIndex}
+                working={workingAgents}
+                members={mentionMembers}
+              />
+            ) : mention ? (
               <FileMentionMenu
                 files={files}
                 activeIndex={active}
@@ -975,16 +961,6 @@ export default function ChatInput({
                 onHover={setActiveIndex}
                 placement={isNewTask ? "below" : "above"}
                 bare={isNewTask}
-              />
-            ) : issue ? (
-              <IssueMentionMenu
-                issues={issues}
-                activeIndex={active}
-                onPick={pickIssue}
-                onHover={setActiveIndex}
-                placement={isNewTask ? "below" : "above"}
-                bare={isNewTask}
-                loading={issuesLoading}
               />
             ) : (
               <SlashCommandMenu
@@ -1009,8 +985,10 @@ export default function ChatInput({
               // shadow: a shadow under a dark card falls on something already
               // darker than itself, and the card is glass there, so being lighter
               // than the page does not draw the box on its own.
-              !isNewTask &&
-                "border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl",
+              recipient !== undefined
+                ? "rounded-[24px] bg-s1 shadow-[inset_0_0_0_1px_var(--line2),0_1px_2px_rgba(0,0,0,.12)] focus-within:bg-s2 focus-within:shadow-[inset_0_0_0_1px_var(--line3),0_0_0_4px_rgba(255,255,255,.04),0_8px_24px_rgba(0,0,0,.18)]"
+                : !isNewTask &&
+                  "border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl",
             )}
           >
             {/* Covers the card rather than replacing anything, so the text and
@@ -1023,6 +1001,8 @@ export default function ChatInput({
                 Drop to attach
               </div>
             )}
+
+            {replyBar}
 
             {/* **What is pinned rides above the box, and this is the only place
                 it is drawn.** It was a token inside the draft — the list was
@@ -1050,8 +1030,19 @@ export default function ChatInput({
                 boundary, and every wrap flickered. `items-end` is what makes
                 one row read correctly at both heights — at one line the buttons
                 sit beside the text, and past it they stay at the bottom. */}
-            <div className={cn("flex items-end gap-1 py-3", isNewTask ? "px-0" : "px-3")}>
-              <div className="relative min-w-0 flex-1">
+            <div
+              className={cn(
+                "flex items-end gap-1",
+                // Without a recipient the box is two rows: the text, then the
+                // tool row (attach, model, mic, send) under it. `order-first` on
+                // the text and `basis-full` by width keep that fixed, so the
+                // tool row never moves with the text's line count.
+                recipient !== undefined ? "items-center px-2.5" : "flex-wrap py-3",
+                recipient === undefined && (isNewTask ? "px-0" : "px-3"),
+              )}
+            >
+              {leading}
+              <div className={cn("relative min-w-0", recipient === undefined ? "order-first w-full" : "flex-1")}>
                 <textarea
                   // Registered as well as held, so dictation can hand focus
                   // back from `App`, which has no route to this element.
@@ -1067,14 +1058,11 @@ export default function ChatInput({
                     const mirror = mirrorRef.current;
                     if (mirror) mirror.scrollTop = e.currentTarget.scrollTop;
                   }}
-                  // Names `#` only where it would do something. An unconnected
-                  // reader offered a tag they cannot use learns the app is
-                  // missing a feature rather than that they haven't set one up.
                   placeholder={
-                    isNewTask
-                      ? issuesConnected
-                        ? "Describe a task. #issues. @files. /skills and commands."
-                        : "Describe a task. @files. /skills and commands."
+                    placeholderOverride
+                      ? placeholderOverride
+                      : isNewTask
+                      ? "Describe a task. @files. /skills and commands."
                       : target
                         ? target
                         : "Send follow-up"
@@ -1190,13 +1178,15 @@ export default function ChatInput({
                       if (recall !== null) setRecall(null);
                     }
 
-                    // Shift+Enter is the only way to get a newline; plain Enter sends.
-                    if (e.key === "Enter" && plainEnter && !e.nativeEvent.isComposing) {
-                      if (!e.shiftKey) {
+                    // Settings → Preferences → Send with. Enter alone sends, or ⌘/Ctrl+Enter
+                    // does and Enter is a newline; Shift+Enter is a newline in both.
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                      if (sendsOnKey(e, studio.sendKey)) {
                         e.preventDefault();
                         submit();
                         return;
                       }
+                      if (!plainEnter) return;
 
                       // A newline inside a list carries the marker with it. Only
                       // with the selection collapsed: over a range the native
@@ -1219,6 +1209,7 @@ export default function ChatInput({
                     "block w-full resize-none overflow-y-auto bg-transparent placeholder:text-muted-foreground focus:outline-none",
                     TEXT_BOX,
                     isNewTask ? "px-0" : "px-1",
+                    recipient !== undefined && "min-h-[44px] py-[10px]",
                     // Hands the glyphs to the overlay only while there is something
                     // to colour. Every other moment the textarea draws its own text
                     // as before, so the usual case keeps no dependency on the
@@ -1247,6 +1238,7 @@ export default function ChatInput({
                       "pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-foreground",
                       TEXT_BOX,
                       isNewTask ? "px-0" : "px-1",
+                      recipient !== undefined && "py-[10px]",
                     )}
                   >
                     {segments.map((segment, i) => {
@@ -1293,14 +1285,18 @@ export default function ChatInput({
             legend saying so. Two Enter legends at once, one of them untrue — and
             the menu, not its rows, because a send hint under an open picker reads
             as belonging to the list. */}
-        <div className="flex items-center gap-1 pt-1.5">
-          {isNewTask && !menuOpen && (
+        <div className={cn("flex items-center gap-1", (isNewTask || note || toolbar) && "pt-1.5")}>
+          {note && !menuOpen && (
+            <span className="min-w-0 truncate text-ui text-muted-foreground/60">{note}</span>
+          )}
+
+          {isNewTask && !menuOpen && !note && (
             <span className="flex items-center gap-1 text-ui text-muted-foreground/60">
-              Press <CornerDownLeft className="size-3" strokeWidth={2} /> to send
+              Press {studio.sendKey === "modEnter" && <>{IS_MAC ? "⌘" : "Ctrl"} </>}
+              <CornerDownLeft className="size-3" strokeWidth={2} /> to send
               {/* Named here because it is the one place the press's *outcome*
                   changes: one prompt, several sessions, each in its own worktree.
                   The trigger beside it already says how many. */}
-              {canFanOut(fanOut) && <> to {fanOut.length} models</>}
             </span>
           )}
 
@@ -1311,32 +1307,7 @@ export default function ChatInput({
             </div>
           )}
 
-          {/* All three at the far end, in the order they are read: what this is
-              for, what the agent may do, then what it has spent doing it. The
-              first is the *start* button for a goal — a goal already running is
-              the band's, above the card.
-
-              **The first one present takes the push, and it takes it
-              unconditionally** — it is the leading edge of the group, so its own
-              `ml-auto` is what moves all three to the far end. Asking it to check
-              whether anything follows made the whole group bunch left against the
-              toolbar whenever all three existed, which is every session. */}
-          {goal && <span className="ml-auto shrink-0">{goal}</span>}
-          {permission && (
-            <span className={cn("shrink-0", !goal && "ml-auto")}>{permission}</span>
-          )}
-          {meter && (
-            <span className={cn("shrink-0", !goal && !permission && "ml-auto")}>{meter}</span>
-          )}
         </div>
-
-        {runnerLive && (
-          <ComposerMascot
-            boxRef={cardRef}
-            busy={busy}
-            onExited={() => setRunnerLive(false)}
-          />
-        )}
       </form>
     </div>
   );

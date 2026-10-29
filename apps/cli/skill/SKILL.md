@@ -15,7 +15,7 @@ can open it, read the transcript, interrupt it, or delete it like any other.
 ## When to reach for this
 
 The user has **several separate pieces of work** and wants them going at once —
-"work through these 3 Linear issues", "fix all four of these bugs", "start a
+"work through these 3 tickets", "fix all four of these bugs", "start a
 session for each of these tickets".
 
 Do **not** use it to break one task into steps. Sessions are for work that is
@@ -37,7 +37,7 @@ on its own, and nothing waits for it.
 
 Write the prompt as if briefing a colleague who has not read this conversation.
 The new session starts empty: it inherits no context, no files you have read, and
-no decisions made here. Include the issue text, the reproduction, the constraints
+no decisions made here. Include the ticket text, the reproduction, the constraints
 — everything it needs.
 
 Options:
@@ -49,7 +49,6 @@ Options:
 | `--effort <level>` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. Defaults to the current session's — see *Model and effort*. |
 | `--harness <name>` | `claude_code`, `codex`, `pi` or `fx`. Defaults to the current session's. |
 | `--from <session\|ref>` | Start the worktree on existing work instead of `origin/<default>`. |
-| `--issue <ID>` | The issue this work is against, like `DRA-53`. Repeat for several. |
 | `--fast` | Run at the agent's faster tier, which spends more usage. Inherits this session's when the harness is the same — see *Fast mode*. |
 
 ### Fast mode
@@ -107,49 +106,6 @@ serve the same model name.
 **pi runs without a permission gate.** It has no approval system, and hz's
 own is not built for it yet, so a pi session does what the model asks. Say so
 when you start one for work that writes.
-
-### Tagging a session with its issue
-
-```bash
-hz new --issue DRA-53 "Add the issue panel described in DRA-53"
-hz issue link DRA-53 --title "Add the issue panel" --url https://linear.app/acme/issue/DRA-53
-hz issue link DRA-53 DRA-54
-hz issue unlink DRA-54
-
-hz issue link <session-id> DRA-53 --title "Add the issue panel"
-```
-
-`link` and `unlink` tag **your own session** when you do not name one, so you
-never have to write `$HZ_SESSION_ID` — and you must not, because Claude Code
-refuses a command naming an environment variable inside a worktree, which is
-where every session `hz new` creates runs. Name a session to tag one you
-spawned.
-
-A tagged session shows an **Issue** tab in the user's panel, and its prompt gains
-one line per issue: the identifier and the title, nothing else.
-
-`hz issue link` **writes down what you give it and asks the tracker nothing.**
-So pass `--title` and `--url` — you have just read the issue and they cost you
-nothing, where without them the tag is a bare `#DRA-53` that links nowhere. They
-describe one issue, so name one issue when you use them.
-
-That line is deliberately thin. **Read the issue yourself** through the tracker's
-own MCP server — `linear-server` for Linear — which is where the description,
-the comments, the links and the current status live. The line in the prompt is an
-address, not a briefing.
-
-If that MCP server is not connected, say so rather than guessing: you have the
-title and the identifier and nothing behind them. `claude mcp list` says which
-servers are reachable.
-
-`--issue`, and a `#DRA-53` written into a prompt, are the other half and they
-*do* need the user to have connected a tracker in hz — that is where the title
-is looked up. If they have not, the tag stays plain text, the session still runs,
-and nothing fails. Report it rather than working around it.
-
-You can also write `#DRA-53` straight into a prompt — `hz new`, `hz send`, or
-the user's own composer. hz resolves the tag and links it exactly as `--issue`
-does.
 
 ### Each session gets its own worktree
 
@@ -278,7 +234,7 @@ first, then open it. `--json` on any verb answers as JSON for scripting.
 ## Reporting back to the user
 
 Say briefly what is now running, in terms of the work — "three sessions, one per
-issue". **Do not list session names or ids.** The user sees every session in the
+ticket". **Do not list session names or ids.** The user sees every session in the
 sidebar, nested under this one, and reading ids back is noise they cannot act on.
 
 Don't poll in a loop waiting for sessions to finish unless the user asked you to.
@@ -355,11 +311,6 @@ failed, the id is spent: a fresh command needs nothing from it.
 
 ## Limits
 
-- **`hz` does not write to the tracker.** Tagging records the link on the
-  session and nothing else: no status change, no comment, no attachment. If the
-  user wants the issue moved or commented on, do it through the tracker's own
-  MCP server. (The app's own issue panel has status and priority menus, but they
-  are the user's to click — nothing here reaches them.)
 - **The browser is the session's own.** `hz browser` reaches the tabs of the
   session running it and nothing else; downloads, file pickers and native
   dialogs are out of reach.

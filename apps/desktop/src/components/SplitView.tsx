@@ -31,9 +31,7 @@ type SplitViewProps = {
   active: boolean;
   chat: Pick<
     React.ComponentProps<typeof Chat>,
-    | "onOpenSubagent"
     | "onOpenSession"
-    | "onOpenSubagents"
     | "onRespondPermission"
     | "onAnswerQuestions"
     | "onCancelQuestion"

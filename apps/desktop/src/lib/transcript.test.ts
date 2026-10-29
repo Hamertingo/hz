@@ -24,10 +24,11 @@ function prompt(seq: number, text: string, queued: boolean): AgentEvent {
     type: "user_message",
     text,
     images: [],
-    issues: [],
+   
     baseline: null,
     queued,
     from: null,
+    replyTo: null,
     cwd: null,
   });
 }

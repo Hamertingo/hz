@@ -23,3 +23,35 @@ export function stripSenderPrefix(text: string, from: MessageSender | null | und
   const prefix = senderPrefix(from);
   return text.startsWith(prefix) ? text.slice(prefix.length) : text;
 }
+
+/// What `team_message` wraps a teammate's words in, rebuilt from the sender the
+/// event names — the same bargain as [`senderPrefix`], and for the same reason:
+/// built, never parsed, so a name holding a bracket can only fail by stripping
+/// nothing. The Rust side that writes these is `team.rs`; the two must agree.
+export function teamPrefix(from: MessageSender): string {
+  return `[message from your teammate ${from.title}]\n\n`;
+}
+
+export function teamSuffix(from: MessageSender): string {
+  return `\n\n(Answer with team_message to ${from.title} if a reply is needed.)`;
+}
+
+/// The wrapper's ending when the teammate *asked* and is waiting on the answer.
+export function teamAskSuffix(from: MessageSender): string {
+  return `\n\n(Answer directly: your answer goes back to ${from.title}. Do not use team_message to answer.)`;
+}
+
+/// The teammate's own words, or `null` when this relayed text is not one of
+/// theirs (a `hz send` from another session, say).
+export function teamBody(text: string, from: MessageSender | null | undefined): string | null {
+  if (!from) return null;
+
+  const prefix = teamPrefix(from);
+  if (!text.startsWith(prefix)) return null;
+
+  const rest = text.slice(prefix.length);
+  for (const suffix of [teamSuffix(from), teamAskSuffix(from)]) {
+    if (rest.endsWith(suffix)) return rest.slice(0, -suffix.length);
+  }
+  return rest;
+}

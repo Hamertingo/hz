@@ -90,7 +90,7 @@ runs:
     # release.yml is the one job whose bundle has to carry the real thing, and
     # it runs vendor-agent.sh after this, which replaces what is here.
     - shell: bash
-      run: mkdir -p apps/desktop/src-tauri/resources/agent
+      run: mkdir -p apps/desktop/src-tauri/resources/agent apps/desktop/src-tauri/resources/hyzevm
 
     # The browser's bindings compile against the CEF SDK: headers plus a C++
     # wrapper that `cef-dll-sys`'s build script builds with CMake and Ninja,

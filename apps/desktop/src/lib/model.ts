@@ -27,6 +27,12 @@ export function isUnsetModel(id: ModelId): boolean {
 /// key for. The CLI's own settings already say which one they want, and the
 /// composer reads that back instead of seeding it.
 export const DEFAULT_MODEL_FOR: Record<Harness, ModelId> = {
+  // Claude, Codex and OpenCode name none either, for the same reason: the model
+  // the reader runs is the one they chose in that CLI, and a constant here
+  // would be one they may have no access to.
+  "claude-acp": UNSET_MODEL,
+  "codex-acp": UNSET_MODEL,
+  opencode: UNSET_MODEL,
   mcode: UNSET_MODEL,
 };
 

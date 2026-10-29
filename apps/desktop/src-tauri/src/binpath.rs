@@ -30,6 +30,16 @@ use crate::proc::HideConsole as _;
 /// answer here.
 static MCODE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+/// The three CLIs this app drives, and `npm` and `node` — which install and run the
+/// adapters Claude and Codex are spoken to through. Resolved once like [`MCODE_PATH`]; a CLI
+/// installed while the app runs reads as missing until a restart, the bargain
+/// `gh` already makes.
+static CLAUDE_PATH: OnceLock<PathBuf> = OnceLock::new();
+static CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
+static OPENCODE_PATH: OnceLock<PathBuf> = OnceLock::new();
+static NPM_PATH: OnceLock<PathBuf> = OnceLock::new();
+static NODE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
 /// `gh`'s slot. Not a `OnceLock` like the one above, because this one caches an
 /// *absence* too, and a reader who has just installed `gh` has to be able to
 /// throw that answer away without restarting the app.
@@ -78,7 +88,7 @@ pub async fn gh() -> Option<PathBuf> {
         return hit;
     }
 
-    // Read before the probe, compared after it — the same bargain the issue
+    // Read before the probe, compared after it — the same bargain the other
     // caches make with their own generation. A probe that started before
     // [`forget_gh`] is answering a question about the machine as it was, and
     // the reader has since installed the very binary it did not find: publish
@@ -124,6 +134,16 @@ pub fn forget_gh() {
 /// the reader sees depends on an accident of their shell.
 pub async fn mcode() -> PathBuf {
     cached(&MCODE_PATH, resolve_mcode()).await
+}
+
+/// `npm`, which installs an ACP adapter into hz's own folder once.
+pub async fn npm() -> PathBuf {
+    cached(&NPM_PATH, or_bare("npm")).await
+}
+
+/// `node`, which runs an installed adapter directly.
+pub async fn node() -> PathBuf {
+    cached(&NODE_PATH, or_bare("node")).await
 }
 
 async fn resolve_mcode() -> PathBuf {
@@ -193,6 +213,20 @@ fn resource_dir(exe: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The folder `scripts/vendor-hyzevm.sh` stages: `bin/hyzevm` and the `qemu/` it runs on. In a release it sits in
+/// `<Name>.app/Contents/Resources/hyzevm`; under `tauri dev` it is the staged tree in the source checkout. `None`
+/// means the build was made without the script, and the caller says so rather than asking the reader to install QEMU.
+pub fn shipped_hyzevm() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let bin = if cfg!(windows) { "hyzevm.exe" } else { "hyzevm" };
+    let bundled = resource_dir(&exe)?.join("hyzevm");
+    if bundled.join("bin").join(bin).is_file() {
+        return Some(bundled);
+    }
+    let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/hyzevm");
+    staged.join("bin").join(bin).is_file().then_some(staged)
+}
+
 fn shipped_mcode() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let bundled = resource_dir(&exe)?.join("agent").join("bin").join(LAUNCHER);
@@ -259,6 +293,9 @@ pub async fn agent_installed(harness: Harness) -> bool {
 /// is what [`agent_installed`] reads to tell a resolved CLI from an absent one.
 pub async fn agent_binary(harness: Harness) -> PathBuf {
     match harness {
+        Harness::Claude => cached(&CLAUDE_PATH, or_bare("claude")).await,
+        Harness::Codex => cached(&CODEX_PATH, or_bare("codex")).await,
+        Harness::OpenCode => cached(&OPENCODE_PATH, or_bare("opencode")).await,
         Harness::Mcode => mcode().await,
         // A harness only some other build knows — one of the four this app
         // used to run, most likely. Its own spelling, which is relative and so
@@ -323,6 +360,7 @@ pub fn known_dirs() -> Vec<PathBuf> {
             home.join(".bun").join("bin"),
             home.join(".volta").join("bin"),
             home.join(".claude").join("local"),
+            home.join(".opencode").join("bin"),
             home.join("scoop").join("shims"),
             roaming.join("npm"),
             local.join("pnpm"),
@@ -335,6 +373,9 @@ pub fn known_dirs() -> Vec<PathBuf> {
         vec![
             home.join(".local/bin"),
             home.join(".claude/local"),
+            // Where OpenCode's own installer puts it, and the one place it is on
+            // no `PATH` a Dock launch inherits.
+            home.join(".opencode/bin"),
             home.join(".bun/bin"),
             home.join(".npm-global/bin"),
             // Managers whose shims run on their own, found by absolute path. asdf's
@@ -374,7 +415,9 @@ pub fn resolved_bin_dirs() -> Vec<PathBuf> {
     // Read, never probed: this runs on the spawn path, and `gh`'s slot is the
     // one here that can be empty because nothing has asked yet.
     let gh = GH_PATH.read().unwrap().clone().flatten();
-    [MCODE_PATH.get()].into_iter().flatten()
+    [MCODE_PATH.get(), CLAUDE_PATH.get(), CODEX_PATH.get(), OPENCODE_PATH.get(), NPM_PATH.get(), NODE_PATH.get()]
+        .into_iter()
+        .flatten()
         .cloned()
         .chain(gh)
         .filter(|path| path.is_absolute())

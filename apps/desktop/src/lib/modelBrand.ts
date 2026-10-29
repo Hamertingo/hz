@@ -23,7 +23,7 @@ import { modelLabel, modelSlug } from "@/lib/model";
 /// One or two paths per icon, none of them carrying anything but `<path>`: that
 /// is what [`@lobehub/icons-static-svg`](https://github.com/lobehub/lobe-icons)
 /// ships, and a shape that used a `<circle>` would need the whole file instead.
-const pathsOf = (svg: string): string[] =>
+export const pathsOf = (svg: string): string[] =>
   [...svg.matchAll(/<path[^>]*\sd="([^"]+)"/g)].map((match) => match[1]);
 
 /// A vendor's mark, and what to draw where there is none.

@@ -162,6 +162,12 @@ async fn title_command(harness: Harness, prompt: &str, _cwd: &str) -> Result<Com
     let prompt = build_prompt(prompt);
 
     Ok(match harness {
+        // Titles for the three CLIs the reader brings are not wired yet, and `Err`
+        // is the documented answer: the session keeps the title derived from its
+        // prompt, which is what every caller already does on failure.
+        Harness::Claude | Harness::Codex | Harness::OpenCode => {
+            anyhow::bail!("no title command for {} yet", harness.label())
+        }
         // One turn of plain text, on whatever model the reader's own provider
         // setup names.
         //

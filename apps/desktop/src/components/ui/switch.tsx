@@ -3,11 +3,9 @@ import { Switch as SwitchPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
-/// The track the composer's own toggle draws by hand, made a control.
-///
-/// Sized a rung up from that one (`h-4 w-7` against its `h-3 w-5`): there the
-/// track sits inside a toolbar button among other 12px chrome, here it is the
-/// thing being pressed and has to take a click on its own.
+/// The mockup's `.tog`: a 30x18 pill, green when on. Green is the signal colour
+/// for "this is running", the same one the status dot uses, so a switch and a
+/// state agree at a glance.
 function Switch({
   className,
   ...props
@@ -16,14 +14,14 @@ function Switch({
     <SwitchPrimitive.Root
       data-slot="switch"
       className={cn(
-        "peer inline-flex h-4 w-7 shrink-0 cursor-pointer items-center rounded-full p-px transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30",
+        "peer relative inline-flex h-[19px] w-8 shrink-0 cursor-pointer items-center rounded-full p-0 transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-green data-[state=unchecked]:bg-foreground/12",
         className
       )}
       {...props}
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
-        className="pointer-events-none block size-3.5 rounded-full bg-background ring-0 transition-transform data-[state=checked]:translate-x-3 data-[state=unchecked]:translate-x-0"
+        className="pointer-events-none block size-[15px] rounded-full bg-white shadow-[0_1px_3px_rgb(0_0_0/30%)] ring-0 transition-transform duration-200 data-[state=checked]:translate-x-[15px] data-[state=unchecked]:translate-x-0.5"
       />
     </SwitchPrimitive.Root>
   )

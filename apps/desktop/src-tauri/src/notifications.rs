@@ -1,4 +1,8 @@
+use std::sync::{LazyLock, Mutex};
+
 use tauri::AppHandle;
+
+use crate::settings::MeStatus;
 
 // `emit` and `path` are trait methods, so the traits only need to be in scope
 // where they are called — and this module posts a banner from Rust on macOS
@@ -26,6 +30,114 @@ pub async fn notify_session(
     title: String,
     body: String,
 ) -> Result<(), String> {
+    deliver(&app, Some(session_id), kind, title, body).await;
+    Ok(())
+}
+
+/// The one door a banner goes through: the reader's status first (held banners
+/// come back as a summary), then the Preferences page's level for this kind and
+/// its quiet hours.
+async fn deliver(app: &AppHandle, session_id: Option<String>, kind: String, title: String, body: String) {
+    let settings = crate::settings::read().await;
+    if verdict(settings.me.status, &kind) == Verdict::Hold {
+        HELD.lock().expect("held notifications poisoned").push(Held { title, body });
+        return;
+    }
+    crate::bark_push::on_banner(app, session_id.as_deref(), &kind, &title, &body);
+    let prefs = crate::studio::StudioPrefs::from_value(settings.studio.as_ref());
+    match crate::studio::delivery(&prefs, &kind, crate::studio::local_minutes()) {
+        crate::studio::Delivery::Banner { sound } => post(app.clone(), session_id, kind, title, body, sound),
+        crate::studio::Delivery::Badge | crate::studio::Delivery::Off => {}
+    }
+}
+
+/// A real banner on request, for the Preferences page's "Send a test
+/// notification". It ignores the levels and quiet hours on purpose: the point is
+/// to see whether the OS lets hz show one at all.
+#[tauri::command]
+pub async fn notify_test(app: AppHandle) -> Result<(), String> {
+    if cfg!(target_os = "macos") && tauri::is_dev() {
+        return Err("A dev build has no app bundle, so macOS shows no banners for it. Try the installed app.".into());
+    }
+    post(
+        app,
+        None,
+        "asking".into(),
+        "hz test".into(),
+        "If you can read this, banners work.".into(),
+        true,
+    );
+    Ok(())
+}
+
+/// A banner for something that waits on the reader (`asking`) or names them
+/// (`mention`), held or delivered by their status exactly as the webview's own
+/// banners are.
+pub async fn notify_asking(app: &AppHandle, session_id: Option<String>, kind: &str, title: String, body: String) {
+    deliver(app, session_id, kind.into(), title, body).await;
+}
+
+/// What the reader's status does to one banner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Deliver,
+    Hold,
+}
+
+/// Focus lets only a request through ("asking": the agent is blocked on the
+/// reader); Away holds everything, requests included, since nobody is there to
+/// answer. Held banners are not dropped: they come back as one summary.
+pub fn verdict(status: MeStatus, kind: &str) -> Verdict {
+    match status {
+        MeStatus::Available => Verdict::Deliver,
+        MeStatus::Focus if kind == "asking" || kind == "mention" => Verdict::Deliver,
+        MeStatus::Focus | MeStatus::Away => Verdict::Hold,
+    }
+}
+
+struct Held {
+    title: String,
+    body: String,
+}
+
+/// Banners withheld while the reader was Focus or Away, oldest first.
+static HELD: LazyLock<Mutex<Vec<Held>>> = LazyLock::new(Default::default);
+
+/// One banner for everything that was held: how many, and the first few titles.
+fn summary(held: &[Held]) -> Option<(String, String)> {
+    if held.is_empty() {
+        return None;
+    }
+    let n = held.len();
+    let title = if n == 1 {
+        "1 update while you were away".to_string()
+    } else {
+        format!("{n} updates while you were away")
+    };
+    let mut body = held.iter().take(3).map(|h| {
+        if h.body.is_empty() { h.title.clone() } else { format!("{}: {}", h.title, h.body) }
+    }).collect::<Vec<_>>().join(" · ");
+    if n > 3 {
+        body.push_str(&format!(" · and {} more", n - 3));
+    }
+    Some((title, body))
+}
+
+/// Called when the reader's status changes: back to Available posts the summary
+/// of what was held. Any other status leaves the queue to grow.
+pub fn status_changed(app: &AppHandle, status: MeStatus) {
+    if status != MeStatus::Available {
+        return;
+    }
+    let held = std::mem::take(&mut *HELD.lock().expect("held notifications poisoned"));
+    if let Some((title, body)) = summary(&held) {
+        post(app.clone(), None, "summary".into(), title, body, false);
+    }
+}
+
+/// Posts one banner. With a session id a click opens that session; without one
+/// (the summary) it only raises the window.
+fn post(app: AppHandle, session_id: Option<String>, kind: String, title: String, body: String, sound: bool) {
     // `UNUserNotificationCenter` reaches for the running process's bundle and
     // raises an **uncaught** `NSInternalInconsistencyException` when there
     // isn't one — not an error it returns, an abort that takes the app with it.
@@ -40,7 +152,7 @@ pub async fn notify_session(
     // frame that crashed it.
     #[cfg(target_os = "macos")]
     if tauri::is_dev() {
-        return Ok(());
+        return;
     }
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -50,8 +162,12 @@ pub async fn notify_session(
         let mut notification = notify_rust::Notification::new();
         notification.summary(&title).body(&body).auto_icon();
 
+        // Only "Banner and sound" asks for one; a plain banner is silent, which
+        // is a pick the reader made and not the oversight `sound_for` guards.
         #[cfg(target_os = "macos")]
-        notification.sound_name(sound_for(&kind));
+        if sound {
+            notification.sound_name(sound_for(&kind));
+        }
 
         let handle = match notification.show() {
             Ok(handle) => handle,
@@ -66,16 +182,14 @@ pub async fn notify_session(
             // is `"__closed"`, which is the reader declining to look — raising
             // the window on that would be the opposite of what was asked.
             if action != "__closed" {
-                activate(&app, &session_id);
+                activate(&app, session_id.as_deref());
             }
         });
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (handle, &app, &session_id, &kind);
+            let _ = (handle, &app, &session_id, &kind, sound);
         }
     });
-
-    Ok(())
 }
 
 /// Pick the banner's sound from what the session wants.
@@ -125,13 +239,41 @@ fn request_auth_once() {
 /// Both halves are needed and neither implies the other: the OS raises the app
 /// on its own, but nothing about being frontmost selects a session.
 #[cfg(target_os = "macos")]
-fn activate(app: &AppHandle, session_id: &str) {
+fn activate(app: &AppHandle, session_id: Option<&str>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
-    if let Err(e) = app.emit("notification_activated", session_id) {
-        eprintln!("[notify emit err] {e}");
+    if let Some(session_id) = session_id {
+        if let Err(e) = app.emit("notification_activated", session_id) {
+            eprintln!("[notify emit err] {e}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focus_passes_only_a_request_and_away_passes_nothing() {
+        assert_eq!(verdict(MeStatus::Available, "completed"), Verdict::Deliver);
+        assert_eq!(verdict(MeStatus::Focus, "asking"), Verdict::Deliver);
+        assert_eq!(verdict(MeStatus::Focus, "completed"), Verdict::Hold);
+        assert_eq!(verdict(MeStatus::Away, "asking"), Verdict::Hold);
+        assert_eq!(verdict(MeStatus::Away, "completed"), Verdict::Hold);
+    }
+
+    #[test]
+    fn the_summary_counts_and_names_the_first_few() {
+        let held = |t: &str| Held { title: t.into(), body: "done".into() };
+
+        assert!(summary(&[]).is_none());
+        assert_eq!(summary(&[held("Ada")]).unwrap().0, "1 update while you were away");
+
+        let (title, body) = summary(&[held("A"), held("B"), held("C"), held("D"), held("E")]).unwrap();
+        assert_eq!(title, "5 updates while you were away");
+        assert_eq!(body, "A: done · B: done · C: done · and 2 more");
     }
 }

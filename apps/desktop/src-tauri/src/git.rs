@@ -383,11 +383,12 @@ fn parse_branches(raw: &str) -> Vec<String> {
 /// the entire point: the panel answers "what did this turn do", not "what does
 /// the tree look like".
 ///
-/// Nothing the user can see moves. The `add` runs against a **copy** of the
-/// index under `GIT_INDEX_FILE`, so the real index, the working tree, and the
-/// stash are all untouched. Copying rather than starting from an empty index is
-/// also what makes it cheap — the copy carries git's stat cache, so unchanged
-/// files are not re-hashed (~18ms on this repo).
+/// Nothing the user can see moves. The `add` runs against an index of hz's own
+/// under `GIT_INDEX_FILE`, seeded from a copy of the real one, so the real index,
+/// the working tree, and the stash are all untouched. Starting from a copy rather
+/// than an empty index is what makes the first one cheap, and keeping the file is
+/// what makes the rest cheap — it carries git's stat cache, so unchanged files
+/// are not re-hashed (~18ms on this repo).
 ///
 /// `None` for a directory that isn't a repo, which is how the panel stays
 /// hidden there rather than reporting an error the user can't act on.
@@ -406,17 +407,52 @@ pub async fn snapshot_tree(cwd: &str) -> Option<String> {
         return None;
     }
 
-    let index = std::env::temp_dir().join(format!("hz-index-{}", Uuid::now_v7()));
-    let tree = write_snapshot(cwd, &index).await;
-    let _ = fs::remove_file(&index).await;
-    tree
+    // One snapshot at a time: they share the index file below, and git's own
+    // lock would make the second one fail rather than wait.
+    static SNAPSHOTTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _one_at_a_time = SNAPSHOTTING.lock().await;
+
+    match snapshot_index_path(cwd).await {
+        Some((index, seed)) => write_snapshot(cwd, &index, seed.as_deref()).await,
+        None => {
+            let index = std::env::temp_dir().join(format!("hz-index-{}", Uuid::now_v7()));
+            let tree = write_snapshot(cwd, &index, real_index_path(cwd).await.as_deref()).await;
+            let _ = fs::remove_file(&index).await;
+            tree
+        }
+    }
 }
 
-async fn write_snapshot(cwd: &str, index: &Path) -> Option<String> {
+/// The index file snapshots reuse, and the real index to seed it from the first
+/// time.
+///
+/// **Kept between snapshots on purpose.** The real index has no stat-cache entry
+/// for an untracked file, so a copy of it made `add -A` re-hash every untracked
+/// file on every send — 15s on a repo with 3GB of untracked video, and a few GB
+/// of loose blobs written into `.git` along the way. This file records every file
+/// the last snapshot saw, so an unchanged one is a stat and nothing more.
+async fn snapshot_index_path(cwd: &str) -> Option<(PathBuf, Option<PathBuf>)> {
+    let raw = git(cwd, &["rev-parse", "--git-path", "hz-snapshot-index"]).await?;
+    let path = Path::new(raw.trim());
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        Path::new(cwd).join(path)
+    };
+
+    let seed = if fs::try_exists(&path).await.unwrap_or(false) {
+        None
+    } else {
+        real_index_path(cwd).await
+    };
+    Some((path, seed))
+}
+
+async fn write_snapshot(cwd: &str, index: &Path, seed: Option<&Path>) -> Option<String> {
     // A repo that has never been staged has no index file yet; `add` builds one
     // from nothing, so a failed copy is not fatal.
-    if let Some(real) = real_index_path(cwd).await {
-        let _ = fs::copy(&real, index).await;
+    if let Some(seed) = seed {
+        let _ = fs::copy(seed, index).await;
     }
 
     let index = index.to_str()?;
@@ -657,140 +693,6 @@ pub struct UndoReport {
     pub deleted: u32,
     /// The turn's own paths, so the reader can be told which files moved.
     pub files: Vec<String>,
-}
-
-/// Puts a finished turn's files back the way its baseline had them.
-///
-/// **Scoped to the turn's own range, not to the working tree.** The pair of
-/// snapshot ids names exactly the paths that turn touched, so an undo writes
-/// those and nothing else — a file the reader had already dirtied before the
-/// prompt went out is in both trees at the same content and is not in the range
-/// at all. `git restore` does the writing, with `--source=<tree>` and no
-/// `--staged`, so the index is left exactly as it was: a restore that staged
-/// itself would put the reader's next commit out of step with their working
-/// tree, which is a side effect nobody asked for.
-///
-/// **A file touched since the turn closed refuses the whole thing**, and that is
-/// the one rule worth the rigidity. The turn's closing snapshot is a fixed tree,
-/// so comparing the working tree against it says exactly which paths have moved
-/// on since — a hand edit, a second session, a rebase. Restoring over one of
-/// those throws away work the reader never asked to lose and cannot get back,
-/// and there is no partial answer that is safe: the files are one turn's worth
-/// of work, not a set to pick from. So it refuses, names them, and does nothing.
-///
-/// Cost, stated: nothing is cleaned up that git does not track, so a directory
-/// the turn created and only files filled stays behind as an empty one.
-#[tauri::command]
-pub async fn undo_turn(cwd: &str, baseline: &str, head: &str) -> Result<UndoReport, Fail> {
-    if !is_tree_id(baseline) || !is_tree_id(head) {
-        fail!("invalid snapshot id");
-    }
-
-    // Both idempotent, and the second one is the check: a frozen range for the
-    // turn, and the turn's closing tree against the working tree as it stands.
-    let turn = changes_since(cwd, baseline, Some(head)).await?;
-    let since = changes_since(cwd, head, None).await?;
-
-    if turn.files.is_empty() {
-        return Ok(UndoReport {
-            restored: 0,
-            deleted: 0,
-            files: Vec::new(),
-        });
-    }
-
-    // Renames are matched by both names on both sides: over-refusing costs the
-    // reader a sentence, and under-refusing costs them their edit.
-    let names = |set: &ChangeSet| -> Vec<String> {
-        set.files
-            .iter()
-            .flat_map(|f| [Some(f.path.clone()), f.old_path.clone()])
-            .flatten()
-            .collect()
-    };
-    let moved: Vec<String> = {
-        let past = names(&since);
-        let mut moved: Vec<String> = names(&turn)
-            .into_iter()
-            .filter(|path| past.contains(path))
-            .collect();
-        moved.sort();
-        moved.dedup();
-        moved
-    };
-
-    if !moved.is_empty() {
-        let named = moved
-            .iter()
-            .take(3)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let more = moved.len().saturating_sub(3);
-        fail!(
-            "{} changed since that turn{}: {named}. Undoing would overwrite {}.",
-            if moved.len() == 1 { "this file has" } else { "these files have" },
-            if more > 0 { format!(" (and {more} more)") } else { String::new() },
-            if moved.len() == 1 { "it" } else { "them" }
-        );
-    }
-
-    // Which of the turn's paths the baseline holds, and which it does not. The
-    // ones it does not are what the turn *created* — an addition, or the new
-    // name of a rename — and undoing those means taking the file away.
-    let mut restore: Vec<String> = Vec::new();
-    let mut remove: Vec<String> = Vec::new();
-    for file in &turn.files {
-        // Where the file lived before the turn: its old name on a rename, its
-        // own otherwise. This is the side the baseline holds content for.
-        let old = file.old_path.clone().unwrap_or_else(|| file.path.clone());
-        if in_tree(cwd, baseline, &old).await {
-            restore.push(old);
-        }
-        // And the side the turn ended at is whatever the baseline does *not*
-        // hold — an addition, or a rename's new name — which undo takes away.
-        if !in_tree(cwd, baseline, &file.path).await {
-            remove.push(file.path.clone());
-        }
-    }
-    restore.sort();
-    restore.dedup();
-    remove.sort();
-    remove.dedup();
-
-    if !restore.is_empty() {
-        let mut args = vec!["restore", "--source", baseline, "--"];
-        args.extend(restore.iter().map(String::as_str));
-        // Deliberately not the shared `git` helper: that sets
-        // `GIT_OPTIONAL_LOCKS=0`, which is right for a read and wrong for the
-        // one call here that writes.
-        // Reported with git's own sentence rather than a context over it: `Fail`
-        // serializes the outermost message alone, so a wrapper would hide the
-        // one line that says which path or which tree was wrong.
-        exec(cwd, &[], &args)
-            .await
-            .map_err(|e| anyhow::anyhow!("could not restore the turn's files: {e}"))?;
-    }
-
-    // Files, not directories: a tree the turn created stays behind empty, and
-    // sweeping it would mean deciding which empty directories were the turn's.
-    for path in &remove {
-        let _ = fs::remove_file(Path::new(cwd).join(path)).await;
-    }
-
-    Ok(UndoReport {
-        restored: restore.len() as u32,
-        deleted: remove.len() as u32,
-        files: turn.files.iter().map(|f| f.path.clone()).collect(),
-    })
-}
-
-/// Whether `tree` holds this path at all — which is what decides whether undoing
-/// the turn means writing the file back or taking it away.
-async fn in_tree(cwd: &str, tree: &str, path: &str) -> bool {
-    git(cwd, &["cat-file", "-e", &format!("{tree}:{path}")])
-        .await
-        .is_some()
 }
 
 /// Newest edit first, which is the order the working tree is actually read in:
@@ -1216,175 +1118,6 @@ pub struct Commit {
     pub author_email: String,
     /// RFC 3339, matching every other timestamp that reaches the frontend.
     pub authored_at: String,
-}
-
-/// Fields separated by unit separators rather than by anything a human types,
-/// with the body **last**: a commit message can contain any character at all,
-/// so only the final field is allowed to be ambiguous, and taking the rest of
-/// the record is exactly what a limited split does with it.
-const LOG_FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%b";
-
-/// Far above what the list pages at. A ceiling rather than a page size: this is
-/// argv, and an unbounded `-n` from the frontend is one typo from reading the
-/// whole history into memory.
-const MAX_LOG_PAGE: u32 = 200;
-
-/// A page of the current branch's history, newest first.
-///
-/// Empty for a directory that isn't a repo and for a branch with no commits
-/// yet — the same "not an error, just nothing to draw" the branch list takes.
-#[tauri::command]
-pub async fn log_commits(cwd: &str, limit: u32, skip: u32) -> Result<Vec<Commit>, Fail> {
-    let limit = limit.clamp(1, MAX_LOG_PAGE).to_string();
-    let skip = format!("--skip={skip}");
-
-    // `-z` separates whole commits with NUL, which is the one byte a message
-    // cannot carry — so record framing survives any message, and the `--`
-    // closes the same rev-or-path ambiguity every diff here closes.
-    let Some(raw) = git(
-        cwd,
-        &["log", "-z", LOG_FORMAT, "-n", &limit, &skip, "HEAD", "--"],
-    )
-    .await
-    else {
-        return Ok(Vec::new());
-    };
-
-    Ok(parse_log(&raw))
-}
-
-/// The commit this branch forked from, read out of the branch's own reflog.
-///
-/// `claude -w` and `hz new --from` both create the branch with
-/// `git worktree add --no-track -B`, which writes `branch: Created from <base>`
-/// on first creation and `branch: Reset to <base>` when the branch already
-/// existed. The entry's own `%H` **is** the base commit, because the branch
-/// starts life pointing at it. An ordinary `git checkout -b feature
-/// origin/main` writes the same entry, so this covers plain sessions too.
-///
-/// `None` on a detached HEAD, and where nothing on record names a base — an
-/// expired reflog, or `core.logAllRefUpdates` turned off.
-async fn fork_point(cwd: &str) -> Option<String> {
-    let branch = current_branch(cwd).await?;
-    let refname = format!("refs/heads/{branch}");
-    let reflog = git(cwd, &["reflog", "show", "--format=%H%x09%gs", &refname]).await?;
-
-    // The newest matching entry, which is the one git prints first: `-B` on a
-    // pre-existing branch resets it, so an older entry names a base this
-    // session never had.
-    reflog.lines().find_map(|line| {
-        let (sha, message) = line.split_once('\t')?;
-        let names_base = message.starts_with("branch: Created from ")
-            || message.starts_with("branch: Reset to ");
-        names_base.then(|| sha.trim().to_string())
-    })
-}
-
-/// A page of the commits this branch made on its own, newest first.
-///
-/// [`log_commits`] logs HEAD whole, which buries a session's work under
-/// however long the branch it forked from is. This excludes the fork point, so
-/// what is left is what this session did.
-///
-/// **One exclusion, and it has to be an immutable one.** Excluding
-/// `origin/<default>` as well looks like it would cover a session that merges
-/// upstream in, and it does — right up until that session's own work lands on
-/// that branch and someone fetches, at which point the ref *contains* the
-/// commits and the list empties itself exactly when the work shipped. A moving
-/// ref cannot be an exclusion here. `--first-parent` covers the merge case
-/// instead: a merge of `origin/main` reaches this branch's own spine through
-/// the first parent and the upstream commits through the second, so walking the
-/// spine alone drops them without any ref being named.
-///
-/// Empty when no fork point resolves and no default base stands in, rather than
-/// logging HEAD whole: a branch with no nameable base has no honest answer here,
-/// and the history beside it already shows everything.
-///
-/// Two ways it can still be wrong, both toward over-reporting. A branch whose
-/// reflog no longer holds its creation entry — expired, or
-/// `core.logAllRefUpdates` off — falls back to the default base, which is a
-/// moving ref again and which reports a `--from` session's inherited commits as
-/// its own. And after a rebase that replays another branch's commits onto a new
-/// base, git no longer knows whose were whose. Over-reporting is the safe
-/// direction, the same reading the unpushed-commit count takes.
-#[tauri::command]
-pub async fn log_branch_commits(cwd: &str, limit: u32, skip: u32) -> Result<Vec<Commit>, Fail> {
-    let limit = limit.clamp(1, MAX_LOG_PAGE).to_string();
-    let skip = format!("--skip={skip}");
-
-    // Hex-checked for [`is_tree_id`]'s reason: this one comes off a reflog
-    // line, and a value opening with `-` would parse as a flag.
-    let fork = fork_point(cwd).await.filter(|sha| is_tree_id(sha));
-
-    // The default base only stands in where the reflog named nothing. It is a
-    // moving ref, so it carries the failure described above and is the worse
-    // answer wherever the fork point exists.
-    let wanted = match fork {
-        Some(base) => Some(base),
-        None => default_base(cwd).await,
-    };
-
-    // An exclusion that doesn't resolve makes the whole command fatal, and
-    // `git` swallows that into `None` — so the list would read empty with
-    // nothing saying why. `default_base` is the live case: it resolves
-    // `refs/remotes/origin/HEAD` without checking the target was ever fetched.
-    let Some(base) = wanted else {
-        return Ok(Vec::new());
-    };
-    if resolve_commit(cwd, &base).await.is_none() {
-        return Ok(Vec::new());
-    }
-
-    let Some(raw) = git(
-        cwd,
-        &[
-            "log",
-            "-z",
-            LOG_FORMAT,
-            "--first-parent",
-            "-n",
-            &limit,
-            &skip,
-            "HEAD",
-            "--not",
-            &base,
-            "--",
-        ],
-    )
-    .await
-    else {
-        return Ok(Vec::new());
-    };
-
-    Ok(parse_log(&raw))
-}
-
-fn parse_log(raw: &str) -> Vec<Commit> {
-    raw.split('\0')
-        .filter(|record| !record.trim().is_empty())
-        .filter_map(|record| {
-            // The previous record's body ends in a newline, which lands at the
-            // front of this one.
-            let mut fields = record.trim_start().splitn(7, '\x1f');
-            let sha = fields.next()?.trim().to_string();
-            let parents = fields.next()?;
-            let author = fields.next()?.to_string();
-            let author_email = fields.next()?.trim().to_string();
-            let authored_at = fields.next()?.trim().to_string();
-            let subject = fields.next()?.to_string();
-            let body = fields.next().unwrap_or_default().trim().to_string();
-
-            (!sha.is_empty()).then(|| Commit {
-                sha,
-                parent: parents.split_whitespace().next().map(str::to_string),
-                subject,
-                body,
-                author,
-                author_email,
-                authored_at,
-            })
-        })
-        .collect()
 }
 
 /// Where the current branch stands against its upstream. Read by [`work_status`]
@@ -2943,109 +2676,6 @@ mod tests {
         fs::remove_dir_all(&dir).await.ok();
     }
 
-    /// The whole of what undo is for: a turn's edits, its additions and its
-    /// deletions, all taken back.
-    #[tokio::test]
-    async fn undo_puts_a_turns_files_back() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-        let baseline = snapshot_tree(at).await.unwrap();
-
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nedited\n")
-            .await
-            .unwrap();
-        fs::write(dir.join("added.txt"), "brand new\n").await.unwrap();
-        fs::remove_file(dir.join("gone.txt")).await.unwrap();
-        let head = snapshot_tree(at).await.unwrap();
-
-        let report = undo_turn(at, &baseline, &head).await.unwrap();
-
-        assert_eq!((report.restored, report.deleted), (2, 1), "{report:?}");
-        assert_eq!(
-            fs::read_to_string(dir.join("keep.txt")).await.unwrap(),
-            "a\nb\nc\n"
-        );
-        assert_eq!(
-            fs::read_to_string(dir.join("gone.txt")).await.unwrap(),
-            "x\ny\n",
-            "a file the turn deleted comes back"
-        );
-        assert!(
-            !fs::try_exists(dir.join("added.txt")).await.unwrap(),
-            "a file the turn created goes away"
-        );
-        assert!(report.files.contains(&"added.txt".to_string()), "{report:?}");
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    /// **The rule worth the rigidity.** The turn's closing snapshot is a fixed
-    /// tree, so the working tree against it says exactly what has moved since:
-    /// restoring over one of those would take work the reader never asked to
-    /// lose, and there is no safe partial answer.
-    #[tokio::test]
-    async fn undo_refuses_when_a_file_moved_since_the_turn() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-        let baseline = snapshot_tree(at).await.unwrap();
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nfrom the agent\n")
-            .await
-            .unwrap();
-        let head = snapshot_tree(at).await.unwrap();
-
-        // The reader edits the same file by hand once the turn is over.
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nmine\n")
-            .await
-            .unwrap();
-
-        let error = undo_turn(at, &baseline, &head).await.unwrap_err();
-        let message = format!("{error:?}");
-        assert!(message.contains("keep.txt"), "the refusal names it: {message}");
-        assert_eq!(
-            fs::read_to_string(dir.join("keep.txt")).await.unwrap(),
-            "a\nb\nc\nmine\n",
-            "a refused undo must not have written anything"
-        );
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    /// `restore` without `--staged`, so the index stays where the reader put it:
-    /// a restore that staged itself would put their next commit out of step with
-    /// their working tree. The two columns of `status` are what tell them apart.
-    #[tokio::test]
-    async fn undo_writes_the_tree_and_leaves_the_index_alone() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-
-        // Dirty before the turn, so the baseline differs from HEAD and a staged
-        // restore would be visible rather than cancelling out.
-        fs::write(dir.join("keep.txt"), "a\nb\nc\ndirty before\n")
-            .await
-            .unwrap();
-        let baseline = snapshot_tree(at).await.unwrap();
-
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nfrom the agent\n")
-            .await
-            .unwrap();
-        let head = snapshot_tree(at).await.unwrap();
-
-        undo_turn(at, &baseline, &head).await.unwrap();
-
-        let status = exec(at, &[], &["status", "--porcelain", "keep.txt"])
-            .await
-            .unwrap();
-        // `trim_end`, never `trim`: the leading space *is* the index column
-        // being asserted — `M ` would mean a staged restore.
-        assert_eq!(
-            status.trim_end(),
-            " M keep.txt",
-            "only the worktree column may move: {status:?}"
-        );
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
     #[tokio::test]
     async fn a_commit_mid_turn_still_reads_as_the_net_change() {
         let dir = scratch_repo().await;
@@ -3317,53 +2947,6 @@ mod tests {
         assert_eq!(count_changes("\n"), 0);
     }
 
-    /// One record in the shape [`LOG_FORMAT`] produces.
-    fn log_record(sha: &str, parents: &str, subject: &str, body: &str) -> String {
-        format!(
-            "{sha}\x1f{parents}\x1fTest\x1ft@example.com\x1f2026-08-22T10:00:00+05:45\x1f{subject}\x1f{body}"
-        )
-    }
-
-    #[test]
-    fn parses_a_log_page_into_commits() {
-        let raw = format!(
-            "{}\0{}\0",
-            log_record("aaa1", "bbb2", "second", "why it happened\n"),
-            log_record("bbb2", "", "init", ""),
-        );
-
-        let commits = parse_log(&raw);
-
-        assert_eq!(commits.len(), 2);
-        assert_eq!(commits[0].sha, "aaa1");
-        assert_eq!(commits[0].parent.as_deref(), Some("bbb2"));
-        assert_eq!(commits[0].subject, "second");
-        assert_eq!(commits[0].body, "why it happened");
-        assert_eq!(commits[0].author, "Test");
-        assert_eq!(commits[0].author_email, "t@example.com");
-        assert_eq!(commits[0].authored_at, "2026-08-22T10:00:00+05:45");
-        // The root commit has no parent to diff against — the caller stands
-        // git's empty tree in for it.
-        assert_eq!(commits[1].parent, None);
-        assert_eq!(commits[1].body, "");
-    }
-
-    #[test]
-    fn a_merge_reads_only_its_first_parent() {
-        let commits = parse_log(&log_record("aaa1", "bbb2 ccc3", "merge", ""));
-
-        assert_eq!(commits[0].parent.as_deref(), Some("bbb2"));
-    }
-
-    #[test]
-    fn a_message_carrying_the_field_separator_keeps_its_body_whole() {
-        // The body is the last field precisely so this cannot shift the others.
-        let commits = parse_log(&log_record("aaa1", "bbb2", "subject", "a\x1fb"));
-
-        assert_eq!(commits[0].subject, "subject");
-        assert_eq!(commits[0].body, "a\x1fb");
-    }
-
     #[tokio::test]
     async fn a_repo_with_no_commit_yet_diffs_against_the_empty_tree() {
         let dir = std::env::temp_dir().join(format!("hz-unborn-{}", Uuid::now_v7()));
@@ -3405,253 +2988,6 @@ mod tests {
 
         fs::remove_dir_all(&dir).await.ok();
         fs::remove_dir_all(&empty).await.ok();
-    }
-
-    #[tokio::test]
-    async fn logs_pages_newest_first() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nd\n").await.unwrap();
-        run(at, &["commit", "-aqm", "second"]).await.unwrap();
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nd\ne\n").await.unwrap();
-        run(at, &["commit", "-aqm", "third"]).await.unwrap();
-
-        let page = log_commits(at, 2, 0).await.unwrap();
-        assert_eq!(
-            page.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
-            ["third", "second"],
-        );
-        // The page's own commits chain, which is what lets a row diff against
-        // its parent without a second read.
-        assert_eq!(page[0].parent.as_deref(), Some(page[1].sha.as_str()));
-
-        let next = log_commits(at, 2, 2).await.unwrap();
-        assert_eq!(next.len(), 1);
-        assert_eq!(next[0].subject, "init");
-        assert_eq!(next[0].parent, None);
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    #[tokio::test]
-    async fn a_directory_that_is_not_a_repo_has_no_history() {
-        let dir = std::env::temp_dir().join(format!("hz-nonrepo-{}", Uuid::now_v7()));
-        fs::create_dir_all(&dir).await.unwrap();
-
-        assert!(log_commits(dir.to_str().unwrap(), 50, 0).await.unwrap().is_empty());
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    /// The whole point of the branch list: a session forked from somebody
-    /// else's branch reports what it did, not what that branch had already
-    /// done. `origin/<default>..HEAD` gets this one wrong — the base's own
-    /// commits are not on the default branch either.
-    #[tokio::test]
-    async fn a_forked_branch_logs_only_its_own_commits() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-
-        run(at, &["checkout", "-q", "-b", "authors-work"]).await.unwrap();
-        fs::write(dir.join("feature.txt"), "the work\n").await.unwrap();
-        run(at, &["add", "-A"]).await.unwrap();
-        run(at, &["commit", "-qm", "author's commit"]).await.unwrap();
-        run(at, &["checkout", "-q", "-"]).await.unwrap();
-
-        let path = create_worktree(at, "reviewer", "authors-work")
-            .await
-            .expect("a branch that exists is a base");
-        fs::write(Path::new(&path).join("review.txt"), "mine\n")
-            .await
-            .unwrap();
-        run(&path, &["add", "-A"]).await.unwrap();
-        run(&path, &["commit", "-qm", "reviewer's commit"]).await.unwrap();
-
-        let page = log_branch_commits(&path, 50, 0).await.unwrap();
-        assert_eq!(
-            page.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
-            ["reviewer's commit"],
-        );
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    /// The newest entry wins. Reusing a worktree name resets the branch it
-    /// left behind, so the reflog holds both bases and only the later one is
-    /// where this session actually started.
-    #[tokio::test]
-    async fn a_reset_branch_forks_from_the_base_it_was_reset_to() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-
-        run(at, &["checkout", "-q", "-b", "base-work"]).await.unwrap();
-        fs::write(dir.join("base.txt"), "one\n").await.unwrap();
-        run(at, &["add", "-A"]).await.unwrap();
-        run(at, &["commit", "-qm", "base one"]).await.unwrap();
-
-        let path = create_worktree(at, "reviewer", "base-work").await.unwrap();
-        // The tree goes and the branch stays, which is what makes the second
-        // create a `Reset to` rather than another `Created from`.
-        run(at, &["worktree", "remove", "--force", &path]).await.unwrap();
-
-        fs::write(dir.join("base.txt"), "two\n").await.unwrap();
-        run(at, &["commit", "-aqm", "base two"]).await.unwrap();
-
-        let path = create_worktree(at, "reviewer", "base-work").await.unwrap();
-        fs::write(Path::new(&path).join("mine.txt"), "mine\n")
-            .await
-            .unwrap();
-        run(&path, &["add", "-A"]).await.unwrap();
-        run(&path, &["commit", "-qm", "session work"]).await.unwrap();
-
-        let page = log_branch_commits(&path, 50, 0).await.unwrap();
-        assert_eq!(
-            page.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
-            ["session work"],
-            "read the base this branch was reset to, not the older one it was created from",
-        );
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    /// The `-w` shape, forked from `origin/<default>`, and the reason the
-    /// default base is excluded as well as the fork point: a session that
-    /// merges upstream in mid-flight pulls commits into HEAD that the fork
-    /// point predates. Drop the `default_base` exclusion and this one fails.
-    #[tokio::test]
-    async fn upstream_merged_in_after_the_fork_is_not_this_branch_s_work() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-
-        let bare = std::env::temp_dir().join(format!("hz-origin-{}", Uuid::now_v7()));
-        fs::create_dir_all(&bare).await.unwrap();
-        run(bare.to_str().unwrap(), &["init", "-q", "--bare", "."])
-            .await
-            .unwrap();
-
-        run(at, &["remote", "add", "origin", bare.to_str().unwrap()])
-            .await
-            .unwrap();
-        // Named rather than pushed by whatever `git init` called the branch, so
-        // the remote side reads the same on a machine configured either way.
-        run(at, &["push", "-q", "origin", "HEAD:refs/heads/main"])
-            .await
-            .unwrap();
-        run(at, &["remote", "set-head", "origin", "main"]).await.unwrap();
-        assert_eq!(default_base(at).await.as_deref(), Some("origin/main"));
-
-        let path = create_worktree(at, "worker", "origin/main")
-            .await
-            .expect("the default base is a base");
-        fs::write(Path::new(&path).join("one.txt"), "1\n").await.unwrap();
-        run(&path, &["add", "-A"]).await.unwrap();
-        run(&path, &["commit", "-qm", "session work"]).await.unwrap();
-
-        // Upstream moves after the fork, and the session merges it in. The push
-        // is what carries it onto `origin/main`, which the worktree shares.
-        fs::write(dir.join("keep.txt"), "a\nb\nc\nd\n").await.unwrap();
-        run(at, &["commit", "-aqm", "upstream work"]).await.unwrap();
-        run(at, &["push", "-q", "origin", "HEAD:refs/heads/main"])
-            .await
-            .unwrap();
-        run(&path, &["merge", "-q", "--no-edit", "origin/main"])
-            .await
-            .unwrap();
-
-        let subjects = log_branch_commits(&path, 50, 0)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|c| c.subject)
-            .collect::<Vec<_>>();
-
-        assert!(subjects.iter().any(|s| s == "session work"), "{subjects:?}");
-        assert!(
-            !subjects.iter().any(|s| s == "upstream work"),
-            "an upstream commit the fork point predates: {subjects:?}"
-        );
-
-        fs::remove_dir_all(&dir).await.ok();
-        fs::remove_dir_all(&bare).await.ok();
-    }
-
-    /// Work that has landed is still this branch's work. Excluding
-    /// `origin/<default>` as well as the fork point emptied this list the
-    /// moment the session's own commits reached that branch and somebody
-    /// fetched — the list going blank exactly when the work shipped. Only an
-    /// immutable exclusion can be used here, which is why the merge case is
-    /// covered by `--first-parent` instead.
-    #[tokio::test]
-    async fn work_that_has_landed_upstream_is_still_this_branch_s_work() {
-        let dir = scratch_repo().await;
-        let at = dir.to_str().unwrap();
-
-        let bare = std::env::temp_dir().join(format!("hz-origin-{}", Uuid::now_v7()));
-        fs::create_dir_all(&bare).await.unwrap();
-        run(bare.to_str().unwrap(), &["init", "-q", "--bare", "."])
-            .await
-            .unwrap();
-
-        run(at, &["remote", "add", "origin", bare.to_str().unwrap()])
-            .await
-            .unwrap();
-        run(at, &["push", "-q", "origin", "HEAD:refs/heads/main"])
-            .await
-            .unwrap();
-        run(at, &["remote", "set-head", "origin", "main"]).await.unwrap();
-
-        let path = create_worktree(at, "worker", "origin/main").await.unwrap();
-        fs::write(Path::new(&path).join("one.txt"), "1\n").await.unwrap();
-        run(&path, &["add", "-A"]).await.unwrap();
-        run(&path, &["commit", "-qm", "session work"]).await.unwrap();
-
-        // The branch lands on the default branch and the worktree learns about
-        // it, which is what makes `origin/main` contain this session's commit.
-        run(&path, &["push", "-q", "origin", "HEAD:refs/heads/main"])
-            .await
-            .unwrap();
-        run(&path, &["fetch", "-q", "origin"]).await.unwrap();
-
-        let page = log_branch_commits(&path, 50, 0).await.unwrap();
-        assert_eq!(
-            page.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
-            ["session work"],
-            "the list emptied itself once the work landed",
-        );
-
-        fs::remove_dir_all(&dir).await.ok();
-        fs::remove_dir_all(&bare).await.ok();
-    }
-
-    /// No remote, and an initial commit whose reflog says `commit (initial)` —
-    /// so nothing on record names a base. Empty rather than the whole of HEAD,
-    /// which the history beside it already draws.
-    #[tokio::test]
-    async fn a_branch_with_no_nameable_base_logs_nothing() {
-        let dir = scratch_repo().await;
-
-        let page = log_branch_commits(dir.to_str().unwrap(), 50, 0)
-            .await
-            .unwrap();
-        assert!(page.is_empty(), "logged HEAD whole: {page:?}");
-
-        fs::remove_dir_all(&dir).await.ok();
-    }
-
-    /// A folder the user attached that git knows nothing about. Empty like
-    /// every other read here, never an error.
-    #[tokio::test]
-    async fn a_directory_that_is_not_a_repo_has_no_branch_history() {
-        let dir = std::env::temp_dir().join(format!("hz-nonrepo-{}", Uuid::now_v7()));
-        fs::create_dir_all(&dir).await.unwrap();
-
-        assert!(log_branch_commits(dir.to_str().unwrap(), 50, 0)
-            .await
-            .unwrap()
-            .is_empty());
-
-        fs::remove_dir_all(&dir).await.ok();
     }
 
     #[tokio::test]

@@ -23,10 +23,11 @@ function event(id: string, seq: number, subagent: Subagent | null = null): Agent
       type: "user_message",
       text: "hi",
       images: [],
-      issues: [],
+     
       baseline: null,
       queued: false,
       from: null,
+      replyTo: null,
       cwd: null,
     },
     raw: null,

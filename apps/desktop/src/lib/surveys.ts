@@ -32,8 +32,7 @@ let started = false;
 let identified: string | null = null;
 
 /// Which consent answer is the current one. Taken before the read and checked
-/// after it, the same bargain `navGen` makes in `App` and the issue caches make
-/// with theirs.
+/// after it, the same bargain `navGen` makes in `App` makes.
 ///
 /// The startup call is fire-and-forget, so it can still be suspended at its own
 /// read when the reader opts out and the settings call makes a second one. The

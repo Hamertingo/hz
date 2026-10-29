@@ -103,6 +103,10 @@ pub enum SessionUpdate {
         /// still leave the sentence the reader needs here.
         #[serde(default)]
         content: Vec<ToolContent>,
+        /// Where Codex puts a shell call's output and exit code
+        /// (`terminal_output_delta`, `terminal_exit`): it sends no `rawOutput`.
+        #[serde(rename = "_meta", default)]
+        meta: Option<Value>,
     },
     SessionInfoUpdate {
         #[serde(default)]
@@ -228,15 +232,13 @@ pub enum ToolContent {
 /// todo list off. It is an opaque [`Value`] here rather than a typed struct
 /// because each tool fills it with its own shape, and one tool's shape failing
 /// to parse must not cost the other eleven.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default)]
 pub struct RawOutput {
     /// mcode's own blocks, which are **not** ACP's: it writes
     /// `{"type":"text","text":…}` where the update's own `content` beside it
     /// writes `{"type":"content","content":{…}}`. Both are in the capture, and
     /// reading one as the other draws nothing.
-    #[serde(default)]
     pub content: Vec<RawBlock>,
-    #[serde(default)]
     pub details: Option<Value>,
 }
 
@@ -255,7 +257,43 @@ pub enum RawBlock {
     Other,
 }
 
+/// `rawOutput` is a different thing on each agent, so it is read from whatever it
+/// arrives as rather than from one shape. mcode writes `{content:[…], details}`;
+/// Claude's adapter writes a **bare string** (a file's text, a shell's stdout);
+/// OpenCode writes `{output, metadata}`; Codex writes none and carries the shell's
+/// output beside the update instead. A shape that fails to parse here used to cost
+/// the whole update, which is a tool call that never closes.
+impl<'de> Deserialize<'de> for RawOutput {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from_value(Value::deserialize(deserializer)?))
+    }
+}
+
 impl RawOutput {
+    fn from_value(value: Value) -> Self {
+        let text = |t: &str| vec![RawBlock::Text { text: t.to_string() }];
+
+        match value {
+            Value::String(t) => Self { content: text(&t), details: None },
+            Value::Array(_) => Self {
+                content: serde_json::from_value(value).unwrap_or_default(),
+                details: None,
+            },
+            Value::Object(map) => {
+                let blocks = map
+                    .get("content")
+                    .and_then(|c| serde_json::from_value::<Vec<RawBlock>>(c.clone()).ok());
+                // OpenCode's `output`, when there are no blocks to read.
+                let content = blocks
+                    .or_else(|| map.get("output").and_then(Value::as_str).map(text))
+                    .unwrap_or_default();
+                let details = map.get("details").or_else(|| map.get("metadata")).cloned();
+                Self { content, details }
+            }
+            _ => Self::default(),
+        }
+    }
+
     /// The text of the output, all of it joined — what a shell call's stdout
     /// arrives as, and what the transcript's result block draws.
     pub fn text(&self) -> Option<String> {
@@ -518,6 +556,39 @@ pub struct PromptResponse {
     /// `end_turn`, `cancelled`, `refused`, `max_tokens`, `max_turn_requests`.
     #[serde(default)]
     pub stop_reason: String,
+    /// The turn's own token counts. Claude, Codex and OpenCode send it; mcode does not.
+    #[serde(default)]
+    pub usage: Option<PromptUsage>,
+    /// Where Claude and Codex name the model that answered (`quota.model_usage[].model`).
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Value>,
+}
+
+/// `session/prompt`'s `usage`: what this one turn consumed, not a running total.
+/// The cached counts sit beside `input_tokens`, never inside it — the captures add up.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptUsage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cached_read_tokens: Option<u64>,
+    #[serde(default)]
+    pub cached_write_tokens: Option<u64>,
+    #[serde(default)]
+    pub thought_tokens: Option<u64>,
+    #[serde(default)]
+    pub total_tokens: Option<u64>,
+}
+
+impl PromptResponse {
+    /// The model the turn ran on, as the agent reported it.
+    pub fn model(&self) -> Option<String> {
+        let m = self.meta.as_ref()?;
+        m.pointer("/quota/model_usage/0/model").and_then(Value::as_str).map(str::to_string)
+    }
 }
 
 /// What `initialize` answered, which is where the app learns what this agent
@@ -855,6 +926,29 @@ pub(crate) mod tests {
             .filter_map(|line| line.strip_prefix("<< "))
             .map(|line| serde_json::from_str(line).expect("fixture line is JSON"))
             .collect()
+    }
+
+    /// A permission request as Claude's adapter really sends it, from a capture of
+    /// a shell call: the call it names, and three options whose ids are the
+    /// adapter's own (`allow-once`, `allow-with-updates`, `reject`) and go back
+    /// whole.
+    #[test]
+    fn claudes_real_permission_request_parses_with_its_options() {
+        const TURN: &str = include_str!("fixtures/claude_turn.jsonl");
+        let line = inbound(TURN)
+            .into_iter()
+            .find(|v| v.get("method").and_then(Value::as_str) == Some("session/request_permission"))
+            .expect("the capture holds a permission request");
+
+        let request: PermissionRequest =
+            serde_json::from_value(line["params"].clone()).expect("the request parses");
+
+        assert_eq!(request.tool_call.name.as_deref(), Some("Bash"));
+        assert!(request.tool_call.raw_input.is_some());
+        assert_eq!(
+            request.options.iter().map(|o| o.kind.as_str()).collect::<Vec<_>>(),
+            ["allow_once", "allow_always", "reject_once"]
+        );
     }
 
     /// Every `session/update` in a capture, typed.

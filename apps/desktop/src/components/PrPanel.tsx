@@ -21,6 +21,7 @@ import OpenInButton from "@/components/OpenInButton";
 import PrStateIcon from "@/components/PrStateIcon";
 import { Markdown } from "@/components/chat/Markdown";
 import { Button } from "@/components/ui/button";
+import { Skeleton, SkeletonRegion, SkeletonText } from "@/components/ui/skeleton";
 import Spinner from "@/components/ui/spinner";
 import {
   DropdownMenu,
@@ -184,7 +185,18 @@ export default function PrPanel({
   if (!shown.length && error) {
     return <Empty tone="error">{UNAVAILABLE[error.kind] || errorText(error)}</Empty>;
   }
-  if (!shown.length && loading) return <Empty>Looking for a pull request…</Empty>;
+  if (!shown.length && loading) {
+    return (
+      <SkeletonRegion label="Looking for a pull request" className="flex flex-col gap-3 p-4">
+        <div className="flex items-center gap-2">
+          <Skeleton className="size-4" />
+          <Skeleton className="h-3.5 w-48" />
+        </div>
+        <SkeletonText lines={3} />
+        <Skeleton className="h-9 w-full rounded-lg" />
+      </SkeletonRegion>
+    );
+  }
   if (!shown.length) {
     return (
       <Empty>

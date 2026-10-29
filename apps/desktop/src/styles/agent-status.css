@@ -1,0 +1,95 @@
+/* The status line while an agent answers (components/chat/AgentStatus.tsx): a small mascot and one sentence. The
+   mascot breathes; its eyes say the kind of work (wandering up while it thinks, down while it writes, sweeping while
+   it reads, scanning at a screen). The sentence, name included, carries one soft sheen and a slow ellipsis.
+   Pupil offsets are in the face's own 100-unit box, so they read at 20px. */
+.astat .face{transform-origin:50% 85%;animation:astat-breathe 2.6s ease-in-out infinite}
+@keyframes astat-breathe{0%,100%{translate:0 0;scale:1 1}50%{translate:0 -1px;scale:1.03 .97}}
+
+.astat-reflecting .face svg .pu,.astat-thinking .face svg .pu,.astat-planning .face svg .pu{animation:astat-ponder 3.2s cubic-bezier(.45,0,.25,1) infinite!important}
+@keyframes astat-ponder{0%,100%{transform:translate(0,0)}20%,42%{transform:translate(-3.5px,-3px)}58%,80%{transform:translate(3.5px,-2.5px)}}
+
+.astat-writing .face,.astat-code .face{animation:astat-type .5s ease-in-out infinite}
+.astat-writing .face svg .pu,.astat-code .face svg .pu{animation:astat-glance-down 2.4s ease-in-out infinite!important}
+@keyframes astat-type{0%,100%{translate:0 0}50%{translate:0 .75px}}
+@keyframes astat-glance-down{0%,100%{transform:translate(1.5px,3px)}50%{transform:translate(-1.5px,3px)}}
+
+.astat-reading .face svg .pu,.astat-searching .face svg .pu{animation:astat-read 1.8s cubic-bezier(.6,0,.3,1) infinite!important}
+@keyframes astat-read{0%{transform:translate(-3.5px,1px)}70%{transform:translate(3.5px,1px)}100%{transform:translate(-3.5px,1px)}}
+
+.astat-computer .face,.astat-mac .face,.astat-web .face{animation:astat-lean 3s ease-in-out infinite}
+.astat-computer .face svg .pu,.astat-mac .face svg .pu,.astat-web .face svg .pu{animation:astat-scan 2.2s ease-in-out infinite!important}
+@keyframes astat-lean{0%,100%{rotate:0deg}50%{rotate:-5deg}}
+@keyframes astat-scan{0%,100%{transform:translate(-3.5px,1.5px)}50%{transform:translate(3.5px,1.5px)}}
+
+/* One sheen across the whole sentence: ink at rest, a lighter band passing over it. */
+.astat-shine{background:linear-gradient(90deg,var(--ink3) 0%,var(--ink3) 40%,var(--ink) 50%,var(--ink3) 60%,var(--ink3) 100%);background-size:250% 100%;background-clip:text;-webkit-background-clip:text;color:transparent;animation:astat-sheen 2.4s linear infinite}
+.astat-shine b{color:transparent}
+@keyframes astat-sheen{from{background-position:100% 0}to{background-position:0 0}}
+
+.astat-ellipsis{display:inline-flex;margin-left:1px;color:var(--ink4)}
+.astat-ellipsis i{font-style:normal;animation:astat-dot 1.4s ease-in-out infinite;opacity:.2}
+.astat-ellipsis i:nth-child(2){animation-delay:.18s}
+.astat-ellipsis i:nth-child(3){animation-delay:.36s}
+@keyframes astat-dot{0%,100%{opacity:.2}40%{opacity:1}}
+
+.astat-line{display:inline-flex;align-items:baseline;animation:astat-in .3s cubic-bezier(.2,.8,.2,1) both}
+@keyframes astat-in{from{opacity:0;translate:0 2px}}
+
+@media (prefers-reduced-motion:reduce){
+  .astat .face,.astat .face svg .pu,.astat-shine,.astat-ellipsis i,.astat-line{animation:none!important}
+  .astat-shine{color:var(--ink3)}
+}
+
+/* The sidebar row while its agent works: a dot that breathes and the activity in green with a slow sheen. */
+.row-act{color:var(--green);animation:astat-in .3s cubic-bezier(.2,.8,.2,1) both}
+.row-act-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 color-mix(in srgb,var(--green) 45%,transparent);animation:row-pulse 1.8s ease-out infinite}
+@keyframes row-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--green) 45%,transparent)}70%,100%{box-shadow:0 0 0 5px transparent}}
+.row-act-text{background:linear-gradient(90deg,var(--green) 0%,var(--green) 40%,color-mix(in srgb,var(--green) 45%,white) 50%,var(--green) 60%,var(--green) 100%);background-size:250% 100%;background-clip:text;-webkit-background-clip:text;color:transparent;animation:astat-sheen 2.4s linear infinite}
+@media (prefers-reduced-motion:reduce){.row-act-dot,.row-act-text{animation:none}.row-act-text{color:var(--green)}}
+
+/* The object the mascot holds (components/chat/ActivityProp.tsx). It sits at the mascot's lower right, as if held,
+   pops in when the activity changes, and moves the way the thing is used. A thought floats at the upper right. */
+.astat-hold{position:absolute;right:-8px;bottom:-4px;display:grid;place-items:center;pointer-events:none;animation:aprop-in .38s cubic-bezier(.3,1.4,.5,1) both}
+.astat-thinking .astat-hold,.astat-reflecting .astat-hold,.astat-planning .astat-hold{right:-10px;bottom:auto;top:-8px}
+@keyframes aprop-in{from{opacity:0;scale:.4;translate:-3px 2px}}
+.aprop{overflow:visible;color:var(--ink2);filter:drop-shadow(0 0 1.5px var(--background)) drop-shadow(0 0 1px var(--background))}
+.aprop .aprop-body{fill:var(--s3);stroke:currentColor;stroke-width:1.2}
+.aprop .aprop-stroke{fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round}
+.aprop .aprop-ring{fill:color-mix(in srgb,var(--blue) 18%,transparent);stroke:currentColor;stroke-width:1.4}
+.aprop .aprop-lines{fill:none;stroke:var(--ink4);stroke-width:1;stroke-linecap:round}
+
+/* Its own computer: the screen's content scrolls up, clipped by the screen. */
+.aprop-monitor .aprop-scroll{fill:var(--blue);clip-path:inset(2.6px 2.6px 5.4px 2.6px);animation:aprop-scroll 1.6s linear infinite}
+@keyframes aprop-scroll{from{translate:0 0}to{translate:0 -4px}}
+
+/* Your Mac: the screen glows and the keyboard taps. */
+.aprop-laptop .aprop-glow{fill:var(--blue);animation:aprop-glow 1.8s ease-in-out infinite}
+.aprop-laptop .aprop-tap{animation:aprop-tap .32s steps(2) infinite}
+@keyframes aprop-glow{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes aprop-tap{50%{translate:0 .5px}}
+
+/* The web: the magnifier moves in a small loop, looking. */
+.aprop-magnifier .aprop-sweep{animation:aprop-sweep 1.8s ease-in-out infinite;transform-origin:7px 7px}
+@keyframes aprop-sweep{0%,100%{translate:0 0}25%{translate:1.5px -1px}50%{translate:0 -1.5px}75%{translate:-1.5px -.5px}}
+
+/* A page: a highlight runs down the lines. */
+.aprop-page .aprop-scan{fill:color-mix(in srgb,var(--blue) 35%,transparent);animation:aprop-scan 1.8s ease-in-out infinite}
+@keyframes aprop-scan{0%{translate:0 0}45%,55%{translate:0 5.8px}100%{translate:0 0}}
+
+/* Writing: the pencil scribbles. */
+.aprop-pencil .aprop-write{transform-origin:3px 13px;animation:aprop-write .6s ease-in-out infinite}
+.aprop-pencil .aprop-body{fill:color-mix(in srgb,var(--amber) 55%,var(--s3))}
+@keyframes aprop-write{0%,100%{rotate:-6deg;translate:0 0}50%{rotate:5deg;translate:1px 0}}
+
+/* A thought: a small bubble with three dots lighting one after the other. */
+.aprop-bubble .aprop-dot{fill:currentColor;opacity:.25;animation:aprop-think 1.2s ease-in-out infinite}
+.aprop-bubble .aprop-d2{animation-delay:.18s}
+.aprop-bubble .aprop-d3{animation-delay:.36s}
+@keyframes aprop-think{0%,100%{opacity:.25}40%{opacity:1}}
+
+@media (prefers-reduced-motion:reduce){.astat-hold,.aprop *{animation:none!important}.aprop-bubble .aprop-dot{opacity:.8}}
+
+/* A teammate the agent is waiting on: three dots taking turns, in place of a spinner. */
+.team-wait i{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.25;animation:astat-dot 1.2s ease-in-out infinite}
+.team-wait i:nth-child(2){animation-delay:.15s}
+.team-wait i:nth-child(3){animation-delay:.3s}

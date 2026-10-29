@@ -1,3 +1,4 @@
+import { formatClock } from "@/lib/clock";
 /// Compact relative time for session rows — "now", "4m", "3h", "2d", then a date.
 export function relativeTime(iso: string): string {
   const then = Date.parse(iso);
@@ -161,7 +162,5 @@ export function formatElapsed(ms: number): string {
 export function clockTime(iso: string): string | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return null;
-  const hh = String(at.getHours()).padStart(2, "0");
-  const mm = String(at.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
+  return formatClock(at);
 }

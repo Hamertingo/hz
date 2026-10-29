@@ -1,8 +1,10 @@
 import React from "react";
+import { installDevMock } from "./devMock";
 import ReactDOM from "react-dom/client";
 import "streamdown/styles.css";
 import App from "./App";
 import RenderErrorBoundary from "@/components/RenderErrorBoundary";
+import { Toaster } from "@/components/ui/toast";
 import { adoptPreviousStorageKeys } from "@/hooks/useLocalStorage";
 import { trackActiveDay } from "@/lib/analytics";
 import { onFocusChange } from "@/lib/focus";
@@ -12,6 +14,8 @@ import { startUiScale } from "@/hooks/useUiScale";
 
 // Before the first render, since every render below reads one of these keys —
 // and before the effects, which write them. See the function for what it moves.
+if (import.meta.env.DEV) installDevMock();
+
 adoptPreviousStorageKeys();
 
 // A stored zoom is applied here rather than from an effect, for the font sizes'
@@ -40,6 +44,7 @@ void (async () => {
       <RenderErrorBoundary>
         <App />
       </RenderErrorBoundary>
+      <Toaster />
     </React.StrictMode>,
   );
 })();

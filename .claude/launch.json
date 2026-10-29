@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "studio-mockup",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/desktop/design/serve.mjs"
+      ],
+      "port": 4719
+    }
+  ]
+}

@@ -1,9 +1,8 @@
 use crate::{
     attachments,
-    context::ContextSnapshot,
     events::{
         now_rfc3339, prompt_ts, AgentEvent, AgentEventPayload, ApprovalPolicy, ErrorSource, ImageRef,
-        MessageSender, PermissionBehavior,
+        MessageSender, PermissionBehavior, ReplyTo,
     },
     git,
     harness::{
@@ -12,12 +11,11 @@ use crate::{
         questions::PendingQuestions,
         FastMode,
     },
-    issues::{self, IssueRef},
     models::{resolve_effort, runs_on, Effort, Model, ModelId},
     store::{
         append_session_event, append_session_index_item, clear_fork_from, copy_session_log,
-        delete_session, get_session_index_item, link_session_issue, list_session_events,
-        record_context_reading, relocate_session_to_project, resolve_unclaimed_worktree_name,
+        delete_session, get_session_index_item, list_session_events,
+        relocate_session_to_project, resolve_unclaimed_worktree_name,
         set_session_status, touch_session_index_item, worktree_path, SessionIndexItem, SessionSnapshot,
         SessionStatus,
     },
@@ -79,12 +77,9 @@ pub struct QueuedMessage {
     /// deleted before the boundary that delivers it.
     #[serde(default)]
     pub from: Option<MessageSender>,
-    /// Resolved when the prompt was typed, not at flush, for `from`'s reason:
-    /// a held prompt can wait out a long turn, and re-reading the tracker at
-    /// the boundary would put a network call — and its failure — inside the
-    /// flush.
+    /// The message this prompt answers, held with it for `from`'s reason.
     #[serde(default)]
-    pub issues: Vec<IssueRef>,
+    pub reply_to: Option<ReplyTo>,
     /// The reader's clock at the press, carried through the wait rather than
     /// read at the flush. A held prompt can wait out a whole turn, and the one
     /// it opens is timed from the press — the boundary that released it is not
@@ -109,19 +104,6 @@ pub struct SendOutcome {
     /// `Some` when a turn was already running, so the prompt is held rather
     /// than sent. The frontend draws it as pending and can still take it back.
     pub queued: Option<QueuedMessage>,
-    /// Every issue the session is linked to now, as written.
-    ///
-    /// Answered on **every** path — created, live, queued and resumed — because
-    /// a `#DRA-53` is expanded and recorded on every one of them, and the
-    /// frontend has no other way to learn what a prompt just linked. Without it
-    /// a tag typed into an existing session persisted in Rust and reached the
-    /// panel only on a reselect or a restart: the Issue tab went on drawing the
-    /// session's old links while the index on disk held the new ones.
-    ///
-    /// The whole list rather than what this send added, for [`store::
-    /// link_session_issue`]'s reason — re-tagging *replaces* an entry, so what
-    /// changed is not a set the caller can apply on its own.
-    pub issues: Vec<IssueRef>,
 }
 
 /// Whether a send has to replace the child rather than write to it.
@@ -368,12 +350,15 @@ pub async fn publish_status(session_id: &str, status: SessionStatus, app: &AppHa
     // `modified` is `set_session_status`'s rule, and stating it twice is how the
     // sidebar and the disk drift apart.
     let modified = match set_session_status(session_id, status).await {
-        Ok(item) => item.map(|i| i.modified),
+        Ok(item) => item.map(|i| (i.modified, i.status)),
         Err(e) => {
             eprintln!("[status write err] {e}");
             None
         }
     };
+    // The status as written: a hidden session's `Completed` lands as `Idle`.
+    let status = modified.as_ref().map_or(status, |(_, s)| *s);
+    let modified = modified.map(|(m, _)| m);
 
     let event = SessionStatusEvent {
         session_id: session_id.to_string(),
@@ -547,12 +532,6 @@ pub struct SendRequest<'a> {
     /// Absolute paths of what the composer had attached. Re-read by the send
     /// rather than uploaded: the frontend holds a thumbnail, not the bytes.
     pub attachment_paths: &'a [String],
-    /// Issues named outright rather than tagged in the text. `hz new --issue`
-    /// is the only caller: the app sends none, since nothing in it starts a
-    /// session against a row. Merged with the prompt's own `#` tags — and
-    /// naming one here is what *links* it, where a tag in the text only
-    /// mentions.
-    pub issue_ids: &'a [String],
     pub harness: Harness,
     pub model: ModelId,
     pub effort: Option<Effort>,
@@ -595,11 +574,18 @@ pub struct SendRequest<'a> {
     /// orchestration socket. `None` everywhere else: the composer's prompts are
     /// the user's own, and a `user_message` with a sender is drawn differently.
     pub from: Option<MessageSender>,
+    /// The message this prompt answers, when the reader used Reply. Recorded on
+    /// the `user_message` so the quote survives a restart, and put in front of
+    /// the text the agent receives so it knows what is being answered.
+    pub reply_to: Option<ReplyTo>,
     /// The reader's clock at the press, from the webview that saw it — the
     /// composer's own `new Date()`, since only it knows when Enter landed.
     /// `None` for every caller that is not a person: `hz send` relaying, and
     /// `hz new` starting a session an agent asked for.
     pub sent_at: Option<&'a str>,
+    /// Why a new session exists when it is not somebody's chat (`"channel"`),
+    /// recorded on its index entry. Ignored for an existing session.
+    pub purpose: Option<&'a str>,
 }
 
 impl SessionManager {
@@ -617,7 +603,6 @@ impl SessionManager {
             session_id,
             prompt,
             attachment_paths,
-            issue_ids,
             harness,
             model,
             effort,
@@ -633,7 +618,9 @@ impl SessionManager {
             is_new_session,
             parent_session_id,
             from,
+            reply_to,
             sent_at,
+            purpose,
         } = request;
 
         // **A prompt needs something to say, and this is the one place that can
@@ -651,6 +638,17 @@ impl SessionManager {
         // so this asks for text *or* an attachment, never both.
         if prompt.trim().is_empty() && attachment_paths.is_empty() {
             bail!("Nothing to send: a prompt needs text or an attachment.");
+        }
+
+        // An agent out of its monthly budget takes no new prompt, whoever sends
+        // it: the reader, a teammate or a routine all come through here.
+        if harness != Harness::Mcode {
+            let owner = agent_name
+                .map(str::to_string)
+                .or_else(|| crate::agents::agent_of(session_id).map(|a| a.id));
+            if let Some(agent_id) = owner {
+                crate::budget::guard(&agent_id, app).await?;
+            }
         }
 
         // Two sends naming one session serialize on this gate — the barrier the
@@ -676,7 +674,25 @@ impl SessionManager {
         // build still spawns. `None` is legal and means "let mcode decide" — its
         // own settings already name one, and hz naming a model the reader has no
         // key for is the worst possible first run.
-        let model_spec = crate::harness::mcode::models::find(&model).await;
+        // The roster agent this session is, so the briefing and the team tools
+        // find it. For the three CLIs `agent_name` is the agent's id, not a
+        // name: the park's identity already carries it, and mcode's own use of
+        // the field is the only other reader.
+        if harness != Harness::Mcode {
+            if let Some(agent_id) = agent_name {
+                crate::agents::bind(session_id, agent_id);
+            }
+        }
+
+        // An agent on the light-and-strong brain gets this prompt's model and
+        // effort here, so the in-place switch below carries it.
+        let (model, effort) = if harness == Harness::Mcode {
+            (model, effort)
+        } else {
+            crate::kit_work::pick(session_id, agent_name, harness, prompt, model, effort).await
+        };
+
+        let model_spec = crate::harness::mcode::models::find(harness, &model).await;
 
         // A model belongs to exactly one harness, and the pair reaches here from
         // two places that each know only half of it — the composer's stored
@@ -731,22 +747,6 @@ impl SessionManager {
                 harness.caps().fast_mode == FastMode::AtCreation,
                 |spec| spec.supports_fast,
             );
-
-        // Resolved once for every path below — created, live, queued and
-        // resumed alike — so a `#DRA-53` means the same thing whichever one the
-        // prompt takes. The prompt comes back with any *named* issue appended as
-        // a tag, so from here `prompt` is what the model will actually be given
-        // and the transcript will actually draw. Best effort by design: an
-        // unreachable tracker leaves the text as it was and costs nothing else.
-        //
-        // Two lists, and the split is the point: `mentioned` rides the prompt
-        // event so the tag draws as a button, `linked` is written onto the
-        // session and holds only what a caller named outright. See
-        // [`issues::expand_tags`].
-        let expanded = issues::expand_tags(prompt, issue_ids).await;
-        let prompt = expanded.prompt.as_str();
-        let issues = &expanded.mentioned;
-        let linked_issues = &expanded.linked;
 
         if is_new_session {
             // Refused before anything is written, and that ordering is the
@@ -861,10 +861,7 @@ impl SessionManager {
                 fast,
                 parent_session_id,
             );
-            // Written with the entry rather than linked after it: the row
-            // appears before the child spawns, and a tab that arrived a beat
-            // later would be one more thing moving while the first turn starts.
-            item.issues = linked_issues.clone();
+            item.purpose = purpose.map(str::to_string);
 
             // The one failure that has to undo the tree, and the row that just
             // failed to be written is exactly why: removal is offered from a
@@ -917,7 +914,7 @@ impl SessionManager {
             // fetches `origin/<default>` first and an upstream commit landing in
             // between would read as this turn's work. A tree created above has
             // none of that: it is on disk and clean, so its snapshot is exact.
-            let baseline = match (owned_worktree, worktree_name.is_some()) {
+        let baseline = match (owned_worktree, worktree_name.is_some()) {
                 (false, true) => git::base_ref_tree(cwd).await,
                 _ => git::snapshot_tree(&session_cwd).await,
             };
@@ -985,7 +982,7 @@ impl SessionManager {
             }
 
             if let Err(error) = session
-                .send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
+                .send_msg(prompt, attachment_paths, baseline, from, reply_to, sent_at, app)
                 .await
             {
                 // Nothing has this session yet — it is inserted below — so
@@ -1008,7 +1005,6 @@ impl SessionManager {
             // Returned so the frontend learns the resolved worktree name and
             // the backend-truncated title rather than guessing either.
             return Ok(SendOutcome {
-                issues: item.issues.clone(),
                 snapshot: Some(SessionSnapshot {
                     index_item: item,
                     events,
@@ -1107,28 +1103,6 @@ impl SessionManager {
             None => cwd.to_string(),
         };
 
-        // Recorded before the prompt goes out, and before the queue branch
-        // below returns: a tag on a prompt held behind a running turn still
-        // says what the session is about, and the panel's tab should not wait
-        // on a boundary to appear. Failures are logged and dropped — the link
-        // is a record, and losing one must not cost the send.
-        //
-        // What each write answered with is kept, because that is what goes back
-        // to the frontend: re-tagging *replaces* an entry rather than appending
-        // one, so the list as written is not something the caller could work out
-        // from `issues` alone. A session nothing was tagged on answers with the
-        // links it already had, so every path can report the same fact.
-        let mut linked = indexed
-            .as_ref()
-            .map(|item| item.issues.clone())
-            .unwrap_or_default();
-        for issue in linked_issues {
-            match link_session_issue(session_id, issue.clone()).await {
-                Ok(next) => linked = next,
-                Err(e) => eprintln!("[issue link err] {e:#}"),
-            }
-        }
-
         // **A session outlives its child**, and the registry is the only thing that
         // says whether it still has one: a child that died took every conversation
         // on it, so a send that followed would write into a pipe nothing reads. A
@@ -1145,7 +1119,11 @@ impl SessionManager {
                     .map(|item| item.project_path.as_str())
                     .unwrap_or(cwd);
 
-                if let Some(agent) = mcode::live_agent_for(project).await {
+                // Read out first so the lock is not held across the lookup.
+                let harness = session.lock().await.harness;
+                if let Some(agent) =
+                    mcode::live_agent_for(&mcode::registry_key(harness, project)).await
+                {
                     let same_agent = Arc::ptr_eq(&session.lock().await.agent, &agent);
                     if same_agent {
                         Some(session)
@@ -1307,8 +1285,8 @@ impl SessionManager {
                         .acp_queue_if_in_flight(
                             prompt,
                             attachment_paths,
-                            issues,
                             from.clone(),
+                            reply_to.clone(),
                             sent_at,
                         )
                         .await
@@ -1316,26 +1294,23 @@ impl SessionManager {
                         return Ok(SendOutcome {
                             snapshot: None,
                             queued: Some(queued),
-                            issues: linked,
                         });
                     }
                 } else {
                     if tool_in_flight {
-                        s.queue_and_flush(prompt, attachment_paths, issues, from, sent_at, app)
+                        s.queue_and_flush(prompt, attachment_paths, from, reply_to, sent_at, app)
                             .await;
                         return Ok(SendOutcome {
-                            issues: linked,
                             ..Default::default()
                         });
                     }
 
                     let queued = s
-                        .queue_msg(prompt, attachment_paths, issues, from, sent_at)
+                        .queue_msg(prompt, attachment_paths, from, reply_to, sent_at)
                         .await;
                     return Ok(SendOutcome {
                         snapshot: None,
                         queued: Some(queued),
-                        issues: linked,
                     });
                 }
             }
@@ -1344,10 +1319,9 @@ impl SessionManager {
             // but alive, so the narrower the gap the less of the user's own
             // editing lands on the turn's side of the diff.
             let baseline = git::snapshot_tree(&session_cwd).await;
-            s.send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
+            s.send_msg(prompt, attachment_paths, baseline, from, reply_to, sent_at, app)
                 .await?;
             return Ok(SendOutcome {
-                issues: linked,
                 ..Default::default()
             });
         }
@@ -1475,7 +1449,7 @@ impl SessionManager {
             }
 
         if let Err(error) = session
-            .send_msg(prompt, attachment_paths, issues, baseline, from, sent_at, app)
+            .send_msg(prompt, attachment_paths, baseline, from, reply_to, sent_at, app)
             .await
         {
             // Same reason as the creation path above: the insert is below, so
@@ -1488,7 +1462,6 @@ impl SessionManager {
             .await
             .insert(session_id.to_string(), Arc::new(Mutex::new(session)));
         Ok(SendOutcome {
-            issues: linked,
             ..Default::default()
         })
     }
@@ -1592,71 +1565,6 @@ impl SessionManager {
             // A fork replays the whole copied log.
             has_older: false,
         })
-    }
-
-    /// Stops the turn in flight and nothing else. Errors when no live child
-    /// holds the id — nothing is running, so there is nothing to stop.
-    ///
-    /// Background tasks are deliberately left alone: backgrounding one asks for
-    /// it to outlive the turn, and the CLI's own interrupt honours that. Stop
-    /// used to fan `stop_task` out over the whole set, from when an outstanding
-    /// task held the session `in_progress` — the status follows the turn alone
-    /// now, so that fan-out only killed dev servers the reader still wanted.
-    /// Per-task stops stay available in the subagent panel for the narrower ask.
-    /// Asks the live child for its own context report, for the composer's panel.
-    ///
-    /// **A reading is a question only a live child can answer**, so the three
-    /// ways this cannot is each its own sentence rather than one silence: no child
-    /// up (a `Err`, because the panel has already drawn the last reading the index
-    /// holds and the reader is owed the reason the refresh did nothing), the child
-    /// mid-turn (the agent refuses a second prompt outright), and a child that
-    /// answers no report — `Ok(None)`, the agent's own "No Runtime context
-    /// snapshot is available for this session yet." until a turn has run on it.
-    ///
-    /// A report is written to the index before it is answered, so the reading on
-    /// screen and the one a reopened session draws are the same answer.
-    pub async fn context_snapshot(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<ContextSnapshot>, String> {
-        let Some(session) = self.sessions.lock().await.get(session_id).cloned() else {
-            // The panel draws the last reading off the index, so this is not
-            // "nothing to show" — it is why the *refresh* it just offered did
-            // nothing, and it says so rather than repeating the agent's own
-            // "nothing to count yet", which is a different fact about a live
-            // child.
-            return Err("This session's agent is not running — a reading is taken while it is.".into());
-        };
-        let session = session.lock().await;
-
-        // Refused rather than queued: the agent answers a second prompt with an
-        // error, and a reading taken mid-turn would be of a run in progress
-        // anyway. The panel says so and the reader asks again when it settles.
-        if session.handles.status.lock().await.turn_in_flight() {
-            return Err("The agent is mid-turn — read this again when it settles.".into());
-        }
-
-        let Transport::Acp(child) = &session.stdin;
-        let text = mcode::probe_context(child).await.map_err(|e| format!("{e:#}"))?;
-
-        // No report: the agent said something else, or nothing it counts yet.
-        // Both read as "nothing to show" rather than as a failure.
-        let Some(snapshot) = mcode::context::parse(&text) else {
-            return Ok(None);
-        };
-
-        // Kept before it is answered, so the panel's reading and the one a
-        // reopened session draws are the same answer. Best effort: a failed write
-        // costs the next cold open, and refusing here would cost the live one.
-        let reading = crate::context::ContextReading {
-            ts: now_rfc3339(),
-            snapshot: snapshot.clone(),
-        };
-        if let Err(e) = record_context_reading(session_id, reading).await {
-            eprintln!("[hz] could not record the context reading: {e:#}");
-        }
-
-        Ok(Some(snapshot))
     }
 
     /// The agent's own roster of the work it delegated, read on demand.
@@ -2065,6 +1973,76 @@ pub enum Transport {
     Acp(McodeSession),
 }
 
+/// What a session asks of whatever it is written to.
+///
+/// Every call here is a `match` on [`Transport`], so a harness added later is
+/// refused by the compiler at each of these until it answers them — and
+/// `session.rs` names no harness's module for any of it. A trait object would
+/// buy the same with `async_trait` and a heap allocation per session, to hide
+/// a set of variants that is closed and known at build time.
+impl Transport {
+    /// Sends one prompt and starts the turn.
+    pub async fn start_turn(&self, text: &str) -> Result<()> {
+        match self {
+            Transport::Acp(s) => mcode::start_turn(s, text).await,
+        }
+    }
+
+    /// Hands text into the turn already running instead of waiting for it to
+    /// end.
+    pub async fn steer(&self, text: &str) -> Result<()> {
+        match self {
+            Transport::Acp(s) => mcode::steer(s, text).await,
+        }
+    }
+
+    /// Interrupts the running turn without ending the conversation.
+    pub fn cancel(&self) -> Result<()> {
+        match self {
+            Transport::Acp(s) => mcode::cancel(s),
+        }
+    }
+
+    /// Moves a live conversation onto another model and answers which one it
+    /// ended up on, which is not always the one asked for.
+    pub async fn set_model(&self, model: &Model, app: &AppHandle) -> Result<Option<ModelId>> {
+        match self {
+            Transport::Acp(s) => {
+                mcode::set_model(s, model, app).await?;
+                Ok(mcode::landed_model(s))
+            }
+        }
+    }
+
+    /// Moves a live conversation onto another effort. A refusal is absorbed:
+    /// the harness keeps its own default and says which level it declined.
+    pub async fn set_effort(&self, effort: Effort, app: &AppHandle) {
+        match self {
+            Transport::Acp(s) => {
+                if let Err(error) = mcode::set_effort(s, effort).await {
+                    mcode::note_effort(effort, &error.to_string());
+                }
+                // The reply restates the model list with the level that landed.
+                mcode::announce_models(app);
+            }
+        }
+    }
+
+    /// Moves a live conversation onto another permission stance.
+    pub async fn set_permission_mode(&self, mode: ApprovalPolicy) -> Result<()> {
+        match self {
+            Transport::Acp(s) => mcode::set_mode(s, mode).await,
+        }
+    }
+
+    /// Ends this conversation, and the child with it when it was the last open.
+    pub async fn close(&self, agent: &Arc<Agent>) {
+        match self {
+            Transport::Acp(s) => mcode::close(agent, s).await,
+        }
+    }
+}
+
 /// Everything one conversation is written through and read from, in one value.
 ///
 /// These were once fields on [`Session`] *and* loose arguments to the read loop
@@ -2177,8 +2155,9 @@ impl Session {
         }
 
         match harness {
-            Harness::Mcode => {
+            Harness::Claude | Harness::Codex | Harness::OpenCode | Harness::Mcode => {
                 let session = mcode::init(
+                    harness,
                     session_id,
                     model,
                     effort,
@@ -2229,9 +2208,9 @@ impl Session {
         &mut self,
         prompt: &str,
         attachment_paths: &[String],
-        issues: &[IssueRef],
         baseline: Option<String>,
         from: Option<MessageSender>,
+        reply_to: Option<ReplyTo>,
         sent_at: Option<&str>,
         app: &AppHandle,
     ) -> Result<()> {
@@ -2240,11 +2219,11 @@ impl Session {
             self.harness,
             prompt,
             attachment_paths,
-            issues,
             baseline,
             false,
             true,
             from,
+            reply_to,
             sent_at,
             &self.stdin,
             app,
@@ -2267,8 +2246,8 @@ impl Session {
         &self,
         prompt: &str,
         attachment_paths: &[String],
-        issues: &[IssueRef],
         from: Option<MessageSender>,
+        reply_to: Option<ReplyTo>,
         sent_at: Option<&str>,
     ) -> QueuedMessage {
         let message = QueuedMessage {
@@ -2277,7 +2256,7 @@ impl Session {
             text: prompt.to_string(),
             attachment_paths: attachment_paths.to_vec(),
             from,
-            issues: issues.to_vec(),
+            reply_to,
             sent_at: sent_at.map(str::to_string),
         };
         self.handles.queued.lock().await.push(message.clone());
@@ -2304,8 +2283,8 @@ impl Session {
         &self,
         prompt: &str,
         attachment_paths: &[String],
-        issues: &[IssueRef],
         from: Option<MessageSender>,
+        reply_to: Option<ReplyTo>,
         sent_at: Option<&str>,
     ) -> Option<QueuedMessage> {
         let _turn = self.handles.status.lock().await;
@@ -2313,7 +2292,7 @@ impl Session {
             return None;
         }
         Some(
-            self.queue_msg(prompt, attachment_paths, issues, from, sent_at)
+            self.queue_msg(prompt, attachment_paths, from, reply_to, sent_at)
                 .await,
         )
     }
@@ -2333,16 +2312,19 @@ impl Session {
     ///
     /// Through the queue rather than written directly, so a prompt already
     /// waiting goes out ahead of this one instead of being overtaken.
+    // The same prompt fields `queue_msg` takes, plus the app handle: eight, for the
+    // reason that function's own callers are not worth a struct.
+    #[allow(clippy::too_many_arguments)]
     pub async fn queue_and_flush(
         &self,
         prompt: &str,
         attachment_paths: &[String],
-        issues: &[IssueRef],
         from: Option<MessageSender>,
+        reply_to: Option<ReplyTo>,
         sent_at: Option<&str>,
         app: &AppHandle,
     ) {
-        self.queue_msg(prompt, attachment_paths, issues, from, sent_at)
+        self.queue_msg(prompt, attachment_paths, from, reply_to, sent_at)
             .await;
         flush_queued(&self.handles, self.harness, &self.stdin, app).await;
     }
@@ -2352,15 +2334,12 @@ impl Session {
     /// whole ladder — which is what the composer's effort menu is drawn from, so
     /// the picker is told to re-read.
     pub async fn set_model(&mut self, model: &Model, app: &AppHandle) -> Result<()> {
-        let Transport::Acp(session) = &self.stdin;
-        mcode::set_model(session, model, app).await?;
-
         // **What the child is on, not what was asked for.** A refusal leaves the
         // session on whatever model it had, and adopting the CLI's own answer is
         // what keeps this struct, the index and the child from naming three
         // different models — a session whose every later send retries the same
         // refusal.
-        if let Some(landed) = mcode::landed_model(session) {
+        if let Some(landed) = self.stdin.set_model(model, app).await? {
             self.model = landed;
         }
 
@@ -2375,18 +2354,10 @@ impl Session {
     /// level is dropped, the session runs on mcode's own default, and stderr
     /// says which level was refused.
     pub async fn set_effort(&mut self, effort: Option<Effort>, app: &AppHandle) -> Result<()> {
-        let Transport::Acp(session) = &self.stdin;
-
         if let Some(effort) = effort {
-            if let Err(error) = mcode::set_effort(session, effort).await {
-                mcode::note_effort(effort, &error.to_string());
-            }
+            self.stdin.set_effort(effort, app).await;
         }
         self.effort = effort;
-        // The reply restates the list with the level it landed on, and a refused
-        // level is the one that did *not* land — so what the picker draws comes
-        // from the agent rather than from what was asked for.
-        mcode::announce_models(app);
 
         Ok(())
     }
@@ -2397,8 +2368,7 @@ impl Session {
     /// are *modes* — plan and default — as a mode change; `mcode::set_mode`
     /// decides between them.
     pub async fn set_permission_mode(&mut self, mode: ApprovalPolicy) -> Result<()> {
-        let Transport::Acp(session) = &self.stdin;
-        mcode::set_mode(session, mode).await?;
+        self.stdin.set_permission_mode(mode).await?;
         self.permission_mode = mode;
 
         Ok(())
@@ -2411,8 +2381,7 @@ impl Session {
     /// the read loop reads as the turn's end, so the status machine needs
     /// nothing special here.
     pub async fn interrupt(&mut self) -> Result<()> {
-        let Transport::Acp(session) = &self.stdin;
-        mcode::cancel(session)
+        self.stdin.cancel()
     }
 
     /// Hands held prompts into the running turn instead of waiting for it to end.
@@ -2449,11 +2418,11 @@ impl Session {
                     self.harness,
                     &message.text,
                     &message.attachment_paths,
-                    &message.issues,
                     None,
                     true,
                     false,
                     message.from.clone(),
+                    message.reply_to.clone(),
                     message.sent_at.as_deref(),
                     &self.stdin,
                     app,
@@ -2462,9 +2431,8 @@ impl Session {
             );
         }
 
-        let Transport::Acp(session) = &self.stdin;
         let joined = texts.join("\n\n");
-        if let Err(e) = mcode::steer(session, &joined).await {
+        if let Err(e) = self.stdin.steer(&joined).await {
             // Put every one back, in order, and say why — a held prompt that
             // vanished into a failed call would be a sentence the reader wrote
             // and never saw again.
@@ -2637,6 +2605,12 @@ impl Session {
     /// orders it correctly. A failure to emit is returned rather than swallowed,
     /// since a card that will not retire is a reader with no way forward.
     fn emit_decision(&self, payload: AgentEventPayload, app: &AppHandle) -> Result<()> {
+        // The inbox row for the same request follows the card, whichever of the
+        // two the reader pressed.
+        if let AgentEventPayload::PermissionDecided { request_id, behavior, .. } = &payload {
+            crate::inbox::on_decided(app, &self.handles.session_id, request_id, *behavior);
+        }
+
         let decision = AgentEvent {
             id: Uuid::now_v7().to_string(),
             session_id: self.handles.session_id.clone(),
@@ -2664,8 +2638,7 @@ impl Session {
     /// process is given the same grace every child here gets and killed if it is
     /// still there.
     pub async fn kill(&mut self) -> Result<()> {
-        let Transport::Acp(session) = &self.stdin;
-        mcode::close(&self.agent, session).await;
+        self.stdin.close(&self.agent).await;
 
         Ok(())
     }
@@ -2693,7 +2666,6 @@ async fn deliver_prompt(
     // surface, so [`crate::harness::fx::start_turn`] appends hz's rules to
     // the wire text alone and the transcript shows strictly less than the
     // model was told. Nothing else may take that liberty.
-    issues: &[IssueRef],
     baseline: Option<String>,
     queued: bool,
     // `false` logs the prompt and hands its prepared text back without sending
@@ -2701,6 +2673,7 @@ async fn deliver_prompt(
     // and then opens **one** turn with the lot, ACP taking one prompt per turn.
     send: bool,
     from: Option<MessageSender>,
+    reply_to: Option<ReplyTo>,
     // When the reader pressed send, where a clock outside this process saw it.
     // `None` for a prompt nothing pressed — a relayed message, `hz new` — which
     // is stamped now, the only thing left to say.
@@ -2719,11 +2692,16 @@ async fn deliver_prompt(
     // needs. They differ for an image: its path is the model's only way to the
     // file, and the transcript already draws the picture it names.
     let text = prepared.display;
-    let prompt_for_model = prepared.text;
+    // The quote rides the wire only: the log shows it from `reply_to`.
+    let quote = reply_to
+        .as_ref()
+        .map(|r| r.wire_prefix(crate::agents::name_of(&r.agent).as_deref()))
+        .unwrap_or_default();
+    let prompt_for_model = format!("{quote}{}", prepared.text);
 
+    let by_reader = from.is_none();
     let payload = AgentEventPayload::UserMessage {
         text: text.clone(),
-        issues: issues.to_vec(),
         images: prepared
             .images
             .iter()
@@ -2736,6 +2714,7 @@ async fn deliver_prompt(
         baseline,
         queued,
         from,
+        reply_to: reply_to.clone(),
         // Absent means "this session's own cwd", which is the truth for every
         // message a session logs itself. Only a fork records one.
         cwd: None,
@@ -2755,6 +2734,12 @@ async fn deliver_prompt(
 
     app.emit("agent_event", &agent_event)?;
 
+    // So a teammate's ask queued behind a turn learns when its own prompt starts one.
+    crate::team::observe_user(&handles.session_id, &text, by_reader);
+    crate::routines::observe_user(&handles.session_id, &text);
+    crate::channels::observe_user(&handles.session_id, &text);
+    crate::kit_work::prompt_logged(&handles.session_id, &text, by_reader);
+
     let mut events_guard = handles.events.lock().await;
     events_guard.push(agent_event.clone());
     drop(events_guard);
@@ -2763,7 +2748,7 @@ async fn deliver_prompt(
 
     // Logged, not sent: the caller holds the text and opens the turn itself.
     if !send {
-        return Ok(text);
+        return Ok(format!("{quote}{text}"));
     }
 
     // mcode takes a prompt as a request that blocks for the whole turn, so the
@@ -2778,8 +2763,14 @@ async fn deliver_prompt(
     // the single id the reader is watching, and the first answer would arrive as
     // a stray. Everything queued during a turn is flushed at the boundary,
     // joined into one.
-    let Transport::Acp(session) = transport;
-    mcode::start_turn(session, &prompt_for_model).await?;
+    // The agent's briefing leads the first prompt after it changes. The log keeps
+    // what the reader wrote; only the wire carries this.
+    let prompt_for_model = if harness == Harness::Mcode {
+        prompt_for_model
+    } else {
+        crate::agents::brief(&handles.session_id, prompt_for_model).await
+    };
+    transport.start_turn(&prompt_for_model).await?;
 
     Ok(prompt_for_model)
 }
@@ -2815,6 +2806,46 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
     // with its own, fresher snapshot.
     if let AgentEventPayload::TurnCompleted { ref mut head, .. } = agent_event.payload {
         *head = crate::git::snapshot_tree(&ctx.handles.session_cwd).await;
+    }
+
+    // Timings, an estimated cost where the agent named none, the digest and the
+    // routine offer. First, so the budget below counts the estimate.
+    crate::kit_work::observe(&ctx.handles.session_id, &mut agent_event, app).await;
+
+    // A teammate may be waiting on this turn's answer.
+    if let AgentEventPayload::TurnCompleted { status, stop_reason, final_text, duration_ms, .. } = &agent_event.payload {
+        // A channel thread's turn is the channel's errand, like a teammate's ask:
+        // nothing in the reader's inbox.
+        let in_channel = crate::channels::observe_completed(&ctx.handles.session_id, status, final_text.as_deref());
+        let answered = crate::team::observe_completed(&ctx.handles.session_id, status, stop_reason.as_deref(), final_text.as_deref()) || in_channel;
+        crate::inbox::on_turn_completed(app, &ctx.handles.session_id, status, final_text.as_deref(), *duration_ms, answered).await;
+    }
+
+    // A routine's run waits on the turn that answers it.
+    if let AgentEventPayload::TurnCompleted { status, final_text, usage, .. } = &agent_event.payload {
+        let total = usage.as_ref().and_then(|u| u.cost_usd);
+        crate::routines::observe_completed(app, &ctx.handles.session_id, status, final_text.as_deref(), total);
+    }
+
+    // The turn's running cost goes onto the agent's month, which is what its
+    // budget is measured against.
+    if let AgentEventPayload::TurnCompleted { usage, .. } = &agent_event.payload {
+        let total = usage.as_ref().and_then(|u| u.cost_usd);
+        crate::budget::observe_completed(&ctx.handles.session_id, total, app).await;
+    }
+
+    // The per-task cost cap watches the running cost inside a turn.
+    match &agent_event.payload {
+        AgentEventPayload::TurnStarted(_) => crate::budget::task_started(&ctx.handles.session_id),
+        AgentEventPayload::UsageUpdate(u) => {
+            if let Some(total) = u.cost_usd {
+                crate::budget::task_cost(&ctx.handles.session_id, total, app);
+            }
+        }
+        AgentEventPayload::TurnCompleted { status: crate::events::TurnStatus::Error, final_text: Some(text), .. } => {
+            crate::fallback::on_error_turn(&ctx.handles.session_id, text, app);
+        }
+        _ => {}
     }
 
     // Here for the same reason: only the session layer knows which session's
@@ -3107,12 +3138,12 @@ async fn flush_acp(
                 harness,
                 &message.text,
                 &message.attachment_paths,
-                &message.issues,
                 // No baseline, for `deliver_batch`'s reason.
                 None,
                 true,
                 false,
                 message.from,
+                message.reply_to,
                 message.sent_at.as_deref(),
                 transport,
                 app,
@@ -3132,8 +3163,8 @@ async fn flush_acp(
         // stands as `InProgress` and the turn is this batch's; on failure every
         // message is already on screen and in the log, so the sentence saying
         // why is the only thing still owing.
-        if let (false, Transport::Acp(session)) = (texts.is_empty(), transport) {
-            match crate::harness::mcode::start_turn(session, &texts.join("\n\n")).await {
+        if !texts.is_empty() {
+            match transport.start_turn(&texts.join("\n\n")).await {
                 Ok(()) => return,
                 Err(err) => {
                     eprintln!("[queued flush err] {err}");
@@ -3168,11 +3199,11 @@ async fn deliver_batch(
             harness,
             &message.text,
             &message.attachment_paths,
-            &message.issues,
             None,
             true,
             true,
             message.from,
+            message.reply_to,
             message.sent_at.as_deref(),
             transport,
             app,
@@ -3306,11 +3337,11 @@ pub async fn strand_queue_on_exit(handles: &SessionHandles, harness: Harness, ap
             subagent: None,
             payload: AgentEventPayload::UserMessage {
                 text,
-                issues: message.issues.clone(),
                 images,
                 baseline: None,
                 queued: true,
                 from: message.from.clone(),
+                reply_to: message.reply_to.clone(),
                 cwd: None,
             },
             raw: None,

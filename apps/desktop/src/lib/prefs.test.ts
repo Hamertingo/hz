@@ -34,6 +34,7 @@ function file(named: Record<string, unknown> = {}) {
     runInTerminal: null,
     space: null,
     spaces: null,
+    workspace: null,
     ...named,
   };
 }
@@ -182,11 +183,10 @@ describe("writePreference", () => {
   });
 });
 
-/// The helpers a plain module reads and writes through, which is how
-/// `useSessions`' `canAnnounce` asks which space is up — outside React, on a
-/// listener registered once. A moved key answered from the wrong store there is
-/// a space that is up reading as no space at all, so the delegation is pinned
-/// rather than left to the call site that cannot be changed.
+/// The helpers a plain module reads and writes through, which is how a key is
+/// read outside React, from a listener registered once. A moved key answered
+/// from the wrong store there would read as its default, so the delegation is
+/// pinned rather than left to the call site that cannot be changed.
 describe("the webview helpers", () => {
   it("answer a moved key from the store, and store through it", async () => {
     const prefs = await launch({ "hz.space": "work" });

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useRef, useSyncExternalStore } from "react";
 
 import type { ComposerPrefs } from "@/hooks/useComposerPrefs";
+import type { LastView } from "@/lib/landing";
 import type { Chord, ShortcutId } from "@/lib/shortcuts";
 import type { ModelId, Preferences, PreferencesPatch, UpdateChannel } from "@/types/events";
 
@@ -37,6 +38,9 @@ const FIELDS = {
   "hz.runInTerminal": "runInTerminal",
   "hz.space": "space",
   "hz.spaces": "spaces",
+  "hz.workspace": "workspace",
+  "hz.studio": "studio",
+  "hz.lastView": "lastView",
 } as const satisfies Record<string, PreferencesPatch["field"]>;
 
 /// One of those keys.
@@ -46,8 +50,8 @@ export type DurableKey = keyof typeof FIELDS;
 ///
 /// Spelled out here rather than read off [`Preferences`], whose fields are
 /// `JsonValue`: Rust stores these verbatim and never reads one, so the shape
-/// belongs to the module that owns it — `ComposerPrefs`, `lib/shortcuts`'s
-/// chords, `lib/space`'s names. It is also what pairs a key with its value type,
+/// belongs to the module that owns it — `ComposerPrefs` and `lib/shortcuts`'s
+/// chords. It is also what pairs a key with its value type,
 /// so no call site casts.
 export type PreferenceValues = {
   "hz.composerPrefs": ComposerPrefs;
@@ -62,6 +66,12 @@ export type PreferenceValues = {
   "hz.runInTerminal": string | null;
   "hz.space": string | null;
   "hz.spaces": string[];
+  // The workspace on screen, by id.
+  "hz.workspace": string | null;
+  // The Preferences page's picks; the shape is `lib/studio.ts`'s.
+  "hz.studio": Record<string, unknown> | null;
+  // Where the reader last was; the shape is `lib/landing.ts`'s.
+  "hz.lastView": LastView | null;
 };
 
 const KEYS = Object.keys(FIELDS) as DurableKey[];

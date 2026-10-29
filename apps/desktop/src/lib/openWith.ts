@@ -20,9 +20,8 @@ export const OPEN_DIR_KEY = "hz.openWith";
 /// their checkout in Ghostty would find that clicking a filename opened a
 /// terminal, which is no answer to "show me this file".
 ///
-/// Markdown never reaches this: it opens in the Docs panel, which is hz's own
-/// answer to "show me this file". See `openPath` in
-/// [useDocs](../hooks/useDocs.ts).
+/// Markdown never reaches this: the chat's file sheet renders it, and a plain
+/// click on a file link takes that route (see `FileLink`).
 export const OPEN_FILE_KEY = "hz.openFileWith";
 
 /// The last answer, so a control drawn after the first read paints at once

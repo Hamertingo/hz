@@ -31,7 +31,6 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    issues::TrackerAccount,
     store::{get_home_app_dir, read_json, write_atomic},
     updater::UpdateChannel,
 };
@@ -59,15 +58,6 @@ pub struct AppSettings {
     /// in is a new person rather than the old one resurfacing.
     #[serde(default)]
     pub install_id: Option<String>,
-    /// Who the stored issue-tracker key belongs to.
-    ///
-    /// The account, never the key — that lives in `credentials.json` beside
-    /// this, and never rides the struct handed to the frontend. This is only
-    /// what saves a round trip to draw a name in the settings row. It is
-    /// therefore not the connection: an account here with no key behind it
-    /// reads as disconnected. See [`crate::issues::get_integrations`].
-    #[serde(default)]
-    pub linear_account: Option<TrackerAccount>,
     /// Which speech-to-text model and microphone to use.
     ///
     /// Here rather than inside [`AppSettings::composer_prefs`], beside the rest
@@ -130,22 +120,162 @@ pub struct AppSettings {
     /// bundle path.
     #[serde(default)]
     pub run_in_terminal: Option<String>,
-    /// The space the reader is looking at, or `None` for every project.
+    /// The space the reader was looking at, or `None` for every project.
     ///
-    /// Nothing on this side reads it. **A space is two records and neither is
-    /// derived from the other**: its *membership* is the tag on the project in
-    /// `projects.json` (this side's, see `crate::projects`), and which one is
-    /// *up* is this pick, read by the frontend's `activeSpace` in
-    /// `src/lib/space.ts` beside those tags. So a rename moves the tags and a
-    /// switch moves this, and neither is a copy of the other.
+    /// Kept for the webview's preference migration only: nothing reads it and
+    /// nothing writes it now that workspaces replace spaces.
     #[serde(default)]
     pub space: Option<String>,
     /// The spaces the reader has declared, in the order the switcher walks
     /// them. A space is made before it holds anything, and one holding nothing
-    /// is exactly what has no project to carry its tag — see
-    /// [`crate::projects::Project::space`].
+    /// is exactly what has no project to carry its tag, the way the retired
+    /// project tag once did.
     #[serde(default)]
     pub spaces: Option<Vec<String>>,
+    /// The workspace on screen, by id. A fact about the reader, so it survives a
+    /// restart: two workspaces each show their own agents only if the pick holds.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// The Preferences page's picks, stored verbatim. Rust reads the few it acts
+    /// on (notification levels, quiet hours, warm-up) through
+    /// [`crate::studio::StudioPrefs`]; the rest are the webview's.
+    #[serde(default)]
+    pub studio: Option<Value>,
+    /// Where the reader was last, so a launch lands there instead of on an empty
+    /// composer. Stored verbatim: `{workspaceId, kind, id, byWorkspace}`, whose
+    /// shape `lib/landing.ts` owns and which Rust never reads.
+    #[serde(default)]
+    pub last_view: Option<Value>,
+    /// Who the reader is to their agents, and whether they want to be reached.
+    #[serde(default)]
+    pub me: Me,
+}
+
+/// Whether the reader wants to be interrupted. Focus lets only "needs you"
+/// through; Away holds everything until they are back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "lowercase")]
+pub enum MeStatus {
+    #[default]
+    Available,
+    Focus,
+    Away,
+}
+
+/// The face the reader wears: a head from the agents' own family and a colour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct MeAvatar {
+    pub kind: String,
+    pub color: String,
+}
+
+impl Default for MeAvatar {
+    fn default() -> Self {
+        Self { kind: "bear".into(), color: "#e2a440".into() }
+    }
+}
+
+/// The reader, as the app and their agents know them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct Me {
+    /// What the chat shows beside their messages.
+    pub name: String,
+    /// How agents are told to think of them, put in every briefing.
+    #[serde(default)]
+    pub calls: String,
+    /// The language agents answer in unless told otherwise.
+    pub language: String,
+    #[serde(default)]
+    pub status: MeStatus,
+    #[serde(default)]
+    pub avatar: MeAvatar,
+    /// Absolute path of an uploaded photo, which wins over the avatar.
+    #[serde(default)]
+    pub photo: Option<String>,
+}
+
+impl Default for Me {
+    fn default() -> Self {
+        Self {
+            name: "You".into(),
+            calls: String::new(),
+            language: "English".into(),
+            status: MeStatus::Available,
+            avatar: MeAvatar::default(),
+            photo: None,
+        }
+    }
+}
+
+/// The fields an edit to [`Me`] may change. A field left out is left alone.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "events.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct MePatch {
+    #[serde(default)]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub calls: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub language: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub status: Option<MeStatus>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub avatar: Option<MeAvatar>,
+}
+
+impl Me {
+    /// Applies a patch. A blank name is ignored: the sidebar always has a name
+    /// to draw, and an empty field mid-typing must not erase it.
+    pub fn apply(&mut self, patch: MePatch) {
+        if let Some(name) = patch.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+            self.name = name;
+        }
+        if let Some(calls) = patch.calls {
+            self.calls = calls;
+        }
+        if let Some(language) = patch.language.filter(|l| !l.trim().is_empty()) {
+            self.language = language;
+        }
+        if let Some(status) = patch.status {
+            self.status = status;
+        }
+        if let Some(avatar) = patch.avatar {
+            self.avatar = avatar;
+            // Picking a face is choosing it over the photo.
+            self.photo = None;
+        }
+    }
+
+    /// The sentence about the reader that opens every briefing's second half,
+    /// or `None` while they have told the app nothing.
+    pub fn briefing_line(&self) -> Option<String> {
+        let calls = self.calls.trim();
+        let who = if !calls.is_empty() {
+            format!("The person you work for: {calls}.")
+        } else if self.name != "You" {
+            format!("The person you work for is called {}.", self.name)
+        } else {
+            String::new()
+        };
+        let language = if self.language.trim().is_empty() {
+            String::new()
+        } else {
+            format!("Answer in {} unless they ask for another language.", self.language.trim())
+        };
+        let line = [who, language].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ");
+        (!line.is_empty()).then_some(line)
+    }
 }
 
 /// The transcription picks. Model and device mean "not chosen" when absent.
@@ -190,7 +320,6 @@ impl Default for AppSettings {
         Self {
             analytics_enabled: enabled_by_default(),
             install_id: None,
-            linear_account: None,
             transcription: TranscriptionSettings::default(),
             composer_prefs: None,
             hidden_models: None,
@@ -201,6 +330,10 @@ impl Default for AppSettings {
             run_in_terminal: None,
             space: None,
             spaces: None,
+            workspace: None,
+            studio: None,
+            last_view: None,
+            me: Me::default(),
         }
     }
 }
@@ -253,6 +386,12 @@ pub struct Preferences {
     pub space: Option<String>,
     /// See [`AppSettings::spaces`].
     pub spaces: Option<Vec<String>>,
+    /// See [`AppSettings::workspace`].
+    pub workspace: Option<String>,
+    /// See [`AppSettings::studio`].
+    pub studio: Option<Value>,
+    /// See [`AppSettings::last_view`].
+    pub last_view: Option<Value>,
 }
 
 impl From<AppSettings> for Preferences {
@@ -267,6 +406,9 @@ impl From<AppSettings> for Preferences {
             run_in_terminal: settings.run_in_terminal,
             space: settings.space,
             spaces: settings.spaces,
+            workspace: settings.workspace,
+            studio: settings.studio,
+            last_view: settings.last_view,
         }
     }
 }
@@ -304,12 +446,18 @@ pub enum PreferencesPatch {
     Space(Option<String>),
     /// See [`AppSettings::spaces`].
     Spaces(Option<Vec<String>>),
+    /// See [`AppSettings::workspace`].
+    Workspace(Option<String>),
+    /// See [`AppSettings::studio`].
+    Studio(Option<Value>),
+    /// See [`AppSettings::last_view`].
+    LastView(Option<Value>),
 }
 
 /// Applies every preference a batch names, and no others.
 ///
 /// One read, one edit and one write under one hold of the lock, for the reason
-/// [`crate::projects::retag_space`] is one call rather than one per project: a
+/// the retired retag command was one call rather than one per project: a
 /// run of writes half of which landed would leave the file describing two
 /// different worlds. The migration is exactly such a run — nine picks moved out
 /// of the webview at once — and a reader who lost half of them would have no
@@ -326,8 +474,68 @@ pub fn apply(patches: Vec<PreferencesPatch>, settings: &mut AppSettings) {
             PreferencesPatch::RunInTerminal(value) => settings.run_in_terminal = value,
             PreferencesPatch::Space(value) => settings.space = value,
             PreferencesPatch::Spaces(value) => settings.spaces = value,
+            PreferencesPatch::Workspace(value) => settings.workspace = value,
+            PreferencesPatch::Studio(value) => settings.studio = value,
+            PreferencesPatch::LastView(value) => settings.last_view = value,
         }
     }
+}
+
+/// The reader's profile.
+#[tauri::command]
+pub async fn get_me() -> Me {
+    read().await.me
+}
+
+/// Changes the reader's profile. Coming back to Available releases whatever
+/// was held while they were Focus or Away.
+#[tauri::command]
+pub async fn set_me(app: tauri::AppHandle, patch: MePatch) -> Result<Me, String> {
+    let next = update(|s| s.me.apply(patch)).await.map_err(|e| format!("{e:#}"))?;
+    crate::notifications::status_changed(&app, next.me.status);
+    Ok(next.me)
+}
+
+/// Copies an image in as the reader's photo, replacing any earlier one.
+///
+/// Each upload gets a fresh file name so the webview can cache by path and never
+/// show the photo it replaced.
+#[tauri::command]
+pub async fn me_set_photo(source: String) -> Result<Me, String> {
+    let ext = crate::workspaces::logo_extension(&source)?;
+    let meta = tokio::fs::metadata(&source).await.map_err(|e| e.to_string())?;
+    if !meta.is_file() || meta.len() > 5 * 1024 * 1024 {
+        return Err("a photo is an image under 5 MB".into());
+    }
+
+    let home = get_home_app_dir().await.map_err(|e| format!("{e:#}"))?;
+    let dir = home.join("profile");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+    let target = dir.join(format!("photo-{}.{ext}", crate::workspaces::chrono_ms()));
+    tokio::fs::copy(&source, &target).await.map_err(|e| e.to_string())?;
+
+    let path = target.to_string_lossy().into_owned();
+    let next = update(|s| {
+        if let Some(old) = s.me.photo.replace(path) {
+            let _ = std::fs::remove_file(old);
+        }
+    })
+    .await
+    .map_err(|e| format!("{e:#}"))?;
+    Ok(next.me)
+}
+
+/// Removes the photo, so the avatar shows again.
+#[tauri::command]
+pub async fn me_clear_photo() -> Result<Me, String> {
+    let next = update(|s| {
+        if let Some(old) = s.me.photo.take() {
+            let _ = std::fs::remove_file(old);
+        }
+    })
+    .await
+    .map_err(|e| format!("{e:#}"))?;
+    Ok(next.me)
 }
 
 /// Reads `settings.json`, **failing closed**.
@@ -511,6 +719,62 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn an_edit_to_me_changes_only_what_it_names() {
+        let mut me = Me { photo: Some("/x/photo.png".into()), ..Me::default() };
+
+        me.apply(MePatch { name: Some("  ".into()), calls: Some("Gabriel, founder".into()), ..Default::default() });
+        assert_eq!(me.name, "You");
+        assert_eq!(me.calls, "Gabriel, founder");
+        assert!(me.photo.is_some());
+
+        me.apply(MePatch { avatar: Some(MeAvatar { kind: "fox".into(), color: "#df6f86".into() }), ..Default::default() });
+        assert!(me.photo.is_none());
+    }
+
+    #[test]
+    fn the_briefing_line_says_who_and_in_what_language() {
+        let mut me = Me::default();
+        assert_eq!(me.briefing_line().unwrap(), "Answer in English unless they ask for another language.");
+
+        me.name = "Gabriel".into();
+        me.calls = "Gabriel, founder of Hyze Cloud".into();
+        me.language = "Português".into();
+        let line = me.briefing_line().unwrap();
+        assert!(line.starts_with("The person you work for: Gabriel, founder of Hyze Cloud."));
+        assert!(line.contains("Português"));
+
+        me.calls.clear();
+        assert!(me.briefing_line().unwrap().contains("is called Gabriel"));
+    }
+
+    #[test]
+    fn a_settings_file_from_before_me_reads_with_defaults() {
+        let parsed: AppSettings = serde_json::from_str(r#"{"analyticsEnabled": true}"#).unwrap();
+
+        assert_eq!(parsed.me, Me::default());
+        assert!(parsed.workspace.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_last_view_survives_a_write_and_a_read() {
+        let dir = tempdir();
+        let view = serde_json::json!({
+            "workspaceId": "w1", "kind": "channel", "id": "c9",
+            "byWorkspace": { "w1": { "kind": "channel", "id": "c9" } }
+        });
+        let mut settings = AppSettings::default();
+        apply(vec![PreferencesPatch::LastView(Some(view.clone()))], &mut settings);
+        write_to(&dir, &settings).await.unwrap();
+
+        let read = read_from(&dir).await.unwrap();
+        assert_eq!(read.last_view, Some(view));
+        assert_eq!(Preferences::from(read).last_view.unwrap()["id"], "c9");
+
+        apply(vec![PreferencesPatch::LastView(None)], &mut settings);
+        assert!(settings.last_view.is_none());
     }
 
     #[tokio::test]

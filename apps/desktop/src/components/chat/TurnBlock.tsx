@@ -2,12 +2,32 @@ import { Check, Copy } from "lucide-react";
 import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from "react";
 
 import AgentTrace from "@/components/chat/AgentTrace";
+import AgentStatus from "@/components/chat/AgentStatus";
 import AssistantMessage from "@/components/chat/AssistantMessage";
 import BloubAvatar from "@/components/BloubAvatar";
 import EventRow from "@/components/chat/EventRow";
 import SubagentRow from "@/components/chat/SubagentRow";
 import ToolGroupRow from "@/components/chat/ToolGroupRow";
+import AgentPosts from "@/components/chat/AgentPosts";
+import ChatCards from "@/components/chat/ChatCards";
+import MessageShell from "@/components/chat/MessageShell";
+import { ApprovedRow, RichCard } from "@/components/chat/cards";
+import TerminalCard from "@/components/chat/TerminalCard";
 import UserMessage from "@/components/chat/UserMessage";
+import { useAgentChat, useAgentChatActions } from "@/hooks/useAgentChat";
+import type { RosterAgent } from "@/lib/roster";
+import { approvedOf } from "@/lib/approved";
+import { cardsOf } from "@/lib/chatCards";
+import { toolPosts } from "@/lib/hzTools";
+import { openSheet } from "@/lib/chatSheets";
+import { useStudio } from "@/lib/studio";
+import { toast } from "@/components/ui/toast";
+import { openLink } from "@/lib/openLink";
+import { splitCards } from "@/lib/richCards";
+import { stripAnsi } from "@/lib/termScreen";
+import { groupLabel, teamTool, toolLabel, toolSummary } from "@/lib/tools";
+import { activityOf, type Hint } from "@/lib/agentStatus";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { clockTime, formatDuration } from "@/lib/format";
@@ -24,7 +44,6 @@ type TurnBlockProps = {
   /// onto the list rather than onto the mutation it came from. Same bargain as
   /// `editsByCallId` and read off the same walk.
   todosByCallId?: Map<string, TodoTask[]>;
-  onOpenSubagent: (id: string) => void;
   /// Opens the session that relayed a prompt, for a `user_message` that carries
   /// a sender. Reaches both the turn's own prompt and any queued one inside it.
   onOpenSession: (sessionId: string) => void;
@@ -32,12 +51,18 @@ type TurnBlockProps = {
   /// indicator above it carries, so the face working is the face that stopped.
   /// Absent draws no bot, which is right for a caller with no session behind it.
   botSeed?: string;
+  /// In an agent chat: what the stream says before anything commits, for the status line's phrase.
+  activity?: Hint;
   /// Trails the turn's work inside this block's own stack. The thinking
   /// indicator and the streaming preview both go here rather than after the
   /// block, so they sit at the same gap the committed event will — placing them
   /// outside left them at the between-turn gap, and the content that replaced
   /// them jumped up by the difference.
   footer?: ReactNode;
+  /// Whether the session is mid-turn. An agent chat draws a turn with no end
+  /// event as still working only while this holds: a missed end, or a turn cut
+  /// off by a quit, would otherwise say "thinking" under a finished reply forever.
+  live?: boolean;
 };
 
 /// How many rendered rows a turn must have before it collapses behind its
@@ -105,10 +130,11 @@ function TurnBlock({
   resultByCallId,
   editsByCallId,
   todosByCallId,
-  onOpenSubagent,
   onOpenSession,
   botSeed,
   footer,
+  activity,
+  live = true,
 }: TurnBlockProps) {
   // Per segment, not per turn: a stretch of work between queued prompts opens
   // and closes on its own, so peeking at one leaves the others collapsed. Keyed
@@ -116,6 +142,7 @@ function TurnBlock({
   // and a running turn is never collapsible. A turn without queued prompts is
   // one segment, so this is the old whole-turn toggle in that case.
   const [openSegments, setOpenSegments] = useState<Record<number, boolean>>({});
+  const agent = useAgentChat();
 
   const running = turn.completed === null;
   const failed =
@@ -142,6 +169,24 @@ function TurnBlock({
   // mentions, paths and markdown on every pass.
   const promptProps = useMemo(() => userProps(turn), [turn]);
 
+  if (agent) {
+    return (
+      <AgentTurn
+        agent={agent}
+        turn={turn}
+        promptProps={promptProps}
+        subagentById={subagentById}
+        resultByCallId={resultByCallId}
+        editsByCallId={editsByCallId}
+        todosByCallId={todosByCallId}
+        onOpenSession={onOpenSession}
+        footer={footer}
+        hint={activity}
+        live={live}
+      />
+    );
+  }
+
   // **A turn with no prompt and nothing but a receipt is drawn as the receipt.**
   // The walk gives an event with nothing in front of it a turn of its own, which
   // is what puts a goal's completion line where it happened rather than at the
@@ -151,7 +196,7 @@ function TurnBlock({
   if (turn.prompt === null && only !== null && !isToolGroup(only) && only.payload.type === "goal_receipt") {
     return (
       <div className="flex flex-col gap-3">
-        {renderItem(only, subagentById, resultByCallId, editsByCallId, todosByCallId, onOpenSubagent, onOpenSession)}
+        {renderItem(only, subagentById, resultByCallId, editsByCallId, todosByCallId, onOpenSession)}
       </div>
     );
   }
@@ -172,7 +217,6 @@ function TurnBlock({
               resultByCallId,
               editsByCallId,
               todosByCallId,
-              onOpenSubagent,
               onOpenSession,
             ),
           )
@@ -212,7 +256,6 @@ function TurnBlock({
                             resultByCallId,
                             editsByCallId,
                             todosByCallId,
-                            onOpenSubagent,
                             onOpenSession,
                           ),
                         )
@@ -226,7 +269,6 @@ function TurnBlock({
                     resultByCallId,
                     editsByCallId,
                     todosByCallId,
-                    onOpenSubagent,
                     onOpenSession,
                   )}
               </Fragment>
@@ -282,6 +324,7 @@ function TurnFooter({
   completed,
   text,
   botSeed,
+  inAgentChat = false,
 }: {
   prompt: AgentEvent | null;
   completed: AgentEvent | null;
@@ -290,6 +333,9 @@ function TurnFooter({
   text: string | null;
   /// Who did the work, for the mark that opens the line. See `TurnBlockProps`.
   botSeed?: string;
+  /// The answer above carries its own face, name, time and copy, so the line keeps
+  /// only how long the work took.
+  inAgentChat?: boolean;
 }) {
   // Nothing to say about a turn still running or one with no prompt to time it
   // from — the line exists between two events, and either half missing is the
@@ -308,7 +354,7 @@ function TurnFooter({
       {/* **The face that worked**, and the same one the live indicator above it
           showed — the bot is derived from the session, so the two are one face
           rather than two marks that happen to sit in the same column. */}
-      {botSeed && <BloubAvatar name={botSeed} size={14} mood={failed ? "failed" : "done"} />}
+      {botSeed && !inAgentChat && <BloubAvatar name={botSeed} size={14} mood={failed ? "failed" : "done"} />}
       {/* **`Worked for`, and the live row above it says `Working for …`** — one
           sentence in two tenses. It used to read `Responded in`, which named the
           reply rather than the work: a turn that spent forty seconds reading and
@@ -318,10 +364,12 @@ function TurnFooter({
       {/* `ml-auto`, so the clock and the control sit at the column's right edge
           and stay put as the wait grows a digit — a ragged left edge under a
           sentence reads as part of it. */}
-      <span className="ml-auto flex items-center gap-1.5">
-        {at && <span className="tabular-nums">{at}</span>}
-        {text && <CopyMessage text={text} />}
-      </span>
+      {!inAgentChat && (
+        <span className="ml-auto flex items-center gap-1.5">
+          {at && <span className="tabular-nums">{at}</span>}
+          {text && <CopyMessage text={text} />}
+        </span>
+      )}
     </div>
   );
 }
@@ -380,7 +428,6 @@ function renderItem(
   resultByCallId: Map<string, ToolResult>,
   editsByCallId: Map<string, FileEdit[]> | undefined,
   todosByCallId: Map<string, TodoTask[]> | undefined,
-  onOpenSubagent: (id: string) => void,
   onOpenSession: (sessionId: string) => void,
 ) {
   if (isToolGroup(item)) {
@@ -403,7 +450,7 @@ function renderItem(
   // An `inline` run draws its spawning tool row, which for a harness that
   // reports nothing about the child is the whole run — see `SubagentRun`.
   return run && !run.inline ? (
-    <SubagentRow key={item.id} run={run} onOpen={onOpenSubagent} />
+    <SubagentRow key={item.id} run={run} />
   ) : (
     <EventRow
       key={item.id}
@@ -423,9 +470,304 @@ function userProps(turn: Turn) {
     ? {
         text: payload.text,
         images: payload.images,
-        issues: payload.issues,
         from: payload.from,
         cwd: payload.cwd,
+        ts: turn.prompt?.ts,
+        eventId: turn.prompt?.id,
+        seq: turn.prompt?.seq,
+        replyTo: payload.replyTo,
       }
     : { text: "" };
+}
+
+/// Whether `EventRow` puts anything on screen for an item the checklist has no
+/// step for. It answers for the row so the live list never wraps an empty `<li>`
+/// in its left rule, which is what drew a lone vertical bar over the text.
+function drawsRow(item: WorkItem): boolean {
+  if (isToolGroup(item)) return true;
+  const p = item.payload;
+  switch (p.type) {
+    case "assistant_text":
+      return p.text.trim() !== "";
+    case "file_edits":
+      return !p.callId;
+    case "turn_completed":
+      return drawsFailure(p);
+    case "error":
+    case "rate_limited":
+    case "permission_denied":
+    case "context_compacted":
+    case "goal_receipt":
+    case "user_message":
+    case "tool_call_started":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/// One step of a running turn as the checklist draws it: what was done, and
+/// whether it is done yet.
+type Step = { key: string; label: string; done: boolean };
+
+/// The label for a call as a sentence fragment — "Ran git status", "Editing
+/// login.ts" — from the tool's own verb and its target.
+function stepOf(item: WorkItem, resultByCallId: Map<string, ToolResult>): Step | null {
+  if (isToolGroup(item)) {
+    const done = item.calls.every(
+      (c) => c.payload.type !== "tool_call_started" || resultByCallId.has(c.payload.callId),
+    );
+    return { key: item.key, label: groupLabel(item.name, item.calls.length, !done), done };
+  }
+  const p = item.payload;
+  if (p.type === "reasoning") return { key: item.id, label: "Thought it through", done: true };
+  if (p.type !== "tool_call_started" || teamTool(p.name)) return null;
+
+  const done = resultByCallId.has(p.callId);
+  const verb = toolLabel(p.name, !done);
+  const target = toolSummary(p.name, p.toolType, p.input) ?? p.title;
+  return { key: item.id, label: target ? `${verb} ${target}` : verb, done };
+}
+
+/// A small ring for the step still running.
+function Spinner() {
+  return (
+    <span
+      aria-hidden
+      className="size-3 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
+    />
+  );
+}
+
+/// An agent's turn as a team chat draws it: the reader's message, then one
+/// message from the agent. While it works, the message is "in progress" with a
+/// checklist of what it has done so far and the shell it is using; once done, it
+/// is the answer, with the documents and pull requests it made as cards and what
+/// it did one click away under it, each step with how long it took.
+///
+/// Messages the agent sent to a teammate are not part of that list: they are
+/// drawn as their own quiet line between the two messages, because they are
+/// something that happened *between* people.
+function AgentTurn({
+  agent,
+  turn,
+  promptProps,
+  subagentById,
+  resultByCallId,
+  editsByCallId,
+  todosByCallId,
+  onOpenSession,
+  footer,
+  hint,
+  live: sessionLive,
+}: {
+  agent: RosterAgent;
+  turn: Turn;
+  promptProps: ReturnType<typeof userProps>;
+  subagentById: Map<string, SubagentRun>;
+  resultByCallId: Map<string, ToolResult>;
+  editsByCallId?: Map<string, FileEdit[]>;
+  todosByCallId?: Map<string, TodoTask[]>;
+  onOpenSession: (sessionId: string) => void;
+  footer?: ReactNode;
+  /// What the stream says before events commit: nothing yet, reasoning, or reply text.
+  hint?: Hint;
+  live: boolean;
+}) {
+  const [studio] = useStudio();
+  const [open, setOpen] = useState(studio.openTrace);
+  const chat = useAgentChatActions();
+
+  const running = turn.completed === null && sessionLive;
+  const failed =
+    turn.completed?.payload.type === "turn_completed" && drawsFailure(turn.completed.payload);
+  const render = (item: WorkItem) =>
+    renderItem(item, subagentById, resultByCallId, editsByCallId, todosByCallId, onOpenSession);
+
+  const calls = useMemo(
+    () => turn.work.flatMap((item) => (isToolGroup(item) ? item.calls : [item])),
+    [turn.work],
+  );
+  const exchanges = useMemo(
+    () =>
+      calls.filter((e) => e.payload.type === "tool_call_started" && teamTool(e.payload.name) !== null),
+    [calls],
+  );
+  const isTeam = (item: WorkItem) =>
+    isToolGroup(item)
+      ? teamTool(item.name) !== null
+      : item.payload.type === "tool_call_started" && teamTool(item.payload.name) !== null;
+
+  // Lines the checklist does not summarise — a nested agent, the agent's own
+  // words between steps — are drawn as themselves.
+  const live = useMemo(
+    () =>
+      running
+        ? turn.work
+            .filter((item) => !isTeam(item))
+            .map((item) => ({ item, step: stepOf(item, resultByCallId) }))
+        : [],
+    [running, turn.work, resultByCallId],
+  );
+
+  // Drawn while it works too: a sign-in card is the agent waiting on the person.
+  const posts = useMemo(() => toolPosts(calls, resultByCallId), [calls, resultByCallId]);
+
+  const approved = useMemo(() => approvedOf(turn.work), [turn.work]);
+  const cards = useMemo(
+    () => (running ? [] : cardsOf(turn.work, resultByCallId, turn.finalText)),
+    [running, turn.work, resultByCallId, turn.finalText],
+  );
+
+  // The shell the agent last used, drawn as a terminal while it works.
+  const shell = useMemo(() => {
+    if (!running) return null;
+    for (let i = calls.length - 1; i >= 0; i -= 1) {
+      const p = calls[i].payload;
+      if (p.type === "tool_call_started" && p.toolType === "shell" && !teamTool(p.name)) {
+        const result = resultByCallId.get(p.callId);
+        return {
+          command: toolSummary(p.name, p.toolType, p.input) ?? p.title ?? p.name,
+          output: result ? tailLines(result.text) : "",
+          running: !result,
+        };
+      }
+    }
+    return null;
+  }, [running, calls, resultByCallId]);
+
+  // Built before the `<ul>` is decided, because its left rule is the only
+  // thing a row-less list still draws: an item `render` turns into nothing
+  // (a bare result, a usage line) used to leave a lone vertical bar over the
+  // text with nothing beside it.
+  const liveRows =
+    running && studio.showSteps
+      ? live.flatMap(({ item, step }) => {
+          if (step) {
+            return [
+              <li key={step.key} className="flex min-w-0 items-center gap-2 text-[13px]">
+                {step.done ? <Check className="size-3 shrink-0 text-green" /> : <Spinner />}
+                <span className={cn("truncate", step.done ? "text-ink3" : "shimmer-text text-ink")}>
+                  {step.label}
+                </span>
+              </li>,
+            ];
+          }
+          if (!drawsRow(item)) return [];
+          return [
+            <li key={isToolGroup(item) ? item.key : item.id} className="text-ui text-ink3">
+              {render(item)}
+            </li>,
+          ];
+        })
+      : [];
+
+  const hasReply = running || turn.finalText !== null || turn.work.length > 0 || failed;
+  const reactKey =
+    chat?.sessionId && turn.completed ? `${chat.sessionId}:${turn.completed.id}` : undefined;
+
+  const said = useMemo(() => splitCards(turn.finalText ?? ""), [turn.finalText]);
+  // While it works, the newest thing it has finished saying stands as the reply, whole; the turn's end only
+  // confirms it (the final text is that same block), so nothing jumps.
+  const soFar = running ? splitCards(latestSaid(calls) ?? "").text || null : null;
+  const words = running
+    ? (soFar ? <AssistantMessage text={soFar} /> : footer)
+    : (
+        <>
+          {said.text && !failed && <AssistantMessage text={said.text} />}
+          {failed && turn.completed && <EventRow event={turn.completed} resultByCallId={resultByCallId} />}
+        </>
+      );
+  const hasWords = running ? Boolean(soFar || footer) : Boolean((said.text && !failed) || (failed && turn.completed));
+
+  return (
+    <div className="flex flex-col gap-[5px]">
+      {turn.prompt && <UserMessage {...promptProps} onOpenSession={onOpenSession} />}
+
+      {exchanges.map((e) => (
+        <Fragment key={e.id}>{render(e)}</Fragment>
+      ))}
+
+      {hasReply && (
+        <MessageShell
+          name={agent.name}
+          time={hasWords ? clockTime((turn.completed ?? turn.prompt)?.ts ?? "") : null}
+          copy={!running && said.text ? said.text : undefined}
+          reactKey={hasWords ? reactKey : undefined}
+          seq={turn.completed?.seq}
+          author={agent.id}
+          above={
+            !running && said.before.length > 0
+              ? said.before.map((card, i) => <RichCard key={i} card={card} {...CARD_ACTIONS} />)
+              : undefined
+          }
+          after={
+            <>
+              {running && shell && (
+                <TerminalCard
+                  name={agent.name}
+                  command={shell.command}
+                  output={shell.output}
+                  running={shell.running}
+                  onTakeOver={() =>
+                    chat?.cwd && openSheet({ kind: "terminal", agentId: agent.id, cwd: chat.cwd })
+                  }
+                />
+              )}
+
+              <AgentPosts posts={posts} running={running} />
+
+              {approved.map((a) => (
+                <ApprovedRow key={a.key} what={a.what} command={a.command} time={clockTime(a.ts) ?? undefined} />
+              ))}
+
+              <ChatCards cards={cards} />
+
+              {!running &&
+                said.cards.map((card, i) => (
+                  <RichCard key={i} card={card} {...CARD_ACTIONS} />
+                ))}
+
+              {running && (
+                <AgentStatus agent={agent} activity={activityOf(calls, hint, (id) => resultByCallId.has(id))} open={open} onToggle={() => setOpen((v) => !v)}>
+                  {liveRows.length > 0 && <ul className="mt-1 mb-1 ml-1 flex flex-col gap-2 border-l border-line pl-3">{liveRows}</ul>}
+                </AgentStatus>
+              )}
+            </>
+          }
+        >
+          {hasWords ? words : null}
+        </MessageShell>
+      )}
+    </div>
+  );
+}
+
+/// The text of the newest finished message in the work so far.
+function latestSaid(events: readonly AgentEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const p = events[i].payload;
+    if (p.type === "assistant_text" && p.text.trim()) return p.text;
+  }
+  return null;
+}
+
+/// What a card's buttons do until an agent-side producer says more: sources open, the rest answer with a line.
+const CARD_ACTIONS = {
+  onOpenSource: (domain: string) => openLink(`https://${domain}`),
+  onOpenPage: () => toast("Opening the page"),
+  onVersions: () => toast("Page versions"),
+  onTakeOver: () => toast("You are in control of the browser"),
+  onSaveKey: () => toast("Saved to the keychain"),
+  onApprove: () => toast("Approved"),
+  onDeny: () => toast("Denied"),
+  onPlay: () => toast("Playing"),
+  onDismiss: () => toast("Dismissed"),
+};
+
+
+/// The last lines of a command's output, without the colour codes a terminal
+/// would have drawn.
+function tailLines(text: string, count = 12): string {
+  return stripAnsi(text).trimEnd().split("\n").slice(-count).join("\n");
 }

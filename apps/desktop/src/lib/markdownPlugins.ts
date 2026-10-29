@@ -298,7 +298,7 @@ export function walk(
 /// repository.
 ///
 /// A second list rather than a flag, because which surface gets this is the
-/// part worth being able to read. An issue description or a PR comment names
+/// part worth being able to read. A PR comment names
 /// paths from somebody else's checkout and numbers from its own repository's
 /// world, so marking them there would offer to open files the reader does not
 /// have — and there is no session for a chip to be resolved against.

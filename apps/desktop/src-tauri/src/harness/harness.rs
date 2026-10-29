@@ -62,8 +62,8 @@ pub fn agent_path(bin: &std::path::Path) -> String {
 ///   variable set — for their own TUI, another profile, anything — would have
 ///   *their* agent state written wherever it pointed. Measured the hard way: a
 ///   probe spawned from a shell with `MAVIS_DATA_DIR` set wrote its provider
-///   credentials into hz's own data directory, where the app's issue-tracker
-///   store then failed to read them and reported it once per launch.
+///   credentials into hz's own data directory, where the app's own store then
+///   failed to read them and reported it once per launch.
 ///
 /// So it is pinned to a directory of the agent's own inside hz's:
 /// `~/.hz/agent`. Nothing else writes there, the app's own files stay the
@@ -211,6 +211,12 @@ impl<T: Clone> ProbeCache<T> {
         let entries = self.entries.lock().unwrap();
         let (at, hit) = entries.get(key)?;
         (at.elapsed() < self.fresh_for).then(|| hit.clone())
+    }
+
+    /// The answer for `key` whatever its age, for a caller that would rather draw
+    /// an old list now than wait on a probe for a new one.
+    pub fn peek_any(&self, key: &str) -> Option<T> {
+        self.entries.lock().unwrap().get(key).map(|(_, hit)| hit.clone())
     }
 
     /// Stores `value` under `key` as fresh, replacing any entry. For a caller
@@ -520,9 +526,27 @@ use ts_rs::TS;
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "snake_case", into = "String")]
 pub enum Harness {
-    /// MiniMax Code, the `mcode` CLI. The only one this build runs, and the
-    /// only one it knows how to spawn: what was five harnesses with five
-    /// dialects is one ACP peer.
+    /// Claude Code, on the reader's own install, spoken to through the ACP
+    /// adapter the ACP registry names for it. Their login, their subscription:
+    /// hz holds no key.
+    ///
+    /// The `rename`s on these four are for the generated TypeScript only: the
+    /// enum serializes `into = "String"` through [`Harness::wire_name`], which
+    /// ts-rs cannot read, so without them the exported union would spell
+    /// OpenCode `open_code` where the wire says `opencode`.
+    #[serde(rename = "claude-acp")]
+    Claude,
+    /// Codex on the reader's own install, through its registry adapter.
+    #[serde(rename = "codex-acp")]
+    Codex,
+    /// OpenCode on the reader's own install. It speaks ACP itself
+    /// (`opencode acp`), so there is no adapter in between.
+    #[serde(rename = "opencode")]
+    OpenCode,
+    /// MiniMax Code, the `mcode` CLI hz used to ship. Still compiled while the
+    /// engine is being made generic, and removed from [`Harness::ALL`] when the
+    /// three above can carry a session — after which a session it wrote reads
+    /// as [`Harness::Other`] and nothing spawns for it.
     Mcode,
     /// A harness some other build named and this one has never heard of, with
     /// its spelling kept so a round trip does not lose it.
@@ -584,7 +608,12 @@ impl Harness {
     /// [`Harness::Other`] is deliberately absent: it is a value read off disk,
     /// never one to pick, so a picker or an availability read built from this
     /// cannot offer it.
-    pub const ALL: [Harness; 1] = [Harness::Mcode];
+    pub const ALL: [Harness; 4] = [
+        Harness::Claude,
+        Harness::Codex,
+        Harness::OpenCode,
+        Harness::Mcode,
+    ];
 
     /// How the wire spells it — what `dray new --harness` takes and what an
     /// index entry holds.
@@ -599,6 +628,14 @@ impl Harness {
     /// would recurse.
     pub fn wire_name(self) -> String {
         match self {
+            // The ACP registry's own ids, and **not** the spellings an older
+            // build wrote: `claude_code` and `codex` there mean a different
+            // protocol and thread ids this engine cannot resume, so reusing
+            // them would send `session/load` an id nothing here minted. They
+            // stay [`Harness::Other`] and the session reads but does not run.
+            Harness::Claude => "claude-acp".to_string(),
+            Harness::Codex => "codex-acp".to_string(),
+            Harness::OpenCode => "opencode".to_string(),
             Harness::Mcode => "mcode".to_string(),
             Harness::Other(name) => name.to_string(),
         }
@@ -750,6 +787,54 @@ impl Harness {
             // so a mention reaches the model as literal punctuation it has to
             // guess the meaning of. The composer names the file in prose
             // instead.
+            // All three below are read off a real `initialize` and `session/new`
+            // (see `fixtures/` beside each adapter), not assumed: each one
+            // advertises `fork`, `resume`, `close` and image prompts, and each
+            // moves model, effort and stance as `session/set_config_option` on a
+            // live session — so none of the three replaces its child to change
+            // one. hz makes the worktree itself on every harness, so
+            // `creates_own_worktree` is false throughout.
+            //
+            // No `@path` expansion on any of them: the adapters pass a prompt
+            // through as written, so the composer names the file in prose.
+            Harness::Claude => Capabilities {
+                creates_own_worktree: false,
+                applies_model_in_place: true,
+                applies_effort_in_place: true,
+                applies_permission_in_place: true,
+                // Claude Code has a fast mode and its adapter exposes no option
+                // for it, so there is no way to reach it from here.
+                fast_mode: FastMode::Unsupported,
+                expands_at_mentions: false,
+                forkable: true,
+                fork_needs_cli: false,
+            },
+            Harness::Codex => Capabilities {
+                creates_own_worktree: false,
+                applies_model_in_place: true,
+                applies_effort_in_place: true,
+                applies_permission_in_place: true,
+                // The one adapter that offers it: a `fast-mode` config option
+                // with `off` and `on`, changeable on a running session.
+                fast_mode: FastMode::InPlace,
+                expands_at_mentions: false,
+                forkable: true,
+                fork_needs_cli: false,
+            },
+            Harness::OpenCode => Capabilities {
+                creates_own_worktree: false,
+                applies_model_in_place: true,
+                // No `thought_level` option in its `session/new`: the model
+                // carries its own effort, so the composer draws no ladder.
+                applies_effort_in_place: false,
+                // Its modes are `build` and `plan` only, which is a stance
+                // about planning rather than about approvals.
+                applies_permission_in_place: true,
+                fast_mode: FastMode::Unsupported,
+                expands_at_mentions: false,
+                forkable: true,
+                fork_needs_cli: false,
+            },
             Harness::Mcode => Capabilities {
                 creates_own_worktree: false,
                 applies_model_in_place: true,
@@ -784,6 +869,9 @@ impl Harness {
             // named the vendor would read as a second thing the reader had to
             // install and keep in step — which is exactly what this build does
             // away with.
+            Harness::Claude => "Claude",
+            Harness::Codex => "Codex",
+            Harness::OpenCode => "OpenCode",
             Harness::Mcode => "hz",
             // Its own spelling, the only thing known about it — and the honest
             // thing to put in a sentence, since the name a newer build wrote is
@@ -812,6 +900,9 @@ impl Harness {
             // here would send them to fetch a second copy of what they already
             // have — and the notice is built to draw the sentence alone where
             // this is empty.
+            Harness::Claude => "curl -fsSL https://claude.ai/install.sh | bash",
+            Harness::Codex => "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+            Harness::OpenCode => "curl -fsSL https://opencode.ai/install | bash",
             Harness::Mcode => "",
             // Empty, because there is nothing to install: the CLI is not what
             // is missing, this build is. A command guessed from the name would
@@ -828,6 +919,9 @@ impl Harness {
         match self {
             // Nothing to link either: the documentation a reader needs is the
             // provider form in Settings, which is in this app.
+            Harness::Claude => "https://code.claude.com/docs/en/setup",
+            Harness::Codex => "https://learn.chatgpt.com/docs/codex/cli",
+            Harness::OpenCode => "https://opencode.ai/docs",
             Harness::Mcode => "",
             // Empty, so the notice draws no link rather than a wrong one: the
             // cure here is a newer hz, not a CLI to install.
@@ -844,6 +938,9 @@ impl Harness {
     /// happens in Settings, where they are looking at it.
     pub fn login_command(self) -> &'static str {
         match self {
+            Harness::Claude => "claude auth login",
+            Harness::Codex => "codex login --device-auth",
+            Harness::OpenCode => "opencode auth login",
             Harness::Mcode => "",
             // Nothing to log in to, for the same reason there is nothing to
             // install: this build cannot name the CLI, let alone drive it.
@@ -860,6 +957,9 @@ impl Harness {
     /// two together. Both are empty here — there is no command either way.
     pub fn login_args(self) -> &'static [&'static str] {
         match self {
+            Harness::Claude => &["auth", "login"],
+            Harness::Codex => &["login", "--device-auth"],
+            Harness::OpenCode => &["auth", "login"],
             Harness::Mcode => &[],
             Harness::Other(_) => &[],
         }
@@ -878,6 +978,7 @@ impl Harness {
         match self {
             // Where the reader can actually act: Settings' Agent tab is where a
             // provider is connected, and there is no sign-in here to point at.
+            Harness::Claude | Harness::Codex | Harness::OpenCode => None,
             Harness::Mcode => Some("Connect a provider in Settings → Agent"),
             Harness::Other(_) => None,
         }
@@ -925,7 +1026,7 @@ mod login_tests {
     /// tests above cannot cover it.
     #[test]
     fn an_unknown_harness_offers_nothing() {
-        let unknown = Harness::Other("opencode");
+        let unknown = Harness::Other("pi");
         assert!(unknown.login_command().is_empty());
         assert!(unknown.login_hint().is_none());
     }

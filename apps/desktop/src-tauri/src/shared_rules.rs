@@ -5,9 +5,8 @@
 //! [`crate::store::session_branch`] and `sessionBranch` in `src/lib/pr.ts`,
 //! [`crate::harness::FastMode`] and `FAST_MODE_BY_HARNESS` in
 //! `src/lib/fastMode.ts`, `permission_value_for`/`acp_mode_for` in
-//! `harness/mcode/mcode.rs` and `honoursMode` in `src/lib/permission.ts`, and
-//! [`crate::issues::parse_identifier`]/`tag_text` and `parseIdentifier`/
-//! `issueTag` in `src/lib/issue.ts`. Each is pinned by a test on its own side,
+//! `harness/mcode/mcode.rs` and `honoursMode` in `src/lib/permission.ts`. Each
+//! is pinned by a test on its own side,
 //! and two hand-written sets of cases is exactly how the copies come to differ
 //! — quietly, in the direction of a tag that links nothing or a switch that
 //! does nothing.
@@ -77,23 +76,6 @@ pub struct StanceRow {
     pub acp_mode: Option<String>,
 }
 
-/// One row of the identifier shape: the word after the `#`, and the identifier
-/// both readers make of it.
-#[derive(Debug, Deserialize)]
-pub struct IdentifierRow {
-    pub text: String,
-    pub expected: Option<String>,
-}
-
-/// One row of the tag text: an identifier and a title, and the string both
-/// writers make of them.
-#[derive(Debug, Deserialize)]
-pub struct TagRow {
-    pub identifier: String,
-    pub title: String,
-    pub expected: String,
-}
-
 /// The whole fixture.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,8 +83,6 @@ pub struct Rules {
     pub session_branch: Vec<SessionBranchRow>,
     pub fast_mode: Vec<FastModeRow>,
     pub stance: Vec<StanceRow>,
-    pub identifier: Vec<IdentifierRow>,
-    pub tag: Vec<TagRow>,
 }
 
 /// The fixture, parsed. Panics on a malformed one: every caller is a test, and

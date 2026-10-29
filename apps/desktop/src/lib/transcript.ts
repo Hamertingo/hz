@@ -1,5 +1,6 @@
 import { todoTimeline, type TodoPlan, type TodoSource, type TodoTask } from "@/lib/todo";
-import { toolSummary } from "@/lib/tools";
+import { isNoReply } from "@/lib/teamTalk";
+import { teamTool, toolSummary } from "@/lib/tools";
 import type { AgentEvent, FileEdit, ToolResult, Usage } from "@/types/events";
 
 export type SubagentRun = {
@@ -361,6 +362,9 @@ function groupKey(
   if (payload.toolType === "subagent_spawn") return null;
   if (subagentIds.has(payload.callId)) return null;
   if (withImages.has(payload.callId)) return null;
+  // Each message to a teammate is its own card: "team_message, 2 calls" hides
+  // who was written to and what was said, which is the whole of it.
+  if (teamTool(payload.name)) return null;
   return payload.name;
 }
 
@@ -527,6 +531,8 @@ function groupTurns(events: AgentEvent[], subagentIds: Set<string>): Turn[] {
     // that summary swallowed the answer into the trace and left a finished turn
     // with no ending on screen.
     const answered = answer === null ? body : body.filter((event) => event !== answer);
+    // A turn that answered `NO_REPLY` said nothing, and draws nothing for it.
+    if (isNoReply(finalText)) finalText = null;
     const work = groupTools(answered, subagentIds);
     // Queued prompts stay on screen through a collapse, so they are not rows
     // the toggle has to account for. Without this a turn whose only extra row is

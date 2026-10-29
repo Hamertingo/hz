@@ -110,6 +110,8 @@ export function markDisagrees(mark: PrMark | undefined, prs: PullRequest[]): boo
       checksState: "CLEAR",
       mergeable: pr.state === "OPEN" ? pr.mergeable : null,
       mergeStateStatus: pr.state === "OPEN" ? pr.mergeStateStatus : null,
+      // Only the rank is read here, and it does not look at the review request.
+      reviewRequested: false,
     })),
   );
 

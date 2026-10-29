@@ -26,19 +26,16 @@ use fff_search::{
 };
 use serde::Serialize;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     path::Path,
-    process::Stdio,
     sync::{Mutex, OnceLock},
     time::Duration,
 };
-use tokio::{io::AsyncWriteExt, process::Command};
 use ts_rs::TS;
 
 use crate::attachments::{image_mime, MAX_IMAGE_BYTES};
 use crate::docs::{read_capped, TOO_LARGE};
 use crate::Fail;
-use crate::proc::HideConsole as _;
 
 /// One row in the picker. `path` is relative to the indexed directory, which is
 /// also what gets typed into the prompt — the CLI resolves `@path` against the
@@ -345,138 +342,11 @@ pub struct DirEntry {
     pub ignored: bool,
 }
 
-/// Dropped from every listing: VS Code's `files.exclude` defaults, and nothing
-/// else. `node_modules` and `target` list like any other directory — the ignore
-/// flag is what says they are not the reader's own work, and hiding them
-/// outright would make the view lie about what is on disk.
-const HIDDEN: &[&str] = &[".git", ".svn", ".hg", ".DS_Store", "Thumbs.db"];
-
 /// Past this a file is refused rather than read. Four times the doc panel's cap
 /// and for a different reason: a lockfile is the file most likely opened here,
 /// and the renderer already falls back to plain text past 100KB, so the cost of
 /// a big one is scrolling rather than freezing.
 const MAX_FILE: u64 = 4 << 20;
-
-/// One directory's entries, directories first and then case-insensitive by
-/// name — which is VS Code's order, and the one anybody arriving from an editor
-/// reads without being told.
-///
-/// `dir` is relative to `cwd`, empty for the root. A directory that cannot be
-/// read answers with the reason, since the tree has a row to draw it in.
-#[tauri::command]
-pub async fn list_dir(cwd: String, dir: String) -> Result<Vec<DirEntry>, String> {
-    let target = if dir.is_empty() {
-        Path::new(&cwd).to_path_buf()
-    } else {
-        Path::new(&cwd).join(&dir)
-    };
-
-    let mut reader = tokio::fs::read_dir(&target)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut entries = Vec::new();
-    while let Some(entry) = reader.next_entry().await.map_err(|e| e.to_string())? {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if HIDDEN.contains(&name.as_str()) {
-            continue;
-        }
-
-        // Read off the link's *target*, so a symlinked directory expands like
-        // any other and a broken link lists as a file rather than as a folder
-        // that answers nothing when opened.
-        let is_dir = tokio::fs::metadata(entry.path())
-            .await
-            .map(|meta| meta.is_dir())
-            .unwrap_or(false);
-
-        let path = if dir.is_empty() {
-            name.clone()
-        } else {
-            format!("{dir}/{name}")
-        };
-
-        entries.push(DirEntry {
-            name,
-            path,
-            is_dir,
-            ignored: false,
-        });
-    }
-
-    sort_entries(&mut entries);
-    mark_ignored(&cwd, &mut entries).await;
-    Ok(entries)
-}
-
-/// Directories first, then case-insensitive by name, with the raw name as the
-/// tie-break so two entries differing only in case keep a stable order.
-fn sort_entries(entries: &mut [DirEntry]) {
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-            .then_with(|| a.name.cmp(&b.name))
-    });
-}
-
-/// Flags the entries git ignores, in one spawn for the whole listing.
-///
-/// `check-ignore` answers nested `.gitignore`s, `.git/info/exclude` and the
-/// user's global ignore together, which is why this is a process rather than
-/// the single-file matcher the `ignore` crate already in the lock file offers.
-/// Exit 1 means "none of them", which is an answer; only a directory that is no
-/// repository, or a git that will not run, leaves every flag as it was — and
-/// nothing dimmed is the right picture there.
-async fn mark_ignored(cwd: &str, entries: &mut [DirEntry]) {
-    if entries.is_empty() {
-        return;
-    }
-
-    let mut input = String::new();
-    for entry in entries.iter() {
-        input.push_str(&entry.path);
-        input.push('\0');
-    }
-
-    let Ok(mut child) = Command::new("git").hide_console()
-        .args(["check-ignore", "--stdin", "-z"])
-        .current_dir(cwd)
-        // A listing shouldn't contend with a background index refresh.
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return;
-    };
-
-    // Written from its own task, since git streams its answer as it reads: on a
-    // directory big enough to fill both pipes, writing the whole input first
-    // and only then draining stdout is a deadlock. The pipe is dropped at the
-    // end of the task, which is what lets git see EOF and exit.
-    let mut pipe = child.stdin.take();
-    let writing = tokio::spawn(async move {
-        if let Some(mut pipe) = pipe.take() {
-            let _ = pipe.write_all(input.as_bytes()).await;
-        }
-    });
-
-    let out = child.wait_with_output().await;
-    let _ = writing.await;
-
-    let Ok(out) = out else { return };
-    let ignored: HashSet<&str> = std::str::from_utf8(&out.stdout)
-        .unwrap_or_default()
-        .split('\0')
-        .filter(|line| !line.is_empty())
-        .collect();
-
-    for entry in entries.iter_mut() {
-        entry.ignored = ignored.contains(entry.path.as_str());
-    }
-}
 
 /// What the viewer draws, or the sentence saying why it draws nothing.
 ///
@@ -588,11 +458,11 @@ mod tests {
     /// separators for a reason that had nothing to do with them.
     #[test]
     fn matches_on_a_path_segment() {
-        let hits = search(&repo(), "composer/Model", 5).unwrap();
+        let hits = search(&repo(), "composer/Mention", 5).unwrap();
         let top = hits.first().map(|h| h.path.as_str()).unwrap_or_default();
 
         assert!(
-            top.starts_with("src/components/composer/Model"),
+            top.starts_with("src/components/composer/Mention"),
             "got {hits:?}"
         );
     }
@@ -663,79 +533,6 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hz-files-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    /// Directories first, then case-insensitively by name — the order is the
-    /// whole of what a tree's rows are arranged by, and a plain byte sort puts
-    /// every capital ahead of every lowercase name.
-    #[tokio::test]
-    async fn lists_directories_first_then_by_name_ignoring_case() {
-        let dir = scratch();
-        for name in ["beta.txt", "Alpha.txt", "zed.txt"] {
-            std::fs::write(dir.join(name), "x").unwrap();
-        }
-        for name in ["src", "Assets"] {
-            std::fs::create_dir(dir.join(name)).unwrap();
-        }
-
-        let entries = list_dir(dir.to_str().unwrap().into(), String::new())
-            .await
-            .unwrap();
-        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-
-        assert_eq!(names, ["Assets", "src", "Alpha.txt", "beta.txt", "zed.txt"]);
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// The exclusion list is what keeps a repository's own plumbing out of a
-    /// tree of the reader's files. Nothing else is hidden — `node_modules` is
-    /// dimmed, not dropped.
-    #[tokio::test]
-    async fn drops_the_vcs_directory_and_the_desktop_droppings() {
-        let dir = scratch();
-        std::fs::create_dir(dir.join(".git")).unwrap();
-        std::fs::create_dir(dir.join("node_modules")).unwrap();
-        std::fs::write(dir.join(".DS_Store"), "x").unwrap();
-        std::fs::write(dir.join("Thumbs.db"), "x").unwrap();
-        std::fs::write(dir.join("keep.txt"), "x").unwrap();
-
-        let entries = list_dir(dir.to_str().unwrap().into(), String::new())
-            .await
-            .unwrap();
-        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-
-        assert_eq!(names, ["node_modules", "keep.txt"]);
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// The flag is read from git itself, so this asserts against a real
-    /// `.gitignore` in a real repository rather than against a matcher of ours.
-    #[tokio::test]
-    async fn flags_what_git_ignores() {
-        let dir = scratch();
-        let cwd = dir.to_str().unwrap().to_string();
-        assert!(std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&cwd)
-            .status()
-            .is_ok_and(|s| s.success()));
-        std::fs::write(dir.join(".gitignore"), "build/\n*.log\n").unwrap();
-        std::fs::create_dir(dir.join("build")).unwrap();
-        std::fs::write(dir.join("run.log"), "x").unwrap();
-        std::fs::write(dir.join("keep.txt"), "x").unwrap();
-
-        let entries = list_dir(cwd, String::new()).await.unwrap();
-        let ignored: Vec<&str> = entries
-            .iter()
-            .filter(|e| e.ignored)
-            .map(|e| e.name.as_str())
-            .collect();
-
-        assert_eq!(ignored, ["build", "run.log"]);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The cap is the whole of what stops the viewer pulling a multi-gigabyte

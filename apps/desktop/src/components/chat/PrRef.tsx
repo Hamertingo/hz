@@ -11,9 +11,8 @@ import { cn } from "@/lib/utils";
 /// priority, and GitHub resolves the ambiguity the only way it can be resolved —
 /// by asking. `useKnownPr` answers from listings the app has already read, so
 /// the asking costs nothing, and `#1 priority` in a repository whose listing
-/// says there is no #1 stays the words it was written as. This is
-/// [issue.ts](../lib/issue.ts)'s rule for a tag whose issue never resolved: a
-/// button that opens nothing is worse than a word that was never one.
+/// says there is no #1 stays the words it was written as. A button that opens
+/// nothing is worse than a word that was never one.
 ///
 /// A repository that has **not** answered is the other side of it, and the chip
 /// is offered there rather than withheld — see `useKnownPr` for what reading
@@ -30,9 +29,8 @@ import { cn } from "@/lib/utils";
 /// nothing about whether the pull request is open, merged or closed, and the
 /// only thing that knows is the read the press starts.
 ///
-/// The colour is the issue tag's, because both are "a tracker reference in a
-/// sentence" and one colour for that idea is enough — what tells them apart is
-/// the shape, since the tag is `#DRA-53` spelled out and this is a chip.
+/// The accent is the one a reference in a sentence takes; the shape, a chip, is
+/// what marks it as something to press.
 ///
 /// A `button` rather than the `span` a file path uses: this is an action, and
 /// `role="link"` on a span exists for the file case alone, where the element has

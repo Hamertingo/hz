@@ -3,10 +3,12 @@ import { memo } from "react";
 import AssistantMessage from "@/components/chat/AssistantMessage";
 import GoalReceipt from "@/components/chat/GoalReceipt";
 import Reasoning from "@/components/chat/Reasoning";
+import TeamMessage from "@/components/chat/TeamMessage";
 import ToolCall from "@/components/chat/ToolCall";
 import UserMessage from "@/components/chat/UserMessage";
 import FileEdits from "@/components/chat/FileEdits";
 import { compactTokens, resetTime } from "@/lib/format";
+import { teamTool } from "@/lib/tools";
 import { drawsFailure } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
 import type { TodoTask } from "@/lib/todo";
@@ -91,9 +93,9 @@ function EventRow({
         <UserMessage
           text={payload.text}
           images={payload.images}
-          issues={payload.issues}
           from={payload.from}
           cwd={payload.cwd}
+          ts={event.ts}
           onOpenSession={onOpenSession}
         />
       );
@@ -116,7 +118,18 @@ function EventRow({
     case "reasoning":
       return <Reasoning text={payload.text} encrypted={payload.encrypted} />;
 
-    case "tool_call_started":
+    case "tool_call_started": {
+      const team = teamTool(payload.name);
+      if (team) {
+        return (
+          <TeamMessage
+            tool={team}
+            input={payload.input}
+            result={resultByCallId.get(payload.callId)}
+            ts={event.ts}
+          />
+        );
+      }
       return (
         <ToolCall
           name={payload.name}
@@ -131,6 +144,7 @@ function EventRow({
           defaultOpen={openTool}
         />
       );
+    }
 
     // Rendered by the `tool_call_started` row it completes, via `resultByCallId`.
     case "tool_call_completed":

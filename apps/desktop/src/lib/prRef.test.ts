@@ -22,7 +22,7 @@ describe("findPrRefs", () => {
     expect(findPrRefs("#7's title").map((r) => r.number)).toEqual([7]);
   });
 
-  /// The rule the issue tag states, and the reason it exists: a `#` inside a
+  /// The rule a mention states, and the reason it exists: a `#` inside a
   /// word is a colour or a fragment, never a reference. `#fff` is not a number
   /// at all; `#7f7f7f` is a number followed by a letter.
   it("stays out of a word", () => {

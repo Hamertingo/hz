@@ -246,10 +246,10 @@ fn expand(member_session_id: &str, turns: &[Value]) -> Vec<AgentEvent> {
                 .unwrap_or_default()
                 .to_string(),
             images: Vec::new(),
-            issues: Vec::new(),
             baseline: None,
             queued: false,
             from: None,
+            reply_to: None,
             cwd: None,
         });
         // **Stamped with the child's own clock, not this read's.** The turn's
@@ -288,6 +288,7 @@ fn expand(member_session_id: &str, turns: &[Value]) -> Vec<AgentEvent> {
                 } else {
                     "end_turn".to_string()
                 },
+                ..Default::default()
             }));
             // The other half of the pair above: the turn's end is the child's own
             // clock too, so the two together report the wait it actually took.

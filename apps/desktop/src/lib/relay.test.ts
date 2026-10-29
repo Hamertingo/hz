@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { senderPrefix, stripSenderPrefix } from "@/lib/relay";
+import { senderPrefix, stripSenderPrefix, teamAskSuffix, teamBody, teamPrefix, teamSuffix } from "@/lib/relay";
 
 const from = { sessionId: "abc-123", title: "Fix the login redirect" };
 
@@ -29,5 +29,24 @@ describe("stripSenderPrefix", () => {
     expect(stripSenderPrefix(`${senderPrefix(from)}\nreview is done`, from)).toBe(
       "\nreview is done",
     );
+  });
+});
+
+describe("teamBody", () => {
+  const from = { sessionId: "s1", title: "Mavis" };
+
+  it("returns a teammate's words without the wrapper the model reads", () => {
+    const wire = `${teamPrefix(from)}quanto e 1+1?${teamSuffix(from)}`;
+
+    expect(teamBody(wire, from)).toBe("quanto e 1+1?");
+  });
+
+  it("strips the ending of an ask as well", () => {
+    expect(teamBody(`${teamPrefix(from)}2+2?${teamAskSuffix(from)}`, from)).toBe("2+2?");
+  });
+
+  it("is null for a relay that is not a teammate's message", () => {
+    expect(teamBody("[message from the Hyze Code session \"x\" (s1)]\n\nhi", from)).toBeNull();
+    expect(teamBody("hello", null)).toBeNull();
   });
 });

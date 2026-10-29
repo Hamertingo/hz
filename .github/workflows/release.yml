@@ -90,6 +90,14 @@ jobs:
         working-directory: apps/desktop
         run: ./scripts/vendor-agent.sh
 
+      # The agents' computers: HyzeVM and the QEMU it runs on, so the reader installs nothing. The runner
+      # needs QEMU once, to copy it (with its libraries) into the bundle; the app never asks for it.
+      - name: Stage HyzeVM and QEMU into the bundle
+        working-directory: apps/desktop
+        run: |
+          brew install qemu
+          ./scripts/vendor-hyzevm.sh
+
       # **`APPLE_SIGNING` is a repository variable, and it is the whole switch.**
       # Unset is the ordinary state for a build with no Apple account behind it:
       # nothing below runs, `bundle.macOS.signingIdentity: "-"` signs ad-hoc, and

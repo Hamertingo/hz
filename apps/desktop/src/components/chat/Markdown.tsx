@@ -26,8 +26,7 @@ type MarkdownProps = {
   /// prose instead of flickering through half-parsed markdown.
   streaming?: boolean;
   /// Element overrides, for a caller whose markdown holds something this
-  /// renderer cannot resolve on its own — an issue description, whose images
-  /// and files sit behind the tracker's auth and have to be fetched with a key.
+  /// renderer cannot resolve on its own, such as an image behind a sign-in.
   components?: Components;
   /// Draw the references in this prose as something that opens: a path that
   /// names a file on this machine, and a `#7` that names a pull request in this

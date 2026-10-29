@@ -1500,7 +1500,7 @@ permissionMode: auto
             "the default was not pointed at the provider:\n{written}"
         );
 
-        let models = crate::harness::mcode::models::probe()
+        let models = crate::harness::mcode::models::probe(crate::harness::Harness::Mcode)
             .await
             .expect("a session opens on the provider that was just connected");
         assert!(models.len() > 10, "only got {} models", models.len());

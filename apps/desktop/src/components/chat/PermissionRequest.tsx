@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { ApprovalCard } from "@/components/chat/cards";
+import { useAgentChatActions } from "@/hooks/useAgentChat";
 import { Button } from "@/components/ui/button";
 import type { PermissionOption, PermissionOptionKind } from "@/types/events";
 
@@ -31,65 +33,73 @@ const KIND_ORDER: Record<PermissionOptionKind, number> = {
 /// belongs to reports both outcomes on its own — a refusal as its error, an
 /// approval by simply running.
 export default function PermissionRequest({
+  who: whoGiven,
   description,
+  detail,
+  time,
   argument,
   options,
   onRespond,
+  onAlwaysAllow,
 }: {
+  who?: string;
   /// The agent's own summary of the call. Filled in upstream when the harness
   /// sends none, so it is never empty.
   description: string;
+  /// What the call does, under `description` when that is only its name.
+  detail?: string;
+  time?: string;
   /// The call's identifying argument — the command, the path. `null` only when
   /// the input carries no conventional field to show.
   argument: string | null;
   options: PermissionOption[];
   onRespond: (optionId: string) => void;
+  /// hz's own standing rule for this agent. When given it stands in for the agent's own "always" option, which
+  /// would grant the CLI a rule hz's reviewer never sees again.
+  /// A refusal puts the buttons back, since the agent is still waiting.
+  onAlwaysAllow?: () => Promise<unknown>;
 }) {
   // Never cleared: the reply is one-shot in the backend, so a second click has
   // nothing to answer. This keeps the buttons from inviting one during the round
   // trip that mints the decision event.
   const [sent, setSent] = useState<string | null>(null);
+  const chatAgent = useAgentChatActions()?.agent.name;
+  const who = whoGiven ?? chatAgent ?? "The agent";
+  const pick = (id: string) => {
+    setSent(id);
+    onRespond(id);
+  };
+  const sorted = [...options].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+  const once = sorted.find((o) => o.kind === "once");
+  const deny = sorted.find((o) => o.kind === "deny");
+  const always = sorted.find((o) => o.kind === "always_rule");
+  const rest = sorted.filter((o) => o !== once && o !== deny && o !== always);
 
   return (
-    <div className="rounded-2xl border border-border bg-muted/30 p-4">
-      {/* Outlined rather than filled: the card already sits on a tinted panel,
-          and a second fill inside it reads as a third surface. */}
-      {argument && (
-        <pre className="mb-3 overflow-x-auto rounded-lg border border-border px-3 py-2.5 font-mono text-xs">
-          {argument}
-        </pre>
-      )}
-
-      <p className="text-chat">{description}</p>
-
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        {[...options]
-          .sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
-          .map((option) => (
-            <Button
-              key={option.id}
-              size="sm"
-              variant={optionVariant(option.kind)}
-              disabled={sent !== null}
-              onClick={() => {
-                setSent(option.id);
-                onRespond(option.id);
-              }}
-            >
-              {option.label}
-            </Button>
-          ))}
-      </div>
-    </div>
+    <ApprovalCard
+      who={who}
+      title={description}
+      detail={detail}
+      time={time}
+      onAlwaysAllow={
+        onAlwaysAllow
+          ? () => {
+              setSent("always");
+              onAlwaysAllow().catch(() => setSent(null));
+            }
+          : always
+            ? () => pick(always.id)
+            : undefined
+      }
+      command={argument ?? undefined}
+      disabled={sent !== null}
+      onApprove={once ? () => pick(once.id) : undefined}
+      onDeny={deny ? () => pick(deny.id) : undefined}
+      extra={rest.map((o) => (
+        <Button key={o.id} variant="ghost" size="sm" disabled={sent !== null} className="text-ink3" onClick={() => pick(o.id)}>
+          {o.label}
+        </Button>
+      ))}
+    />
   );
 }
-
-/// Only "allow once" is filled. The standing-rule options outlast the call they
-/// were granted for, so they read as the deliberate choice rather than the
-/// obvious one.
-function optionVariant(kind: PermissionOptionKind) {
-  if (kind === "once") return "default" as const;
-  if (kind === "deny") return "destructive" as const;
-  return "outline" as const;
-}
-

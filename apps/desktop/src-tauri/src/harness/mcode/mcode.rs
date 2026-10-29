@@ -32,6 +32,7 @@ pub mod agents;
 pub mod commands;
 pub mod context;
 pub mod delegation;
+pub mod dialect;
 pub mod elicitation;
 pub mod goal;
 pub mod mapper;
@@ -44,7 +45,7 @@ pub mod rpc;
 pub mod skills;
 
 use crate::events::{AgentEvent, AgentEventPayload, ApprovalPolicy, BlockRef, DeltaEvent};
-use crate::harness::{read_stderr, record_failure, Harness::Mcode};
+use crate::harness::{read_stderr, record_failure, Harness};
 use crate::models::{Effort, Model, ModelId};
 use crate::session::{Session, SessionHandles, StatusTracker, Transport};
 use crate::store::{self, next_seq_by_session_id};
@@ -86,6 +87,10 @@ const DEFAULT_MODE: &str = "default";
 /// which prompt is running, since the reader is what sees it answered.
 #[derive(Clone, Debug)]
 pub struct McodeSession {
+    /// Which agent is on the other end. The engine is one ACP peer for all of
+    /// them, and this is the one thing it asks to tell them apart: which
+    /// `configOptions` ids to write and which stances exist. See [`dialect`].
+    pub harness: Harness,
     pub client: RpcClient,
     /// Minted by mcode, not chosen by us. Recorded on the index entry's
     /// `thread_id` — the slot every peer harness's minted id lives in.
@@ -157,11 +162,12 @@ impl McodeSession {
 
     fn configs(&self, configs: &parser::ConfigOptions) {
         *self.model.lock().expect("mcode model poisoned") = configs.model().map(str::to_string);
-        *self.efforts.lock().expect("mcode efforts poisoned") = models::effort_levels(configs);
+        *self.efforts.lock().expect("mcode efforts poisoned") =
+            models::effort_levels(self.harness, configs);
         // Every `set_config_option` reply restates the whole list, so this is a
         // free reading for the picker — and it is the one that keeps a session's
         // provider change visible without a probe.
-        models::remember_configs(configs);
+        models::remember_configs(self.harness, configs);
     }
 }
 
@@ -211,7 +217,7 @@ pub fn permission_value_for(policy: ApprovalPolicy) -> Result<&'static str> {
 /// started while the reader is still typing and adopted when they send.
 ///
 /// What makes that legal is `HZ_SESSION_ID`, which is fixed at spawn — the hz
-/// CLI reads it as the default session for `hz issue link`, so a child parked
+/// CLI reads it as the default session for its own calls, so a child parked
 /// without one would quietly lose that for its whole life. Hence the caller
 /// naming the session before it exists, rather than this inventing one.
 struct Parked {
@@ -264,6 +270,7 @@ static PARKED: LazyLock<AsyncMutex<Option<Parked>>> = LazyLock::new(|| AsyncMute
 /// a reader who parks and never sends leaves no `.jsonl` behind.
 #[allow(clippy::too_many_arguments)]
 pub async fn prepare(
+    harness: Harness,
     session_id: &str,
     cwd: &str,
     model: Option<&Model>,
@@ -279,9 +286,14 @@ pub async fn prepare(
     // Nothing to park where the project already has a child: the boot this exists
     // to hide has been paid, and the send that follows would open its conversation
     // on that one anyway.
-    if agent_for(cwd).await.is_some() {
+    if agent_for(&registry_key(harness, cwd)).await.is_some() {
         return Ok(());
     }
+
+    // Held for the whole opening, so a model read that arrives meanwhile waits for
+    // this park's answer instead of starting a second copy of the agent beside it.
+    let gate = models::launch_gate(harness);
+    let _starting = gate.lock().await;
 
     let handles = SessionHandles {
         session_id: session_id.to_string(),
@@ -296,6 +308,7 @@ pub async fn prepare(
 
     let session = spawn_agent(
         Opening {
+            harness,
             project: cwd,
             session_id,
             session_cwd: cwd,
@@ -327,8 +340,15 @@ pub async fn prepare(
             at,
         })
     };
+    // **Torn down on its own task, not awaited here.** Closing a child asks it to
+    // close its session first and waits out a grace period, which is as long as
+    // the agent takes — and this call is what the composer's model list is
+    // waiting on. A park that sat behind the previous one's teardown held the
+    // picker on its spinner for exactly that long.
     if let Some(mut previous) = previous {
-        let _ = previous.session.kill().await;
+        tokio::spawn(async move {
+            let _ = previous.session.kill().await;
+        });
     }
 
     tokio::spawn(async move {
@@ -354,12 +374,18 @@ pub async fn prepare(
 
 /// Takes the parked session if it belongs to this one, so [`init`] can skip the
 /// spawn, the handshake and the settings alike.
-async fn adopt(session_id: &str, cwd: &str, agent_name: Option<&str>) -> Option<Session> {
+async fn adopt(
+    harness: Harness,
+    session_id: &str,
+    cwd: &str,
+    agent_name: Option<&str>,
+) -> Option<Session> {
     let mut slot = PARKED.lock().await;
-    if !slot
-        .as_ref()
-        .is_some_and(|parked| parked.belongs_to(session_id, cwd, agent_name))
-    {
+    // A park made for one agent is never adopted for another: it is a live child
+    // of *that* agent, and the model list and stances it was opened with are its.
+    if !slot.as_ref().is_some_and(|parked| {
+        parked.session.harness == harness && parked.belongs_to(session_id, cwd, agent_name)
+    }) {
         return None;
     }
     slot.take().map(|parked| parked.session)
@@ -416,14 +442,14 @@ fn park_matches(
 /// [`init`] would: an env or an argument that differs between them is a parked
 /// child that behaves differently from a spawned one, which is the kind of
 /// difference nobody would find until it mattered.
-async fn spawn_child(cwd: &str) -> Result<Child> {
-    child_command(cwd)
-        .await
+async fn spawn_child(harness: Harness, cwd: &str) -> Result<Child> {
+    child_command(harness, cwd)
+        .await?
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("couldn't start mcode")
+        .with_context(|| format!("couldn't start {}", harness.label()))
 }
 
 /// The command every child of this harness is started from.
@@ -440,26 +466,37 @@ async fn spawn_child(cwd: &str) -> Result<Child> {
 /// since the `hz` CLI defaults to it. The agent names the session per turn
 /// instead, in the environment of each tool child it spawns, which is the only
 /// place that knows which conversation is running.
-async fn child_command(cwd: &str) -> Command {
-    let bin = crate::binpath::mcode().await;
+async fn child_command(harness: Harness, cwd: &str) -> Result<Command> {
+    let resolving = Instant::now();
+    let launch = dialect::launch(harness).await?;
+    eprintln!("[launch] {} resolved in {:.2}s", harness.label(), resolving.elapsed().as_secs_f64());
+    let bin = launch.program;
     let mut command = Command::new(&bin).hide_console();
 
     if let Some(endpoint) = crate::orchestration::child_endpoint() {
         command.env("HZ_ENDPOINT", endpoint);
     }
 
-    command.arg("acp");
+    command.args(&launch.args);
 
-    crate::harness::agent_env(&mut command, &bin).await;
+    // The data-dir pin is mcode's alone: it exists so the CLI's provider
+    // credentials land in hz's own directory. The other three keep the reader's
+    // own login where it already is — that is the point of running on them.
+    if harness == Harness::Mcode {
+        crate::harness::agent_env(&mut command, &bin).await;
+    } else {
+        command.env("PATH", crate::binpath::child_path(crate::binpath::resolved_bin_dirs()));
+    }
 
     command.current_dir(cwd);
-    command
+    Ok(command)
 }
 
 /// Opens a session's conversation — on the project's child where one is up, on a
 /// child of its own where none is — or adopts the one [`prepare`] already opened.
 #[allow(clippy::too_many_arguments)]
 pub async fn init(
+    harness: Harness,
     session_id: &str,
     model: Option<&Model>,
     effort: Option<Effort>,
@@ -478,7 +515,7 @@ pub async fn init(
     //
     // The parked session was configured with the picks the composer held when it
     // was made, so only a pick the reader changed *since* costs anything here.
-    if let Some(mut session) = adopt(session_id, cwd, agent_name).await {
+    if let Some(mut session) = adopt(harness, session_id, cwd, agent_name).await {
         // The child is borrowed for the three calls and the session's own
         // record is written afterwards, so the pick a send carries is what the
         // next comparison reads — not what the CLI happened to answer.
@@ -558,6 +595,7 @@ pub async fn init(
     };
 
     let opening = Opening {
+        harness,
         project: cwd,
         session_id,
         session_cwd,
@@ -575,7 +613,7 @@ pub async fn init(
     // step: a second session in a project opens a conversation on the child that
     // is already up — measured at 0.02s, against a boot of ~6.5s and ~400MB for a
     // child of its own.
-    match agent_for(cwd).await {
+    match agent_for(&registry_key(harness, cwd)).await {
         Some(agent) => open_conversation(&agent, opening, None, app).await,
         None => spawn_agent(opening, app).await,
     }
@@ -604,6 +642,8 @@ async fn record_thread_id(
 /// What opening one conversation needs: everything about the session, and
 /// nothing about the child it lands on.
 struct Opening<'a> {
+    /// Which agent to start, and the other half of the registry's key.
+    harness: Harness,
     /// The directory the child runs in — the registry's key — and the cwd a
     /// *new* conversation is opened with. A worktree session's own tree is
     /// `session_cwd`.
@@ -627,18 +667,20 @@ struct Opening<'a> {
 /// Spawns a child for a project and opens its first conversation on it.
 async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
     let boot = Instant::now();
-    let mut child = spawn_child(opening.project).await?;
+    let mut child = spawn_child(opening.harness, opening.project).await?;
     let spawned = boot.elapsed();
 
     let stdin = child.stdin.take().context("failed to take stdin")?;
     let stdout = child.stdout.take().context("failed to take stdout")?;
     let stderr = child.stderr.take().context("failed to take stderr")?;
 
+    let harness = opening.harness;
     let client = RpcClient::new(stdin);
     let stderr_tail: StderrTail = Default::default();
 
     let ours = Arc::new(Agent {
-        project: opening.project.to_string(),
+        harness: opening.harness,
+        project: registry_key(opening.harness, opening.project),
         process: AsyncMutex::new(Some(child)),
         client,
         live: AsyncMutex::new(HashMap::new()),
@@ -686,7 +728,7 @@ async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
     });
 
     tokio::spawn(async move {
-        if let Err(error) = read_mcode_stderr(stderr, stderr_tail).await {
+        if let Err(error) = read_mcode_stderr(harness, stderr, stderr_tail).await {
             eprintln!("Failed to read mcode stderr: {error}");
         }
     });
@@ -696,7 +738,7 @@ async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
     // keeps the first, and a conversation on the other would be unroutable —
     // every line is filed by the id the table holds it under. So the loser's
     // child goes and this opening uses the winner's.
-    let agent = register(opening.project, ours.clone()).await;
+    let agent = register(&ours.project, ours.clone()).await;
     if !Arc::ptr_eq(&agent, &ours) {
         // Another send won the race, so this child has nothing to serve: it is
         // not the table's, and a conversation on it could never be routed.
@@ -708,7 +750,7 @@ async fn spawn_agent(opening: Opening<'_>, app: &AppHandle) -> Result<Session> {
     // The handshake, once per child and before any conversation exists: it is the
     // connection every conversation on it will be spoken over.
     let handshaking = Instant::now();
-    if let Err(error) = handshake(&agent.client).await {
+    if let Err(error) = handshake(&agent.client, opening.harness).await {
         // Post-spawn, so the child is running with nobody left to talk to it. A
         // `Child` is not reaped on drop, and nothing is registered as a
         // conversation yet, so this is the one path that ends the child itself.
@@ -739,6 +781,7 @@ async fn open_conversation(
     app: &AppHandle,
 ) -> Result<Session> {
     let Opening {
+        harness,
         session_id,
         session_cwd,
         handles,
@@ -760,6 +803,7 @@ async fn open_conversation(
     agent.mark_opening();
 
     let (mcode_id, config) = match open_session(
+        harness,
         &agent.client,
         session_id,
         session_cwd,
@@ -783,6 +827,7 @@ async fn open_conversation(
     }
 
     let session = McodeSession {
+        harness,
         client: agent.client.clone(),
         id: mcode_id,
         prompt_id: Arc::new(Mutex::new(None)),
@@ -798,7 +843,7 @@ async fn open_conversation(
     // acquired — so the list the picker needs is on the wire here before the
     // reader has opened anything, and taking it is what keeps the picker from
     // booting a child of its own beside this one.
-    models::remember_configs(&config);
+    models::remember_configs(harness, &config);
 
     // **On the table before the settings, which is what stops the pushes
     // `session/new` is answered with from being dropped.** The agent sends the
@@ -887,7 +932,7 @@ async fn open_conversation(
         handles,
         agent: agent.clone(),
         stdin: Transport::Acp(session),
-        harness: Mcode,
+        harness,
         model: model
             .map(|m| m.id.clone())
             .unwrap_or_else(|| ModelId::new("")),
@@ -961,42 +1006,30 @@ pub async fn close(agent: &Arc<Agent>, session: &McodeSession) {
 /// The child's side of the handshake, once per process rather than once per
 /// conversation: what it answers is the *connection's* capabilities, and every
 /// conversation on this child is spoken over the same one.
-async fn handshake(client: &RpcClient) -> Result<()> {
+async fn handshake(client: &RpcClient, harness: Harness) -> Result<()> {
+    // `elicitation` and the extension notifications are mcode's own vocabulary.
+    // The other three are not told about them: advertising a capability this
+    // build only knows how to draw for mcode would invite requests it answers
+    // with an error, and an unanswered one blocks the agent's turn.
+    let mut capabilities = json!({
+        "fs": {"readTextFile": false, "writeTextFile": false},
+        "terminal": false,
+    });
+    if harness == Harness::Mcode {
+        capabilities["elicitation"] = json!({"form": {}});
+        capabilities["_meta"] =
+            json!({"minimax-code/extensions": {"version": 1, "notifications": true}});
+    }
+
     let init = client
         .request(
             "initialize",
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                // `fs` and `terminal` are both declined. mcode reads and writes
-                // through its own tools, and advertising either would invite
-                // requests this build cannot serve — which, unanswered, block
-                // the agent's turn.
-                "clientCapabilities": {
-                    "fs": {"readTextFile": false, "writeTextFile": false},
-                    "terminal": false,
-                    // **Form elicitation, which is how the agent asks a
-                    // question.** Without it the agent degrades `ask_user` into a
-                    // permission card — `handleQuestionnaire`'s own fallback —
-                    // which draws a question's options as allow/deny buttons.
-                    // `{}` is the value that means yes: the field is
-                    // `form?: … | null`, and only absent or `null` reads as
-                    // unsupported.
-                    "elicitation": {"form": {}},
-                    // **What turns the agent's own extension notifications on.**
-                    // It gates pushes, not requests: `mcode/session/delegation/get`
-                    // and its siblings answer whether or not this is here, but
-                    // `mcode/session/delegation_update` is only sent to a client
-                    // that says it speaks them — see `supportsTuiAcpExtensionNotifications`.
-                    // Stated with `notifications: true` because two of these
-                    // pushes have a screen behind them: the delegation roster and
-                    // the goal. The queue, plan and current-session pushes that
-                    // ride the same flag arrive as methods `parse_notification`
-                    // does not model and are dropped, which is the ordinary path
-                    // for a method we have no use for.
-                    "_meta": {
-                        "minimax-code/extensions": {"version": 1, "notifications": true}
-                    },
-                },
+                // `fs` and `terminal` are declined for all of them: each agent reads
+                // and writes through its own tools, and advertising either would
+                // invite requests this build cannot serve.
+                "clientCapabilities": capabilities,
                 "clientInfo": {"name": "hz", "version": env!("CARGO_PKG_VERSION")},
             }),
         )
@@ -1011,6 +1044,7 @@ async fn handshake(client: &RpcClient) -> Result<()> {
 /// Returns mcode's own session id — which for a resume is the recorded one,
 /// since that reply carries none — and the settings that came back with it.
 async fn open_session(
+    harness: Harness,
     client: &RpcClient,
     session_id: &str,
     session_cwd: &str,
@@ -1020,18 +1054,55 @@ async fn open_session(
 ) -> Result<(String, parser::ConfigOptions)> {
 
     // mcode keeps its own MCP configuration and manages it from its own TUI
-    // (`mcode mcp`), so this list is empty on every path: the servers a session
-    // reaches are the reader's, configured once where they already are.
-    let servers = json!([]);
+    // (`mcode mcp`), so its list is empty: the servers a session reaches are the
+    // reader's, configured once where they already are. The other three get the
+    // team's server when the session is an agent's — named by `agent_name` on a
+    // new one, and by the roster's own record of the session on a resume.
+    let agent_id = if harness == Harness::Mcode {
+        None
+    } else {
+        agent_name
+            .map(str::to_string)
+            .or_else(|| crate::agents::agent_of(session_id).map(|a| a.id))
+    };
+    let servers = agent_id
+        .as_deref()
+        .map_or_else(|| json!([]), |id| crate::agents::mcp_servers(id, session_id));
+    // Claude takes the agent's briefing as its system prompt, at `session/new`
+    // and again at every resume. `excludeDynamicSections` moves cwd and git status
+    // into the first message so the prompt stays identical and cached.
+    let system_meta = match (harness, agent_id.as_deref()) {
+        (Harness::Claude, Some(id)) => crate::agents::system_prompt(id).await.map(|text| {
+            json!({"systemPrompt": {"append": text, "excludeDynamicSections": true}})
+        }),
+        _ => None,
+    };
+
+    // Folders the reader gave this agent beyond its own. Only Claude's adapter
+    // passes them on to the CLI; for the others they reach the agent as words in
+    // its briefing, and nowhere else.
+    let extra_dirs: Vec<String> = match (harness, agent_id.as_deref()) {
+        (Harness::Claude, Some(id)) => crate::agents::extra_dirs(id),
+        _ => Vec::new(),
+    };
+    let with_dirs = |mut params: Value| -> Value {
+        if !extra_dirs.is_empty() {
+            params["additionalDirectories"] = json!(extra_dirs);
+        }
+        params
+    };
 
     if let Some(parent) = fork_from {
         let answer = client
             .request(
                 "session/fork",
-                json!({"sessionId": parent, "cwd": session_cwd, "mcpServers": servers}),
+                with_meta(
+                    with_dirs(json!({"sessionId": parent, "cwd": session_cwd, "mcpServers": servers})),
+                    system_meta.as_ref(),
+                ),
             )
             .await
-            .context("mcode refused to fork this session")?;
+            .with_context(|| format!("{} refused to fork this session", harness.label()))?;
 
         let started = parser::NewSessionResult::of(&answer);
         if started.session_id.is_empty() {
@@ -1045,7 +1116,7 @@ async fn open_session(
     }
 
     if is_new_session {
-        let mut params = json!({"cwd": session_cwd, "mcpServers": servers});
+        let mut params = with_dirs(json!({"cwd": session_cwd, "mcpServers": servers}));
         // **The Agent rides `_meta`, and it has to.** ACP's `NewSessionRequest`
         // declares `cwd`, `additionalDirectories`, `mcpServers` and `_meta`, and
         // the agent validates it with a stripping object — so a top-level
@@ -1055,14 +1126,20 @@ async fn open_session(
         //
         // Absent means the runtime's own default agent, which is what every send
         // that names nothing gets.
-        if let Some(name) = agent_name.map(str::trim).filter(|name| !name.is_empty()) {
+        // mcode's own: the other agents have no such slot, and a name sent to
+        // one would be a field it strips or refuses.
+        if let Some(name) = agent_name
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && harness == Harness::Mcode)
+        {
             params["_meta"] = json!({"minimax-code/agent": name});
         }
+        let params = with_meta(params, system_meta.as_ref());
 
         let answer = client
             .request("session/new", params)
             .await
-            .context("mcode refused to open a session")?;
+            .with_context(|| format!("{} refused to open a session", harness.label()))?;
 
         let started = parser::NewSessionResult::of(&answer);
         if started.session_id.is_empty() {
@@ -1078,17 +1155,32 @@ async fn open_session(
     let recorded = store::get_session_index_item(session_id)
         .await?
         .and_then(|item| item.thread_id)
-        .context("this session has no mcode session to resume")?;
+        .with_context(|| format!("this session has no {} session to resume", harness.label()))?;
 
     let answer = client
         .request(
             "session/resume",
-            json!({"sessionId": recorded, "cwd": session_cwd, "mcpServers": servers}),
+            with_meta(
+                with_dirs(json!({"sessionId": recorded, "cwd": session_cwd, "mcpServers": servers})),
+                system_meta.as_ref(),
+            ),
         )
         .await
-        .context("mcode refused to resume this session")?;
+        .with_context(|| format!("{} refused to resume this session", harness.label()))?;
 
     Ok((recorded, parser::ConfigOptions::of(&answer)))
+}
+
+/// `params` with `meta` merged into its `_meta`, which the agent reads for the
+/// extensions the spec leaves open.
+fn with_meta(mut params: Value, meta: Option<&Value>) -> Value {
+    if let (Some(extra), Some(target)) = (meta.and_then(Value::as_object), params.as_object_mut()) {
+        let slot = target.entry("_meta").or_insert_with(|| json!({}));
+        if let Some(slot) = slot.as_object_mut() {
+            slot.extend(extra.clone());
+        }
+    }
+    params
 }
 
 /// Asks the child for its own context report, and answers with what it said.
@@ -1146,7 +1238,7 @@ pub async fn probe_context(session: &McodeSession) -> Result<String> {
 /// Moves a running session onto another model, and re-reads what that model
 /// takes.
 pub async fn set_model(session: &McodeSession, model: &Model, app: &AppHandle) -> Result<()> {
-    let answer = set_config(session, "model", &model.arg).await?;
+    let answer = set_config(session, dialect::options(session.harness).model, &model.arg).await?;
     let configs = parser::ConfigOptions::of(&answer);
     session.configs(&configs);
     announce_models(app);
@@ -1158,7 +1250,12 @@ pub async fn set_model(session: &McodeSession, model: &Model, app: &AppHandle) -
 /// Refused by mcode on a model that does no reasoning, which is why the caller
 /// treats the error as a notice rather than as fatal.
 pub async fn set_effort(session: &McodeSession, effort: Effort) -> Result<()> {
-    let answer = set_config(session, "thinkingEffort", effort.as_arg()).await?;
+    // An agent with no effort option is not asked: OpenCode puts a model's effort
+    // in the model, so there is nothing to write and nothing that failed.
+    let Some(id) = dialect::options(session.harness).effort else {
+        return Ok(());
+    };
+    let answer = set_config(session, id, effort.as_arg()).await?;
     let configs = parser::ConfigOptions::of(&answer);
     session.configs(&configs);
     Ok(())
@@ -1167,6 +1264,17 @@ pub async fn set_effort(session: &McodeSession, effort: Effort) -> Result<()> {
 /// Moves a running session onto another stance: ACP's mode for the two that are
 /// modes, and the `permissionMode` setting for the rest.
 pub async fn set_mode(session: &McodeSession, policy: ApprovalPolicy) -> Result<()> {
+    // The three agents hz runs on the reader's own install say their stance as
+    // `set_config_option` writes — see [`dialect::stance`]. mcode below keeps its
+    // own two-step (ACP plan mode, then `permissionMode`) until it is removed.
+    if session.harness != Harness::Mcode {
+        for (id, value) in dialect::stance(session.harness, policy)? {
+            let answer = set_config(session, id, value).await?;
+            session.configs(&parser::ConfigOptions::of(&answer));
+        }
+        return Ok(());
+    }
+
     if let Some(mode) = acp_mode_for(policy) {
         session
             .client
@@ -1242,12 +1350,16 @@ async fn set_config(session: &McodeSession, config_id: &str, value: &str) -> Res
             json!({"sessionId": session.id, "configId": config_id, "value": value}),
         )
         .await
-        .with_context(|| format!("mcode refused {config_id} = {value}"))
+        .with_context(|| format!("{} refused {config_id} = {value}", session.harness.label()))
 }
 
 /// Sends a prompt. Returns as soon as the request is written — the turn's end
 /// arrives later, as that request's response.
 pub async fn start_turn(session: &McodeSession, text: &str) -> Result<()> {
+    PROMPTED
+        .lock()
+        .expect("prompt clock poisoned")
+        .insert(session.id.clone(), Instant::now());
     let prompt = json!([{"type": "text", "text": text}]);
     let id = session.client.request_detached(
         "session/prompt",
@@ -1255,6 +1367,31 @@ pub async fn start_turn(session: &McodeSession, text: &str) -> Result<()> {
     )?;
     *session.prompt_id.lock().expect("mcode prompt id poisoned") = Some(id);
     Ok(())
+}
+
+/// When each session's prompt went out, until its first sign of life comes back.
+static PROMPTED: LazyLock<std::sync::Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(Default::default);
+
+/// Logs how long the agent took to start answering, once per prompt.
+///
+/// The wait is the one number a reader feels and no log carried: the agent's own
+/// timings cover its boot, and the transcript's `Worked for` covers the whole turn.
+/// Measured from the write of the prompt, so it holds what hz does not control
+/// (the model) apart from what it does.
+fn note_first_response(session_id: &str, params: &Value) {
+    let kind = params
+        .pointer("/update/sessionUpdate")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(kind, "agent_message_chunk" | "agent_thought_chunk" | "tool_call") {
+        return;
+    }
+
+    let sent = PROMPTED.lock().expect("prompt clock poisoned").remove(session_id);
+    if let Some(sent) = sent {
+        eprintln!("[turn] first response ({kind}) in {:.2}s", sent.elapsed().as_secs_f64());
+    }
 }
 
 /// Injects a message into the turn that is already running.
@@ -1380,8 +1517,8 @@ pub async fn open_control() -> Result<Control> {
     // `kill_on_drop` where a session's child has it not: this one is owned by no
     // session and outlives no app, so a quit that dropped it must take the
     // process with it rather than leave an agent nobody can see or reach.
-    let mut child = child_command(&scratch_cwd)
-        .await
+    let mut child = child_command(Harness::Mcode, &scratch_cwd)
+        .await?
         .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1414,12 +1551,13 @@ pub async fn open_control() -> Result<Control> {
     };
 
     tokio::spawn(async move {
-        if let Err(error) = read_stderr(Mcode, stderr).await {
+        if let Err(error) = read_stderr(Harness::Mcode, stderr).await {
             eprintln!("Failed to read the control child's stderr: {error}");
         }
     });
 
-    let opened = open_session(&client, &control_id, &scratch_cwd, true, None, None).await;
+    let opened =
+        open_session(Harness::Mcode, &client, &control_id, &scratch_cwd, true, None, None).await;
     let (id, configs) = match opened {
         Ok(opened) => opened,
         Err(error) => {
@@ -1435,13 +1573,14 @@ pub async fn open_control() -> Result<Control> {
     // the model list the same way every session's does, and the machine's
     // configuration is what it describes rather than this scratch directory's.
     // Free, and it seeds the picker for a launch whose only session is this one.
-    models::remember_configs(&configs);
+    models::remember_configs(Harness::Mcode, &configs);
 
     Ok(Control {
         // The settings are not applied: a control child is never asked to run a
         // turn, so a model is a hop of the boot it does not need — and picking one
         // would mean this app deciding what a management question runs on.
         session: McodeSession {
+            harness: Harness::Mcode,
             client,
             id,
             prompt_id: Arc::new(Mutex::new(None)),
@@ -1472,7 +1611,12 @@ pub async fn open_control() -> Result<Control> {
 /// takes an id — so one child carries conversations on different models, which is
 /// also why moving any of them never respawned anything.
 pub struct Agent {
-    /// The directory the child was spawned in, which is the table's key. The
+    /// The agent this child is. Read by the loop for everything it files — the
+    /// events it mints, the failures it records — which is why it lives here and
+    /// not on a conversation: a child is one agent however many sessions it holds.
+    pub harness: Harness,
+    /// The table's key ([`registry_key`]), whose second half is the directory the
+    /// child was spawned in. The
     /// sessions it carries may each be in another one: `session/new` names the
     /// cwd per conversation, and a worktree session names its own tree.
     pub project: String,
@@ -1578,7 +1722,17 @@ struct Live {
     coalescer: Coalescer,
 }
 
-/// Every child this process is running, by project.
+/// What a child is filed under: the harness *and* the project.
+///
+/// A project can run a Claude child and an OpenCode child side by side, and a key
+/// that was the directory alone would hand one's conversation to the other's
+/// pipe. Written with a NUL between the two so no directory name can collide with
+/// another harness's prefix.
+pub fn registry_key(harness: Harness, project: &str) -> String {
+    format!("{}\0{project}", harness.wire_name())
+}
+
+/// Every child this process is running, by [`registry_key`].
 static AGENTS: LazyLock<AsyncMutex<HashMap<String, Arc<Agent>>>> =
     LazyLock::new(|| AsyncMutex::new(HashMap::new()));
 
@@ -1719,6 +1873,14 @@ impl ReaderHandles {
     /// exists to end** — `dropped a line` reads as noise until the day it costs
     /// something, and then it is the one detail that would have said what.
     async fn route(&self, method: &str, params: &Value) -> Option<String> {
+        let routed = self.route_to(method, params).await;
+        if let (Some(id), "session/update") = (&routed, method) {
+            note_first_response(id, params);
+        }
+        routed
+    }
+
+    async fn route_to(&self, method: &str, params: &Value) -> Option<String> {
         let named = line_session(params).map(str::to_string);
         let give_up = tokio::time::Instant::now() + CLAIM_GRACE;
 
@@ -1798,6 +1960,7 @@ fn stderr_tail_note(tail: &StderrTail) -> Option<String> {
 /// and the buffer is the half a *bundle* needs, where the printed line goes
 /// nowhere anybody can read.
 async fn read_mcode_stderr(
+    harness: Harness,
     stderr: tokio::process::ChildStderr,
     tail: StderrTail,
 ) -> anyhow::Result<()> {
@@ -1808,7 +1971,7 @@ async fn read_mcode_stderr(
         if line.trim().is_empty() {
             continue;
         }
-        eprintln!("[{} stderr] {line}", Mcode.wire_name());
+        eprintln!("[{} stderr] {line}", harness.wire_name());
 
         let mut held = tail.lock().expect("stderr tail mutex poisoned");
         if held.len() == STDERR_TAIL_LINES {
@@ -1974,7 +2137,7 @@ async fn send(handles: &SessionHandles, session: &McodeSession, app: &AppHandle,
     let transport = Transport::Acp(session.clone());
     let ingest = crate::session::Ingest {
         handles,
-        harness: Mcode,
+        harness: session.harness,
         transport: &transport,
     };
     crate::session::ingest(&ingest, event, app).await;
@@ -2167,7 +2330,7 @@ async fn read_stdout(stdout: ChildStdout, reader: ReaderHandles) -> Result<()> {
             Ok(value) => value,
             Err(_) => {
                 record_failure(
-                    Mcode,
+                    reader.agent.harness,
                     &reader.own.session_id,
                     "parse",
                     "not a JSON-RPC message",
@@ -2265,7 +2428,7 @@ async fn close_after_exit(reader: &ReaderHandles, cause: ExitCause) {
             continue;
         }
 
-        crate::session::strand_queue_on_exit(&handles, Mcode, &reader.app).await;
+        crate::session::strand_queue_on_exit(&handles, reader.agent.harness, &reader.app).await;
         // The reason, carried where the failure is. A bundled app has no terminal
         // to read the child's stack from, so without this the row says only that
         // the agent exited — see [`stderr_tail_note`].
@@ -2350,7 +2513,7 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
                 if let Some(finished) = session.note_goal(event.goal.as_ref()) {
                     let receipt = AgentEvent::mint(
                         handles.session_id.clone(),
-                        Mcode,
+                        session.harness,
                         handles.seq.fetch_add(1, Ordering::Relaxed),
                         None,
                         None,
@@ -2404,7 +2567,7 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
                     .await;
                 }
                 Err(err) => {
-                    record_failure(Mcode, &handles.session_id, "map", &err, line).await;
+                    record_failure(reader.agent.harness, &handles.session_id, "map", &err, line).await;
                 }
             }
         }
@@ -2431,9 +2594,9 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
             };
 
             if method == "session/request_permission" {
-                if let Err(err) = raise_permission(&handles, &reader.app, id, params).await {
+                if let Err(err) = raise_permission(reader.agent.harness, &handles, &reader.app, &reader.agent.client, id, params).await {
                     record_failure(
-                        Mcode,
+                        reader.agent.harness,
                         &handles.session_id,
                         "unsupported_request",
                         &err.to_string(),
@@ -2445,9 +2608,9 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
                         .respond(id, json!({"outcome": {"outcome": "cancelled"}}));
                 }
             } else if method == "elicitation/create" {
-                if let Err(err) = raise_question(&handles, &reader.app, id, line).await {
+                if let Err(err) = raise_question(reader.agent.harness, &handles, &reader.app, id, line).await {
                     record_failure(
-                        Mcode,
+                        reader.agent.harness,
                         &handles.session_id,
                         "unsupported_request",
                         &err.to_string(),
@@ -2462,7 +2625,7 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
             } else {
                 // `fs/*` and `terminal/*` were declined at the handshake, so one
                 // arriving is mcode asking past the capabilities it was given.
-                record_failure(Mcode, &handles.session_id, "unsupported_request", &method, line)
+                record_failure(reader.agent.harness, &handles.session_id, "unsupported_request", &method, line)
                     .await;
                 let _ = session.client.respond_err(
                     id,
@@ -2474,12 +2637,12 @@ async fn take_value(line: &str, value: Value, reader: &ReaderHandles) {
 
         Incoming::Response { id, matched: false } => {
             let detail = format!("no caller waiting on id {id}");
-            record_failure(Mcode, &reader.own.session_id, "stray_response", &detail, line).await;
+            record_failure(reader.agent.harness, &reader.own.session_id, "stray_response", &detail, line).await;
         }
         Incoming::Response { .. } => {}
 
         Incoming::Malformed => {
-            record_failure(Mcode, &reader.own.session_id, "parse", "not a JSON-RPC message", line)
+            record_failure(reader.agent.harness, &reader.own.session_id, "parse", "not a JSON-RPC message", line)
                 .await;
         }
     }
@@ -2545,13 +2708,55 @@ fn prompt_event(value: &Value) -> parser::McodeEvent {
 /// which is why this goes straight to the frontend rather than through
 /// [`crate::session::ingest`].
 async fn raise_permission(
+    harness: Harness,
     handles: &SessionHandles,
     app: &AppHandle,
+    client: &RpcClient,
     rpc_id: i64,
     params: Value,
 ) -> Result<()> {
     let request: parser::PermissionRequest =
         serde_json::from_value(params).context("unreadable permission request")?;
+
+    let tool = request.tool_call.name.clone().unwrap_or_else(|| "tool".to_string());
+    let raw_input = request.tool_call.raw_input.clone().unwrap_or(json!({}));
+    let agent = crate::agents::agent_of(&handles.session_id);
+
+    // A Mac shell command goes past the reviewer first, under the agent's mode;
+    // the safety floor it applies outranks every standing rule below.
+    let mut floor: Option<String> = None;
+    if let Some(agent) = &agent {
+        let offered: Vec<(String, String)> =
+            request.options.iter().map(|o| (o.option_id.clone(), o.kind.clone())).collect();
+        let once = offered.iter().find(|(_, kind)| kind == "allow_once").map(|(id, _)| id.clone());
+        let is_execute = request.tool_call.kind == parser::ToolKind::Execute;
+        if let Some(command) = crate::command_review::shell_command(is_execute, &raw_input) {
+            let mode = crate::command_review::mode_for(agent).await;
+            match crate::command_review::screen(mode, &command, std::path::Path::new(&handles.session_cwd)) {
+                crate::command_review::Screen::Allow(label) if once.is_some() => {
+                    client.respond(rpc_id, permissions::selected(once.as_deref().unwrap_or_default()))?;
+                    crate::command_review::note_auto(app, harness, handles, &rpc_id.to_string(), &request.tool_call.tool_call_id, &label).await;
+                    return Ok(());
+                }
+                crate::command_review::Screen::Floor(why) => floor = Some(why),
+                _ => {}
+            }
+        }
+
+        // A standing "always allow" the reader gave this agent answers on their
+        // behalf, with the allow-once option and no wider one. Logged in the inbox
+        // so what ran unasked can still be read.
+        if floor.is_none() {
+            if let Some(option_id) = crate::inbox::auto_allow(&agent.id, &tool, &raw_input, &offered) {
+                client.respond(rpc_id, permissions::selected(&option_id))?;
+                crate::inbox::record_auto(app, agent, &handles.session_id, &tool, &raw_input);
+                let label = crate::inbox::rule_for(&raw_input).map(|(_, l)| l).unwrap_or_else(|| "Always allowed".into());
+                crate::command_review::note_auto(app, harness, handles, &rpc_id.to_string(), &request.tool_call.tool_call_id, &label).await;
+                return Ok(());
+            }
+        }
+    }
+
     let (pending, options) = permissions::pending_for(&request, rpc_id);
 
     let request_id = rpc_id.to_string();
@@ -2561,7 +2766,7 @@ async fn raise_permission(
         .expect("pending permissions mutex poisoned")
         .insert(request_id.clone(), pending);
 
-    let input = request.tool_call.raw_input.clone().unwrap_or(json!({}));
+    let input = raw_input;
     let command = input.get("command").and_then(Value::as_str);
     let path = input
         .get("path")
@@ -2574,28 +2779,26 @@ async fn raise_permission(
     // conversation of it.
     let event = AgentEvent::mint(
         handles.session_id.clone(),
-        Mcode,
+        harness,
         handles.seq.fetch_add(1, Ordering::Relaxed),
         None,
         None,
         AgentEventPayload::PermissionRequested {
-        request_id,
+        request_id: request_id.clone(),
         tool_use_id: request.tool_call.tool_call_id.clone(),
-        tool_name: request
-            .tool_call
-            .name
-            .clone()
-            .unwrap_or_else(|| "tool".to_string()),
+        tool_name: tool.clone(),
         display_name: None,
         // The command or the path, which is what the card draws as the subject.
         // mcode's own `title` is the tool name repeated, which the row above
         // already says.
         title: command.map(str::to_string).or_else(|| path.clone()),
-        description: None,
+        description: floor.as_ref().map(|why| format!("Safety check: {why}.")),
         input,
         blocked_path: path,
-        decision_reason: None,
-        decision_reason_type: None,
+        decision_reason: floor.clone(),
+        // The card reads this to leave "Always allow this" off: no rule may
+        // stand in for a floor that tripped.
+        decision_reason_type: floor.as_ref().map(|_| "safetyCheck".to_string()),
         // Main-thread only: mcode files a subagent's request through the same
         // channel with no field saying so, and a card that claimed to be a
         // child's would be the one thing worse than saying nothing.
@@ -2605,6 +2808,25 @@ async fn raise_permission(
     );
 
     app.emit("agent_event", &event)?;
+
+    // After the card, so the two appear together; the inbox row is the same
+    // request seen from the Inbox page, and a decision in either settles both.
+    if let (Some(agent), AgentEventPayload::PermissionRequested { title, input, options, .. }) =
+        (&agent, &event.payload)
+    {
+        crate::inbox::push_approval(
+            app,
+            agent,
+            crate::inbox::ApprovalRequest {
+                session_id: &handles.session_id,
+                request_id: &request_id,
+                tool: &tool,
+                title: title.as_deref(),
+                input,
+                options,
+            },
+        );
+    }
     Ok(())
 }
 
@@ -2621,6 +2843,7 @@ async fn raise_permission(
 /// form's steps are only in order in the bytes — see
 /// [`parser::ElicitationEnvelope`].
 async fn raise_question(
+    harness: Harness,
     handles: &SessionHandles,
     app: &AppHandle,
     rpc_id: i64,
@@ -2648,7 +2871,7 @@ async fn raise_question(
 
     let event = AgentEvent::mint(
         handles.session_id.clone(),
-        Mcode,
+        harness,
         handles.seq.fetch_add(1, Ordering::Relaxed),
         None,
         None,
@@ -2675,7 +2898,7 @@ mod coalesce_tests {
         AgentEvent {
             id: format!("e{seq}"),
             session_id: "s".into(),
-            harness: Mcode,
+            harness: Harness::Mcode,
             seq,
             ts: format!("t{seq}"),
             turn_id: None,
@@ -2906,6 +3129,7 @@ mod route_tests {
         let stdin = child.stdin.take().expect("stdin");
 
         Arc::new(Agent {
+            harness: Harness::Mcode,
             project: project.to_string(),
             process: AsyncMutex::new(None),
             client: RpcClient::new(stdin),
@@ -3032,6 +3256,7 @@ mod route_tests {
         let stdin = cat.stdin.take().expect("stdin");
 
         let held = Arc::new(Agent {
+            harness: Harness::Mcode,
             project: "/retract-hands-back".to_string(),
             process: AsyncMutex::new(Some(cat)),
             client: RpcClient::new(stdin),
