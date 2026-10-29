@@ -83,8 +83,16 @@ pub fn launch_gate(harness: Harness) -> Arc<tokio::sync::Mutex<()>> {
 /// Every model the agent offers, from the last reading or a fresh probe.
 pub async fn all(harness: Harness) -> Vec<Model> {
     let key = harness.wire_name();
-    if let Some(cached) = CACHE.peek(&key) {
+    // Any reading at all is served as it is, however old: every session's reply
+    // restates the list (`remember_configs`), so it renews itself as agents run,
+    // and a probe is a whole agent started just to ask — measured at 7–10s on
+    // Claude, with every park held behind it on the gate below.
+    if let Some(cached) = CACHE.peek_any(&key) {
         return cached;
+    }
+    if let Some(saved) = saved(&key) {
+        CACHE.insert(&key, saved.clone());
+        return saved;
     }
 
     // Behind whoever is starting this agent, then looked at again: the one that
@@ -97,7 +105,7 @@ pub async fn all(harness: Harness) -> Vec<Model> {
 
     match probe(harness).await {
         Ok(models) if !models.is_empty() => {
-            CACHE.insert(&key, models.clone());
+            store(&key, &models);
             models
         }
         // An unreadable probe is not a reason to draw nothing: the reader still
@@ -128,7 +136,7 @@ pub fn find_cached(harness: Harness, id: &ModelId) -> Option<Model> {
         return None;
     }
     CACHE
-        .peek(&harness.wire_name())?
+        .peek_any(&harness.wire_name())?
         .into_iter()
         .find(|m| &m.id == id)
 }
@@ -136,6 +144,42 @@ pub fn find_cached(harness: Harness, id: &ModelId) -> Option<Model> {
 /// Drops the cached answer, so the next read probes again.
 pub fn forget() {
     CACHE.forget();
+    if let Some(path) = saved_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Where the last list each agent stated is kept between runs, so the first
+/// picker and the first park after a launch start no agent just to ask.
+fn saved_path() -> Option<std::path::PathBuf> {
+    // Tests feed fixture lists through `remember_configs`; they must not land in the reader's home.
+    if cfg!(test) {
+        return None;
+    }
+    Some(std::env::home_dir()?.join(".hz").join("model-lists.json"))
+}
+
+fn saved_lists() -> HashMap<String, Vec<Model>> {
+    saved_path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn saved(key: &str) -> Option<Vec<Model>> {
+    saved_lists().remove(key).filter(|m| !m.is_empty())
+}
+
+/// Keeps a list in memory and on disk. The disk write is best-effort: losing it
+/// costs one probe on the next launch, nothing more.
+fn store(key: &str, models: &[Model]) {
+    CACHE.insert(key, models.to_vec());
+    let Some(path) = saved_path() else { return };
+    let mut lists = saved_lists();
+    lists.insert(key.to_string(), models.to_vec());
+    if let Ok(bytes) = serde_json::to_vec(&lists) {
+        let _ = std::fs::write(path, bytes);
+    }
 }
 
 /// Takes the list off a session's own `configOptions`.
@@ -156,7 +200,7 @@ pub fn remember_configs(harness: Harness, configs: &ConfigOptions) {
     if models.is_empty() {
         return;
     }
-    CACHE.insert(&harness.wire_name(), models);
+    store(&harness.wire_name(), &models);
 }
 
 /// The models a session's own `configOptions` state.

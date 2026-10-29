@@ -2,8 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { getCurrentWebview, type Webview } from "@tauri-apps/api/webview";
 import { ArrowUp, CornerDownLeft, Paperclip, Square, X } from "lucide-react";
 
-import FormatBar from "@/components/composer/FormatBar";
-import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
 import AttachmentTray from "@/components/composer/AttachmentTray";
 import FileMentionMenu from "@/components/composer/FileMentionMenu";
 import MentionMenu, { type MentionRow } from "@/components/composer/MentionMenu";
@@ -106,9 +104,6 @@ type ChatInputProps = {
   note?: string;
   /// Above the card while something is under way: who is working, and a stop.
   status?: ReactNode;
-  /// Stands in the empty composer where the wordmark does — who the chat is
-  /// with, when it is with someone.
-  hero?: ReactNode;
   /// Replaces the prompt box's own placeholder, for a chat with a name to say.
   placeholder?: string;
   /// The dictate button and, while recording, the level and its two buttons.
@@ -257,7 +252,6 @@ export default function ChatInput({
   workingAgents = NO_WORKING,
   note,
   status,
-  hero,
   placeholder: placeholderOverride,
   dictation,
   dictating = false,
@@ -291,21 +285,6 @@ export default function ChatInput({
   // textarea otherwise puts the caret at the end, which is wrong whenever the
   // completed command has arguments after it.
   const pendingCaretRef = useRef<number | null>(null);
-
-  /// Applies a mark from the formatting row to the selection, then puts the
-  /// selection back on what it marked so a second press can undo it.
-  const format = (kind: FormatKind) => {
-    const el = textareaRef.current;
-    if (!el) return;
-
-    const edit = applyFormat(message, el.selectionStart, el.selectionEnd, kind);
-    setMessage(edit.text);
-    setCaret(edit.end);
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(edit.start, edit.end);
-    });
-  };
 
   const [recent, recordCommand] = useRecentCommands();
 
@@ -705,7 +684,7 @@ export default function ChatInput({
   /// copies of a submit button is two things to keep in step, and the one that
   /// is wrong is the one nobody is looking at.
   const controls = (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="ml-auto flex shrink-0 items-center gap-1">
       {dictation}
 
       {/* One button, two jobs, and what is typed decides which. Stopping is what
@@ -742,7 +721,7 @@ export default function ChatInput({
               // Default light the two tokens are the same value, so this says
               // nothing there; on that palette it is what makes Send the
               // branded control and leaves every other filled button dark.
-              className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none disabled:opacity-100"
+              className="ml-1 size-[30px] rounded-full bg-primary text-primary-foreground shadow-none transition-[background,color,transform] hover:bg-primary/90 not-disabled:scale-[1.04] disabled:bg-s3 disabled:text-ink4 disabled:opacity-100"
             >
               {/* Both icons are mounted and stacked in one grid cell, so the
                   swap is a transition rather than a remount — React would
@@ -849,16 +828,16 @@ export default function ChatInput({
   }
 
   return (
-    <div className="px-4 pb-4">
+    <div className="px-7 pt-1 pb-4">
       {/* **An ask card is not part of the prompt being composed.** It answers
           the agent, not the composer, and the card is a `form` of its own — put
           inside this one it is nested markup, and a submit in it bubbles to the
           form below, which reads as the reader pressing send. Drawn above the
           form at the form's own measure, so the two still line up. */}
-      {ask && <div className="mx-auto max-w-3xl">{ask}</div>}
+      {ask && <div className="mx-auto max-w-[880px]">{ask}</div>}
 
       <form
-        className="mx-auto w-full max-w-3xl"
+        className="mx-auto w-full max-w-[880px]"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -868,14 +847,13 @@ export default function ChatInput({
             edge like the toolbar and the text below it. Height-sized so the
             mark scales with the layout rather than with a viewBox nobody
             reading this file should have to hold in their head. */}
-        {isNewTask &&
-          (hero ?? (
-            <div
-              aria-hidden
-              style={WORDMARK_MASK}
-              className="mb-4 h-10 w-full max-w-30 bg-current text-foreground/10"
-            />
-          ))}
+        {isNewTask && (
+          <div
+            aria-hidden
+            style={WORDMARK_MASK}
+            className="mb-4 h-10 w-full max-w-30 bg-current text-foreground/10"
+          />
+        )}
 
         {notice}
 
@@ -1007,8 +985,10 @@ export default function ChatInput({
               // shadow: a shadow under a dark card falls on something already
               // darker than itself, and the card is glass there, so being lighter
               // than the page does not draw the box on its own.
-              (!isNewTask || recipient !== undefined) &&
-                "border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl",
+              recipient !== undefined
+                ? "rounded-[24px] bg-s1 shadow-[inset_0_0_0_1px_var(--line2),0_1px_2px_rgba(0,0,0,.12)] focus-within:bg-s2 focus-within:shadow-[inset_0_0_0_1px_var(--line3),0_0_0_4px_rgba(255,255,255,.04),0_8px_24px_rgba(0,0,0,.18)]"
+                : !isNewTask &&
+                  "border border-edge-surface bg-composer shadow-(--shadow-surface) backdrop-blur-xl",
             )}
           >
             {/* Covers the card rather than replacing anything, so the text and
@@ -1053,12 +1033,16 @@ export default function ChatInput({
             <div
               className={cn(
                 "flex items-end gap-1",
-                recipient !== undefined ? "px-4 pt-3.5 pb-2" : "py-3",
+                // Without a recipient the box is two rows: the text, then the
+                // tool row (attach, model, mic, send) under it. `order-first` on
+                // the text and `basis-full` by width keep that fixed, so the
+                // tool row never moves with the text's line count.
+                recipient !== undefined ? "items-center px-2.5" : "flex-wrap py-3",
                 recipient === undefined && (isNewTask ? "px-0" : "px-3"),
               )}
             >
-              {recipient === undefined && leading}
-              <div className="relative min-w-0 flex-1">
+              {leading}
+              <div className={cn("relative min-w-0", recipient === undefined ? "order-first w-full" : "flex-1")}>
                 <textarea
                   // Registered as well as held, so dictation can hand focus
                   // back from `App`, which has no route to this element.
@@ -1225,6 +1209,7 @@ export default function ChatInput({
                     "block w-full resize-none overflow-y-auto bg-transparent placeholder:text-muted-foreground focus:outline-none",
                     TEXT_BOX,
                     isNewTask ? "px-0" : "px-1",
+                    recipient !== undefined && "min-h-[44px] py-[10px]",
                     // Hands the glyphs to the overlay only while there is something
                     // to colour. Every other moment the textarea draws its own text
                     // as before, so the usual case keeps no dependency on the
@@ -1253,6 +1238,7 @@ export default function ChatInput({
                       "pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-foreground",
                       TEXT_BOX,
                       isNewTask ? "px-0" : "px-1",
+                      recipient !== undefined && "py-[10px]",
                     )}
                   >
                     {segments.map((segment, i) => {
@@ -1280,12 +1266,8 @@ export default function ChatInput({
                 )}
               </div>
 
-              {recipient === undefined && controls}
+              {controls}
             </div>
-
-            {recipient !== undefined && (
-              <FormatBar recipient={recipient} onFormat={format} extra={leading} end={controls} />
-            )}
           </div>
         </div>
 
@@ -1303,7 +1285,7 @@ export default function ChatInput({
             legend saying so. Two Enter legends at once, one of them untrue — and
             the menu, not its rows, because a send hint under an open picker reads
             as belonging to the list. */}
-        <div className="flex items-center gap-1 pt-1.5">
+        <div className={cn("flex items-center gap-1", (isNewTask || note || toolbar) && "pt-1.5")}>
           {note && !menuOpen && (
             <span className="min-w-0 truncate text-ui text-muted-foreground/60">{note}</span>
           )}

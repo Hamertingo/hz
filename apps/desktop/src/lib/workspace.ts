@@ -43,7 +43,7 @@ export const DEFAULT_WORKSPACE_DEFAULTS: WorkspaceDefaults = {
   tidy: false,
   tidyTime: "03:00",
   sharedMemory: false,
-  handoffs: 8,
+  handoffs: 4,
   waitMins: 10,
   onLimit: "ask",
   fallbackHarness: "codex-acp",

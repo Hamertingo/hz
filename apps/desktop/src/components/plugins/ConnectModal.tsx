@@ -128,7 +128,7 @@ export default function ConnectModal({
         <DialogPrimitive.Content
           aria-describedby={undefined}
           onInteractOutside={ignoreToaster}
-          className="fixed top-1/2 left-1/2 z-70 flex max-h-[calc(100vh-48px)] w-[min(500px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-y-auto rounded-[18px] bg-(--pop) px-6 pt-0 pb-[18px] text-ink shadow-(--shadow) ring-1 ring-line2 backdrop-blur-xl outline-none data-open:animate-pop-in"
+          className="fixed top-1/2 left-1/2 z-70 flex max-h-[calc(100vh-48px)] w-[min(500px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-y-auto rounded-(--r4) bg-(--sheet) px-6 pt-0 pb-[18px] text-ink shadow-(--shadow) ring-1 ring-line2 backdrop-blur-xl outline-none data-open:animate-pop-in"
         >
           <PluginBand face={entry} color={entry.color} height={92} markSize={56} className="-mx-6 rounded-t-[18px]" />
           <div className="mt-[18px]">

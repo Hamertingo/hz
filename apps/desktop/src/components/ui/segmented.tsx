@@ -29,7 +29,7 @@ function Segmented<T extends string>({
       role="radiogroup"
       aria-label={label}
       data-slot="segmented"
-      className={cn("inline-flex gap-0.5 rounded-[9px] bg-s2 p-0.5", className)}
+      className={cn("inline-flex gap-px rounded-[8px] bg-s2 p-0.5", className)}
       onKeyDown={(e) => {
         const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0
         if (!step) return
@@ -51,10 +51,10 @@ function Segmented<T extends string>({
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(o.value)}
             className={cn(
-              "inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[7px] px-2.5 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+              "inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-[6px] px-2.5 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
               on
-                ? "bg-foreground/10 text-ink shadow-[0_1px_2px_rgb(0_0_0/25%)]"
-                : "text-ink3 hover:text-ink2"
+                ? "bg-foreground/12 text-ink"
+                : "text-ink2 hover:text-ink"
             )}
           >
             {o.label}

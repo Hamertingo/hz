@@ -1,103 +1,62 @@
-import { Clock } from "lucide-react";
-
-import AgentTile from "@/components/AgentTile";
-import type { RosterAgent } from "@/lib/roster";
 import { cn } from "@/lib/utils";
 import type { Routine } from "@/types/events";
 import type { WeekDay, WeekMark } from "@/lib/routines";
 
-/// One face on a day: the agent that ran, or will run. Faded ones are still to
-/// come, a red dot marks a failure, and a run that just finished pops in.
-function Mark({
-  mark,
-  routine,
-  agent,
-  onOpen,
-}: {
-  mark: WeekMark;
-  routine: Routine | undefined;
-  agent: RosterAgent | undefined;
-  onOpen: (mark: WeekMark) => void;
-}) {
-  const time = new Date(mark.at);
-  const hhmm = `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
-  return (
-    <button
-      type="button"
-      title={`${routine?.name ?? "Routine"} · ${hhmm}`}
-      aria-label={`${routine?.name ?? "Routine"} at ${hhmm}, ${mark.state === "next" ? "coming up" : mark.state === "fail" ? "failed" : "ran"}`}
-      onClick={() => onOpen(mark)}
-      className={cn(
-        "relative grid size-5 cursor-pointer place-items-center rounded-md transition-transform hover:scale-115 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-        mark.state === "next" && "opacity-40",
-        mark.fresh && "animate-routine-pop",
-      )}
-    >
-      {agent ? (
-        <AgentTile id={agent.id} kind={agent.kind} color={agent.color} size={20} />
-      ) : (
-        <span className="grid size-5 place-items-center rounded-md bg-s3 text-ink3">
-          <Clock className="size-3" />
-        </span>
-      )}
-      {mark.state === "fail" && (
-        <span className="absolute -top-0.5 -right-0.5 size-[7px] rounded-full bg-red shadow-[0_0_0_2px_var(--background)]" />
-      )}
-    </button>
-  );
-}
-
-/// The week as seven days, each holding the faces of the runs that happened and
-/// the ones still to come.
+/// The week as seven days, each a date with a dot for every run that happened or is still to
+/// come. A day selects the routines that touch it; a dot opens that run.
 export default function WeekStrip({
   days,
   routines,
-  agents,
+  selected,
+  onSelect,
   onOpen,
 }: {
   days: WeekDay[];
   routines: Routine[];
-  agents: RosterAgent[];
+  selected: string | null;
+  onSelect: (date: string | null) => void;
   onOpen: (mark: WeekMark) => void;
 }) {
   return (
-    <>
-      <div className="grid grid-cols-7 gap-1.5">
-        {days.map((d) => (
+    <div className="mb-3.5 grid grid-cols-7 gap-1.5">
+      {days.map((d) => {
+        const on = selected === d.date;
+        return (
           <div
             key={d.date}
+            role="button"
+            tabIndex={0}
+            aria-pressed={on}
+            onClick={() => onSelect(on ? null : d.date)}
+            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelect(on ? null : d.date)}
             className={cn(
-              "relative min-h-24 rounded-(--r3) px-2.5 pt-2.5 pb-3 shadow-[inset_0_0_0_1px_var(--line)]",
-              d.today ? "bg-s2 shadow-[inset_0_0_0_1px_var(--line3)]" : "bg-s1",
+              "cursor-pointer rounded-(--r2) py-2 text-center text-[11.5px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+              on ? "bg-ink text-background" : "text-ink3 shadow-[inset_0_0_0_1px_var(--line)] hover:bg-s1",
             )}
           >
-            <div className="flex items-baseline gap-1.5 text-[11.5px] font-medium text-ink3">
-              {d.label}
-              <b className={cn("text-[15px] font-semibold tracking-[-0.01em]", d.today ? "text-ink" : "text-ink2")}>{d.day}</b>
-              {d.today && <span className="ml-auto rounded-full bg-s3 px-1.5 text-[10.5px] font-normal text-ink">Today</span>}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1">
-              {d.marks.map((m, i) => (
-                <Mark
+            <span className={cn("leading-normal", d.today && (on ? "text-background" : "font-medium text-ink"))}>{d.today ? "Today" : d.label}</span>
+            <b className={cn("mt-px block text-base leading-normal font-medium", on ? "text-background" : "text-ink")}>{d.day}</b>
+            <div className="mt-1 flex h-1 justify-center gap-0.5">
+              {d.marks.slice(0, 4).map((m, i) => (
+                <button
                   key={`${m.routineId}-${m.at}-${i}`}
-                  mark={m}
-                  routine={routines.find((r) => r.id === m.routineId)}
-                  agent={agents.find((a) => a.id === m.agentId)}
-                  onOpen={onOpen}
+                  type="button"
+                  aria-label={`${routines.find((r) => r.id === m.routineId)?.name ?? "Routine"}, ${m.state === "next" ? "coming up" : m.state === "fail" ? "failed" : "ran"}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpen(m);
+                  }}
+                  className={cn(
+                    "size-1 cursor-pointer rounded-full p-0 outline-none",
+                    m.state === "fail" ? "bg-red" : on ? "bg-background" : "bg-ink3",
+                    m.state === "next" && "opacity-50",
+                  )}
                 />
               ))}
             </div>
           </div>
-        ))}
-      </div>
-      <div className="mt-2.5 flex gap-3.5 text-xs text-ink4">
-        <span>Each face is a run</span>
-        <span>Faded ones are coming up</span>
-        <span className="flex items-center gap-1.5">
-          <i className="size-1.5 rounded-full bg-red" />
-          failed
-        </span>
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
 }

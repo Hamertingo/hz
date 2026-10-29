@@ -17,9 +17,9 @@ export default function AttachButton({ onAttach }: { onAttach: () => void }) {
           size="icon-sm"
           onClick={onAttach}
           aria-label="Attach files"
-          className="shrink-0 text-muted-foreground"
+          className="size-[30px] shrink-0 rounded-lg text-ink3 hover:bg-s3 hover:text-ink [&_svg]:size-[17px]"
         >
-          <Plus />
+          <Plus strokeWidth={1.75} />
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top">

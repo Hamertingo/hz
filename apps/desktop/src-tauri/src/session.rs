@@ -684,6 +684,14 @@ impl SessionManager {
             }
         }
 
+        // An agent on the light-and-strong brain gets this prompt's model and
+        // effort here, so the in-place switch below carries it.
+        let (model, effort) = if harness == Harness::Mcode {
+            (model, effort)
+        } else {
+            crate::kit_work::pick(session_id, agent_name, harness, prompt, model, effort).await
+        };
+
         let model_spec = crate::harness::mcode::models::find(harness, &model).await;
 
         // A model belongs to exactly one harness, and the pair reaches here from
@@ -2691,6 +2699,7 @@ async fn deliver_prompt(
         .unwrap_or_default();
     let prompt_for_model = format!("{quote}{}", prepared.text);
 
+    let by_reader = from.is_none();
     let payload = AgentEventPayload::UserMessage {
         text: text.clone(),
         images: prepared
@@ -2726,9 +2735,10 @@ async fn deliver_prompt(
     app.emit("agent_event", &agent_event)?;
 
     // So a teammate's ask queued behind a turn learns when its own prompt starts one.
-    crate::team::observe_user(&handles.session_id, &text);
+    crate::team::observe_user(&handles.session_id, &text, by_reader);
     crate::routines::observe_user(&handles.session_id, &text);
     crate::channels::observe_user(&handles.session_id, &text);
+    crate::kit_work::prompt_logged(&handles.session_id, &text, by_reader);
 
     let mut events_guard = handles.events.lock().await;
     events_guard.push(agent_event.clone());
@@ -2798,12 +2808,16 @@ pub async fn ingest(ctx: &Ingest<'_>, mut agent_event: AgentEvent, app: &AppHand
         *head = crate::git::snapshot_tree(&ctx.handles.session_cwd).await;
     }
 
+    // Timings, an estimated cost where the agent named none, the digest and the
+    // routine offer. First, so the budget below counts the estimate.
+    crate::kit_work::observe(&ctx.handles.session_id, &mut agent_event, app).await;
+
     // A teammate may be waiting on this turn's answer.
-    if let AgentEventPayload::TurnCompleted { status, final_text, duration_ms, .. } = &agent_event.payload {
+    if let AgentEventPayload::TurnCompleted { status, stop_reason, final_text, duration_ms, .. } = &agent_event.payload {
         // A channel thread's turn is the channel's errand, like a teammate's ask:
         // nothing in the reader's inbox.
         let in_channel = crate::channels::observe_completed(&ctx.handles.session_id, status, final_text.as_deref());
-        let answered = crate::team::observe_completed(&ctx.handles.session_id, status, final_text.as_deref()) || in_channel;
+        let answered = crate::team::observe_completed(&ctx.handles.session_id, status, stop_reason.as_deref(), final_text.as_deref()) || in_channel;
         crate::inbox::on_turn_completed(app, &ctx.handles.session_id, status, final_text.as_deref(), *duration_ms, answered).await;
     }
 

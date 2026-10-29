@@ -1,4 +1,5 @@
 import React from "react";
+import { installDevMock } from "./devMock";
 import ReactDOM from "react-dom/client";
 import "streamdown/styles.css";
 import App from "./App";
@@ -13,6 +14,8 @@ import { startUiScale } from "@/hooks/useUiScale";
 
 // Before the first render, since every render below reads one of these keys —
 // and before the effects, which write them. See the function for what it moves.
+if (import.meta.env.DEV) installDevMock();
+
 adoptPreviousStorageKeys();
 
 // A stored zoom is applied here rather than from an effect, for the font sizes'

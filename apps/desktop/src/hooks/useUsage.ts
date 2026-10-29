@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { kit } from "@/lib/kit";
 import { tracked as slow } from "@/lib/slow";
 import type { CliInfo, CliLimits, CliProgress, SpendOverview } from "@/types/events";
 import { listen } from "@tauri-apps/api/event";
@@ -127,5 +128,12 @@ export function useClis() {
     }
   };
 
-  return { byCli, reading, runs, checking, check };
+  // The registry check behind `kit_engine_updates` runs at most every six hours and hands what it
+  // finds to the rows, so a newer version shows with its Update button without pressing Check.
+  const autoCheck = useCallback(async () => {
+    const found = await kit.engineUpdates().catch(() => []);
+    if (found.length) for (const h of CLI_ORDER) void reloadOne(h);
+  }, [reloadOne]);
+
+  return { byCli, reading, runs, checking, check, autoCheck };
 }

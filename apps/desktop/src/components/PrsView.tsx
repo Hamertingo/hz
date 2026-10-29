@@ -2,16 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   CircleCheck,
-  CircleX,
   ExternalLink,
   GitMerge,
   GitPullRequest,
-  GitPullRequestDraft,
   Plus,
   RefreshCw,
   TriangleAlert,
   Undo2,
-  type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type MutableRefObject, type ReactNode } from "react";
 
@@ -19,7 +16,6 @@ import AgentTile from "@/components/AgentTile";
 import Avatar from "@/components/Avatar";
 import { diffClass } from "@/components/chat/ChatSheets";
 import { Skeleton, SkeletonRegion } from "@/components/ui/skeleton";
-import Spinner from "@/components/ui/spinner";
 import PrPanel from "@/components/PrPanel";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -29,13 +25,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PageSheet } from "@/components/ui/page-sheet";
 import { Sheet } from "@/components/ui/sheet";
-import { toast } from "@/components/ui/toast";
 import Tab from "@/components/Tab";
+import { toast } from "@/components/ui/toast";
 import { prKey, describe as describeError, usePrList, type PrRow } from "@/hooks/usePrList";
 import { runPrAction, usePullRequest, type PrAction } from "@/hooks/usePullRequest";
-import { relativeTime } from "@/lib/format";
-import { attributeAgent, boardLanes, type AgentBranch, type PrLane } from "@/lib/prBoard";
+import { attributeAgent, type AgentBranch } from "@/lib/prBoard";
 import { prUnavailableText } from "@/lib/unavailable";
 import { useRoster, type RosterAgent } from "@/lib/roster";
 import { cn } from "@/lib/utils";
@@ -80,7 +76,7 @@ export default function PrsView({
 
   /// `all` is the state the launch prefetch fills, so the board costs no read
   /// the app was not already paying for. Only open rows reach the lanes.
-  const { items, viewer, error, failed, loading, refresh, invalidate } = usePrList(
+  const { items, error, failed, loading, refresh, invalidate } = usePrList(
     cwds,
     active,
     "all",
@@ -99,11 +95,16 @@ export default function PrsView({
   }, [items, agentBranches]);
 
   const open = useMemo(() => items.filter((pr) => pr.state === "OPEN"), [items]);
+  const onBoard = useMemo(() => items.filter((pr) => pr.state === "OPEN" || pr.state === "MERGED"), [items]);
   const shown = useMemo(
-    () => (agentFilter === "all" ? open : open.filter((pr) => agentOf.get(prKey(pr)) === agentFilter)),
-    [open, agentFilter, agentOf],
+    () => (agentFilter === "all" ? onBoard : onBoard.filter((pr) => agentOf.get(prKey(pr)) === agentFilter)),
+    [onBoard, agentFilter, agentOf],
   );
-  const lanes = useMemo(() => boardLanes(shown, viewer), [shown, viewer]);
+  const lanes = useMemo(() => {
+    const out: Record<BoardLane, PrRow[]> = { open: [], review: [], merged: [] };
+    for (const pr of shown) out[laneOf(pr)].push(pr);
+    return out;
+  }, [shown]);
 
   // The faces in the filter row: agents that have at least one open pull request.
   const authors = useMemo(() => {
@@ -127,86 +128,80 @@ export default function PrsView({
   // the page having nothing to list. Said in quiet words, not as a failure.
   if (!cwds.length || error?.kind === "no_remote") {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
+      <PageSheet active={active} title="Pull requests" onClose={onClose}>
         <Empty>
           {error?.kind === "no_remote"
             ? prUnavailableText(error, cwds[0])
             : "Attach a project with a GitHub remote to see its pull requests here."}
         </Empty>
-      </div>
+      </PageSheet>
     );
   }
 
   const firstRead = loading && !items.length;
 
   const board = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex shrink-0 flex-col gap-2.5 border-b border-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h2 className="flex items-center gap-2 text-ui font-medium">
-            <GitPullRequest className="size-4" /> Pull requests
-          </h2>
-          <Button variant="ghost" size="sm" onClick={onClose} className="ml-auto cursor-pointer">
-            Close
-          </Button>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <AuthorChip label="All" count={open.length} active={agentFilter === "all"} onClick={() => setAgentFilter("all")} />
-          {authors.map(({ agent, count }) => (
-            <AuthorChip
-              key={agent.id}
-              label={agent.name}
-              count={count}
-              active={agentFilter === agent.id}
-              onClick={() => setAgentFilter(agent.id)}
-              face={<AgentTile id={agent.id} kind={agent.kind} color={agent.color} size={16} />}
-            />
-          ))}
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-auto cursor-pointer text-muted-foreground"
-            onClick={refresh}
-            disabled={loading}
-          >
-            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} /> Refresh
-          </Button>
-        </div>
-      </header>
+    <PageSheet
+      active={active}
+      title="Pull requests"
+      onClose={onClose}
+      actions={
+        <Button variant="outline" onClick={refresh} disabled={loading}>
+          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} /> Refresh
+        </Button>
+      }
+    >
+      <div className="flex min-h-0 flex-1 flex-col px-5 pt-4 pb-5">
+        {authors.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            <AuthorChip label="All" count={onBoard.length} active={agentFilter === "all"} onClick={() => setAgentFilter("all")} />
+            {authors.map(({ agent, count }) => (
+              <AuthorChip
+                key={agent.id}
+                label={agent.name}
+                count={count}
+                active={agentFilter === agent.id}
+                onClick={() => setAgentFilter(agent.id)}
+                face={<AgentTile id={agent.id} kind={agent.kind} color={agent.color} size={16} />}
+              />
+            ))}
+          </div>
+        )}
 
-      {error && (
-        <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-ui text-destructive">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0">{prUnavailableText(error, cwds[0])}</span>
-        </div>
-      )}
-      {failed && (
-        <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-border px-3 py-2 text-ui text-muted-foreground">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0">
-            {failed.count} of {cwds.length} repositories could not be read — {failed.detail}
-          </span>
-        </div>
-      )}
+        {error && (
+          <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-ui text-destructive">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <span className="min-w-0">{prUnavailableText(error, cwds[0])}</span>
+          </div>
+        )}
+        {failed && (
+          <div className="mb-3 flex items-start gap-2 rounded-lg border border-border px-3 py-2 text-ui text-muted-foreground">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <span className="min-w-0">
+              {failed.count} of {cwds.length} repositories could not be read — {failed.detail}
+            </span>
+          </div>
+        )}
 
-      {firstRead ? (
-        <BoardSkeleton />
-      ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3.5 overflow-hidden p-5 md:grid-cols-3">
-          {LANES.map((lane) => (
-            <Lane key={lane.key} title={lane.title} sub={lane.sub} empty={lane.empty} count={lanes[lane.key].length}>
-              {lanes[lane.key].map((pr) => (
-                <PrCard
-                  key={prKey(pr)}
-                  pr={pr}
-                  agent={rosterAgent(roster.agents, agentOf.get(prKey(pr)))}
-                  onOpen={() => setSheetKey(prKey(pr))}
-                />
-              ))}
-            </Lane>
-          ))}
-        </div>
-      )}
+        {firstRead ? (
+          <BoardSkeleton />
+        ) : (
+          <div className="grid min-h-0 flex-1 grid-cols-3 gap-2.5 max-[760px]:grid-cols-1">
+            {LANES.map((lane) => (
+              <Lane key={lane.key} dot={lane.dot} title={lane.title} empty={lane.empty} count={lanes[lane.key].length}>
+                {lanes[lane.key].map((pr) => (
+                  <PrCard
+                    key={prKey(pr)}
+                    pr={pr}
+                    agent={rosterAgent(roster.agents, agentOf.get(prKey(pr)))}
+                    onOpen={() => setSheetKey(prKey(pr))}
+                  />
+                ))}
+              </Lane>
+            ))}
+          </div>
+        )}
+      </div>
 
       <span className="sr-only" role="status">
         {open.length} open pull requests
@@ -224,17 +219,26 @@ export default function PrsView({
           onAskAgent={onAskAgent}
         />
       )}
-    </div>
+    </PageSheet>
   );
 
   return board;
 }
 
-const LANES: { key: PrLane; title: string; sub: string; empty: string }[] = [
-  { key: "you", title: "Needs you", sub: "Review or approve", empty: "Nothing waiting on you" },
-  { key: "work", title: "Agents working", sub: "Still being written or checked", empty: "No agent is mid-PR" },
-  { key: "ready", title: "Ready to merge", sub: "Approved, checks green", empty: "Nothing ready yet" },
+type BoardLane = "open" | "review" | "merged";
+
+const LANES: { key: BoardLane; title: string; empty: string; dot: string }[] = [
+  { key: "open", dot: "bg-blue", title: "Open", empty: "Nothing here." },
+  { key: "review", dot: "bg-amber", title: "In review", empty: "Nothing here." },
+  { key: "merged", dot: "bg-green", title: "Merged", empty: "Nothing here." },
 ];
+
+/// Open and waiting for anyone to look; open with a review asked or given; settled. The board
+/// is the picture of where each pull request is in its life, not of whose move it is.
+function laneOf(pr: PrListItem): BoardLane {
+  if (pr.state === "MERGED") return "merged";
+  return pr.reviewDecision || pr.reviewRequests.length > 0 ? "review" : "open";
+}
 
 function rosterAgent(agents: readonly RosterAgent[], id: string | undefined): RosterAgent | null {
   if (!id) return null;
@@ -271,29 +275,26 @@ function AuthorChip({
 }
 
 function Lane({
+  dot,
   title,
-  sub,
   empty,
   count,
   children,
 }: {
+  dot: string;
   title: string;
-  sub: string;
   empty: string;
   count: number;
   children: ReactNode;
 }) {
-  const none = count === 0;
   return (
-    <section className="flex min-h-0 flex-col rounded-xl border border-border bg-card/40 px-3 pt-3.5 pb-3">
-      <div className="flex items-center gap-2 px-1">
-        <b className="text-ui font-semibold">{title}</b>
-        <span className="tabular-nums text-ui text-muted-foreground">{count}</span>
-      </div>
-      <div className="px-1 pt-0.5 pb-3 text-ui text-muted-foreground">{sub}</div>
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {none ? <div className="px-2.5 py-7 text-center text-ui text-muted-foreground">{empty}</div> : children}
-      </div>
+    <section className="flex min-h-0 flex-col gap-1.5 overflow-y-auto rounded-(--r3) bg-s1 px-2 pt-2.5 pb-2 scrollbar-none">
+      <h4 className="flex items-center gap-[7px] px-1.5 pt-0.5 pb-1 text-[12.5px] leading-normal font-medium">
+        <i aria-hidden className={cn("size-1.5 rounded-full", dot)} />
+        {title}
+        <i className="font-normal not-italic text-ink4">{count}</i>
+      </h4>
+      <div className="flex flex-col gap-2">{count === 0 ? <div className="px-2.5 py-7 text-center text-[12.5px] text-ink3">{empty}</div> : children}</div>
     </section>
   );
 }
@@ -305,15 +306,14 @@ function BoardSkeleton() {
   return (
     <SkeletonRegion
       label="Reading this repository's pull requests"
-      className="grid min-h-0 flex-1 grid-cols-1 gap-3.5 overflow-hidden p-5 md:grid-cols-3"
+      className="grid min-h-0 flex-1 grid-cols-3 gap-2.5"
     >
       {LANES.map((lane, l) => (
-        <section key={lane.key} className="flex min-h-0 flex-col rounded-xl border border-border bg-card/40 px-3 pt-3.5 pb-3">
+        <section key={lane.key} className="flex min-h-0 flex-col rounded-[13px] px-3 pt-3.5 pb-3 shadow-[inset_0_0_0_1px_var(--line)]">
           <div className="flex items-center gap-2 px-1">
             <b className="text-ui font-semibold">{lane.title}</b>
           </div>
-          <div className="px-1 pt-0.5 pb-3 text-ui text-muted-foreground">{lane.sub}</div>
-          <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2">
             {Array.from({ length: 3 - l }, (_, i) => (
               <div key={i} className="rounded-lg bg-background px-3.5 py-3 shadow-[inset_0_0_0_1px_var(--color-border)]">
                 <div className="flex items-center gap-1.5">
@@ -344,90 +344,33 @@ function PrCard({
   agent: RosterAgent | null;
   onOpen: () => void;
 }) {
-  const tint = agent?.color ?? "var(--muted-foreground)";
-  const Icon: LucideIcon = pr.isDraft ? GitPullRequestDraft : GitPullRequest;
+  const ck = pr.checksState === "RUNNING" ? ["Running", "bg-amber"] : pr.checksState === "FAILING" ? ["Failing", "bg-red"] : ["Passing", "bg-green"];
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="relative w-full cursor-pointer overflow-hidden rounded-lg bg-background px-3.5 py-3 text-left shadow-[inset_0_0_0_1px_var(--color-border)] transition-colors hover:bg-sidebar-accent/40"
+      className="w-full cursor-pointer rounded-(--r2) bg-background px-3 py-[11px] text-left shadow-[inset_0_0_0_1px_var(--line)] transition-shadow outline-none hover:shadow-[inset_0_0_0_1px_var(--line2)] focus-visible:ring-2 focus-visible:ring-ring/50"
     >
-      <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 opacity-80" style={{ background: tint }} />
-      <div className="flex items-center gap-1.5 text-ui text-muted-foreground">
-        <Icon className="size-3.5" />
-        <span>
-          {pr.repo} #{pr.number}
-        </span>
-        {pr.isDraft && <Tag>Draft</Tag>}
-        {pr.reviewDecision === "CHANGES_REQUESTED" && <Tag tone="amber">Changes requested</Tag>}
-        <span className="ml-auto shrink-0 text-muted-foreground/70">{relativeTime(pr.createdAt)}</span>
-      </div>
-      <div className="mt-1.5 text-ui font-medium leading-snug">{pr.title}</div>
-      <div className="mt-2.5 flex items-center gap-2.5 text-xs text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5 text-foreground/80">
-          {agent ? (
-            <AgentTile id={agent.id} kind={agent.kind} color={agent.color} size={18} />
-          ) : (
-            <Avatar src={pr.avatar} name={pr.author} className="size-[18px]" />
-          )}
-          {agent ? agent.name : pr.author}
-        </span>
-        <span className="tabular-nums">
-          <b className="font-medium text-green">+{pr.additions}</b> <i className="not-italic text-red">−{pr.deletions}</i>
-        </span>
-        <span>
-          {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
-        </span>
-      </div>
-      <div className="mt-2.5 flex items-center border-t border-border pt-2.5">
-        <ChecksLine state={pr.checksState} />
-        {pr.reviewRequests.length > 0 && (
-          <span className="ml-auto flex -space-x-1">
-            {pr.reviewRequests.slice(0, 3).map((login) => (
-              <Avatar key={login} src={null} name={login} className="size-[18px] ring-2 ring-background" />
-            ))}
-          </span>
+      <span className="block text-[11.5px] leading-normal text-ink3">
+        {pr.repo} #{pr.number}
+        {pr.isDraft && <> · Draft</>}
+      </span>
+      <b className="mt-0.5 block text-[13px] leading-[1.4] font-medium">{pr.title}</b>
+      <div className="mt-[9px] flex items-center gap-2 text-[11.5px] leading-normal text-ink3">
+        {agent ? (
+          <AgentTile id={agent.id} kind={agent.kind} color={agent.color} shape={agent.shape} look={agent.look} photo={agent.photo} size={16} />
+        ) : (
+          <Avatar src={pr.avatar} name={pr.author} className="size-4" />
         )}
+        <span className="tabular-nums">
+          <b className="font-medium text-green">+{pr.additions}</b> <em className="not-italic text-red">−{pr.deletions}</em>
+        </span>
+        <span className="ml-auto inline-flex items-center gap-[5px]">
+          <i className={cn("size-1.5 rounded-full", ck[1])} />
+          {ck[0]}
+        </span>
       </div>
     </button>
-  );
-}
-
-function Tag({ children, tone }: { children: ReactNode; tone?: "amber" }) {
-  return (
-    <span
-      className={cn(
-        "rounded-full border border-border px-1.5 py-px text-[11px]",
-        tone === "amber" && "text-accent-command",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function ChecksLine({ state }: { state: PrListItem["checksState"] }) {
-  if (state === "RUNNING") {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Spinner className="size-3" />
-        Checks running
-      </span>
-    );
-  }
-  if (state === "FAILING") {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
-        <CircleX className="size-3.5" />
-        Checks failing
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-accent-add">
-      <CircleCheck className="size-3.5" />
-      Checks passing
-    </span>
   );
 }
 

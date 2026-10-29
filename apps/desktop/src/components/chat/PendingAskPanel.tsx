@@ -28,6 +28,7 @@ export default function PendingAskPanel({
   onAnswer,
   onCancelQuestion,
   autoFocus,
+  permissionsInChat = false,
 }: {
   asks: PendingAsk[];
   sessionId: string;
@@ -37,14 +38,17 @@ export default function PendingAskPanel({
   onCancelQuestion: (sessionId: string, requestId: string) => void;
   /// The composer's own pane, which is the one whose card may take the caret.
   autoFocus: boolean;
+  /// An agent's chat draws permission requests as cards in the transcript, so only its questions come here.
+  permissionsInChat?: boolean;
 }) {
-  if (!asks.length) return null;
+  const shown = permissionsInChat ? asks.filter((a) => a.type === "questions_asked") : asks;
+  if (!shown.length) return null;
 
   return (
     // The gap is the panel's own, so the composer only has to place it: a card
     // that sits flush against the composer below it reads as part of the box.
     <div className="mb-2 flex flex-col gap-2">
-      {asks.map((ask) =>
+      {shown.map((ask) =>
         ask.type === "questions_asked" ? (
           <QuestionRequest
             key={ask.requestId}

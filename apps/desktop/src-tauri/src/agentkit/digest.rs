@@ -68,6 +68,32 @@ pub fn clean_digest(out: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
+/// The opening sentence of a message, markdown marks dropped, cut to `max` chars.
+fn opening(text: &str, max: usize) -> String {
+    let line = text
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['#', '>', '-', '*', ' ']).trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let plain: String = line.chars().filter(|c| !matches!(c, '*' | '`' | '_')).collect();
+    let end = [". ", "! ", "? ", ": "].iter().filter_map(|p| plain.find(p)).min().map_or(plain.len(), |i| i + 1);
+    let s = plain[..end].trim().trim_end_matches(['.', ':']);
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(max - 1).collect();
+    format!("{}…", cut.trim_end())
+}
+
+/// A digest made with no model at all: the openings of the newest three meaningful messages,
+/// oldest first, with a count in front when more came in than the line can carry.
+pub fn local_line(msgs: &[Msg]) -> String {
+    let m = meaningful(msgs);
+    let shown: Vec<String> = m.iter().skip(m.len().saturating_sub(3)).map(|m| opening(&m.text, 44)).filter(|s| !s.is_empty()).collect();
+    let body = shown.join(" · ");
+    clean_digest(&if m.len() > 3 { format!("{} updates: {body}", m.len()) } else { body })
+}
+
 /// Stores `line` for a chat on its newest message; an empty cleaned line removes the digest.
 pub fn apply(store: &mut Store, chat: &str, newest_id: &str, line: &str) {
     let line = clean_digest(line);
@@ -163,6 +189,22 @@ mod tests {
         apply(&mut s, "c", "m3", "x");
         apply(&mut s, "c", "m4", "  ");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn local_line_takes_openings_and_counts_the_rest() {
+        let a = vec![
+            m("1", "## Report ready\nThe March numbers are in the sheet."),
+            m("2", "On it"),
+            m("3", "Found **two bugs** in checkout. One is the coupon field."),
+            m("4", "Deployed the fix to staging: all green"),
+        ];
+        assert_eq!(local_line(&a), "Report ready · Found two bugs in checkout · Deployed the fix to staging");
+        let mut b = a.clone();
+        b.push(m("5", "Wrote the release notes for Friday"));
+        let l = local_line(&b);
+        assert!(l.starts_with("4 updates: Found two bugs"), "{l}");
+        assert!(l.chars().count() <= MAX_LEN);
     }
 
     #[test]

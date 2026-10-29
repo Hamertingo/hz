@@ -43,6 +43,7 @@ async fn deliver(app: &AppHandle, session_id: Option<String>, kind: String, titl
         HELD.lock().expect("held notifications poisoned").push(Held { title, body });
         return;
     }
+    crate::bark_push::on_banner(app, session_id.as_deref(), &kind, &title, &body);
     let prefs = crate::studio::StudioPrefs::from_value(settings.studio.as_ref());
     match crate::studio::delivery(&prefs, &kind, crate::studio::local_minutes()) {
         crate::studio::Delivery::Banner { sound } => post(app.clone(), session_id, kind, title, body, sound),

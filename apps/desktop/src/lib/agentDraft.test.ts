@@ -1,27 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import { agentIdFor, DEFAULT_LOOK, TEMPLATE_NAMES, TEMPLATES } from "./agentDraft";
-import { MASCOT_COLORS, MASCOT_KINDS } from "./mascots";
+import { EYES, MOUTHS, ACCS, PATS, SHAPE_NAMES } from "./face";
+import { MASCOT_COLORS } from "./mascots";
 
 describe("templates", () => {
-  it("offers the six the mockup offers, Blank first", () => {
-    expect(TEMPLATE_NAMES).toEqual(["Blank", "Developer", "Researcher", "Writer", "Reviewer", "Strategist"]);
+  it("offers the eight the mockup offers, in its order", () => {
+    expect(TEMPLATE_NAMES).toEqual(["Dev", "Marketer", "Scout", "Helper", "Ops", "Quill", "Guard", "Pal"]);
   });
 
-  it("Blank fills nothing, so the reader's own text stays", () => {
-    expect(TEMPLATES.Blank).toEqual({});
-  });
-
-  it("every template's face and colour are ones the picker offers", () => {
-    for (const name of TEMPLATE_NAMES) {
-      const t = TEMPLATES[name];
-      if (t.kind) expect(MASCOT_KINDS).toContain(t.kind);
-      if (t.color) expect(MASCOT_COLORS).toContain(t.color);
+  it("every template's face is parts the picker offers", () => {
+    for (const t of TEMPLATES) {
+      expect(SHAPE_NAMES).toContain(t.shape);
+      expect(MASCOT_COLORS).toContain(t.color);
+      expect(EYES).toContain(t.look.eyes);
+      expect(MOUTHS).toContain(t.look.mouth);
+      expect(ACCS).toContain(t.look.acc);
+      expect(PATS).toContain(t.look.pat);
     }
   });
 
   it("the default look is one the picker offers", () => {
-    expect(MASCOT_KINDS).toContain(DEFAULT_LOOK.kind);
+    expect(SHAPE_NAMES).toContain(DEFAULT_LOOK.shape);
     expect(MASCOT_COLORS).toContain(DEFAULT_LOOK.color);
   });
 });

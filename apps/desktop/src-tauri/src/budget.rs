@@ -206,21 +206,12 @@ fn month_token(workspace_id: &str) -> String {
     format!("{workspace_id}:{}", month_key(now_ms()))
 }
 
-/// Refuses a prompt to an agent that is out of budget. Called at the one door
-/// every prompt goes through. The agent's own budget comes first; then the
-/// workspace's, whose "Ask me" raises an Inbox question and holds the prompt.
+/// Refuses a prompt when the workspace is out of budget. Called at the one door
+/// every prompt goes through; "Ask me" raises an Inbox question and holds the
+/// prompt. An agent's own `budget` is not checked: the panel no longer offers a
+/// way to change it, so a limit set there earlier would block with no way out.
 pub async fn guard(agent_id: &str, app: &AppHandle) -> anyhow::Result<()> {
     let Some(agent) = agents::by_id(agent_id) else { return Ok(()) };
-    if let Some(budget) = agent.budget {
-        let spent = ledger(&agent).await.usd;
-        if state_for(spent, Some(budget)) == BudgetState::Paused {
-            anyhow::bail!(
-                "{} is paused: it has spent US$ {spent:.2} of its US$ {budget:.2} monthly budget. \
-                 Raise the budget in its Access tab to continue.",
-                agent.name
-            );
-        }
-    }
 
     let Some(ws_id) = agent.workspace_id.clone() else { return Ok(()) };
     let defaults = workspaces::defaults_of(&ws_id);

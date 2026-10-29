@@ -327,3 +327,25 @@ agent just wrote), and so does everything around it — the row model, the
 highlighting and where a hit opens are this repository's own.
 
 MIT License, Copyright (c) 2026 Nick.
+
+## QEMU — the engine under the agents' computers
+
+<https://www.qemu.org> · GNU General Public License, version 2 or later.
+
+The bundle carries `qemu-system-<arch>` and `qemu-img` from the upstream release named in
+`resources/hyzevm/qemu/VERSION`, with the libraries they link against (glib, gnutls, pixman and others, each under
+its own licence, texts in the QEMU build's own tree) and the firmware under `share/qemu` (EDK II, BSD-2-Clause-Patent,
+see `edk2-licenses.txt`). QEMU is run as a separate program, started by HyzeVM; hz does not link it. The source is the
+upstream release; `scripts/vendor-hyzevm.sh` stages it unmodified apart from re-pointing library paths.
+
+## noVNC — the screen viewer
+
+<https://github.com/novnc/noVNC> · Mozilla Public License 2.0.
+
+`apps/desktop` imports `@novnc/novnc` (the RFB client) to draw an agent's screen, and the machines serve noVNC's web
+bridge. Used unmodified.
+
+## HyzeVM
+
+`apps/hyzevm` — MIT, this project's own, vendored from `Hamertingo/hyzevm` with one change: it looks for a bundled
+QEMU through `HYZEVM_QEMU_DIR` before the one installed on the machine.

@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import AgentIcon from "@/components/AgentIcon";
-import { Lead, SetHeading, StudioRow } from "@/components/settings/StudioRow";
+import { Group, Row } from "@/components/kit/kit";
+import { SetHeading, StudioRow } from "@/components/settings/StudioRow";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton, SkeletonRegion } from "@/components/ui/skeleton";
@@ -21,57 +22,16 @@ const MORE: { name: string; note: string }[] = [
   { name: "Cursor", note: "cursor-agent has no ACP mode hz can drive yet." },
 ];
 
-function Chip({ tone, children }: { tone: "green" | "amber" | "dim"; children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-[7px] py-px text-[11px] font-medium",
-        tone === "green" && "bg-green/10 text-green",
-        tone === "amber" && "bg-amber/10 text-amber",
-        tone === "dim" && "bg-s3 text-ink3",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Meta({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <span className="text-ink3">{label}</span>
-      <code className="min-w-0 truncate font-mono text-[11.5px] text-ink2">{children}</code>
-    </>
-  );
-}
-
-/// A CLI card before its own read lands: the logo tile, the name and a chip, the
-/// four metadata lines and the two buttons.
+/// A CLI row before its own read lands: the mark, two lines and a button.
 function CliSkeleton() {
   return (
-    <SkeletonRegion
-      label="Reading the CLIs"
-      className="mt-2.5 flex items-start gap-3.5 rounded-(--r3) bg-s1 px-4 py-3.5 shadow-[inset_0_0_0_1px_var(--line)]"
-    >
-      <Skeleton className="size-10 rounded-[11px]" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-3.5 w-20" />
-          <Skeleton className="h-4 w-16 rounded-full" />
-        </div>
-        <div className="mt-2.5 grid grid-cols-[86px_1fr] gap-x-3 gap-y-[9px]">
-          {[["w-14", "w-24"], ["w-9", "w-64"], ["w-14", "w-40"], ["w-16", "w-48"]].map(([a, b], i) => (
-            <span key={i} className="contents">
-              <Skeleton className={cn("h-2.5", a)} />
-              <Skeleton className={cn("h-2.5", b)} />
-            </span>
-          ))}
-        </div>
+    <SkeletonRegion label="Reading the CLIs" className="flex items-center gap-[11px] px-3 py-[9px]">
+      <Skeleton className="size-[18px] rounded-[5px]" />
+      <div className="flex-1">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="mt-1.5 h-2.5 w-44" />
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <Skeleton className="h-7 w-16 rounded-md" />
-        <Skeleton className="h-7 w-[70px] rounded-md" />
-      </div>
+      <Skeleton className="h-[26px] w-16 rounded-md" />
     </SkeletonRegion>
   );
 }
@@ -86,7 +46,7 @@ function CliRow({
 }: {
   cli: CliInfo;
   run: CliRun | undefined;
-  /// Read again with this card's last answer still showing.
+  /// Read again with this row's last answer still showing.
   reading: boolean;
   checking: boolean;
   onCheck: () => void;
@@ -97,65 +57,56 @@ function CliRow({
   const last = run?.lines[run.lines.length - 1];
 
   return (
-    <div className="mt-2.5 rounded-(--r3) bg-s1 px-4 py-3.5 shadow-[inset_0_0_0_1px_var(--line)]">
-      <div className="flex items-start gap-3.5">
-        <span className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-s3">
-          <AgentIcon harness={cli.harness as Harness} className="size-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <b className="text-sm font-semibold text-ink">{cli.name}</b>
+    <div title={cli.path ?? undefined}>
+      <Row
+        lead={<AgentIcon harness={cli.harness as Harness} className="size-[18px]" />}
+        title={
+          <span className="flex items-center gap-2">
+            {cli.name}
             {reading && <Spinner className="size-3 text-ink3" />}
-            {!cli.installed ? (
-              <Chip tone="dim">Not installed</Chip>
-            ) : cli.signedIn ? (
-              <Chip tone="green">Signed in</Chip>
-            ) : (
-              <Chip tone="dim">Signed out</Chip>
-            )}
-            {cli.latest && <Chip tone="amber">{cli.latest} available</Chip>}
-            {cli.installed && !cli.adapterReady && <Chip tone="amber">Adapter not set up</Chip>}
-          </div>
-          <div className="mt-2.5 grid grid-cols-[86px_1fr] gap-x-3 gap-y-[5px] text-xs">
-            <Meta label="Version">{cli.version ?? "—"}</Meta>
-            <Meta label="Path">{cli.path ?? "—"}</Meta>
-            <Meta label="Account">{cli.account ?? "—"}</Meta>
-            <Meta label="Talks over">{cli.via}</Meta>
-          </div>
-        </div>
-
-        {cli.installed && (
-          <div className="flex shrink-0 flex-col items-end gap-1.5">
-            {!cli.adapterReady ? (
-              <Button size="sm" variant="default" disabled={busy} onClick={() => void act("cli_install_adapter")}>
-                Set up adapter
+          </span>
+        }
+        sub={
+          <>
+            <span className="font-mono text-xs">
+              {cli.installed ? (cli.version ?? "—") : "Not installed"}
+              {cli.installed && (cli.latest ? ` · ${cli.latest} available` : " · up to date")}
+            </span>
+            {cli.installed && !cli.adapterReady && <span className="text-amber"> · Adapter not set up</span>}
+            <br />
+            {!cli.installed ? "Install it, then sign in." : cli.signedIn ? `Signed in${cli.account ? ` as ${cli.account}` : ""}` : "Not signed in"}
+          </>
+        }
+        right={
+          cli.installed ? (
+            <>
+              {!cli.adapterReady ? (
+                <Button size="sm" variant="solid" disabled={busy} onClick={() => void act("cli_install_adapter")}>
+                  Set up adapter
+                </Button>
+              ) : cli.latest ? (
+                <UpdateButton cli={cli} busy={busy} onClick={() => void act("cli_update")} />
+              ) : (
+                <Button variant="ghost" size="sm" disabled={busy || checking} onClick={onCheck}>
+                  {checking && <Spinner />}
+                  Check
+                </Button>
+              )}
+              <Button
+                variant={cli.signedIn ? "ghost" : "outline"}
+                size="sm"
+                disabled={busy}
+                onClick={() => (cli.signedIn ? onSignOut() : void act("cli_sign_in"))}
+              >
+                {cli.signedIn ? "Sign out" : "Sign in"}
               </Button>
-            ) : cli.latest ? (
-              <UpdateButton cli={cli} busy={busy} onClick={() => void act("cli_update")} />
-            ) : (
-              <Button variant="outline" size="sm" disabled={busy || checking} onClick={onCheck}>
-                {checking && <Spinner />}
-                Check
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => (cli.signedIn ? onSignOut() : void act("cli_sign_in"))}
-            >
-              {cli.signedIn ? "Sign out" : "Sign in"}
-            </Button>
-          </div>
-        )}
-      </div>
-
+            </>
+          ) : undefined
+        }
+      />
       {run && (
         <div
-          className={cn(
-            "mt-3 flex items-center gap-2 border-t border-line pt-2.5 text-xs",
-            run.done && !run.ok ? "text-red" : "text-ink3",
-          )}
+          className={cn("flex items-center gap-2 px-3 pb-2.5 text-xs", run.done && !run.ok ? "text-red" : "text-ink3")}
           role="status"
         >
           {busy && <Spinner />}
@@ -169,7 +120,7 @@ function CliRow({
 function UpdateButton({ cli, busy, onClick }: { cli: CliInfo; busy: boolean; onClick: () => void }) {
   const can = cli.updateCommand !== null;
   const button = (
-    <Button size="sm" variant="default" disabled={busy || !can} onClick={onClick}>
+    <Button size="sm" variant="solid" disabled={busy || !can} onClick={onClick}>
       {busy && <Spinner />}
       Update
     </Button>
@@ -189,17 +140,16 @@ function UpdateButton({ cli, busy, onClick }: { cli: CliInfo; busy: boolean; onC
 /// and your own login. `extras` carries the rows that used to be pages of their
 /// own (GitHub's CLI, the old model providers).
 export default function ClisSettings({ extras }: { extras: ReactNode }) {
-  const { byCli, reading, runs, checking, check } = useClis();
+  const { byCli, reading, runs, checking, check, autoCheck } = useClis();
   const [prefs, set] = useStudio();
+  useEffect(() => {
+    if (prefs.updateCheck) void autoCheck();
+  }, [prefs.updateCheck, autoCheck]);
   const [signingOut, setSigningOut] = useState<CliInfo | null>(null);
 
   return (
     <>
-      <Lead>
-        The coding agents your agents run on. hz uses your own install and your own login, and never holds your keys.
-      </Lead>
-
-      <div className="-mt-4">
+      <Group className="mt-1">
         {CLI_ORDER.map((h) => {
           const cli = byCli[h];
           return cli ? (
@@ -216,35 +166,33 @@ export default function ClisSettings({ extras }: { extras: ReactNode }) {
             <CliSkeleton key={h} />
           );
         })}
-      </div>
+      </Group>
+      <p className="px-1 text-xs leading-normal text-ink3">hz uses the CLIs you already have. Nothing is installed for you.</p>
 
       <SetHeading>More agents</SetHeading>
-      <div className="-mt-2">
+      <Group>
         {MORE.map((m) => (
-          <div
+          <Row
             key={m.name}
-            className="mt-2.5 flex items-center gap-3.5 rounded-(--r3) bg-s1 px-4 py-3.5 opacity-70 shadow-[inset_0_0_0_1px_var(--line)]"
-          >
-            <span className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-s3 font-mono text-[11px] font-semibold">
-              {m.name[0]}
-            </span>
-            <div className="min-w-0 flex-1">
-              <b className="text-sm font-semibold text-ink">{m.name}</b>
-              <div className="mt-1 text-xs text-ink3">{m.note} Not available yet.</div>
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span tabIndex={0}>
-                  <Button variant="outline" size="sm" disabled>
-                    Install
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>Not available yet</TooltipContent>
-            </Tooltip>
-          </div>
+            className="opacity-70"
+            lead={<span className="grid size-[18px] place-items-center font-mono text-[11px] font-semibold">{m.name[0]}</span>}
+            title={m.name}
+            sub={`${m.note} Not available yet.`}
+            right={
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0}>
+                    <Button variant="outline" size="sm" disabled>
+                      Install
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Not available yet</TooltipContent>
+              </Tooltip>
+            }
+          />
         ))}
-      </div>
+      </Group>
 
       <SetHeading>Behaviour</SetHeading>
       <div>

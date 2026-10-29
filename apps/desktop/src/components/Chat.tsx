@@ -5,10 +5,10 @@ import AssistantMessage from "@/components/chat/AssistantMessage";
 import BackgroundTasksIndicator from "@/components/chat/BackgroundTasksIndicator";
 import CheckpointRail, { type Checkpoint } from "@/components/chat/CheckpointRail";
 import ApiRetryIndicator from "@/components/chat/ApiRetryIndicator";
-import AssistantSelectionToolbar from "@/components/chat/AssistantSelectionToolbar";
 import CompactingIndicator from "@/components/chat/CompactingIndicator";
 import PermissionRequest from "@/components/chat/PermissionRequest";
 import QueuedMessages from "@/components/chat/QueuedMessages";
+import RoutineOfferCard from "@/components/chat/RoutineOfferCard";
 import QuestionRequest from "@/components/chat/QuestionRequest";
 import Reasoning from "@/components/chat/Reasoning";
 import WorkingIndicator from "@/components/chat/WorkingIndicator";
@@ -21,19 +21,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import InlineApproval from "@/components/chat/InlineApproval";
-import TypingDots from "@/components/chat/TypingDots";
+import KeyRequests from "@/components/chat/KeyRequests";
 import { useAgentChatActions } from "@/hooks/useAgentChat";
 import { ChatSessionContext } from "@/hooks/useChatSession";
 import { isFolded, useBoundaries } from "@/lib/chatMarks";
 import { clockTime } from "@/lib/format";
 import { MOUNT_ALL } from "@/lib/jump";
-import { addCitation } from "@/hooks/useCitations";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useLingeringCards } from "@/hooks/useLingeringCards";
 import type { ApiRetryState, QueuedPrompt, StreamingBlock, Working } from "@/hooks/useSessions";
 import { useStableCallback } from "@/hooks/useStableCallback";
 import type { QuestionAnswer } from "@/lib/questionnaire";
 import { toolArgument } from "@/lib/tools";
+import ThreadLines from "@/components/chat/ThreadLines";
+import { usePairThreads } from "@/hooks/useTeamTalk";
 import { buildTranscript, isToolGroup, type Turn } from "@/lib/transcript";
 import { firstMount, grow, mountedTurns } from "@/lib/turnWindow";
 import type { SessionSnapshot } from "@/types/events";
@@ -131,6 +132,28 @@ function turnSeq(turn: Turn): number {
   return isToolGroup(first) ? (first.calls[0]?.seq ?? 0) : first.seq;
 }
 
+/// Where a turn starts on the clock (unix ms). Thread lines go between two turns'
+/// starts, so a thread message that landed while a turn ran sits after that turn.
+function turnStart(turn: Turn): number {
+  const ts = turn.prompt?.ts ?? turn.completed?.ts;
+  return ts ? new Date(ts).getTime() : 0;
+}
+
+/// "Today", "Yesterday", a weekday or a date, shown where a turn starts a new day.
+function dayLabelOf(turn: Turn, prev: Turn | null): string | null {
+  const ts = turn.prompt?.ts ?? turn.completed?.ts;
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  const prevTs = prev ? (prev.prompt?.ts ?? prev.completed?.ts) : null;
+  if (prevTs && new Date(prevTs).toDateString() === d.toDateString()) return null;
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 export default function Chat({
   session,
   streamingBlock,
@@ -147,7 +170,7 @@ export default function Chat({
   apiRetry = null,
   queuedMessages = [],
   crowded = false,
-  rail = true,
+  rail = false,
   active = true,
   onLoadOlder,
 }: ChatProps) {
@@ -223,6 +246,7 @@ export default function Chat({
   // it: the turns above the newest boundary are folded away behind "Show
   // earlier" and nothing is deleted.
   const agentChat = useAgentChatActions();
+  const pairs = usePairThreads(agentChat?.agent.id ?? null);
   const boundaries = useBoundaries(session?.sessionId ?? null);
   const [showEarlier, setShowEarlier] = useState(false);
   useEffect(() => setShowEarlier(false), [session?.sessionId]);
@@ -694,9 +718,12 @@ export default function Chat({
           ref={scrollRef}
           onScroll={onScroll}
           onWheel={onWheel}
-          className="h-full overflow-y-auto"
+          // Both edges keep the scrollbar's room, so the centred column sits over the same centre as the composer
+          // below it rather than half a scrollbar to the left.
+          className="h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable_both-edges]"
+          style={agentChat ? ({ "--acc": agentChat.agent.color } as React.CSSProperties) : undefined}
         >
-          <div ref={contentRef} className="chat-col mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
+          <div ref={contentRef} className="chat-col mx-auto flex max-w-[936px] flex-col gap-[5px] px-7 pt-4 pb-2">
             {agentChat && foldedCount > 0 && (
               <button
                 type="button"
@@ -719,6 +746,19 @@ export default function Chat({
               // The wrapper is what the rail measures and scrolls to. It carries
               // no styles of its own — it stands in for the block as the flex item.
               <div key={turn.key} data-turn={turn.key}>
+                {agentChat && dayLabelOf(turn, i === 0 ? null : shownTurns[i - 1]) && (
+                  <div className="py-[10px] pb-1.5 text-center text-[11.5px] font-medium text-ink4">
+                    {dayLabelOf(turn, i === 0 ? null : shownTurns[i - 1])}
+                  </div>
+                )}
+                {agentChat && (i > 0 || (shownTurns[0] === allTurns[0] && !backfilling)) && (
+                  <ThreadLines
+                    pairs={pairs}
+                    agentId={agentChat.agent.id}
+                    from={i === 0 ? 0 : turnStart(shownTurns[i - 1])}
+                    to={turnStart(turn)}
+                  />
+                )}
                 {agentChat && (
                   <PageBreaks
                     boundaries={boundaries}
@@ -736,6 +776,7 @@ export default function Chat({
                   todosByCallId={todosByCallId}
                   onOpenSession={openSession}
                   botSeed={session?.sessionId}
+                  live={busy && i === shownTurns.length - 1}
                   // Both cover the wait for output, and on every harness but fx
                   // never at once — `waitingTurn` requires no streaming text
                   // there. Inside the block so they sit at the gap the committed
@@ -743,41 +784,49 @@ export default function Chat({
                   // the preview belongs to this turn, not after it. Where both
                   // draw, the orb goes under the preview, which is where the
                   // reader is already looking and where it sits on its own.
+                  // In an agent chat the status line says it all (thinking, writing, at its computer): nothing is
+                  // typed out letter by letter, the reply lands whole the moment it is committed.
+                  activity={
+                    turn === waitingTurn ? "waiting" : turn === streamingTurn ? (streamingThinking ? "thinking" : "writing") : undefined
+                  }
                   footer={
-                    turn !== streamingTurn && turn !== waitingTurn ? undefined : (
+                    turn !== streamingTurn && turn !== waitingTurn ? undefined : agentChat ? undefined : (
                       <>
                         {turn === streamingTurn &&
                           (streamingThinking ? (
-                            // The same component the committed `reasoning` event
-                            // renders with, in its `streaming` presentation — the
-                            // multi-line preview keeps growing live; it collapses
-                            // to one line once committed.
                             <Reasoning text={streamingThinking} encrypted={false} streaming />
                           ) : (
                             <AssistantMessage text={streamingText} streaming />
                           ))}
-                        {turn === waitingTurn &&
-                          (agentChat ? (
-                            <TypingDots />
-                          ) : (
-                            <WorkingIndicator
-                              tokens={working?.tokens ?? 0}
-                              seed={session?.sessionId}
-                              since={turn.prompt?.ts}
-                            />
-                          ))}
+                        {turn === waitingTurn && (
+                          <WorkingIndicator
+                            tokens={working?.tokens ?? 0}
+                            seed={session?.sessionId}
+                            since={turn.prompt?.ts}
+                          />
+                        )}
                       </>
                     )
                   }
                 />
               </div>
             ))}
+            {agentChat && (
+              <ThreadLines
+                pairs={pairs}
+                agentId={agentChat.agent.id}
+                from={shownTurns.length > 0 ? turnStart(shownTurns[shownTurns.length - 1]) : 0}
+                to={Number.POSITIVE_INFINITY}
+              />
+            )}
 
             {agentChat && turns.length === 0 && boundaries.length > 0 && (
               <p className="py-10 text-center text-[13px] text-ink3">
                 Fresh page. {agentChat.agent.name} keeps its memory.
               </p>
             )}
+
+            {agentChat && <KeyRequests agentId={agentChat.agent.id} />}
 
             {agentChat &&
               cards.map(
@@ -787,12 +836,15 @@ export default function Chat({
                       key={ask.requestId}
                       ask={ask}
                       agent={agentChat.agent}
+                      sessionId={session.sessionId}
                       onRespond={(optionId) =>
                         onRespondPermission(session.sessionId, ask.requestId, optionId)
                       }
                     />
                   ),
               )}
+
+            {agentChat && <RoutineOfferCard agent={agentChat.agent} />}
 
             {/* Only where this pane has no composer. The focused pane's asks are
                 drawn beside the composer instead (`PendingAskPanel`) — one card
@@ -904,15 +956,6 @@ export default function Chat({
         )}
       </div>
 
-      {/* Only for the pane the composer serves. In a split the composer sits
-          under the focused pane, so a selection quoted from the other one would
-          be pinned to a draft it does not belong to. */}
-      {active && (
-        <AssistantSelectionToolbar
-          scroller={scrollRef}
-          onCite={(quote) => addCitation(session?.sessionId ?? null, quote)}
-        />
-      )}
     </ChatSessionContext>
   );
 }

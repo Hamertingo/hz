@@ -65,7 +65,7 @@ pub struct AuthServer {
     pub auth_methods: Vec<String>,
 }
 
-static CANCELS: LazyLock<Mutex<HashMap<String, oneshot::Sender<()>>>> = LazyLock::new(Default::default);
+pub(crate) static CANCELS: LazyLock<Mutex<HashMap<String, oneshot::Sender<()>>>> = LazyLock::new(Default::default);
 
 /// Abandons the sign-in waiting under `key`, if there is one.
 pub fn cancel(key: &str) {
@@ -89,7 +89,7 @@ pub fn challenge_of(verifier: &str) -> String {
     b64url(&Sha256::digest(verifier.as_bytes()))
 }
 
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let mut bytes = Vec::with_capacity(32);
     bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
     bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
@@ -260,7 +260,7 @@ fn callback_of(request_line: &str) -> Result<(String, String)> {
 
 const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>hz</title><body style=\"font:15px -apple-system,sans-serif;background:#161617;color:#ddd;display:grid;place-items:center;height:100vh;margin:0\"><div>You are signed in. You can close this tab and go back to hz.</div>";
 
-async fn wait_for_code(listener: TcpListener, state: &str, mut cancel: oneshot::Receiver<()>) -> Result<String> {
+pub(crate) async fn wait_for_code(listener: TcpListener, state: &str, mut cancel: oneshot::Receiver<()>) -> Result<String> {
     let accept = async {
         loop {
             let (mut sock, _) = listener.accept().await?;

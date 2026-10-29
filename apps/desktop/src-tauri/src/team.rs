@@ -23,35 +23,21 @@ use tokio::{
 
 use crate::{
     agents,
-    events::{MessageSender, TurnStatus},
+    events::TurnStatus,
     orchestration,
 };
 
 static PORT: OnceLock<u16> = OnceLock::new();
 
-/// The workspace's own limits (Settings → Agent defaults), or the built-in ones
-/// where it says nothing. Taken from the *asking* agent's workspace.
-fn limits_for(agent: &agents::AgentRecord) -> (u32, Duration) {
-    let d = match agent.workspace_id.as_deref() {
-        Some(id) => crate::workspaces::defaults_of(id),
-        None => crate::workspaces::first_defaults(),
-    };
-    (d.handoffs, Duration::from_secs(u64::from(d.wait_mins) * 60))
-}
-
-/// How many hand-offs one request chain may make is the workspace's setting
-/// (`limits_for`; 8 unless the reader changed it). Counted along the chain — A asks
-/// B, B asks C — so it bounds A → B → A → B even when few requests are open at once.
-/// A new message from the reader to an agent starts a fresh allowance.
-/// How many asks may wait at once, host-wide.
+/// How many hidden asks may wait at once, host-wide.
 const MAX_OUTSTANDING: usize = 64;
-/// How long an ask waits, queue and approvals included.
+/// How long a hidden ask waits, queue and approvals included.
 const ASK_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// One of hz's own errands to an agent ([`ask_hidden`]), answered by the turn its
+/// own prompt starts. Agents talking to each other never wait: see `talk.rs`.
 struct Ask {
     id: u64,
-    from: String,
-    to: String,
     /// The exact prompt the recipient was sent, which is how its `user_message`
     /// is recognised when the ask was queued behind a turn in flight.
     prompt: String,
@@ -64,67 +50,30 @@ struct State {
     next: u64,
     /// Keyed by the recipient's session, which is where events arrive.
     asks: HashMap<String, Vec<Ask>>,
-    /// The hand-off depth of the request each agent is serving right now.
-    serving: HashMap<String, u32>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
-/// Asks to a conversation that does not exist yet, until it is made and they can be
-/// filed under its session.
-static PENDING_NEW: LazyLock<Mutex<HashMap<u64, Ask>>> = LazyLock::new(Default::default);
-
-/// Drops an ask that will not be answered and frees the recipient's allowance.
-fn forget(recipient: &str, ask: Option<u64>) {
+fn forget(id: u64) {
     let mut state = STATE.lock().expect("team state poisoned");
-    state.serving.remove(recipient);
-    if let Some(id) = ask {
-        PENDING_NEW.lock().expect("team state poisoned").remove(&id);
-        for asks in state.asks.values_mut() {
-            asks.retain(|a| a.id != id);
-        }
-        state.asks.retain(|_, asks| !asks.is_empty());
+    for asks in state.asks.values_mut() {
+        asks.retain(|a| a.id != id);
     }
+    state.asks.retain(|_, asks| !asks.is_empty());
 }
 
 impl State {
     fn outstanding(&self) -> usize {
         self.asks.values().map(Vec::len).sum()
     }
-
-    /// Whether `from` already waits on `to`, directly or through others — a new
-    /// edge `from → to` would then close a cycle and neither could ever answer.
-    fn would_wait_in_a_circle(&self, from: &str, to: &str) -> bool {
-        let edges: Vec<(&str, &str)> = self
-            .asks
-            .values()
-            .flatten()
-            .map(|a| (a.from.as_str(), a.to.as_str()))
-            .collect();
-
-        let mut frontier = vec![to];
-        let mut seen: Vec<&str> = Vec::new();
-        while let Some(at) = frontier.pop() {
-            if at == from {
-                return true;
-            }
-            if seen.contains(&at) {
-                continue;
-            }
-            seen.push(at);
-            frontier.extend(edges.iter().filter(|(f, _)| *f == at).map(|(_, t)| *t));
-        }
-        false
-    }
-
-    fn duplicate(&self, from: &str, to: &str) -> bool {
-        self.asks.values().flatten().any(|a| a.from == from && a.to == to)
-    }
 }
 
 /// Called with every message a session logs, so an ask queued behind a turn is
 /// marked started the moment its own prompt becomes that session's next turn.
-pub fn observe_user(session_id: &str, text: &str) {
+/// `by_reader` is a message the person wrote, which `talk` gives way to.
+pub fn observe_user(session_id: &str, text: &str, by_reader: bool) {
+    crate::agent_tools::observe_user(session_id);
+    crate::talk::observe_user(session_id, text, by_reader);
     let mut state = STATE.lock().expect("team state poisoned");
     if let Some(ask) = state
         .asks
@@ -136,17 +85,14 @@ pub fn observe_user(session_id: &str, text: &str) {
 }
 
 /// Called when a session's turn closes: answers the asks that turn carried and
-/// frees the agent's hand-off allowance.
+/// lets `talk` route a thread's answer.
 ///
-/// Returns whether it answered one: a turn that did was a teammate's errand, and
-/// nothing in the reader's inbox.
-pub fn observe_completed(session_id: &str, status: &TurnStatus, final_text: Option<&str>) -> bool {
+/// Returns whether the turn was an errand (an ask, a teammate's thread, a
+/// `NO_REPLY`), which is nothing for the reader's inbox.
+pub fn observe_completed(session_id: &str, status: &TurnStatus, stop_reason: Option<&str>, final_text: Option<&str>) -> bool {
+    let talked = crate::talk::observe_completed(session_id, status, stop_reason, final_text);
     let mut state = STATE.lock().expect("team state poisoned");
-    if let Some(agent) = agents::agent_of(session_id) {
-        state.serving.remove(&agent.id);
-    }
-
-    let Some(asks) = state.asks.get_mut(session_id) else { return false };
+    let Some(asks) = state.asks.get_mut(session_id) else { return talked };
     let mut waiting = Vec::new();
     let mut answered = false;
     for ask in std::mem::take(asks) {
@@ -167,9 +113,8 @@ pub fn observe_completed(session_id: &str, status: &TurnStatus, final_text: Opti
     if asks.is_empty() {
         state.asks.remove(session_id);
     }
-    answered
+    answered || talked
 }
-
 
 /// The port the server is on, once it is up.
 pub fn port() -> Option<u16> {
@@ -266,14 +211,31 @@ async fn connection(mut stream: TcpStream, app: AppHandle) -> Result<()> {
     let mut buf = Vec::new();
 
     while let Some(request) = read_request(&mut stream, &mut buf).await? {
-        let Some(rest) = request.path.strip_prefix("/mcp/") else {
+        // `?s=<session>` names the session the team server was opened for
+        // (`agents::mcp_servers`), which is where an answer to it comes back.
+        let (path, query) = request.path.split_once('?').unwrap_or((request.path.as_str(), ""));
+        let session = query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix("s="))
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .map(str::to_string);
+        let Some(rest) = path.strip_prefix("/mcp/") else {
             respond(&mut stream, "404 Not Found", None).await?;
             continue;
         };
         // `/mcp/<agent>` is the team's server, `/mcp/<agent>/memory` the memory's,
-        // and `/mcp/<agent>/plugin/<id>` the proxy in front of a connected plugin.
+        // `/mcp/<agent>/hz` what it posts (`agent_tools.rs`), and
+        // `/mcp/<agent>/plugin/<id>` the proxy in front of a connected plugin.
+        // `/mcp/<agent>/safety/<what>` is plain JSON from the `computer` server, not MCP.
+        if let Some((id, what)) = rest.split_once("/safety/") {
+            let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+            respond(&mut stream, "200 OK", Some(&crate::safety_tools::http(id, what, &body, &app).await)).await?;
+            continue;
+        }
         let (agent_id, server) = match rest.split_once('/') {
             Some((id, "memory")) => (id.to_string(), Server::Memory),
+            Some((id, "hz")) => (id.to_string(), Server::Hz),
+            Some((id, tail)) if crate::kit_mcp::route(tail).is_some() => (id.to_string(), Server::Kit(tail.to_string())),
             Some((id, tail)) if tail.starts_with("plugin/") => {
                 (id.to_string(), Server::Plugin(tail["plugin/".len()..].to_string()))
             }
@@ -283,7 +245,7 @@ async fn connection(mut stream: TcpStream, app: AppHandle) -> Result<()> {
         match request.method.as_str() {
             "POST" => {
                 let message: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-                match handle(&agent_id, server, &message, &app).await {
+                match handle(&agent_id, session.as_deref(), server, &message, &app).await {
                     Some(reply) => respond(&mut stream, "200 OK", Some(&reply)).await?,
                     // A notification has no answer, and MCP wants a bare 202.
                     None => respond(&mut stream, "202 Accepted", None).await?,
@@ -301,6 +263,9 @@ async fn connection(mut stream: TcpStream, app: AppHandle) -> Result<()> {
 enum Server {
     Team,
     Memory,
+    Hz,
+    /// Accounts and documents (`kit_mcp`): `google`, `docs`, `apps`.
+    Kit(String),
     /// A plugin's proxy, by plugin id.
     Plugin(String),
 }
@@ -308,23 +273,49 @@ enum Server {
 fn tools() -> Value {
     json!([
         {
-            "name": "team_list",
-            "description": "List the other agents on the team: their names and what each one does.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
-        },
-        {
-            "name": "team_ask",
-            "description": "Ask a teammate by name and wait for their answer, which comes back as this \
-                            tool's result. Use it when you need the answer to carry on. Give them \
-                            everything they need; they cannot see your conversation. Takes as long as \
-                            they do, up to ten minutes.",
+            "name": "team_message",
+            "description": "Send a message to a teammate by name. It returns at once: tell the person in a line or \
+                            two what you passed on, then end your turn. Their answer comes back to this chat by \
+                            itself. They cannot see your conversation, so write a complete brief. Inside a \
+                            channel, this posts an @Name line for a member there.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "to": {"type": "string", "description": "The teammate's name, as team_list shows it."},
-                    "text": {"type": "string", "description": "The question or request."},
+                    "to": {"type": "string", "description": "The teammate's name; a unique start of it works too."},
+                    "text": {"type": "string", "description": "The message, up to 4000 characters."},
                 },
                 "required": ["to", "text"],
+                "additionalProperties": false,
+            },
+        },
+        {
+            "name": "team_list",
+            "description": "List your teammates: their names, what each one does, and what they are busy with.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+        },
+        {
+            "name": "post_to_channel",
+            "description": "Post a message as yourself in a channel you belong to. An @Name in it wakes that \
+                            member, who answers in the channel.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "channel": {"type": "string", "description": "The channel's name, without the #."},
+                    "text": {"type": "string", "description": "The message."},
+                },
+                "required": ["channel", "text"],
+                "additionalProperties": false,
+            },
+        },
+        {
+            "name": "read_channel",
+            "description": "Without a channel: list the channels you belong to. With one: its newest messages.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "channel": {"type": "string", "description": "The channel's name, without the #."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "How many messages; 20 if left out."},
+                },
                 "additionalProperties": false,
             },
         },
@@ -380,28 +371,16 @@ fn tools() -> Value {
                 "additionalProperties": false,
             },
         },
-        {
-            "name": "team_message",
-            "description": "Send a message to a teammate by name. It lands in their conversation and \
-                            they answer in yours if a reply is needed. Say what you need and why; they \
-                            cannot see your conversation.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "to": {"type": "string", "description": "The teammate's name, as team_list shows it."},
-                    "text": {"type": "string", "description": "The message."},
-                },
-                "required": ["to", "text"],
-                "additionalProperties": false,
-            },
-        },
     ])
 }
 
 /// One JSON-RPC message in, the reply out — `None` for a notification.
-async fn handle(agent_id: &str, server: Server, message: &Value, app: &AppHandle) -> Option<Value> {
+async fn handle(agent_id: &str, session: Option<&str>, server: Server, message: &Value, app: &AppHandle) -> Option<Value> {
     if let Server::Plugin(plugin_id) = &server {
         return crate::plugin_proxy::handle(agent_id, plugin_id, message, Some(app)).await;
+    }
+    if let Server::Kit(name) = &server {
+        return crate::kit_mcp::handle(name, agent_id, message, app).await;
     }
     let id = message.get("id")?.clone();
     let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
@@ -415,20 +394,24 @@ async fn handle(agent_id: &str, server: Server, message: &Value, app: &AppHandle
             json!({
                 "protocolVersion": version,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": if server == Server::Memory { "memory" } else { "team" }, "version": "1"},
+                "serverInfo": {"name": match server { Server::Memory => "memory", Server::Hz => "hz", _ => "team" }, "version": "1"},
             })
         }
-        "tools/list" => json!({"tools": if server == Server::Memory { crate::memory_mcp::tools() } else { tools() }}),
+        "tools/list" => json!({"tools": match server {
+            Server::Memory => crate::memory_mcp::tools(),
+            Server::Hz => crate::agent_tools::tools(),
+            _ => crate::safety_tools::with_tools(tools()),
+        }}),
         "tools/call" => {
             let name = message
                 .pointer("/params/name")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let args = message.pointer("/params/arguments").cloned().unwrap_or(Value::Null);
-            let answered = if server == Server::Memory {
-                crate::memory_mcp::call(agent_id, name, &args).await
-            } else {
-                call(agent_id, name, &args, app).await
+            let answered = match server {
+                Server::Memory => crate::memory_mcp::call(agent_id, name, &args).await,
+                Server::Hz => crate::agent_tools::call(agent_id, name, &args, app).await,
+                _ => call(agent_id, session, name, &args, app).await,
             };
             let (text, is_error) = match answered {
                 Ok(text) => (text, false),
@@ -449,9 +432,12 @@ async fn handle(agent_id: &str, server: Server, message: &Value, app: &AppHandle
     Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
-async fn call(agent_id: &str, name: &str, args: &Value, app: &AppHandle) -> Result<String> {
+async fn call(agent_id: &str, session: Option<&str>, name: &str, args: &Value, app: &AppHandle) -> Result<String> {
     let me = agents::by_id(agent_id).context("you are not a known agent")?;
     anyhow::ensure!(agents::tool_enabled(agent_id, "team"), "the team tools are switched off for you");
+    if let Some(answered) = crate::safety_tools::call(app, &me, name, args).await {
+        return answered;
+    }
 
     match name {
         "ask_user" => {
@@ -488,159 +474,39 @@ async fn call(agent_id: &str, name: &str, args: &Value, app: &AppHandle) -> Resu
             if team.is_empty() {
                 return Ok("You have no teammates yet.".into());
             }
+            let status = crate::talk::status();
             Ok(team
                 .iter()
                 .map(|a| {
-                    if a.role.is_empty() {
-                        a.name.clone()
-                    } else {
-                        format!("{} — {}", a.name, a.role)
+                    let mut line = if a.role.is_empty() { a.name.clone() } else { format!("{} \u{2014} {}", a.name, a.role) };
+                    if let Some(st) = status.iter().find(|s| s.agent_id == a.id) {
+                        let names = |ids: &[String]| ids.iter().filter_map(|id| agents::name_of(id)).collect::<Vec<_>>().join(", ");
+                        if !st.working_for.is_empty() {
+                            line.push_str(&format!(" (working for {})", names(&st.working_for)));
+                        } else if !st.waiting_for.is_empty() {
+                            line.push_str(&format!(" (waiting for {})", names(&st.waiting_for)));
+                        }
                     }
+                    line
                 })
                 .collect::<Vec<_>>()
                 .join("\n"))
         }
+        // `team_ask` was the blocking ask. Kept as a name so an agent that still
+        // knows it gets the same non-blocking send rather than an error.
         "team_message" | "team_ask" => {
-            let asking = name == "team_ask";
-            let to = args.get("to").and_then(Value::as_str).unwrap_or_default().trim();
-            let text = args.get("text").and_then(Value::as_str).unwrap_or_default().trim();
-            if to.is_empty() || text.is_empty() {
-                anyhow::bail!("{name} needs `to` and `text`");
-            }
-
-            let target = agents::teammates(agent_id)
-                .into_iter()
-                .find(|a| a.name.eq_ignore_ascii_case(to))
-                .with_context(|| format!("no teammate named {to}; team_list shows who is there"))?;
-            // The reader's setting for who may reach this agent, kept here at
-            // the one door every agent-to-agent message goes through.
-            agents::may_talk(&me, &target).map_err(anyhow::Error::msg)?;
-            let from = MessageSender {
-                session_id: me.session_id.clone().unwrap_or_default(),
-                title: me.name.clone(),
-            };
-            // The wrapper is rebuilt on the webview side (`teamBody` in
-            // `lib/relay.ts`) to show only the words; change both together.
-            let prompt = if asking {
-                format!(
-                    "[message from your teammate {}]\n\n{text}\n\n(Answer directly: your answer goes back to {}. Do not use team_message to answer.)",
-                    me.name, me.name
-                )
-            } else {
-                format!(
-                    "[message from your teammate {}]\n\n{text}\n\n(Answer with team_message to {} if a reply is needed.)",
-                    me.name, me.name
-                )
-            };
-
-            let existing = match target.session_id.as_deref() {
-                Some(id) => orchestration::resolved_session(Some(id)).await,
-                None => None,
-            };
-
-            let (max_handoffs, ask_timeout) = limits_for(&me);
-            // Everything that can refuse happens before anything is sent.
-            let waiting = {
-                let mut state = STATE.lock().expect("team state poisoned");
-                let depth = state.serving.get(&me.id).copied().unwrap_or(0) + 1;
-                anyhow::ensure!(
-                    depth <= max_handoffs,
-                    "this chain of requests has already been handed on {max_handoffs} times; \
-                     stop and tell the person what is unresolved instead of asking again"
-                );
-
-                let waiting = if asking {
-                    anyhow::ensure!(
-                        !state.duplicate(&me.id, &target.id),
-                        "you are already waiting on {}; wait for that answer first",
-                        target.name
-                    );
-                    anyhow::ensure!(
-                        !state.would_wait_in_a_circle(&me.id, &target.id),
-                        "{} is already waiting, directly or through others, on your answer; \
-                         asking back would leave you both waiting forever. Use team_message instead",
-                        target.name
-                    );
-                    anyhow::ensure!(state.outstanding() < MAX_OUTSTANDING, "too many requests are waiting");
-
-                    // For a conversation that exists, registered before the send:
-                    // its prompt is logged inside the send, and an ask not yet
-                    // known would miss that line.
-                    let (tx, rx) = oneshot::channel();
-                    state.next += 1;
-                    let id = state.next;
-                    let ask = Ask {
-                        id,
-                        from: me.id.clone(),
-                        to: target.id.clone(),
-                        prompt: prompt.clone(),
-                        started: false,
-                        reply: Some(tx),
-                    };
-                    match &existing {
-                        Some(item) => state.asks.entry(item.session_id.clone()).or_default().push(ask),
-                        None => {
-                            PENDING_NEW.lock().expect("team state poisoned").insert(id, ask);
-                        }
-                    }
-                    Some((id, rx))
-                } else {
-                    None
-                };
-
-                state.serving.insert(target.id.clone(), depth);
-                waiting
-            };
-
-            let delivered = match &existing {
-                Some(item) => orchestration::deliver(item, Some(from), &prompt, app).await,
-                None => orchestration::start_agent_session(&target, &prompt, Some(from), app)
-                    .await
-                    .map(|_| false),
-            };
-            let queued = match delivered {
-                Ok(queued) => queued,
-                Err(e) => {
-                    forget(&target.id, waiting.as_ref().map(|(id, _)| *id));
-                    return Err(e);
-                }
-            };
-
-            let Some((id, rx)) = waiting else {
-                return Ok(if queued {
-                    format!("Queued for {}: they are mid-turn and will read it next.", target.name)
-                } else {
-                    format!("Delivered to {}.", target.name)
-                });
-            };
-
-            // A conversation opened by this very ask has no turn before it: its
-            // first turn is the answer, so it is registered as started.
-            if existing.is_none() {
-                if let Some(mut ask) = PENDING_NEW.lock().expect("team state poisoned").remove(&id) {
-                    ask.started = true;
-                    if let Some(session) = agents::by_id(&target.id).and_then(|a| a.session_id) {
-                        STATE.lock().expect("team state poisoned").asks.entry(session).or_default().push(ask);
-                    }
-                }
-            }
-
-            match tokio::time::timeout(ask_timeout, rx).await {
-                Ok(Ok(Ok(answer))) if answer.is_empty() => {
-                    Ok(format!("{} finished without writing an answer.", target.name))
-                }
-                Ok(Ok(Ok(answer))) => Ok(format!("{} answered:\n\n{answer}", target.name)),
-                Ok(Ok(Err(why))) => anyhow::bail!("{} did not answer: {why}", target.name),
-                Ok(Err(_)) => anyhow::bail!("{}'s answer was lost", target.name),
-                Err(_) => {
-                    forget(&target.id, Some(id));
-                    anyhow::bail!(
-                        "{} did not answer within {} minutes",
-                        target.name,
-                        ask_timeout.as_secs() / 60
-                    )
-                }
-            }
+            let arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or_default().trim();
+            anyhow::ensure!(!arg("to").is_empty() && !arg("text").is_empty(), "team_message needs `to` and `text`");
+            crate::talk::send(app, &me, session, arg("to"), arg("text")).await
+        }
+        "post_to_channel" => {
+            let arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or_default().trim().to_string();
+            crate::channels::tool_post(app, agent_id, &arg("channel"), &arg("text")).await
+        }
+        "read_channel" => {
+            let channel = args.get("channel").and_then(Value::as_str).map(str::trim);
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+            crate::channels::tool_read(app, agent_id, channel, limit).await
         }
         other => anyhow::bail!("no tool {other}"),
     }
@@ -649,10 +515,8 @@ async fn call(agent_id: &str, name: &str, args: &Value, app: &AppHandle) -> Resu
 /// Sends `prompt` to an agent's own conversation as if from nobody and waits for
 /// the turn it starts to close, returning what the agent said.
 ///
-/// For hz's own errands (tidying memory) that need the agent's answer. It rides
-/// the same machinery as `team_ask` — the answer is the final text of the turn
-/// that carried this exact prompt — but skips the teammate checks, since the
-/// reader, not an agent, is asking.
+/// For hz's own errands (tidying memory) that need the agent's answer: the
+/// answer is the final text of the turn that carried this exact prompt.
 pub async fn ask_hidden(target: &agents::AgentRecord, prompt: &str, app: &AppHandle) -> Result<String> {
     let session = orchestration::resolved_session(target.session_id.as_deref())
         .await
@@ -666,8 +530,6 @@ pub async fn ask_hidden(target: &agents::AgentRecord, prompt: &str, app: &AppHan
         let id = state.next;
         state.asks.entry(session.session_id.clone()).or_default().push(Ask {
             id,
-            from: "hz".into(),
-            to: target.id.clone(),
             prompt: prompt.to_string(),
             started: false,
             reply: Some(tx),
@@ -676,7 +538,7 @@ pub async fn ask_hidden(target: &agents::AgentRecord, prompt: &str, app: &AppHan
     };
 
     if let Err(e) = orchestration::deliver(&session, None, prompt, app).await {
-        forget(&target.id, Some(id));
+        forget(id);
         return Err(e);
     }
 
@@ -685,7 +547,7 @@ pub async fn ask_hidden(target: &agents::AgentRecord, prompt: &str, app: &AppHan
         Ok(Ok(Err(why))) => anyhow::bail!("{} did not finish: {why}", target.name),
         Ok(Err(_)) => anyhow::bail!("{}'s answer was lost", target.name),
         Err(_) => {
-            forget(&target.id, Some(id));
+            forget(id);
             anyhow::bail!("{} did not answer within ten minutes", target.name)
         }
     }
@@ -695,39 +557,23 @@ pub async fn ask_hidden(target: &agents::AgentRecord, prompt: &str, app: &AppHan
 mod tests {
     use super::*;
 
-    fn ask(id: u64, from: &str, to: &str, prompt: &str) -> (Ask, oneshot::Receiver<Result<String, String>>) {
+    fn ask(id: u64, prompt: &str) -> (Ask, oneshot::Receiver<Result<String, String>>) {
         let (tx, rx) = oneshot::channel();
-        (
-            Ask { id, from: from.into(), to: to.into(), prompt: prompt.into(), started: false, reply: Some(tx) },
-            rx,
-        )
-    }
-
-    #[test]
-    fn asking_back_along_a_chain_is_a_circle() {
-        let mut state = State::default();
-        state.asks.entry("sb".into()).or_default().push(ask(1, "a", "b", "p1").0);
-        state.asks.entry("sc".into()).or_default().push(ask(2, "b", "c", "p2").0);
-
-        assert!(state.would_wait_in_a_circle("c", "a"), "c asking a closes a -> b -> c -> a");
-        assert!(state.would_wait_in_a_circle("b", "a"));
-        assert!(!state.would_wait_in_a_circle("c", "d"));
-        assert!(state.duplicate("a", "b"));
-        assert!(!state.duplicate("b", "a"));
+        (Ask { id, prompt: prompt.into(), started: false, reply: Some(tx) }, rx)
     }
 
     #[test]
     fn an_ask_is_answered_by_the_turn_its_own_prompt_started() {
         let session = "team-test-session-1";
-        let (waiting, mut rx) = ask(10, "a", "b", "the question");
+        let (waiting, mut rx) = ask(10, "the question");
         STATE.lock().unwrap().asks.entry(session.into()).or_default().push(waiting);
 
         // A turn that closes before this ask's prompt began is somebody else's.
-        observe_completed(session, &TurnStatus::Success, Some("older answer"));
+        observe_completed(session, &TurnStatus::Success, None, Some("older answer"));
         assert!(rx.try_recv().is_err(), "the earlier turn must not answer it");
 
-        observe_user(session, "the question");
-        observe_completed(session, &TurnStatus::Success, Some("  forty-two \n"));
+        observe_user(session, "the question", false);
+        observe_completed(session, &TurnStatus::Success, None, Some("  forty-two \n"));
 
         assert_eq!(rx.try_recv().unwrap(), Ok("forty-two".to_string()));
         assert!(!STATE.lock().unwrap().asks.contains_key(session));
@@ -736,12 +582,28 @@ mod tests {
     #[test]
     fn a_turn_that_fails_fails_the_ask() {
         let session = "team-test-session-2";
-        let (waiting, mut rx) = ask(11, "a", "b", "q");
+        let (waiting, mut rx) = ask(11, "q");
         STATE.lock().unwrap().asks.entry(session.into()).or_default().push(waiting);
 
-        observe_user(session, "q");
-        observe_completed(session, &TurnStatus::Error, None);
+        observe_user(session, "q", false);
+        observe_completed(session, &TurnStatus::Error, None, None);
 
         assert!(rx.try_recv().unwrap().is_err());
+    }
+
+    #[test]
+    fn a_turn_that_says_no_reply_is_an_errand() {
+        assert!(observe_completed("team-test-session-3", &TurnStatus::Success, Some("end_turn"), Some("NO_REPLY")));
+        assert!(!observe_completed("team-test-session-3", &TurnStatus::Success, Some("end_turn"), Some("Done.")));
+    }
+
+    #[test]
+    fn the_blocking_ask_is_gone_from_the_tool_list() {
+        let list = tools();
+        let names: Vec<&str> = list.as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(!names.contains(&"team_ask"));
+        for want in ["team_message", "team_list", "post_to_channel", "read_channel"] {
+            assert!(names.contains(&want), "{want} is missing");
+        }
     }
 }

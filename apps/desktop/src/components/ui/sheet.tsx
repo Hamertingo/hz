@@ -32,6 +32,7 @@ function Sheet({
   sub,
   icon,
   bare = false,
+  expandable = true,
   footer,
   children,
   className,
@@ -47,6 +48,8 @@ function Sheet({
   sub?: string
   icon?: ReactNode
   bare?: boolean
+  /// A centered sheet offers a full-screen button unless this is off.
+  expandable?: boolean
   footer?: ReactNode
   children: ReactNode
   className?: string
@@ -61,7 +64,7 @@ function Sheet({
 
   const buttons = (
     <>
-      {centered && (
+      {centered && expandable && (
         <button
           type="button"
           className={cn(FLOAT_BTN, !bare && "ml-auto")}
@@ -95,7 +98,7 @@ function Sheet({
           onInteractOutside={ignoreToaster}
           style={centered && !full ? { width: `min(${width}px, calc(100vw - 48px))` } : !centered ? { width: `min(${width}px, calc(100vw - 24px))` } : undefined}
           className={cn(
-            "fixed z-60 flex flex-col overflow-hidden rounded-(--r4) bg-(--pop) text-ink shadow-(--shadow) ring-1 ring-line2 backdrop-blur-xl outline-none",
+            "fixed z-60 flex flex-col overflow-hidden rounded-(--r4) bg-(--sheet) text-ink shadow-(--shadow) ring-1 ring-line2 backdrop-blur-xl outline-none",
             centered
               ? full
                 ? "inset-3.5"
@@ -124,7 +127,7 @@ function Sheet({
             </div>
           )}
           <div className={cn("min-h-0 flex-1 overflow-y-auto", !bare && "px-6 pt-[22px] pb-[30px]")}>{children}</div>
-          {footer && <div className="flex flex-none items-center gap-2 border-t border-line px-4 py-3">{footer}</div>}
+          {footer && <div className="flex flex-none items-center justify-end gap-2 border-t border-line px-5 pt-3 pb-4">{footer}</div>}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

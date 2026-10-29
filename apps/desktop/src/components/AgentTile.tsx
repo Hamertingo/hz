@@ -1,45 +1,46 @@
-import Dither from "@/components/Dither";
-import Mascot, { blinkDelay } from "@/components/Mascot";
-import { tileTones } from "@/lib/dither";
-import { mixHex, type MascotKind } from "@/lib/mascots";
-import { cn } from "@/lib/utils";
+import Face from "@/components/Face";
+import type { Look, Pose, ShapeName } from "@/lib/face";
+import { useRoster } from "@/lib/roster";
 
-/// An agent's face on its tile: the head, lightened, on a small dither of the
-/// agent's own colour. One component for every size a face is drawn at, so the
-/// corner and the inset scale together (20 in the sidebar, 32 in the chat, 96 on
-/// the profile) and the same agent is the same tile everywhere.
+/// An agent's face at any size: one component for the sidebar (34), the chat (28), the profile (84),
+/// so the same agent is the same face everywhere. `look`, `photo` and `pose` come from the agent; a caller
+/// that only knows the id gets them from the roster, so no row draws a stale body.
 export default function AgentTile({
   id,
   kind,
   color,
   size = 32,
+  shape,
+  look,
+  photo,
+  pose,
+  gaze,
   className,
 }: {
   id: string;
-  kind: MascotKind;
+  kind?: string;
   color: string;
   size?: number;
+  shape?: ShapeName | string;
+  look?: Look;
+  photo?: string | null;
+  pose?: Pose;
+  gaze?: boolean;
   className?: string;
 }) {
+  const own = useRoster().agents.find((a) => a.id === id);
   return (
-    <span
-      aria-hidden
-      className={cn("relative inline-flex shrink-0 items-center justify-center overflow-hidden", className)}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: Math.max(5, Math.round(size * 0.27)),
-        boxShadow: `inset 0 0 0 1px ${color}47`,
-      }}
-    >
-      <Dither color={color} seed={`${id}:tile`} cols={12} rows={12} light={0.9} tones={tileTones(color)} />
-      <Mascot
-        kind={kind}
-        color={mixHex(color, "#ffffff", 0.42)}
-        size={Math.round(size * 0.78)}
-        delay={blinkDelay(id)}
-        className="relative"
-      />
-    </span>
+    <Face
+      id={id}
+      kind={kind}
+      color={color}
+      size={size}
+      shape={shape ?? own?.shape}
+      look={look ?? own?.look}
+      photo={photo === undefined ? own?.photo : photo}
+      pose={pose}
+      gaze={gaze}
+      className={className}
+    />
   );
 }

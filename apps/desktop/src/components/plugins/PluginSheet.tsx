@@ -1,8 +1,14 @@
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import AgentTile from "@/components/AgentTile";
-import { AccountBox, AgentSwitchRow, H4, PluginBand, ToolRow } from "@/components/plugins/parts";
+import Dither from "@/components/Dither";
+import { Chip, Empty, Group, Row, Section, Val } from "@/components/kit/kit";
+import MeAvatar from "@/components/MeAvatar";
+import { liftDark, PluginMark } from "@/components/plugins/parts";
+import { Segmented } from "@/components/ui/segmented";
+import { Switch } from "@/components/ui/switch";
+import { POLICIES, POLICY_LABEL } from "@/lib/pluginsView";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -79,124 +85,117 @@ export default function PluginSheet({
         open={!!plugin}
         onOpenChange={(o) => !o && onClose()}
         mode="centered"
-        width={880}
+        width={600}
         bare
+        expandable={false}
         title={p.name}
         footer={
           <>
-            <Button variant="bad" onClick={() => setConfirm(true)}>
+            <Button variant="bad" className="mr-auto" onClick={() => setConfirm(true)}>
               {p.kind === "custom" ? "Remove" : "Disconnect"}
             </Button>
-            <Button variant="solid" className="ml-auto" onClick={onClose}>
+            <Button variant="solid" onClick={onClose}>
               Done
             </Button>
           </>
         }
       >
-        <PluginBand face={p} color={p.color} height={120} markSize={76} />
-        <div className="mt-[52px] grid grid-cols-[260px_1fr] gap-9 px-6 pb-7 max-[760px]:grid-cols-1">
-          <div className="flex flex-col gap-3.5">
-            <div>
-              <h2 className="text-[22px] font-semibold tracking-[-0.02em]">{p.name}</h2>
-              <span className="mt-1 flex items-center gap-[7px] text-xs text-ink3">
-                <i className={cn("size-1.5 rounded-full", p.status === "connected" ? "bg-green" : "bg-amber")} />
-                {connectionLine(p)}
-              </span>
-            </div>
-            <p className="leading-[1.55] text-ink3">{p.description}</p>
-            {p.error && <p className="text-xs leading-normal text-red">{p.error}</p>}
-            <AccountBox
-              me={me}
-              title={p.account ?? (p.transport.kind === "stdio" ? "Runs on this Mac" : "No account")}
-              sub={p.connectedAt ? `Connected ${connectedOn(p.connectedAt)}` : "Added by you"}
-            />
-            <Button variant="outline" disabled={busy !== null} onClick={() => void run("reconnect", onReconnect)}>
-              {busy === "reconnect" ? <Spinner className="size-3.5" /> : <RefreshCw className="size-[13px]" />}
-              {busy === "reconnect" ? "Reconnecting" : "Reconnect"}
-            </Button>
-            <div className="mt-1 flex flex-col gap-2 text-[12.5px]">
-              {(
-                [
-                  ["Calls this week", callsThisWeek(calls, p.id, now)],
-                  ["Tools", p.tools.length],
-                  ["Agents", mine.length],
-                ] as const
-              ).map(([label, value]) => (
-                <div key={label} className="flex justify-between text-ink3">
-                  {label}
-                  <b className="font-medium text-ink2">{value}</b>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="relative h-24 overflow-hidden bg-s2">
+          <Dither color={liftDark(p.color)} seed={`${p.id}:drawer`} cols={150} rows={24} light={0.8} />
+        </div>
+        <span className="relative z-[2] -mt-[30px] ml-5 flex w-max rounded-(--r4) bg-(--sheet) p-[5px]">
+          <PluginMark face={p} size={60} />
+        </span>
+        <div className="flex items-center gap-2.5 px-5 pt-2">
+          <h2 className="flex-1 text-lg font-semibold tracking-[-0.015em]">{p.name}</h2>
+          <Chip dot={p.status === "connected" ? "go" : "warn"}>{p.status === "connected" ? "Connected" : "Needs attention"}</Chip>
+        </div>
+        <div className="px-5 pt-1 pb-5">
+          <p className="mx-0.5 mt-1.5 mb-1 text-[13px] leading-normal text-ink2">{p.description}</p>
+          {p.error && <p className="mx-0.5 mt-1 text-xs leading-normal text-red">{p.error}</p>}
 
-          <div className="min-w-0">
-            <H4
-              right={
-                <>
-                  <button
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void run("refresh", onRefresh)}
-                    className="mr-3 cursor-pointer text-ink3 transition-colors hover:text-ink disabled:opacity-50"
-                  >
-                    {busy === "refresh" ? "Listing…" : "Refresh list"}
-                  </button>
-                  Allow · Ask you first · Off
-                </>
-              }
-            >
-              Tools
-            </H4>
-            {p.tools.length === 0 && (
-              <p className="text-[12.5px] text-ink3">
-                No tools listed yet. Refresh the list to ask the server what it offers.
-              </p>
-            )}
-            {p.tools.map((t) => (
-              <ToolRow
-                key={t.name}
-                name={t.name}
-                description={t.description}
-                policy={t.policy}
-                onChange={(policy) => onPolicy(p, t.name, policy)}
+          <Section title="Which agents can use it" count={mine.length} />
+          <Group>
+            {agents.map((a) => (
+              <Row
+                key={a.id}
+                bareLead
+                lead={<AgentTile id={a.id} kind={a.kind} color={a.color} shape={a.shape} look={a.look} photo={a.photo} size={26} />}
+                title={a.name}
+                sub={a.role}
+                right={<Switch aria-label={`${a.name} can use it`} checked={p.grants.includes(a.id)} onCheckedChange={(on) => onGrant(p, a, on)} />}
               />
             ))}
+            {agents.length === 0 && <Empty>There are no agents in this workspace yet.</Empty>}
+          </Group>
+          <p className="mx-1 mt-1.5 text-xs leading-normal text-ink4">
+            A new grant reaches an agent when its next session starts. A taken one stops working at once.
+          </p>
 
-            <H4>Which agents can use it</H4>
-            {agents.map((a) => (
-              <AgentSwitchRow key={a.id} agent={a} on={p.grants.includes(a.id)} onChange={(on) => onGrant(p, a, on)} />
+          <Section
+            title="What it may do"
+            action={busy === "refresh" ? "Listing…" : "Refresh list"}
+            onAction={() => busy === null && void run("refresh", onRefresh)}
+          />
+          <Group>
+            {p.tools.map((t) => (
+              <Row
+                key={t.name}
+                lead={<Zap />}
+                title={t.name}
+                sub={t.description || undefined}
+                right={
+                  <Segmented<Policy>
+                    label={`${t.name} policy`}
+                    value={t.policy}
+                    onChange={(policy) => onPolicy(p, t.name, policy)}
+                    options={POLICIES.map((x) => ({ value: x, label: POLICY_LABEL[x] }))}
+                  />
+                }
+              />
             ))}
-            <p className="mt-1.5 text-xs leading-normal text-ink4">
-              A new grant reaches an agent when its next session starts. A taken one stops working at once.
-            </p>
-
-            <H4>Recent calls</H4>
-            {log.length === 0 ? (
-              <p className="text-[12.5px] text-ink3">No calls yet.</p>
-            ) : (
-              <div className="text-xs leading-8 text-ink3">
-                {log.map((c) => {
-                  const a = agents.find((x) => x.id === c.agent);
-                  const note = outcomeLabel(c.outcome);
-                  return (
-                    <div key={`${c.t}-${c.tool}`} className="flex items-center gap-3">
-                      <b className="w-10 font-normal text-ink4 tabular-nums">{clockOf(c.t)}</b>
-                      <span className="flex w-[84px] items-center gap-1.5">
-                        {a && <AgentTile id={a.id} kind={a.kind} color={a.color} size={16} />}
-                        <span className="truncate">{a?.name ?? c.agent}</span>
-                      </span>
-                      <code className={cn("min-w-0 flex-1 truncate font-mono text-[11.5px]", c.ok ? "text-ink2" : "text-red")}>
-                        {c.tool}
-                        {note && <span className="ml-2 font-sans text-ink4">{note}</span>}
-                      </code>
-                      <span className="tabular-nums">{durationOf(c.ms)}</span>
-                    </div>
-                  );
-                })}
-              </div>
+            {p.tools.length === 0 && (
+              <Empty>No tools listed yet. Refresh the list to ask the server what it offers.</Empty>
             )}
-          </div>
+          </Group>
+
+          <Section title="Connection" />
+          <Group>
+            <Row
+              bareLead
+              lead={<MeAvatar me={me} size={26} />}
+              title={p.account ?? (p.transport.kind === "stdio" ? "Runs on this Mac" : "No account")}
+              sub={`${p.connectedAt ? `Connected ${connectedOn(p.connectedAt)}` : "Added by you"} · ${connectionLine(p)}`}
+              right={
+                <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run("reconnect", onReconnect)}>
+                  {busy === "reconnect" ? <Spinner className="size-3.5" /> : <RefreshCw className="size-[13px]" />}
+                  {busy === "reconnect" ? "Reconnecting" : "Reconnect"}
+                </Button>
+              }
+            />
+          </Group>
+
+          <Section title="Recent calls" count={callsThisWeek(calls, p.id, now) ? `${callsThisWeek(calls, p.id, now)} this week` : undefined} />
+          {log.length === 0 ? (
+            <p className="mx-1 text-[12.5px] text-ink3">No calls yet.</p>
+          ) : (
+            <Group>
+              {log.map((c) => {
+                const a = agents.find((x) => x.id === c.agent);
+                const note = outcomeLabel(c.outcome);
+                return (
+                  <Row
+                    key={`${c.t}-${c.tool}`}
+                    bareLead={!!a}
+                    lead={a ? <AgentTile id={a.id} kind={a.kind} color={a.color} shape={a.shape} look={a.look} photo={a.photo} size={20} /> : undefined}
+                    title={<code className={cn("font-mono text-xs", c.ok ? "text-ink2" : "text-red")}>{c.tool}</code>}
+                    sub={`${clockOf(c.t)} · ${a?.name ?? c.agent}${note ? ` · ${note}` : ""}`}
+                    right={<Val>{durationOf(c.ms)}</Val>}
+                  />
+                );
+              })}
+            </Group>
+          )}
         </div>
       </Sheet>
       <ConfirmDialog

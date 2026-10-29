@@ -1,11 +1,11 @@
 /// A note's front matter and the profile page's reading of it. The Rust side
 /// (`memory_mcp.rs`) writes the same block; the two must agree.
 
-export type NoteTag = "About you" | "Project" | "Decision";
-export const NOTE_TAGS: readonly NoteTag[] = ["About you", "Project", "Decision"];
+type NoteTag = "About you" | "Project" | "Decision";
+const NOTE_TAGS: readonly NoteTag[] = ["About you", "Project", "Decision"];
 
-export type TagTab = "all" | "you" | "project" | "decision";
-export const TAG_TABS: readonly { key: TagTab; label: string; tag: NoteTag | null }[] = [
+type TagTab = "all" | "you" | "project" | "decision";
+const TAG_TABS: readonly { key: TagTab; label: string; tag: NoteTag | null }[] = [
   { key: "all", label: "All", tag: null },
   { key: "you", label: "About you", tag: "About you" },
   { key: "project", label: "Projects", tag: "Project" },
@@ -51,7 +51,7 @@ export function composeNote(front: readonly [string, string][], body: string): s
   return `---\n${lines.join("\n")}\n---\n${body}`;
 }
 
-export function frontValue(front: readonly [string, string][], key: string): string | null {
+function frontValue(front: readonly [string, string][], key: string): string | null {
   return front.find(([k]) => k === key)?.[1] ?? null;
 }
 
@@ -97,7 +97,7 @@ export function noteSummary(body: string): string {
   return "";
 }
 
-export function asTag(raw: string | null): NoteTag | null {
+function asTag(raw: string | null): NoteTag | null {
   return NOTE_TAGS.find((t) => t.toLowerCase() === raw?.trim().toLowerCase()) ?? null;
 }
 

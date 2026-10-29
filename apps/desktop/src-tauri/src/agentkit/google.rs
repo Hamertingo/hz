@@ -20,8 +20,8 @@ pub const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GMAIL: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 /// The only write endpoint for mail: drafts. Nothing in this file names a send endpoint.
 pub const DRAFTS_ENDPOINT: &str = "https://gmail.googleapis.com/gmail/v1/users/me/drafts";
-const CALENDAR: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-const DRIVE: &str = "https://www.googleapis.com/drive/v3/files";
+pub const CALENDAR: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+pub const DRIVE: &str = "https://www.googleapis.com/drive/v3/files";
 
 /// Seconds before real expiry at which a cached token counts as stale.
 pub const EXPIRY_SKEW_SECS: i64 = 60;
@@ -63,6 +63,8 @@ pub enum Feature {
     CalendarRead,
     CalendarCreate,
     DriveRead,
+    /// Labels and archiving for bulk organising; still no send and no delete.
+    GmailOrganize,
 }
 
 /// The OAuth scopes for the chosen features, deduplicated and sorted, never wider than needed.
@@ -81,6 +83,7 @@ pub fn scopes_for(features: &[Feature]) -> Vec<&'static str> {
                 "https://www.googleapis.com/auth/calendar.events",
             ],
             Feature::DriveRead => &["https://www.googleapis.com/auth/drive.readonly"],
+            Feature::GmailOrganize => &["https://www.googleapis.com/auth/gmail.modify"],
         };
         for s in add {
             if !out.contains(s) {
@@ -253,6 +256,50 @@ pub fn gmail_message_url(id: &str) -> String {
 
 fn encode_segment(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+/// One page of up to 500 message ids for a bulk job; `page` is the previous reply's `nextPageToken`.
+pub fn gmail_ids_page_url(query: &str, page: Option<&str>) -> String {
+    let mut p = vec![("q", query), ("maxResults", "500")];
+    if let Some(t) = page {
+        p.push(("pageToken", t));
+    }
+    with_params(&format!("{GMAIL}/messages"), &p)
+}
+
+/// The ids of one page and the token for the next, `None` on the last page.
+pub fn parse_message_page(json: &str) -> Result<(Vec<String>, Option<String>)> {
+    let ids = parse_message_list(json)?;
+    let v: Value = serde_json::from_str(json)?;
+    Ok((ids, v.get("nextPageToken").and_then(Value::as_str).map(String::from)))
+}
+
+/// URL for a message's headers only, enough for a preview row.
+pub fn gmail_headers_url(id: &str) -> String {
+    let mut u = url::Url::parse(&format!("{GMAIL}/messages/{}", encode_segment(id))).expect("constant base url");
+    u.query_pairs_mut()
+        .append_pair("format", "metadata")
+        .append_pair("metadataHeaders", "From")
+        .append_pair("metadataHeaders", "Subject");
+    u.into()
+}
+
+/// URL that lists, and with a POST creates, the reader's labels.
+pub const LABELS_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/labels";
+
+/// The id of the label called `name` (case-insensitive) in a `labels.list` reply.
+pub fn find_label(json: &str, name: &str) -> Result<Option<String>> {
+    let v: Value = serde_json::from_str(json)?;
+    Ok(v.get("labels").and_then(Value::as_array).and_then(|ls| {
+        ls.iter()
+            .find(|l| l.get("name").and_then(Value::as_str).is_some_and(|n| n.eq_ignore_ascii_case(name.trim())))
+            .and_then(|l| l.get("id").and_then(Value::as_str).map(String::from))
+    }))
+}
+
+/// Body for `labels.create`.
+pub fn create_label_body(name: &str) -> Value {
+    json!({ "name": name.trim(), "labelListVisibility": "labelShow", "messageListVisibility": "show" })
 }
 
 /// Message ids out of a `messages.list` reply; an empty result has no `messages` key at all.
@@ -565,6 +612,11 @@ pub fn export_text_url(file_id: &str, mime: &str) -> Option<String> {
     ))
 }
 
+/// URL for a file's name and type.
+pub fn file_meta_url(file_id: &str) -> String {
+    with_params(&format!("{DRIVE}/{}", encode_segment(file_id)), &[("fields", "id,name,mimeType")])
+}
+
 /// Raw-content URL for binary or plain files.
 pub fn download_url(file_id: &str) -> String {
     with_params(&format!("{DRIVE}/{}", encode_segment(file_id)), &[("alt", "media")])
@@ -852,6 +904,25 @@ mod tests {
         assert!(export_text_url("3", "application/vnd.google-apps.presentation").unwrap().contains("text%2Fplain"));
         assert!(export_text_url("4", "application/pdf").is_none());
         assert!(download_url("a/b").contains("a%2Fb") && download_url("x").contains("alt=media"));
+        assert!(file_meta_url("a/b").contains("a%2Fb") && file_meta_url("x").contains("fields=id%2Cname%2CmimeType"));
+    }
+
+    #[test]
+    fn bulk_pages_and_labels() {
+        let u = gmail_ids_page_url("older_than:1y", Some("t2"));
+        assert!(u.contains("maxResults=500") && u.contains("pageToken=t2"));
+        assert!(!gmail_ids_page_url("x", None).contains("pageToken"));
+        let (ids, next) = parse_message_page(r#"{"messages":[{"id":"a"}],"nextPageToken":"n"}"#).unwrap();
+        assert_eq!((ids, next.as_deref()), (vec!["a".to_string()], Some("n")));
+        assert_eq!(parse_message_page("{}").unwrap().1, None);
+        let h = gmail_headers_url("m/1");
+        assert!(h.contains("m%2F1") && h.contains("format=metadata") && h.contains("metadataHeaders=Subject"));
+        let labels = r#"{"labels":[{"id":"INBOX","name":"INBOX"},{"id":"Label_3","name":"Receipts"}]}"#;
+        assert_eq!(find_label(labels, " receipts ").unwrap().as_deref(), Some("Label_3"));
+        assert_eq!(find_label(labels, "Nope").unwrap(), None);
+        assert_eq!(create_label_body(" Receipts ")["name"], "Receipts");
+        let s = scopes_for(&[Feature::GmailOrganize]);
+        assert_eq!(s, vec!["https://www.googleapis.com/auth/gmail.modify"]);
     }
 
     #[test]

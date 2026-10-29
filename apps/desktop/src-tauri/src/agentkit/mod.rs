@@ -35,7 +35,6 @@ pub mod relay;
 pub mod frameio;
 pub mod takeover;
 pub mod screens;
-pub mod vm;
 pub mod screenshot;
 pub mod work_screen;
 pub mod cursor_buddy;

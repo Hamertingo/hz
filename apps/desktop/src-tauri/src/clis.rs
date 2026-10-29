@@ -273,6 +273,18 @@ async fn codex_account(bin: &std::path::Path) -> Option<String> {
 /// What the last "check for updates" found, by harness wire name, and when.
 static LATEST: LazyLock<Mutex<HashMap<String, (Instant, String)>>> = LazyLock::new(Default::default);
 
+/// Keeps a newer version the six-hourly registry check found (`kit_engine_updates`), so the row
+/// offers Update without the reader pressing Check. `engine` is `claude`, `codex` or `opencode`.
+pub fn note_latest(engine: &str, version: &str) {
+    let h = match engine {
+        "claude" => Harness::Claude,
+        "codex" => Harness::Codex,
+        "opencode" => Harness::OpenCode,
+        _ => return,
+    };
+    LATEST.lock().expect("latest poisoned").insert(h.wire_name(), (Instant::now(), version.to_string()));
+}
+
 async fn info_of(h: Harness) -> CliInfo {
     let bin = crate::binpath::agent_binary(h).await;
     let installed = bin.is_absolute();

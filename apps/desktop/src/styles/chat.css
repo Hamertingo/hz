@@ -1,0 +1,14 @@
+/* The conversation's motion. New rows rise, cards pop, bars grow; all of it short, none of it loops except the spinner. */
+@keyframes chat-rise{from{opacity:0;transform:translateY(6px)}}
+@keyframes chat-pop{from{opacity:0;transform:scale(.97) translateY(3px)}}
+@keyframes chat-bar{from{transform:scaleY(0)}}
+@keyframes chat-tdot{0%,60%,100%{opacity:.3;transform:none}30%{opacity:1;transform:translateY(-2px)}}
+@keyframes chat-send{from{transform:scale(.8)}}
+.chat-rise{animation:chat-rise .25s cubic-bezier(.2,.8,.2,1)}
+.chat-pop{animation:chat-pop .2s cubic-bezier(.2,.8,.2,1)}
+.chat-bar{transform-origin:bottom;animation:chat-bar .6s cubic-bezier(.2,.8,.2,1) both}
+.chat-tdot{animation:chat-tdot 1.2s infinite}
+.chat-send{animation:chat-send .25s cubic-bezier(.3,1.4,.5,1)}
+@media (prefers-reduced-motion: reduce){
+  .chat-rise,.chat-pop,.chat-bar,.chat-tdot,.chat-send{animation:none}
+}

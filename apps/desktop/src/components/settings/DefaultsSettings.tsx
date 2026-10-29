@@ -1,10 +1,12 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { Folder } from "lucide-react";
 
+import { PaymentsRows } from "@/components/settings/AgentKeys";
+import { CommandReviewDefault } from "@/components/safety/SafetyRows";
 import SettingsSkeleton from "@/components/settings/SettingsSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import AgentIcon from "@/components/AgentIcon";
-import { Lead, SetHeading, StudioRow } from "@/components/settings/StudioRow";
+import { SetHeading, StudioRow } from "@/components/settings/StudioRow";
 import { fieldClassName } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
@@ -44,11 +46,9 @@ export default function DefaultsSettings() {
 
   return (
     <>
-      <Lead>What a new agent in this workspace starts with. Each agent can change its own.</Lead>
-
-      <SetHeading>New agents</SetHeading>
+      <SetHeading>New agents start with</SetHeading>
       <div>
-        <StudioRow label="Runs on">
+        <StudioRow stack label="Runs on">
           <div className="grid w-full grid-cols-3 gap-2.5" role="radiogroup" aria-label="Runs on">
             {AGENT_HARNESSES.map((h) => {
               const info = availability?.find((a) => a.harness === h);
@@ -144,20 +144,15 @@ export default function DefaultsSettings() {
 
       <SetHeading>Working together</SetHeading>
       <div>
-        <StudioRow label="Hand-offs per request" hint="How many times one request can be passed on before it stops.">
+        <StudioRow
+          label="Back and forth between agents"
+          hint="How many times a conversation between agents can go back and forth before it stops. Each message and each answer counts once."
+        >
           <Segmented
-            label="Hand-offs per request"
+            label="Back and forth between agents"
             value={String(d.handoffs)}
             onChange={(n) => save({ handoffs: Number(n) })}
             options={optionsWith([4, 8, 12], d.handoffs).map((n) => ({ value: String(n), label: String(n) }))}
-          />
-        </StudioRow>
-        <StudioRow label="Wait for an answer" hint="How long an agent waits when it asks another.">
-          <Segmented
-            label="Wait for an answer"
-            value={String(d.waitMins)}
-            onChange={(n) => save({ waitMins: Number(n) })}
-            options={optionsWith([2, 10, 30], d.waitMins).map((n) => ({ value: String(n), label: `${n} min` }))}
           />
         </StudioRow>
         <StudioRow
@@ -176,6 +171,12 @@ export default function DefaultsSettings() {
           />
         </StudioRow>
       </div>
+
+      <SetHeading>Safety</SetHeading>
+      <div>
+        <CommandReviewDefault />
+      </div>
+      <PaymentsRows />
     </>
   );
 }

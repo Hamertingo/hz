@@ -288,6 +288,7 @@ fn expand(member_session_id: &str, turns: &[Value]) -> Vec<AgentEvent> {
                 } else {
                     "end_turn".to_string()
                 },
+                ..Default::default()
             }));
             // The other half of the pair above: the turn's end is the child's own
             // clock too, so the two together report the wait it actually took.

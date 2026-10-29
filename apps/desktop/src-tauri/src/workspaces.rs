@@ -55,9 +55,11 @@ pub struct WorkspaceDefaults {
     pub tidy_time: String,
     /// A memory folder every agent in the workspace can read and write.
     pub shared_memory: bool,
-    /// How many times one request may be passed on before it stops.
+    /// How many hops one conversation between agents may take: each message and
+    /// each answer is one (`talk.rs`).
     pub handoffs: u32,
-    /// Minutes an agent waits for a teammate's answer.
+    /// Kept so saved files still read. Nothing waits on a teammate any more:
+    /// `team_message` returns at once and the answer wakes the sender.
     pub wait_mins: u32,
     /// `wait`, `move` (resend on the fallback CLI) or `ask` (raise a question).
     pub on_limit: String,
@@ -86,7 +88,7 @@ impl Default for WorkspaceDefaults {
             tidy: false,
             tidy_time: "03:00".into(),
             shared_memory: false,
-            handoffs: 8,
+            handoffs: 4,
             wait_mins: 10,
             on_limit: "ask".into(),
             fallback_harness: "codex-acp".into(),

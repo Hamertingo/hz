@@ -8,32 +8,25 @@ export default function RoutinesSkeleton() {
     <SkeletonRegion label="Reading routines">
       <div className="grid grid-cols-7 gap-1.5">
         {Array.from({ length: 7 }, (_, i) => (
-          <div key={i} className="flex h-[92px] flex-col gap-2 rounded-(--r3) bg-s1 p-2.5 shadow-[inset_0_0_0_1px_var(--line)]">
-            <Skeleton className="h-2.5 w-8" />
-            {i % 3 !== 1 && <Skeleton className="h-4 w-full rounded-[4px]" />}
-            {i % 2 === 0 && <Skeleton className="h-4 w-4/5 rounded-[4px]" />}
+          <div key={i} className="flex h-[66px] flex-col items-center gap-1.5 rounded-(--r2) py-2 shadow-[inset_0_0_0_1px_var(--line)]">
+            <Skeleton className="h-2.5 w-7" />
+            <Skeleton className="h-4 w-5 rounded-[4px]" />
           </div>
         ))}
       </div>
 
-      <div className="mt-[34px] mb-2.5 flex items-baseline gap-2.5">
-        <Skeleton className="h-3.5 w-24" />
-        <Skeleton className="h-2.5 w-44" />
+      <div className="mx-1 mt-5 mb-2 flex items-baseline gap-1.5">
+        <Skeleton className="h-3 w-20" />
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div className="rounded-[13px] bg-s1 shadow-[inset_0_0_0_1px_var(--line)] [&>*+*]:border-t [&>*+*]:border-line">
         {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="flex items-start gap-3.5 rounded-(--r4) bg-s1 py-4 pr-4 pl-[18px] shadow-[inset_0_0_0_1px_var(--line)]"
-          >
-            <Skeleton className="size-[34px] rounded-lg" />
-            <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <Skeleton className="h-3.5 w-40" />
-              <Skeleton className={i === 1 ? "h-3 w-2/3" : "h-3 w-4/5"} />
-              <Skeleton className="h-2.5 w-48" />
+          <div key={i} className="flex items-center gap-[11px] px-3 py-[9px]">
+            <Skeleton className="size-[26px] rounded-lg" />
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <Skeleton className={i === 1 ? "h-3.5 w-1/2" : "h-3.5 w-2/5"} />
+              <Skeleton className="h-3 w-3/5" />
             </div>
-            <Skeleton className="h-5 w-9 rounded-full" />
           </div>
         ))}
       </div>

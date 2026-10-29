@@ -14,6 +14,8 @@ pub const DISPLAY_BASE: u32 = 100;
 pub const VNC_BASE: u16 = 5900;
 /// Chrome DevTools port for screen n is `CDP_BASE + n`.
 pub const CDP_BASE: u16 = 9200;
+/// The noVNC web client of screen n is served on `NOVNC_BASE + n`.
+pub const NOVNC_BASE: u16 = 6080;
 
 /// X display name, e.g. `:102` for screen 2.
 pub fn display_for(n: u32) -> String {
@@ -23,6 +25,11 @@ pub fn display_for(n: u32) -> String {
 /// VNC port of screen n.
 pub fn vnc_port(n: u32) -> u16 {
     VNC_BASE.saturating_add(n as u16)
+}
+
+/// Port the browser can open to see and drive screen n.
+pub fn novnc_port(n: u32) -> u16 {
+    NOVNC_BASE.saturating_add(n as u16)
 }
 
 /// Chrome DevTools port of screen n.
@@ -138,6 +145,12 @@ impl ScreenManager {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_live_view_port_follows_the_screen_number() {
+        assert_eq!(novnc_port(2), 6082);
+        assert_eq!(novnc_port(7), 6087);
+    }
+
     use super::*;
     use chrono::TimeZone;
 

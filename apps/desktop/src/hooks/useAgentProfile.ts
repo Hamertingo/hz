@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { toNote, type Note } from "@/lib/memoryNotes";
-import type { ActivityScan, InstrMeta, LayerInfo, NoteUsage, SpendView, Tidied } from "@/types/events";
+import type { ActivityScan, InstrMeta, NoteUsage, SpendView } from "@/types/events";
 
 type MemoryFile = { name: string; size: number; modifiedMs: number };
 
@@ -110,27 +110,6 @@ export function useVersions(agentId: string) {
   return { versions, reload };
 }
 
-export function useLayers(agentId: string, dep: unknown) {
-  const [layers, setLayers] = useState<LayerInfo[]>([]);
-  useEffect(() => {
-    let live = true;
-    // The roster mirrors to the backend a moment after an edit; asking at once
-    // would read the briefing as it was.
-    const t = setTimeout(
-      () =>
-        invoke<LayerInfo[]>("agent_briefing_layers", { agentId })
-          .then((l) => live && setLayers(l))
-          .catch(() => {}),
-      400,
-    );
-    return () => {
-      live = false;
-      clearTimeout(t);
-    };
-  }, [agentId, dep]);
-  return layers;
-}
-
 export function useSpend(agentId: string, dep: unknown) {
   const [spend, setSpend] = useState<SpendView | null>(null);
   useEffect(() => {
@@ -148,14 +127,4 @@ export function useSpend(agentId: string, dep: unknown) {
     };
   }, [agentId, dep]);
   return spend;
-}
-
-export function useTidied(agentId: string) {
-  const [tidied, setTidied] = useState<Tidied | null>(null);
-  useEffect(() => {
-    invoke<Tidied | null>("agent_memory_tidied", { agentId })
-      .then(setTidied)
-      .catch(() => {});
-  }, [agentId]);
-  return [tidied, setTidied] as const;
 }

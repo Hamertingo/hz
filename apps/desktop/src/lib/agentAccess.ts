@@ -5,18 +5,6 @@ export type Folder = { path: string; write: boolean };
 
 export const DEFAULT_TALK: Talk = { mode: "everyone", ids: [] };
 
-/// The rules a new agent starts with: the actions the mockup lists, all on but
-/// package installs. Written into the roster the first time Access is opened, so
-/// they are the agent's own from then on.
-export const STARTER_RULES: readonly AskRule[] = [
-  { text: "Merging or pushing to main", on: true },
-  { text: "Deploying anything", on: true },
-  { text: "Deleting files", on: true },
-  { text: "Spending over US$ 2 on one task", on: true },
-  { text: "Posting in public or sending email", on: true },
-  { text: "Installing packages", on: false },
-];
-
 export function readTalk(raw: unknown): Talk {
   if (typeof raw !== "object" || raw === null) return DEFAULT_TALK;
   const t = raw as Record<string, unknown>;

@@ -538,6 +538,9 @@ pub fn open_count() -> usize {
 /// webview reports `null` while the window is hidden or another page is up.
 #[tauri::command]
 pub fn inbox_viewing(session_id: Option<String>) {
+    if let Some(id) = session_id.as_deref() {
+        crate::kit_work::seen(id);
+    }
     *VIEWING.lock().expect("viewing poisoned") = session_id;
 }
 
@@ -729,6 +732,7 @@ pub async fn on_turn_completed(
         sub.push(format!("{}s", (ms / 1000).max(1)));
     }
     let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(text);
+    crate::bark_push::finished(app, &agent.name, &clip(first, 140));
     push_done(
         app,
         &agent.id,
@@ -940,6 +944,19 @@ pub fn inbox_mark_mentions_read(app: AppHandle) -> usize {
         changed(&app);
     }
     n
+}
+
+/// "Always allow this" pressed on the chat's own card: the same standing rule
+/// the Inbox writes, and the agent answered once. Returns the rule's label.
+#[tauri::command]
+pub async fn permission_always_allow(app: AppHandle, session_id: String, request_id: String) -> Result<String, String> {
+    let item = lock()
+        .open_ref(InboxKind::Approval, &session_id, &request_id)
+        .map(|i| (i.id.clone(), i.payload.get("input").cloned().unwrap_or(Value::Null)))
+        .ok_or("that request is no longer waiting")?;
+    let (_, label) = rule_for(&item.1).ok_or("this one cannot be allowed for good; approve it once instead")?;
+    resolve(&app, &item.0, "ALWAYS", None).await.map_err(|e| format!("{e:#}"))?;
+    Ok(label)
 }
 
 /// Drops one standing "always allow".

@@ -1,12 +1,11 @@
-import AgentTile from "@/components/AgentTile";
+import AgentAvatar from "@/components/AgentAvatar";
+import { Group, Row, Section } from "@/components/kit/kit";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import type { RosterAgent } from "@/lib/roster";
 import type { Channel } from "@/types/events";
-
-const H4 = "mt-6 mb-2.5 text-xs font-medium text-ink3 first:mt-0";
 
 /// Who is in a channel, who leads it and how many rounds a message may run. Each
 /// change is written as it is made; Done only closes.
@@ -44,38 +43,37 @@ export default function MembersSheet({
         </Button>
       }
     >
-      <h4 className={H4}>Agents in {workspaceName}</h4>
-      {agents.map((a) => {
-        const on = channel.members.includes(a.id);
-        const only = on && channel.members.length === 1;
-        return (
-          <div key={a.id} className="flex items-center gap-2.5 py-1.5">
-            <AgentTile id={a.id} kind={a.kind} color={a.color} size={28} />
-            <div className="min-w-0">
-              <div className="truncate text-[13px]">{a.name}</div>
-              <div className="truncate text-[11.5px] text-ink3">
-                {a.role}
-                {a.id === channel.lead ? " · lead" : ""}
-              </div>
-            </div>
-            <Switch
-              className="ml-auto"
-              checked={on}
-              disabled={only}
-              aria-label={`${a.name} in #${channel.name}`}
-              onCheckedChange={(next) => onMember(a.id, next)}
+      <Section title={`Agents in ${workspaceName}`} className="mt-0" />
+      <Group>
+        {agents.map((a) => {
+          const on = channel.members.includes(a.id);
+          const only = on && channel.members.length === 1;
+          return (
+            <Row
+              key={a.id}
+              lead={<AgentAvatar agent={a} size={28} />}
+              title={a.name}
+              sub={`${a.role}${a.id === channel.lead ? " · lead" : ""}`}
+              right={
+                <Switch
+                  checked={on}
+                  disabled={only}
+                  aria-label={`${a.name} in #${channel.name}`}
+                  onCheckedChange={(next) => onMember(a.id, next)}
+                />
+              }
             />
-          </div>
-        );
-      })}
-      <h4 className={H4}>Lead</h4>
+          );
+        })}
+      </Group>
+      <Section title="Lead" />
       <Segmented
         label="Lead"
         value={channel.lead}
         onChange={onLead}
         options={inside.map((a) => ({ value: a.id, label: a.name }))}
       />
-      <h4 className={H4}>Rounds per message</h4>
+      <Section title="Rounds per message" />
       <Segmented
         label="Rounds per message"
         value={String(channel.rounds)}

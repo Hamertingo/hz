@@ -1,4 +1,4 @@
-import { Clock, FileText, Hash, Inbox, Plug, Plus, Settings } from "lucide-react";
+import { Clock, FileText, GitPullRequest, Hand, Hash, PanelLeft, Plug, Plus, Settings } from "lucide-react";
 
 import AgentTile from "@/components/AgentTile";
 import { PluginMark } from "@/components/plugins/parts";
@@ -113,5 +113,7 @@ export const DO_ICONS = {
   routine: <Clock className="size-[13px]" />,
   plugin: <Plug className="size-[13px]" />,
   settings: <Settings className="size-[13px]" />,
-  inbox: <Inbox className="size-[13px]" />,
+  inbox: <Hand className="size-[13px]" />,
+  prs: <GitPullRequest className="size-[13px]" />,
+  sidebar: <PanelLeft className="size-[13px]" />,
 };

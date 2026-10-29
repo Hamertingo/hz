@@ -93,14 +93,14 @@ export default function RightPanel({
       className={cn(
         "relative min-w-0 flex-col bg-sidebar",
         open ? "flex" : "hidden",
-        wide ? "flex-1" : "shrink-0 border-l border-border",
+        wide ? "flex-1" : "shrink-0 border-l border-line",
       )}
     >
       {!wide && handle}
       <div
         className={cn(
           "flex h-(--titlebar-h) shrink-0 items-center gap-0.5 overflow-hidden px-2",
-          !heading && "border-b border-border",
+          !heading && "border-b border-line",
         )}
         data-tauri-drag-region="deep"
       >
@@ -109,7 +109,7 @@ export default function RightPanel({
         {tabs ? (
           <div className="scrollbar-none flex h-full min-w-0 items-center gap-1 overflow-x-auto">{tabs}</div>
         ) : heading ? (
-          <span className="px-2 py-1 text-ui font-medium">{heading}</span>
+          <span className="px-2 py-1 text-ui font-medium text-ink">{heading}</span>
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -119,7 +119,7 @@ export default function RightPanel({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  className="text-muted-foreground/60 hover:text-muted-foreground"
+                  className="text-ink4 hover:text-ink2"
                   onClick={onToggleWide}
                   aria-label={wide ? "Restore the panel" : "Expand the panel"}
                 >
@@ -140,7 +140,7 @@ export default function RightPanel({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  className="-mr-0.5 text-muted-foreground/60 hover:text-muted-foreground"
+                  className="-mr-0.5 text-ink4 hover:text-ink2"
                   onClick={refresh.onRefresh}
                   aria-label="Refresh"
                 >

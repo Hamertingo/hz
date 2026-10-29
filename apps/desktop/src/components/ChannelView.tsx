@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { BellOff, Download, Hash, Pencil, Bell, PanelRight, Trash2, Users, MoreHorizontal, Square, type LucideIcon } from "lucide-react";
+import { BellOff, ChevronDown, Download, Hash, ListChecks, Pencil, Bell, Trash2, Users, MoreHorizontal, Square, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import AgentTile from "@/components/AgentTile";
 import ChannelAbout from "@/components/channel/ChannelAbout";
@@ -9,8 +10,10 @@ import { InlineApproval, MessageRow, NoteRow, Rule, type Cast } from "@/componen
 import MembersSheet from "@/components/channel/MembersSheet";
 import TaskSheet from "@/components/channel/TaskSheet";
 import ChatInput from "@/components/ChatInput";
+import AttachButton from "@/components/composer/AttachButton";
+import { MentionButton, SlashButton } from "@/components/composer/ComposerActions";
 import ReplyBar from "@/components/composer/ReplyBar";
-import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
@@ -32,6 +35,7 @@ import {
   updateChannel,
   useChannel,
 } from "@/hooks/useChannels";
+import { pickAttachments } from "@/hooks/useAttachments";
 import { readDraft, useDraft, writeDraft } from "@/hooks/useDraft";
 import { resolveInboxItem, useInbox } from "@/hooks/useInbox";
 import { useMe } from "@/hooks/useMe";
@@ -63,9 +67,20 @@ function MentionChips({
   const [text] = useDraft(draftId);
   const chips = addressChips(text, everyone, members);
   if (chips.length === 0) {
+    const inRoom = members.flatMap((id) => everyone.filter((a) => a.id === id));
     return (
-      <span className="flex items-center gap-1.5 rounded-full bg-s3 px-2.5 py-[3px] text-xs text-ink3">
-        @ {lead ? `${lead.name} leads` : "pick who answers"}
+      <span
+        title={lead ? `${lead.name} leads and answers when no one is named` : "Agents in this channel"}
+        className="ml-1 inline-flex h-7 items-center gap-1.5 rounded-lg px-[9px] text-xs font-medium text-ink3 shadow-[inset_0_0_0_1px_var(--line)]"
+      >
+        <span className="flex">
+          {inRoom.slice(0, 3).map((a, i) => (
+            <span key={a.id} className={cn("rounded-full", i > 0 && "-ml-1")}>
+              <AgentTile id={a.id} kind={a.kind} color={a.color} shape={a.shape} look={a.look} photo={a.photo} size={16} />
+            </span>
+          ))}
+        </span>
+        {members.length} {members.length === 1 ? "agent" : "agents"}
       </span>
     );
   }
@@ -112,8 +127,11 @@ export default function ChannelView({
   onOpenInbox,
   onArchived,
   composer,
+  panelSlot,
 }: {
   channelId: string;
+  /// Where the channel's panel is drawn, beside the whole column; without it the panel sits inline.
+  panelSlot?: HTMLElement | null;
   /// The agents of the workspace on screen.
   workspaceAgents: RosterAgent[];
   workspaceName: string;
@@ -235,43 +253,72 @@ export default function ChannelView({
   const typing = working.agents.flatMap((id) => roster.agents.filter((a) => a.id === id));
   const hint = composerHint(channel.mode, channel.rounds, lead?.name ?? "The lead");
 
+  const about = (
+    <ChannelAbout
+      onClose={toggleAbout}
+      channel={channel}
+      members={members}
+      tasks={detail.tasks}
+      onOpenProfile={onOpenProfile}
+      onOpenChat={onMessageAgent}
+      onAddMember={() => setMembersOpen(true)}
+      onOpenTask={setTask}
+      onEdit={() => onEdit(channel)}
+      onLeave={() => setArchiving(true)}
+    />
+  );
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-[62px] flex-none items-center gap-3 border-b border-line px-5">
-        <span className="grid size-[34px] flex-none place-items-center rounded-[9px] border border-line2 text-ink2">
-          <Hash className="size-[15px]" />
-        </span>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-[14.5px] font-semibold">
-            {channel.name}
-            {channel.muted && <BellOff aria-label="Muted" className="size-3 text-ink4" />}
-          </div>
-          <div className="truncate text-xs text-ink3">{channel.purpose || "No purpose yet."}</div>
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setMembersOpen(true)}
-            aria-label="Members"
-            className="mr-1.5 flex cursor-pointer"
-          >
-            {members.map((m, i) => (
-              <span key={m.id} className={cn("rounded-[7px] ring-2 ring-background", i > 0 && "-ml-1.5")}>
-                <AgentTile id={m.id} kind={m.kind} color={m.color} size={22} />
-              </span>
-            ))}
-          </button>
-          <Button variant="outline" size="sm" onClick={() => setMembersOpen(true)}>
-            <Users /> {members.length + 1}
-          </Button>
-          <Button variant="ghost" size="icon-sm" aria-label={aboutOpen ? "Hide channel info" : "Show channel info"} aria-pressed={aboutOpen} onClick={toggleAbout}>
-            <PanelRight />
-          </Button>
+    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative z-[2] flex h-[50px] flex-none items-center justify-center border-b border-line">
+        <button
+          type="button"
+          onClick={toggleAbout}
+          aria-label={aboutOpen ? "Hide channel info" : "Show channel info"}
+          aria-pressed={aboutOpen}
+          className="group/np inline-flex h-8 cursor-pointer items-center gap-2 rounded-(--r1) pr-2 pl-1.5 text-[13.5px] font-semibold outline-none transition-colors hover:bg-s2 focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
+          <span className="grid size-[22px] flex-none place-items-center rounded-[7px] bg-s3 text-ink2">
+            <Hash className="size-3" />
+          </span>
+          <span className="max-w-[260px] truncate">{channel.name}</span>
+          {channel.muted && <BellOff aria-label="Muted" className="size-3 text-ink4" />}
+          <span className="text-xs font-normal text-ink3">
+            · {members.length} {members.length === 1 ? "agent" : "agents"}
+          </span>
+          <ChevronDown className={cn("size-[13px] text-ink4 transition-transform", aboutOpen && "rotate-180")} />
+        </button>
+        <div className="absolute top-2.5 right-2.5 flex gap-0.5">
+          {(
+            [
+              [ListChecks, "Tasks", toggleAbout],
+              [Users, "Members", () => setMembersOpen(true)],
+            ] as const
+          ).map(([Icon, label, run]) => (
+            <Tooltip key={label}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={label}
+                  onClick={run}
+                  className="grid size-[30px] cursor-pointer place-items-center rounded-(--r1) text-ink2 transition-colors hover:bg-s3 hover:text-ink active:bg-s3 [&_svg]:size-[17px]"
+                >
+                  <Icon strokeWidth={1.75} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{label}</TooltipContent>
+            </Tooltip>
+          ))}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="Channel menu">
-                <MoreHorizontal />
-              </Button>
+              <button
+                type="button"
+                aria-label="Channel menu"
+                className="grid size-[30px] cursor-pointer place-items-center rounded-(--r1) text-ink2 transition-colors hover:bg-s3 hover:text-ink [&_svg]:size-[17px]"
+              >
+                <MoreHorizontal strokeWidth={1.75} />
+              </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[200px]">
               <MenuItem icon={Pencil} onSelect={() => onEdit(channel)}>
@@ -303,9 +350,10 @@ export default function ChannelView({
               const el = e.currentTarget;
               stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             }}
-            className="scrollbar-overlay min-h-0 flex-1 overflow-y-auto"
+            className="scrollbar-overlay min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+            style={lead ? ({ "--acc": lead.color } as React.CSSProperties) : undefined}
           >
-            <div className="mx-auto max-w-[940px] px-10 pt-7 pb-10">
+            <div className="mx-auto flex max-w-[936px] flex-col gap-[5px] px-7 pt-4 pb-2">
               {rows.length === 0 && (
                 <p className="py-16 text-center text-[13px] text-ink3">
                   Nothing here yet. @mention someone to start.
@@ -371,7 +419,7 @@ export default function ChannelView({
             </div>
           </div>
 
-          <div className="mx-auto w-full max-w-[1020px] px-10 pb-[18px]">
+          <div className="w-full">
             <ChatInput
               onSend={(message, attachments) => void send(message, attachments)}
               sessionId={draftKey(channel.id)}
@@ -380,6 +428,13 @@ export default function ChannelView({
               mentionAgents={workspaceAgents}
               mentionMembers={channel.members}
               workingAgents={new Set(working.agents)}
+              leading={
+                <>
+                  <AttachButton onAttach={() => void pickAttachments(draftKey(channel.id))} />
+                  <MentionButton sessionId={draftKey(channel.id)} />
+                  <SlashButton sessionId={draftKey(channel.id)} />
+                </>
+              }
               recipient={
                 <MentionChips
                   draftId={draftKey(channel.id)}
@@ -424,18 +479,6 @@ export default function ChannelView({
           </div>
         </div>
 
-        {aboutOpen && (
-        <ChannelAbout
-          onClose={toggleAbout}
-          channel={channel}
-          me={me}
-          members={members}
-          tasks={detail.tasks}
-          onOpenProfile={onOpenProfile}
-          onAddMember={() => setMembersOpen(true)}
-          onOpenTask={setTask}
-        />
-        )}
       </div>
 
       <MembersSheet
@@ -489,6 +532,8 @@ export default function ChannelView({
             .catch((e) => toast(String(e)));
         }}
       />
+    </div>
+    {aboutOpen && (panelSlot ? createPortal(about, panelSlot) : about)}
     </div>
   );
 }

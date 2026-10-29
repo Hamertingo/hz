@@ -1,17 +1,29 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+  Brain,
   Check,
   ChevronDown,
   Building2,
+  Download,
   Gauge,
+  GitBranch,
+  Lightbulb,
+  Lock,
   Settings2,
   SquareTerminal,
   User,
-  Users,
+  Volume2,
+  X,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
+import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Group, Row, Val } from "@/components/kit/kit";
+import { Card1 } from "@/components/settings/StudioRow";
+import { MacTile } from "@/components/settings/parts";
+import { Dialog as DialogPrimitive } from "radix-ui";
 
 import AppIcon from "@/components/AppIcon";
 import { CommandChip, INSTALL_COMMAND, LOGIN_COMMAND } from "@/components/PrPanel";
@@ -55,13 +67,18 @@ import {
   OPEN_FILE_KEY,
   pickFileOpener,
 } from "@/lib/openWith";
+import { ROW_BOX } from "@/components/settings/StudioRow";
+import { SettingsNav } from "@/components/settings/parts";
 import ClisSettings from "@/components/settings/ClisSettings";
 import DefaultsSettings from "@/components/settings/DefaultsSettings";
 import PreferencesSettings from "@/components/settings/PreferencesSettings";
 import ProfileSettings from "@/components/settings/ProfileSettings";
 import UsageSettings from "@/components/settings/UsageSettings";
 import WorkspaceSettings from "@/components/settings/WorkspaceSettings";
-import { useWorkspaces } from "@/hooks/useWorkspaces";
+import MemoriesSettings from "@/components/settings/MemoriesSettings";
+import PrivacySettings from "@/components/settings/PrivacySettings";
+import VoiceSettings from "@/components/settings/VoiceSettings";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 import TranscriptionSettings from "@/components/settings/TranscriptionSettings";
 import { useTranscriptionSettings } from "@/hooks/useTranscription";
 import { IS_MAC } from "@/lib/platform";
@@ -99,6 +116,7 @@ export default function SettingsDialog({
   updateChannel,
   onUpdateChannelChange,
   onOpenAgentAccess,
+  onOpenAgentMemory,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
@@ -120,12 +138,15 @@ export default function SettingsDialog({
   onUpdateChannelChange: (next: UpdateChannel) => void;
   /// Opens an agent's Access tab (the spend rows on Usage & limits), closing this.
   onOpenAgentAccess?: (agentId: string) => void;
+  /// Opens an agent's Memory tab, closing this.
+  onOpenAgentMemory?: (agentId: string) => void;
 }) {
   const { settings, setAnalyticsEnabled } = useAppSettings(open);
   const transcription = useTranscriptionSettings(open);
   // Starts when the dialog opens, not when its tab is reached: a body is built on
   // arrival, and a read started there would leave the tab blank meanwhile.
   const sourceControl = useSourceControl(open);
+  const [advanced, setAdvanced] = useLocalStorage("hz.advancedMode", false);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -136,99 +157,66 @@ export default function SettingsDialog({
       {/* Wider than the dialog default. That default is sized for a question and
           two buttons; this holds prose, and at 25rem the analytics sentence broke
           across three lines with two words on the last one. */}
+      {/* A centred sheet, the same frame the apps, routines and pull-request sheets wear. The
+          overlay stays: it is what tells the browser tab a modal is over it (`judgeOcclusion`). */}
       <DialogContent
         aria-describedby={undefined}
-        overlayClassName="bg-transparent"
-        // **Full window, and every override neutralises one half of the
-        // dialog's own frame** — a centred card of a dialog is the shape this
-        // stopped being. The frame, the overlay and the fade stay: the overlay
-        // is what hides the native browser view (see `judgeOcclusion`), the fade
-        // is the same one every other surface opens with, and the centring,
-        // radius, border, fill and blur are what a full-bleed surface cannot
-        // carry. `bg-transparent` because the two columns paint themselves: the
-        // nav stays see-through so the window keeps its glass, which is exactly
-        // how the app's own sidebar is drawn.
-        // **No animation at all, and that is a fix rather than a preference.** A
-        // card can afford to fade: the reader keeps seeing the app they were in,
-        // dimmed, and the card arrives over it. A surface that replaces the
-        // window cannot — a fade from zero opacity *is* the app showing through
-        // it, so the settings page arrives as a ghost of the transcript with the
-        // window's own header over the top, which reads as a glitch rather than
-        // as a transition. Measured before this: 0.11 → 1.0 over about 100ms,
-        // every frame of it wrong, and the way out faded the same. So this
-        // surface appears on one frame, the way every other in-app navigation
-        // does.
-        animated={false}
-        className="top-0 left-0 flex h-full w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 bg-transparent p-0 shadow-none backdrop-blur-none"
+        showClose={false}
+        overlayClassName="bg-black/55 backdrop-blur-[2px]"
+        className="top-1/2 left-1/2 flex h-[min(600px,calc(100vh-48px))] w-[min(920px,calc(100vw-48px))] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-(--r4) border-0 bg-(--sheet) p-0 text-ink shadow-(--shadow) ring-1 ring-line2 backdrop-blur-xl"
       >
-        {/* The window's own drag row, and it has to be here: this surface covers
-            the app's, and a full-window page with nothing to drag by is a window
-            that cannot be moved. */}
-        <div
-          className="flex h-(--titlebar-h) shrink-0 bg-background"
-          data-tauri-drag-region="deep"
-        />
-
-        <SettingsSections initialTab={initialTab}>
+        <SettingsSections initialTab={initialTab} advanced={advanced}>
           {{
             profile: <ProfileSettings />,
             prefs: (
               <PreferencesSettings
+                advanced={advanced}
+                onAdvanced={setAdvanced}
                 extras={{
                   // The palettes the old Appearance page offered, kept under the
                   // mode picker: Theme above is light/dark/system, this is which
                   // colours.
+                  theme: <ThemeRow />,
                   appearance: (
-                    <>
-                      <ThemeRow />
-                      <Section title="Font size">
-                        <FontSizeRows />
-                      </Section>
-                    </>
+                    <Section title="Font size">
+                      <FontSizeRows />
+                    </Section>
                   ),
                   apps: (
-                    <>
-                      <Section title="Apps">
-                        <OpenFilesRow />
-                        <BrowserRow />
-                      </Section>
-                      <Section title="Dictation">
-                        <TranscriptionSettings
-                          status={transcription.status}
-                          downloads={transcription.downloads}
-                          onDownload={transcription.download}
-                          onCancelDownload={transcription.cancelDownload}
-                          onDelete={transcription.remove}
-                          onSelectModel={transcription.selectModel}
-                          onSelectDevice={transcription.selectDevice}
-                          onSetMute={transcription.setMute}
-                        />
-                      </Section>
-                    </>
-                  ),
-                  about: (
-                    <>
-                      <Section title="About hz">
-                        <UpdatesRow
-                          status={updateStatus}
-                          manual={updateManual}
-                          blocked={updateBlocked}
-                          onCheck={onCheckUpdates}
-                          onInstall={onInstallUpdate}
-                        />
-                        <BetaUpdatesRow channel={updateChannel} onChange={onUpdateChannelChange} />
-                        <AnalyticsRow view={settings} onChange={setAnalyticsEnabled} />
-                      </Section>
-                      <Section title="Feedback">
-                        <ContactBlock />
-                      </Section>
-                    </>
+                    <Section title="Apps">
+                      <OpenFilesRow />
+                      <BrowserRow />
+                    </Section>
                   ),
                 }}
               />
             ),
-            workspace: <WorkspaceSettings />,
+            voice: (
+              <VoiceSettings>
+                <Section title="Dictation">
+                  <TranscriptionSettings
+                    status={transcription.status}
+                    downloads={transcription.downloads}
+                    onDownload={transcription.download}
+                    onCancelDownload={transcription.cancelDownload}
+                    onDelete={transcription.remove}
+                    onSelectModel={transcription.selectModel}
+                    onSelectDevice={transcription.selectDevice}
+                    onSetMute={transcription.setMute}
+                  />
+                </Section>
+              </VoiceSettings>
+            ),
+            privacy: (
+              <PrivacySettings>
+                <Section title="Reports">
+                  <AnalyticsRow view={settings} onChange={setAnalyticsEnabled} />
+                </Section>
+              </PrivacySettings>
+            ),
+            workspace: <WorkspaceSettings onOpenAgent={onOpenAgentAccess} />,
             defaults: <DefaultsSettings />,
+            memories: <MemoriesSettings onOpen={onOpenAgentMemory} />,
             usage: <UsageSettings onOpenAccess={(id) => onOpenAgentAccess?.(id)} />,
             clis: (
               <ClisSettings
@@ -238,6 +226,23 @@ export default function SettingsDialog({
                   </>
                 }
               />
+            ),
+            updates: (
+              <>
+                <div className="mt-1 flex flex-col gap-2">
+                  <UpdatesRow
+                    status={updateStatus}
+                    manual={updateManual}
+                    blocked={updateBlocked}
+                    onCheck={onCheckUpdates}
+                    onInstall={onInstallUpdate}
+                  />
+                </div>
+                <div>
+                  <BetaUpdatesRow channel={updateChannel} onChange={onUpdateChannelChange} />
+                </div>
+                <ContactBlock />
+              </>
             ),
           }}
         </SettingsSections>
@@ -353,13 +358,8 @@ function ThemeRow() {
   );
 
   return (
-    <SettingRow id={id} asGroup stacked label="Colour theme">
-      <div
-        role="radiogroup"
-        aria-labelledby={id}
-        onKeyDown={onKeyDown}
-        className="flex items-start gap-3"
-      >
+    <SettingRow id={id} asGroup label="Theme" description="The tone of backgrounds and text, in light and dark.">
+      <div role="radiogroup" aria-labelledby={id} onKeyDown={onKeyDown} className="flex items-start gap-2">
         {THEMES.map(({ id: name, label }, i) => (
           <button
             key={name}
@@ -371,32 +371,19 @@ function ThemeRow() {
             aria-checked={theme === name}
             tabIndex={theme === name ? 0 : -1}
             onClick={() => setTheme(name)}
-            className="group flex cursor-pointer flex-col items-center gap-1.5 outline-none"
+            className="group flex min-w-[52px] cursor-pointer flex-col items-center gap-[5px] outline-none"
           >
             <span
               data-theme={name}
-              // Its own mode, not the document's. A dark-only theme in light
-              // mode matches no palette block and falls through to the light
-              // ramp's neutrals — so the swatch would draw a light Default that
-              // clicking it does not give you, `modeFor` having forced dark.
               data-mode={hasLightMode(name) ? resolvedMode : "dark"}
               className={cn(
-                "theme-swatch size-12 rounded-md border transition-colors",
-                // The offset has to be the dialog's own fill rather than
-                // `--background`: this floats over the sidebar, which has none.
+                "theme-swatch h-9 w-[52px] rounded-[9px] border-0 transition-shadow",
                 theme === name
-                  ? "border-transparent ring-2 ring-ring ring-offset-2 ring-offset-popover"
-                  : "border-border group-hover:border-muted-foreground/60 group-focus-visible:border-ring",
+                  ? "shadow-[0_0_0_2px_var(--ink)]"
+                  : "shadow-[inset_0_0_0_1px_var(--line2)] group-hover:shadow-[inset_0_0_0_1px_var(--line3)] group-focus-visible:shadow-[0_0_0_2px_var(--ring)]",
               )}
             />
-            <span
-              className={cn(
-                "text-ui",
-                theme === name ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              {label}
-            </span>
+            <span className={cn("text-[11.5px] whitespace-nowrap", theme === name ? "text-ink" : "text-ink3")}>{label}</span>
           </button>
         ))}
       </div>
@@ -686,7 +673,6 @@ function UpdatesRow({
     <Button
       id={id}
       variant="outline"
-      size="sm"
       // Only the install has a reason worth a tooltip, so only it gives up
       // `disabled` for the aria form. A download in flight is its own answer,
       // and the hook's in-flight guard would refuse a second check anyway.
@@ -705,8 +691,21 @@ function UpdatesRow({
 
   // The same sentence the sidebar row draws, since this dialog covers it — a
   // reader who pressed the button here would otherwise get no answer at all.
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    getVersion().then(setVersion, () => {});
+  }, []);
+
   return (
-    <SettingRow id={id} label="Updates" description={updateFailure(manual)}>
+    <Card1
+      lead={
+        <MacTile dot={ready ? "bg-amber" : "bg-green"}>
+          <Download className="size-[22px]" />
+        </MacTile>
+      }
+      title={version ? `hz ${version}` : "hz"}
+      sub={updateFailure(manual) ?? (ready ? `Version ${status.version} is ready to install.` : "Installs when no agent is mid-turn.")}
+    >
       {ready && blocked ? (
         <Tooltip>
           <TooltipTrigger asChild>{button}</TooltipTrigger>
@@ -717,7 +716,7 @@ function UpdatesRow({
       ) : (
         button
       )}
-    </SettingRow>
+    </Card1>
   );
 }
 
@@ -1081,132 +1080,126 @@ function BrowserRow() {
 /// the app window into one.
 function ContactBlock() {
   return (
-    <div className="flex flex-col gap-2.5">
-      <p className="text-ui text-muted-foreground">
-        Tell me what&apos;s broken, or send a PR.
-      </p>
-      <div className="flex items-center gap-1.5">
-        <Button variant="secondary" size="sm" onClick={() => void openUrl(CONTACT_URL)}>
-          Message me
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => void openUrl(REPO_URL)}>
-          GitHub
-        </Button>
-      </div>
-    </div>
+    <Group>
+      <Row lead={<Lightbulb />} title="Send feedback" sub="Tell me what's broken." right={<Val kind="next" />} onClick={() => void openUrl(CONTACT_URL)} />
+      <Row lead={<GitBranch />} title="GitHub" sub="Or send a PR." right={<Val kind="next" />} onClick={() => void openUrl(REPO_URL)} />
+    </Group>
   );
 }
 
-/// A run of rows, optionally under a quiet heading.
-///
-/// The heading is the exception now that the groups are tabs: the tab's own
-/// label already names what is below it, so a heading repeating it is a second
-/// copy of one word. What still earns one is a block carrying no label of its
-/// own, which is the feedback links and nothing else.
-///
-/// Untitled it is still worth being: the tab panel spaces its groups apart at
-/// `gap-7` and this holds rows together at `gap-4`, which is the whole of how a
-/// heading ends up nearer what it names than what it follows.
+/// A run of rows, optionally under a quiet heading. The rows share hairlines and round at the
+/// ends (see `SettingRow`), so there is no gap between them.
 function Section({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-4">
-      {title && <h2 className="text-ui font-medium text-muted-foreground">{title}</h2>}
+    <section className="mt-3 flex flex-col first:mt-5">
+      {title && <h2 className="mb-2 px-1 text-xs leading-normal font-medium text-ink3">{title}</h2>}
       {children}
     </section>
   );
 }
 
-/// Set *and* order, so a page added later is one entry plus one body. Grouped
-/// the way the mockup's rail is: the reader, then the workspace, then the app.
-const SETTINGS_TABS = ["profile", "prefs", "workspace", "defaults", "usage", "clis"] as const;
+/// Set *and* order, so a page added later is one entry plus one body. Grouped the way the
+/// mockup's rail is: the reader, then the workspace, then the app.
+const SETTINGS_TABS = [
+  "profile",
+  "prefs",
+  "voice",
+  "privacy",
+  "workspace",
+  "defaults",
+  "memories",
+  "usage",
+  "clis",
+  "updates",
+] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   profile: "Profile",
   prefs: "Preferences",
+  voice: "Voice",
+  privacy: "Privacy",
   workspace: "Workspace",
-  defaults: "Agent defaults",
+  defaults: "Agents",
+  memories: "Memories",
   usage: "Usage & limits",
   clis: "CLIs",
+  updates: "Updates",
 };
 
-/// The rail's headings: the second is the workspace's own name, filled in where
-/// the rail is drawn.
-const TAB_GROUPS: { heading: "Account" | "workspace" | "App"; tabs: readonly SettingsTab[] }[] = [
-  { heading: "Account", tabs: ["profile", "prefs"] },
-  { heading: "workspace", tabs: ["workspace", "defaults", "usage"] },
-  { heading: "App", tabs: ["clis"] },
+const TAB_GROUPS: { heading: string; tabs: readonly SettingsTab[] }[] = [
+  { heading: "You", tabs: ["profile", "prefs", "voice", "privacy"] },
+  { heading: "Workspace", tabs: ["workspace", "defaults", "memories", "usage", "clis"] },
+  { heading: "hz", tabs: ["updates"] },
 ];
 
-/// A nav rail down one side and the section's rows in the pane beside it — the
-/// shape a settings surface takes once it owns the window.
+/// Usage & limits and CLIs are the technical pages; Advanced mode on Preferences shows them.
+const ADVANCED_TABS: readonly SettingsTab[] = ["usage", "clis"];
+
+const SECTION_ICONS: Record<SettingsTab, LucideIcon> = {
+  profile: User,
+  prefs: Settings2,
+  voice: Volume2,
+  privacy: Lock,
+  workspace: Building2,
+  defaults: Zap,
+  memories: Brain,
+  usage: Gauge,
+  clis: SquareTerminal,
+  updates: Download,
+};
+
+/// A rail down the left and the page beside it, in a centred sheet like the apps, routines and
+/// pull-request sheets.
 ///
-/// **Tabs across the top were right for a 34rem dialog and wrong for a window.**
-/// They fit one line there by using the width a card had to spare; here the same
-/// seven across the top read as a web form, and the reader hunting one setting
-/// scans a horizontal row whose labels are all the same weight. The rail also
-/// buys the thing the tabs could not: an icon per group, so Appearance is found
-/// by shape as well as by word.
+/// **A vertical tab list, so the keyboard promise is the vertical one.** Up and Down, Home and
+/// End, one Tab stop; `aria-orientation` tells a screen reader which half of the four keys to
+/// expect. The rail skips the advanced pages while Advanced mode is off, and the roving group is
+/// told about the list that is drawn rather than the full one.
 ///
-/// **A vertical tab list, so the keyboard promise is the vertical one.** Up and
-/// Down, Home and End, one Tab stop; `aria-orientation` is what tells a screen
-/// reader which half of the four keys to expect.
-///
-/// **About holds privacy and feedback**, which is the one grouping worth
-/// arguing about. Both answer what the app does with you rather than what it
-/// does for you: what is collected, and how to reach the person who wrote it.
-/// Privacy alone was too thin to be a section and reads oddly next to Appearance.
-///
-/// Bodies are switched, not hidden, unlike the right panel's. There is no
-/// scroll position or expensive render to preserve here, and mounting them all
-/// would have the external-app scan run every time this opens whichever section
-/// the reader wanted. The pick resets on close for the same reason the open state
-/// is not persisted.
+/// Bodies are switched, not hidden: mounting them all would run the external-app scan every time
+/// this opens whichever page the reader wanted, and the pick resets on close for the same reason
+/// the open state is not persisted.
 function SettingsSections({
   initialTab,
+  advanced,
   children,
 }: {
   initialTab: SettingsTab;
+  advanced: boolean;
   children: Record<SettingsTab, ReactNode>;
 }) {
   const id = useId();
-  // An initializer, not an effect: `DialogContent` unmounts on close, so every
-  // open builds this fresh and the caller's section is simply where it starts.
-  // That is also what keeps "the pick resets on close" true.
+  // An initializer, not an effect: `DialogContent` unmounts on close, so every open builds this
+  // fresh and the caller's page is simply where it starts.
   const [section, setSection] = useState<SettingsTab>(initialTab);
 
-  const workspaceName = useWorkspaces().active?.name ?? "Workspace";
-  const index = SETTINGS_TABS.indexOf(section);
-  const { refs, onKeyDown } = useRovingGroup(SETTINGS_TABS.length, index, (next) =>
-    setSection(SETTINGS_TABS[next]),
-  );
+  const shown = SETTINGS_TABS.filter((t) => advanced || !ADVANCED_TABS.includes(t) || t === section);
+  const index = Math.max(0, shown.indexOf(section));
+  const { refs, onKeyDown } = useRovingGroup(shown.length, index, (next) => setSection(shown[next]));
 
   return (
+    <SettingsNav.Provider value={(tab) => setSection(tab as SettingsTab)}>
     <div className="flex min-h-0 flex-1">
+      <DialogHeader className="sr-only">
+        <DialogTitle>Settings</DialogTitle>
+      </DialogHeader>
       <div
         role="tablist"
         aria-label="Settings"
         aria-orientation="vertical"
         onKeyDown={onKeyDown}
-        className="flex w-56 shrink-0 flex-col border-r border-sidebar-border bg-background"
+        className="flex w-[200px] shrink-0 flex-col gap-px scrollbar-none overflow-y-auto border-r border-line bg-(--side) px-2 py-4"
       >
-        {/* The rail's own heading, in the muted weight every group heading in
-            the pane wears — the pane's `<h2>` names the section, and this names
-            the surface. It is also the dialog's `DialogTitle`, which is why it
-            is a heading rather than a word in a `div`. */}
-        <DialogHeader className="px-4 pt-1 pb-3">
-          <DialogTitle className="text-ui text-muted-foreground">Settings</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-0.5 px-2">
-          {TAB_GROUPS.map((group) => (
+        {TAB_GROUPS.map((group) => {
+          const tabs = group.tabs.filter((t) => shown.includes(t));
+          if (tabs.length === 0) return null;
+          return (
             <Fragment key={group.heading}>
-              <div className="px-2.5 pt-3.5 pb-1.5 text-[11.5px] font-medium text-ink4 first:pt-1">
-                {group.heading === "workspace" ? workspaceName : group.heading}
-              </div>
-              {group.tabs.map((value) => {
-                const i = SETTINGS_TABS.indexOf(value);
+              <div className="px-2.5 pt-3.5 pb-1 text-[11px] font-medium text-ink4 first:pt-0.5">{group.heading}</div>
+              {tabs.map((value) => {
+                const i = shown.indexOf(value);
                 const Icon = SECTION_ICONS[value];
                 const active = section === value;
                 return (
@@ -1223,95 +1216,51 @@ function SettingsSections({
                     tabIndex={active ? 0 : -1}
                     onClick={() => setSection(value)}
                     className={cn(
-                      "flex h-8 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-ui outline-none transition-colors",
-                      // The app's one selected-row token, so a lit section reads the
-                      // same as a lit session or a lit file.
-                      active
-                        ? "bg-sidebar-accent text-foreground"
-                        : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                      "flex h-8 cursor-pointer items-center gap-2.5 rounded-(--r1) px-2.5 text-left text-[13px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+                      active ? "bg-s3 text-ink" : "text-ink2 hover:bg-s2 hover:text-ink",
                     )}
                   >
-                    <Icon className="size-4 shrink-0" aria-hidden />
+                    <Icon className={cn("size-4 shrink-0", active ? "text-ink" : "text-ink3")} aria-hidden />
                     <span className="truncate">{TAB_LABELS[value]}</span>
                   </button>
                 );
               })}
             </Fragment>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
-      <div
-        role="tabpanel"
-        id={`${id}-panel`}
-        aria-labelledby={`${id}-${section}`}
-        className="flex min-w-0 flex-1 flex-col bg-background"
-      >
-        {/* `key` on the scroll box, so a section opens at its own top: the
-            container is the same element across a switch, and Shortcuts is long
-            enough that a reader who scrolled it would otherwise land in About
-            somewhere past its heading. */}
-        <div key={section} className="min-h-0 flex-1 overflow-y-auto px-10 pb-10">
-          {/* **Capped, and the heading is inside the cap.** A row is a label and
-              a control that want an edge to sit against, and the same row spread
-              across a 1400px window leaves the control a page away from the
-              sentence explaining it. Centred rather than pinned left, like the
-              transcript — and the section's own name belongs to the top of that
-              column rather than to the pane's edge, or the heading and the rows
-              it names start at two different places and read as two blocks. */}
-          <div className="mx-auto flex w-full max-w-2xl flex-col gap-7 [&>*]:shrink-0">
-            {/* Named here as well as in the rail, and that is not repetition: a
-                section whose own name is only in the rail while the pane starts
-                mid-sentence makes the reader check the rail to know where they
-                are. */}
-            <h2 className="pt-1 text-lg font-medium">{TAB_LABELS[section]}</h2>
-
-            {children[section]}
-          </div>
+      <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${section}`} className="flex min-w-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-3 px-6 pt-[18px] pb-1.5">
+          <h2 className="flex-1 text-[18px] leading-[1.3] font-semibold tracking-[-0.015em]">{TAB_LABELS[section]}</h2>
+          <DialogPrimitive.Close
+            aria-label="Close"
+            className="grid size-[26px] cursor-pointer place-items-center rounded-md text-ink2 transition-colors outline-none hover:bg-s3 hover:text-ink focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <X className="size-[15px]" aria-hidden />
+          </DialogPrimitive.Close>
+        </div>
+        {/* `key` on the scroll box, so a page opens at its own top: the container is the same
+            element across a switch, and a reader who scrolled Preferences would otherwise land
+            in the next page somewhere past its heading. */}
+        <div key={section} className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-6 pt-2 pb-6">
+          <div className="flex w-full flex-col gap-2 [&>*]:shrink-0">{children[section]}</div>
         </div>
       </div>
     </div>
+    </SettingsNav.Provider>
   );
 }
 
-/// One glyph per section, and the rail is the only place they appear.
+/// Label and reason on the left, control on the right, in the same hairline row `StudioRow`
+/// draws, so the pages built from either read as one. `stacked` puts the control under the label
+/// at full width, for a picker too wide to share a line.
 ///
-/// Chosen for the word beside them rather than for the app's own vocabulary:
-/// these are the reader's questions (`Keyboard` for what key does what, `Mic`
-/// for the thing that listens), not the internals behind them.
-const SECTION_ICONS: Record<SettingsTab, LucideIcon> = {
-  profile: User,
-  prefs: Settings2,
-  workspace: Building2,
-  defaults: Users,
-  usage: Gauge,
-  clis: SquareTerminal,
-};
-
-/// Label and control on the top line, reason at full width underneath — and
-/// `stacked` for when even that is the wrong shape.
-///
-/// Side by side was the first shape, and it broke on the widest control here: two
-/// buttons pushed the sentence into a third of the dialog, where four words took
-/// three lines and the row's height jumped every time the control changed. The
-/// description is prose and wants a measure; the control is a fixed thing and wants
-/// an edge to sit against.
-///
-/// `stacked` goes further and puts the control *under* the label at full width. That
-/// is for a control too wide to share a line at all — the theme swatches, the mode
-/// segments — and it is also where a picker wants to be: options ranged along one
-/// edge rather than pushed against the far one.
-///
-/// `description` is optional only for a control that shows the reader the answer
-/// instead of telling them: the theme swatches, and the mode segments while they
-/// work. For a switch it is never optional — a switch is a word and a state, and the
-/// sentence under it is the only place "why is this off by default" can live. A
-/// control that has gone *disabled* always takes one too, whatever its shape, since
-/// that sentence is then the only place the reason can be said.
-///
-/// `asGroup` is for a control that is several elements rather than one input:
-/// `htmlFor` only reaches a labelable element, so a radio group has to be pointed the
-/// other way and name the label by id instead.
+/// `description` is optional only for a control that shows the reader the answer instead of
+/// telling them (the theme swatches). For a switch it is never optional, and a control that has
+/// gone *disabled* always takes one, since that sentence is then the only place the reason can
+/// be said. `asGroup` is for a control that is several elements: `htmlFor` only reaches a
+/// labelable element, so a radio group names its label by id instead.
 function SettingRow({
   id,
   label,
@@ -1322,45 +1271,31 @@ function SettingRow({
 }: {
   id: string;
   label: string;
-  /// A node, not a string: a row whose reason is best said with a mark beside
-  /// it should not have to reach past this for the privilege.
+  /// A node, not a string: a row whose reason is best said with a mark beside it should not have
+  /// to reach past this for the privilege.
   description?: ReactNode;
   asGroup?: boolean;
   stacked?: boolean;
   children: ReactNode;
 }) {
-  const labelEl = (
-    <label
-      id={asGroup ? id : undefined}
-      htmlFor={asGroup ? undefined : id}
-      className="text-ui font-medium"
-    >
-      {label}
-    </label>
+  const text = (
+    <div className="min-w-0 flex-1">
+      <label id={asGroup ? id : undefined} htmlFor={asGroup ? undefined : id} className="block text-[13px] leading-[1.4] font-medium">
+        {label}
+      </label>
+      {description && <p className="mt-px text-xs leading-[1.45] text-ink3">{description}</p>}
+    </div>
   );
-  const descriptionEl = description && (
-    <p className="text-ui text-muted-foreground">{description}</p>
-  );
-
-  if (stacked) {
-    return (
-      <div className="flex flex-col gap-2.5">
-        <div className="flex flex-col gap-1">
-          {labelEl}
-          {descriptionEl}
-        </div>
-        {children}
-      </div>
-    );
-  }
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-4">
-        {labelEl}
-        <div className="shrink-0">{children}</div>
-      </div>
-      {descriptionEl}
+    <div
+      className={cn(
+        ROW_BOX,
+        stacked ? "flex flex-col gap-2.5" : "flex items-center gap-[11px]",
+      )}
+    >
+      {text}
+      <div className={cn(stacked ? "min-w-0" : "shrink-0")}>{children}</div>
     </div>
   );
 }

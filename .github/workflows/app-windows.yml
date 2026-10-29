@@ -133,7 +133,7 @@ jobs:
       # the staged tree is gitignored build output. Same step the macOS setup
       # action runs, for the same reason.
       - shell: bash
-        run: mkdir -p apps/desktop/src-tauri/resources/agent
+        run: mkdir -p apps/desktop/src-tauri/resources/agent apps/desktop/src-tauri/resources/hyzevm
 
       # `tsc && vite build`. Two jobs in one: the type-check gate, and the
       # `dist/` the Rust step needs — `tauri::generate_context!()` reads

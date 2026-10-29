@@ -213,6 +213,12 @@ impl<T: Clone> ProbeCache<T> {
         (at.elapsed() < self.fresh_for).then(|| hit.clone())
     }
 
+    /// The answer for `key` whatever its age, for a caller that would rather draw
+    /// an old list now than wait on a probe for a new one.
+    pub fn peek_any(&self, key: &str) -> Option<T> {
+        self.entries.lock().unwrap().get(key).map(|(_, hit)| hit.clone())
+    }
+
     /// Stores `value` under `key` as fresh, replacing any entry. For a caller
     /// that probed outside [`Self::get_or_probe`] and decided for itself whether
     /// the answer is safe to cache.

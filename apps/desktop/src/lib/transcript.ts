@@ -1,4 +1,5 @@
 import { todoTimeline, type TodoPlan, type TodoSource, type TodoTask } from "@/lib/todo";
+import { isNoReply } from "@/lib/teamTalk";
 import { teamTool, toolSummary } from "@/lib/tools";
 import type { AgentEvent, FileEdit, ToolResult, Usage } from "@/types/events";
 
@@ -530,6 +531,8 @@ function groupTurns(events: AgentEvent[], subagentIds: Set<string>): Turn[] {
     // that summary swallowed the answer into the trace and left a finished turn
     // with no ending on screen.
     const answered = answer === null ? body : body.filter((event) => event !== answer);
+    // A turn that answered `NO_REPLY` said nothing, and draws nothing for it.
+    if (isNoReply(finalText)) finalText = null;
     const work = groupTools(answered, subagentIds);
     // Queued prompts stay on screen through a collapse, so they are not rows
     // the toggle has to account for. Without this a turn whose only extra row is

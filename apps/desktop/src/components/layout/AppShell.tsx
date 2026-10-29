@@ -53,7 +53,7 @@ export default function AppShell({
 
           Display is conditional rather than stacked with `flex`, which would
           leave the winner of two `display` declarations to stylesheet order. */}
-      <div className={cn("min-w-0 flex-1 flex-col", columnHidden ? "hidden" : "flex")}>
+      <div className={cn("relative min-w-0 flex-1 flex-col", columnHidden ? "hidden" : "flex")}>
         {header}
         {centered ? (
           // Held below the top rather than centered. Centering moves the whole

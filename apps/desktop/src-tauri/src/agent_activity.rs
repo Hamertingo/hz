@@ -68,7 +68,7 @@ pub struct OpenTurn {
 pub struct FeedItem {
     /// `chat`, `file`, `team` or `routine`: the filter the row falls under.
     pub group: String,
-    /// `answer`, `file`, `pr`, `team_ask`, `team_message`, `team_in`, `note`.
+    /// `answer`, `file`, `image` (a shared screenshot, with its `path`), `pr`, `team_ask`, `team_message`, `team_in`, `note`.
     pub kind: String,
     pub title: String,
     pub sub: String,
@@ -310,6 +310,22 @@ pub fn scan(log: &str, memory_marker: &str) -> ActivityScan {
                         item.answer = Some(answer.trim().to_string());
                     }
                 }
+                // `agent_tools.rs` names the picture as `(file <path>)` in its answer.
+                if call.name.ends_with("share_screenshot") {
+                    if let Some(path) = result.split_once("(file ").and_then(|(_, r)| r.split_once(')')).map(|(p, _)| p) {
+                        let caption = call.input["caption"].as_str().unwrap_or_default();
+                        feed.push(FeedItem {
+                            group: "file".into(),
+                            kind: "image".into(),
+                            title: if caption.is_empty() { "Shared a screenshot".into() } else { one_line(caption, 80) },
+                            sub: "screenshot".into(),
+                            at_ms: at,
+                            seq,
+                            path: Some(path.to_string()),
+                            ..Default::default()
+                        });
+                    }
+                }
                 let command = call.input["command"].as_str().unwrap_or_default();
                 if command.contains("pr create") {
                     if let Some((repo, number, url)) = pr_in(result) {
@@ -491,6 +507,18 @@ mod tests {
         assert_eq!(s.feed[3].answer.as_deref(), Some("E2B per second."));
         assert_eq!(s.feed[3].peer.as_deref(), Some("Hugo"));
         assert!(s.open.is_some(), "the turn never closed, so it is still going");
+    }
+
+    #[test]
+    fn a_shared_screenshot_is_a_library_row_with_its_file() {
+        let text = log(&[
+            line(1, "2026-10-23T21:00:01.000Z", serde_json::json!({"type":"tool_call_started","callId":"s","name":"mcp__hz__share_screenshot","toolType":"mcp","input":{"caption":"The deploy page"}})),
+            line(2, "2026-10-23T21:00:03.000Z", serde_json::json!({"type":"tool_call_completed","callId":"s","result":{"text":"Screenshot shared (file /h/.hz/attachments/s1/screenshots/ada-20261023-210003.png). The person sees it."}})),
+        ]);
+        let s = scan(&text, "");
+        assert_eq!(s.feed[0].kind, "image");
+        assert_eq!(s.feed[0].title, "The deploy page");
+        assert_eq!(s.feed[0].path.as_deref(), Some("/h/.hz/attachments/s1/screenshots/ada-20261023-210003.png"));
     }
 
     #[test]

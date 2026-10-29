@@ -24,6 +24,12 @@ export type RosterAgent = {
   name: string;
   kind: MascotKind;
   color: string;
+  /// The body, eyes, mouth, extra and pattern the reader picked. Absent on an agent from before faces had
+  /// parts: its `kind` picks a body and a stable look is derived from its id (lib/face.ts).
+  shape?: string;
+  look?: { eyes?: string; mouth?: string; acc?: string; pat?: string };
+  /// A photo (a data URL) drawn in place of the face.
+  photo?: string | null;
   /// The CLI this agent runs on, which is the reader's own install of it.
   harness: Harness;
   /// The folder it works in, fixed at creation. Null only for an agent an older
@@ -52,6 +58,8 @@ export type RosterAgent = {
   /// Its finished-turn and needs-you notices are held back, in the app and on the
   /// desktop. The chat itself still updates.
   muted?: boolean;
+  /// Held: the turn in flight finishes, new messages wait. Sending is never blocked.
+  paused?: boolean;
   /// Things it stops and asks about first. Advisory: they ride in its briefing
   /// as hard rules, and no tool call is intercepted.
   alwaysAsk?: AskRule[];
@@ -63,8 +71,14 @@ export type RosterAgent = {
   talk?: Talk;
   /// hz's own tool servers switched off for it: `team`, `memory`.
   toolsOff?: string[];
+  /// How its Mac commands are approved; absent follows Settings → Agents.
+  commandReview?: CommandReview;
   sessionId: string | null;
 };
+
+/// What the command reviewer may approve on its own (`command_review.rs`).
+export type CommandReview = "always_ask" | "auto_review" | "allow_all";
+const REVIEWS: readonly CommandReview[] = ["always_ask", "auto_review", "allow_all"];
 
 export type Roster = {
   agents: RosterAgent[];
@@ -107,6 +121,15 @@ export function withoutAgent(roster: Roster, id: string): Roster {
   };
 }
 
+/// The parts of a face as stored, keeping only the strings; absent when none were picked, so the
+/// derived look from the id still applies.
+function readLook(raw: unknown): RosterAgent["look"] {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  const pick = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : undefined);
+  return { eyes: pick("eyes"), mouth: pick("mouth"), acc: pick("acc"), pat: pick("pat") };
+}
+
 /// Tolerant of whatever a previous build or a hand edit left: an entry that is
 /// not an agent is dropped rather than failing the whole list.
 export function readAgents(raw: unknown): RosterAgent[] {
@@ -125,6 +148,9 @@ export function readAgents(raw: unknown): RosterAgent[] {
         color: typeof e.color === "string" ? e.color : MASCOT_COLORS[0],
         // An entry from before agents chose a CLI reads as Claude, the first one
         // offered, rather than being dropped: the agent and its session are real.
+        shape: typeof e.shape === "string" ? e.shape : undefined,
+        look: readLook(e.look),
+        photo: typeof e.photo === "string" && e.photo ? e.photo : null,
         harness: AGENT_HARNESSES.includes(e.harness as Harness) ? (e.harness as Harness) : "claude-acp",
         role: typeof e.role === "string" ? e.role : "",
         projectPath: typeof e.projectPath === "string" ? e.projectPath : null,
@@ -137,11 +163,13 @@ export function readAgents(raw: unknown): RosterAgent[] {
         instructions: typeof e.instructions === "string" ? e.instructions : "",
         pinned: e.pinned === true,
         muted: e.muted === true,
+        paused: e.paused === true,
         alwaysAsk: readRules(e.alwaysAsk),
         folders: readFolders(e.folders),
         budget: typeof e.budget === "number" && e.budget > 0 ? e.budget : null,
         talk: readTalk(e.talk),
         toolsOff: Array.isArray(e.toolsOff) ? e.toolsOff.filter((t): t is string => typeof t === "string") : [],
+        commandReview: REVIEWS.includes(e.commandReview as CommandReview) ? (e.commandReview as CommandReview) : undefined,
         sessionId: typeof e.sessionId === "string" ? e.sessionId : null,
       },
     ];
@@ -201,6 +229,12 @@ export function rosterAdd(agent: RosterAgent) {
 
 export function rosterRemove(id: string) {
   commit(withoutAgent(state, id));
+}
+
+/// Changes a few fields of one agent where it stands. `rosterAdd` would move it to the end of the list, which
+/// is wrong for a pin, a mute or a move between workspaces: none of them is an edit of who the agent is.
+export function rosterPatch(id: string, patch: Partial<RosterAgent>) {
+  commit({ ...state, agents: state.agents.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
 }
 
 /// Removes every agent of a deleted workspace.

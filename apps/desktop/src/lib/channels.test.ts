@@ -132,6 +132,7 @@ describe("labels", () => {
     expect(composerHint("mention", 3, "Atlas")).toContain("Atlas leads");
     expect(composerHint("turns", 1, "Atlas")).toContain("1 round.");
     expect(composerHint("lead", 2, "Atlas")).toContain("Atlas reads every message");
+    expect(composerHint("triage", 3, "Atlas")).toContain("roles fit");
   });
 });
 

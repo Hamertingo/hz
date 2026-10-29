@@ -36,6 +36,18 @@ export function PluginMark({ face, size = 28 }: { face: Face; size?: number }) {
   );
 }
 
+/// A near-black brand colour lifted toward grey so its dithered field still reads.
+export function liftDark(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  if (r * 0.3 + g * 0.6 + b * 0.1 >= 60) return hex;
+  const k = 0.55;
+  const mix = (c: number, t: number) => Math.round(c * (1 - k) + t * k);
+  return `#${[mix(r, 0x9a), mix(g, 0x9a), mix(b, 0xa6)].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
 /// The dithered band in a plugin's colour, with its mark sitting on the edge.
 /// `sheet` is the tall one on the detail; the modal's is shorter.
 export function PluginBand({ face, color, height, markSize, className }: { face: Face; color: string; height: number; markSize: number; className?: string }) {
@@ -45,7 +57,7 @@ export function PluginBand({ face, color, height, markSize, className }: { face:
         <Dither color={color} seed={`${face.id}:band`} cols={120} rows={Math.round(height / 4)} light={0.8} />
       </div>
       <span
-        className="absolute flex bg-(--pop)"
+        className="absolute flex bg-(--sheet)"
         style={{ left: markSize > 60 ? 24 : 22, bottom: -Math.round(markSize / 2 + 2), padding: markSize > 60 ? 6 : 5, borderRadius: markSize > 60 ? 26 : 20 }}
       >
         <PluginMark face={face} size={markSize} />
@@ -59,7 +71,7 @@ export function Faces({ agents, size = 18 }: { agents: readonly RosterAgent[]; s
   return (
     <span className="flex">
       {agents.map((a, i) => (
-        <span key={a.id} className={cn("flex rounded-[6px] shadow-[0_0_0_2px_var(--pop)]", i > 0 && "-ml-[5px]")}>
+        <span key={a.id} className={cn("flex rounded-full bg-(--sheet) shadow-[0_0_0_2px_var(--sheet)]", i > 0 && "-ml-[5px]")}>
           <AgentTile id={a.id} kind={a.kind} color={a.color} size={size} />
         </span>
       ))}

@@ -38,25 +38,26 @@ const buttonVariants = cva(
           "bg-button-primary text-button-primary-foreground shadow-(--shadow-button) hover:bg-button-primary/90",
         // The mockup's plain `.btn`: a faint fill with a hairline inside it.
         outline:
-          "bg-s2 text-ink shadow-[inset_0_0_0_1px_var(--line)] hover:bg-s3 aria-expanded:bg-s3 [&_svg]:text-ink2",
+          "bg-s3 text-ink hover:bg-foreground/12 aria-expanded:bg-foreground/12 [&_svg]:text-ink2",
         // `.btn.solid`: the ink fill, for the one action a screen is about.
         solid:
           "bg-ink text-background hover:bg-ink/90 [&_svg]:text-background",
         secondary:
           "bg-secondary text-secondary-foreground shadow-(--shadow-surface) hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
-          "text-ink2 hover:bg-hover hover:text-ink aria-expanded:bg-hover aria-expanded:text-ink",
+          "text-ink2 hover:bg-s2 hover:text-ink aria-expanded:bg-s2 aria-expanded:text-ink",
         // `.btn.bad`: red words on a red wash, never a red fill.
         destructive:
           "bg-red/[0.07] text-red shadow-[inset_0_0_0_1px_rgb(230_120_122/16%)] hover:bg-red/[0.13] focus-visible:ring-red/20",
+        danger: "bg-red text-white hover:opacity-90",
         bad:
           "bg-red/[0.07] text-red shadow-[inset_0_0_0_1px_rgb(230_120_122/16%)] hover:bg-red/[0.13] focus-visible:ring-red/20",
       },
       size: {
         default:
-          "h-[30px] gap-[7px] rounded-[9px] px-3 text-[12.5px] has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5",
+          "h-[30px] gap-1.5 rounded-(--r1) px-3 text-[12.5px] has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5",
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-[26px] gap-1.5 rounded-md px-[9px] text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-[26px] gap-1.5 rounded-[6px] px-2.5 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         icon: "size-8",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",

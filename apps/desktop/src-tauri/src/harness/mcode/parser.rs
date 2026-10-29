@@ -556,6 +556,39 @@ pub struct PromptResponse {
     /// `end_turn`, `cancelled`, `refused`, `max_tokens`, `max_turn_requests`.
     #[serde(default)]
     pub stop_reason: String,
+    /// The turn's own token counts. Claude, Codex and OpenCode send it; mcode does not.
+    #[serde(default)]
+    pub usage: Option<PromptUsage>,
+    /// Where Claude and Codex name the model that answered (`quota.model_usage[].model`).
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Value>,
+}
+
+/// `session/prompt`'s `usage`: what this one turn consumed, not a running total.
+/// The cached counts sit beside `input_tokens`, never inside it — the captures add up.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptUsage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cached_read_tokens: Option<u64>,
+    #[serde(default)]
+    pub cached_write_tokens: Option<u64>,
+    #[serde(default)]
+    pub thought_tokens: Option<u64>,
+    #[serde(default)]
+    pub total_tokens: Option<u64>,
+}
+
+impl PromptResponse {
+    /// The model the turn ran on, as the agent reported it.
+    pub fn model(&self) -> Option<String> {
+        let m = self.meta.as_ref()?;
+        m.pointer("/quota/model_usage/0/model").and_then(Value::as_str).map(str::to_string)
+    }
 }
 
 /// What `initialize` answered, which is where the app learns what this agent

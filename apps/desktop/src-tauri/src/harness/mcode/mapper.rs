@@ -422,12 +422,22 @@ impl Mapper {
         };
         self.answer = None;
 
+        let usage = response.usage.as_ref().map(|u| Usage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cached_input_tokens: u.cached_read_tokens,
+            cache_write_tokens: u.cached_write_tokens,
+            reasoning_tokens: u.thought_tokens,
+            total_tokens: u.total_tokens,
+            model: response.model(),
+            ..Default::default()
+        });
         out.push(self.turn_completed(
             status,
             Some(response.stop_reason),
             final_text,
             false,
-            None,
+            usage,
         ));
         out
     }
@@ -461,7 +471,13 @@ impl Mapper {
             stop_reason,
             auth_failed,
             final_text,
-            usage: usage.or_else(|| {
+            // A turn's own counts keep the running figures beside them: the ring
+            // and the spend are read off this same event.
+            usage: usage.map(|mut u| {
+                u.context_window = u.context_window.or(self.occupancy);
+                u.cost_usd = u.cost_usd.or(self.spend);
+                u
+            }).or_else(|| {
                 // Nothing at all where neither has been reported: an empty
                 // `Usage` would draw a ring reading zero, which is a claim the
                 // agent never made.
@@ -832,6 +848,28 @@ mod tests {
     const CLAUDE_TURN: &str = include_str!("fixtures/claude_turn.jsonl");
     const CODEX_TURN: &str = include_str!("fixtures/codex_turn.jsonl");
     const OPENCODE_TURN: &str = include_str!("fixtures/opencode_turn.jsonl");
+
+    /// The prompt's answer carries the turn's tokens, which is what an estimated
+    /// cost is priced from; the running cost and the ring ride beside them.
+    #[test]
+    fn a_turn_closes_with_its_own_tokens_and_model() {
+        let usage = |fixture| {
+            mapped(fixture).into_iter().rev().find_map(|e| match e.payload {
+                P::TurnCompleted { usage, .. } => usage,
+                _ => None,
+            })
+        };
+        let claude = usage(CLAUDE_TURN).expect("claude reports usage");
+        assert_eq!((claude.input_tokens, claude.output_tokens, claude.cached_input_tokens), (Some(4), Some(72), Some(57867)));
+        assert_eq!(claude.model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(claude.cost_usd, Some(0.0780987), "the agent's own cost stays");
+        assert!(claude.context_window.is_some());
+
+        let codex = usage(CODEX_TURN).expect("codex reports usage");
+        assert_eq!((codex.input_tokens, codex.cost_usd), (Some(18638), None));
+        assert_eq!(codex.model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(usage(OPENCODE_TURN).and_then(|u| u.model), None, "opencode names no model");
+    }
 
     /// **The three adapters' real turns, each writing a file and running
     /// `wc -c` on it.** Their tool updates are not mcode's: Claude closes a call

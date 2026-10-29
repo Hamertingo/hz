@@ -337,6 +337,11 @@ pub fn observe_user(session_id: &str, text: &str) {
     }
 }
 
+/// Whether a routine's run is what this session is answering now.
+pub fn is_running(session_id: &str) -> bool {
+    PENDING.lock().expect("routines pending poisoned").get(session_id).is_some_and(|p| p.started)
+}
+
 /// Called when a session's turn closes. Settles the run that turn carried, and
 /// keeps a quiet run quiet unless the answer asks for the person.
 pub fn observe_completed(

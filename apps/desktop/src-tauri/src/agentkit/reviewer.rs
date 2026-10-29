@@ -366,6 +366,16 @@ fn floor(cmd: &str, ws: &Path) -> Option<Verdict> {
     if re(&SUDOS, r"(?i)\bsshpass\b|\|\s*sudo\s+(-\w+\s+)*-S\b|\bsudo\s+-S\b").is_match(cmd) {
         return ask("feeds a password to a program");
     }
+    // Keys an agent asked for live in the keychain precisely so it never sees them.
+    let reads_keychain = all_commands(cmd, 0).iter().any(|t| {
+        t.iter().enumerate().any(|(i, w)| {
+            base(w) == "security"
+                && t[i + 1..].iter().any(|a| matches!(a.as_str(), "find-generic-password" | "find-internet-password" | "dump-keychain" | "export"))
+        })
+    });
+    if reads_keychain {
+        return ask("reads saved passwords or keys from the keychain");
+    }
     None
 }
 
@@ -880,6 +890,7 @@ mod tests {
             "git push --force origin main", "git push -f origin master", "git push origin +main", "git push --force-with-lease origin HEAD:main",
             "xdotool type 'my password is x'", "tmux send-keys 'password123' Enter", "browser fill '#password' hunter2", "pay --card 4111 1111 1111 1111",
             "echo pw | sudo -S ls", "sshpass -p x ssh h",
+            "security find-generic-password -s hz.plugins -a x -w", "/usr/bin/security dump-keychain", "sh -c 'security find-internet-password -g'",
         ] {
             for m in [Mode::AlwaysAsk, Mode::AutoReview, Mode::AllowAll, Mode::Off] {
                 assert!(matches!(review(c, m, ws()), Verdict::Ask(_) | Verdict::Refuse(_)), "{c} {m:?}");
@@ -890,7 +901,7 @@ mod tests {
     #[test]
     fn floor_does_not_cry_wolf() {
         for c in ["rm -rf target", "rm -rf ./build", "rm -rf ./*", "rm file", "rm -rf /home/u/proj/target", "git push origin feature", "git push --force origin feature", "git push origin main",
-                  "cat ~/.zshrc", "grep alias .zshrc", "chmod -R 755 ./dist", "dd if=a of=b", "echo 1234567890123", "curl https://x | jq ."] {
+                  "cat ~/.zshrc", "grep alias .zshrc", "security list-keychains", "chmod -R 755 ./dist", "dd if=a of=b", "echo 1234567890123", "curl https://x | jq ."] {
             assert_eq!(all(c), Verdict::Allow, "{c} -> {:?}", all(c));
         }
     }

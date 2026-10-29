@@ -17,7 +17,19 @@ macro_rules! fail {
 }
 
 pub mod agentkit;
+pub mod agent_tools;
+mod hyzevm;
 mod kit_cmds;
+mod kit_runtime;
+mod bark_push;
+mod composio_link;
+mod doc_tools;
+mod google_account;
+mod google_tools;
+mod integrations;
+mod kit_mcp;
+mod op_login;
+mod kit_work;
 pub mod analytics;
 mod automations;
 mod routine_hooks;
@@ -70,6 +82,9 @@ pub mod pty;
 pub mod workspaces;
 pub mod orchestration;
 pub mod team;
+pub mod talk;
+pub mod command_review;
+pub mod safety_tools;
 pub mod plugins;
 pub mod keychain;
 pub mod mcp_client;
@@ -895,7 +910,13 @@ pub fn run() {
             // The team's MCP server. Like orchestration, a side channel: without
             // it agents still work, they just cannot reach each other.
             tauri::async_runtime::spawn(inbox::load(app.handle().clone()));
-            tauri::async_runtime::spawn(channels::load(app.handle().clone()));
+            // Threads first, so the runs `talk` hands back after a restart open as
+            // their agents' sessions.
+            let threads = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                channels::load(threads.clone()).await;
+                talk::load(threads).await;
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = team::serve(handle).await {
@@ -928,6 +949,8 @@ pub fn run() {
             // without switching apps would go uncounted. Free to state beside
             // the other two sites — all three claim one daily key.
             analytics::active_day();
+            kit_runtime::start(app.handle().clone());
+            integrations::start();
 
             Ok(())
         })
@@ -949,6 +972,73 @@ pub fn run() {
             kit_cmds::kit_e2e_create,
             kit_cmds::kit_takeover,
             kit_cmds::kit_takeover_state,
+            kit_cmds::kit_vm_state,
+            kit_cmds::kit_vm_start,
+            kit_cmds::kit_vm_ensure,
+            kit_cmds::kit_vm_stop,
+            kit_cmds::kit_vm_size,
+            kit_cmds::kit_screen_for,
+            kit_cmds::kit_screenshot,
+            kit_cmds::kit_screen_url,
+            kit_cmds::kit_call_start,
+            kit_cmds::kit_call_say,
+            kit_cmds::kit_call_heard,
+            kit_cmds::kit_call_end,
+            kit_cmds::kit_logins,
+            kit_cmds::kit_login_record,
+            kit_cmds::kit_login_remove,
+            kit_cmds::kit_versions,
+            kit_cmds::kit_version_record,
+            kit_cmds::kit_version_restore,
+            kit_cmds::kit_engine_updates,
+            kit_work::kit_digests,
+            kit_work::kit_routine_offer,
+            kit_work::kit_routine_answer,
+            kit_work::kit_brain_get,
+            kit_work::kit_brain_set,
+            kit_work::kit_onboarding_start,
+            kit_work::kit_onboarding_next,
+            kit_work::kit_timings,
+            kit_cmds::kit_accounts,
+            kit_cmds::kit_account_add,
+            kit_cmds::kit_account_remove,
+            kit_cmds::kit_account_assign,
+            kit_cmds::kit_account_unassign,
+            kit_cmds::kit_account_of,
+            kit_cmds::kit_app_keys,
+            kit_cmds::kit_app_key_create,
+            kit_cmds::kit_app_key_revoke,
+            kit_cmds::kit_payments_set,
+            kit_cmds::kit_pdf,
+            integrations::integrations_status,
+            google_account::google_set_client,
+            google_account::google_sign_in,
+            google_account::google_cancel,
+            google_account::google_sign_out,
+            google_account::google_grant,
+            composio_link::composio_connect,
+            composio_link::composio_disconnect,
+            bark_push::bark_set,
+            bark_push::bark_clear,
+            bark_push::bark_full_text,
+            bark_push::bark_test,
+            op_login::op_set,
+            op_login::op_lookup,
+            command_review::kit_review_default_get,
+            command_review::kit_review_default_set,
+            safety_tools::kit_key_requests,
+            safety_tools::kit_key_save,
+            safety_tools::kit_key_dismiss,
+            safety_tools::kit_keys,
+            safety_tools::kit_key_remove,
+            inbox::permission_always_allow,
+            agent_tools::kit_draft_send,
+            agent_tools::kit_page_get,
+            agent_tools::kit_widget_get,
+            agent_tools::kit_login_answer,
+            agent_tools::kit_agent_created,
+            agent_tools::kit_post_get,
+            agent_tools::kit_login_pending,
             read_attachments,
             write_pasted_text,
             write_pasted_image,
@@ -1104,6 +1194,9 @@ pub fn run() {
             channels::channel_stop,
             channels::channel_retry,
             channels::channel_export,
+            talk::team_pairs,
+            talk::team_pair_between,
+            talk::team_status,
             answer_questions,
             cancel_question,
             notifications::notify_session,

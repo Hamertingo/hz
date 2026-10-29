@@ -3,6 +3,11 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@import "./styles/face.css";
+@import "./styles/agent-status.css";
+@import "./styles/chat.css";
+@import "./styles/sidebar.css";
+@import "./styles/agent-panel.css";
 
 /* Streamdown ships prebuilt classes Tailwind would otherwise never see, since it
    only scans our own source. Paths are relative to this file. */
@@ -521,7 +526,7 @@
   /* The Studio greys, written out. The derived ramp lands within a few percent of
      the mockup's but not on it, and "the same charcoal" is the one thing a
      side-by-side check cannot forgive. The other dark palettes keep their own. */
-  --background: #121213;
+  --background: #18181a;
   --foreground: #ececea;
   --surface-card: #18181a;
   --surface-raised: #151516;
@@ -536,14 +541,17 @@
   --hairline: rgb(255 255 255 / 6%);
   --hairline-strong: rgb(255 255 255 / 9%);
   --side: #0e0e0f;
-  --ink2: #a3a3a0;
-  --ink3: #71716e;
-  --ink4: #4b4b49;
-  --s1: rgb(255 255 255 / 2.5%);
-  --s2: rgb(255 255 255 / 4.5%);
-  --s3: rgb(255 255 255 / 7%);
-  --line: rgb(255 255 255 / 6%);
-  --line2: rgb(255 255 255 / 9%);
+  --sheet: #1b1b1d;
+  --popover: #222225;
+  --pop: #222225;
+  --ink2: #c6c6c1;
+  --ink3: #9c9c97;
+  --ink4: #6e6e6a;
+  --s1: rgb(255 255 255 / 3%);
+  --s2: rgb(255 255 255 / 5%);
+  --s3: rgb(255 255 255 / 8%);
+  --line: rgb(255 255 255 / 6.5%);
+  --line2: rgb(255 255 255 / 10%);
   --line3: rgb(255 255 255 / 14%);
   --hover: rgb(255 255 255 / 3.5%);
   --active: rgb(255 255 255 / 6.5%);
@@ -553,13 +561,14 @@
   /* The Studio light palette, written out as hex like the dark block. Warm paper
      under white panels: the page is `--paper`, the panel is pure white, and the
      card's step above the page is the whole of what separates them. */
-  --background: #f4f3ef;
+  --background: #fcfcfb;
   --surface-raised: #ebeae5;
   --surface-card: #ffffff;
   --muted: #e9e8e3;
   --muted-foreground: #5c5c58;
   --foreground: #1b1b1a;
-  --side: #e6e5e0;
+  --side: #f4f4f2;
+  --sheet: #fbfbfa;
   --ink2: #5c5c58;
   /* Not the mockup's #8a8a85, which measures 3.1:1 on the page. Meta text the
      reader has to read (a role, a count, a hint) needs 4.5, and #66665f clears it.
@@ -896,15 +905,16 @@
   --hover: color-mix(in oklab, var(--foreground) 3.5%, transparent);
   --active: color-mix(in oklab, var(--foreground) 6.5%, transparent);
   --pop: var(--surface-card);
+  --sheet: var(--pop);
   --shadow: 0 16px 40px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 25%);
-  --r1: 6px;
-  --r2: 9px;
-  --r3: 12px;
+  --r1: 7px;
+  --r2: 10px;
+  --r3: 13px;
   --r4: 16px;
-  --amber: #e0ac52;
-  --green: #5fbf88;
-  --red: #e6787a;
-  --blue: #8aa6f5;
+  --amber: #e9ad4c;
+  --green: #3cc76f;
+  --red: #f06b6d;
+  --blue: #7ea0ff;
   --paper: #f4f3ef;
   /* Ink on a signal fill (a green tick, a green Send). The signals are light in
      dark mode, so the ink is near-black; light mode darkens them, and the ink flips. */
@@ -1251,7 +1261,7 @@
        so the header reserves this much lead space on macOS. Tall enough to clear
        a 28px control with breathing room — at exactly 28px the toggle butts
        against the window edge. */
-    --titlebar-h: 40px;
+    --titlebar-h: 50px;
     /* Horizontal clearance for those same lights, needed only when a pane
        reaches the window's left edge — i.e. with the sidebar collapsed. */
     --traffic-lights-w: 78px;

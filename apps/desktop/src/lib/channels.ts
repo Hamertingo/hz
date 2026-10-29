@@ -203,6 +203,7 @@ export function sortTasks(tasks: readonly Task[]): Task[] {
 }
 
 export const MODES: readonly { value: Mode; title: string; hint: string }[] = [
+  { value: "triage", title: "Whoever fits", hint: "hz picks who answers from their roles. Everyone when nobody fits." },
   { value: "mention", title: "Who you mention", hint: "@name picks who answers. Nobody else speaks." },
   { value: "turns", title: "Everyone, in turns", hint: "Each agent answers once per round." },
   { value: "lead", title: "The lead decides", hint: "One agent reads every message and hands it on." },
@@ -215,6 +216,8 @@ export function composerHint(mode: Mode, rounds: number, leadName: string): stri
       return `Everyone answers in turns, then @mentions carry on, up to ${rounds} ${rounds === 1 ? "round" : "rounds"}.`;
     case "lead":
       return `${leadName} reads every message and hands it on, up to ${rounds} ${rounds === 1 ? "round" : "rounds"}.`;
+    case "triage":
+      return `The agents whose roles fit answer, or everyone, up to ${rounds} ${rounds === 1 ? "round" : "rounds"}. @name picks someone.`;
     default:
       return `Agents answer when you @mention them, up to ${rounds} ${rounds === 1 ? "round" : "rounds"}. ${leadName} leads and answers otherwise.`;
   }

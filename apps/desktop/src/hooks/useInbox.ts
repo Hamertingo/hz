@@ -69,10 +69,6 @@ export function markMentionsRead(): Promise<number> {
   return invoke<number>("inbox_mark_mentions_read");
 }
 
-export function removeAllowRule(id: string) {
-  return invoke("inbox_rule_remove", { id });
-}
-
 export function inboxTrail(id: string): Promise<TrailStep[]> {
   return invoke<TrailStep[]>("inbox_trail", { id });
 }

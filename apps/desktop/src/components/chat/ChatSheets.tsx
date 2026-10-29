@@ -43,6 +43,9 @@ export default function ChatSheets({ sessionId, busy, onStop, onRespond }: Props
       return <PrSheet sheet={sheet} cwd={cwdOf(roster.agents, sheet.agentId)} />;
     case "exchange":
       return <ExchangeSheet sheet={sheet} agents={roster.agents} />;
+    case "thread":
+      // Drawn over the chat column instead, as a chat of its own: `ThreadView`.
+      return null;
     case "approval":
       return <ApprovalSheet sheet={sheet} sessionId={sessionId} onRespond={onRespond} />;
     case "terminal":

@@ -1,19 +1,27 @@
-import { Check, ChevronDown, Dices, Folder, Sparkles } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { ChevronDown, Dices, Image as ImageIcon, X } from "lucide-react";
+import { useRef, useState } from "react";
 
-import AgentIcon from "@/components/AgentIcon";
-import AgentTile from "@/components/AgentTile";
+import EngineMark from "@/components/EngineMark";
 import Dither from "@/components/Dither";
-import Mascot from "@/components/Mascot";
+import Face from "@/components/Face";
+import { Group, Row, UnderlineTabs } from "@/components/kit/kit";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Segmented } from "@/components/ui/segmented";
+import { useModels } from "@/components/profile/ConfigMenus";
 import { useAgentAvailability } from "@/hooks/useAgentAvailability";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
-import { basename } from "@/lib/format";
-import { agentIdFor, DEFAULT_LOOK, TEMPLATE_NAMES, TEMPLATES, type TemplateName } from "@/lib/agentDraft";
+import { ACCS, EYES, MOUTHS, PATS, SHAPE_NAMES, lookFor, shapeOfKind, type Look, type Pose, type ShapeName } from "@/lib/face";
+import { agentIdFor, DEFAULT_LOOK, TEMPLATES, type AgentTemplate } from "@/lib/agentDraft";
+import { CLI } from "@/lib/cli";
+import { MASCOT_COLORS, type MascotKind } from "@/lib/mascots";
 import { honouredModes, MODE_COPY } from "@/lib/permission";
-import { MASCOT_COLORS, MASCOT_KINDS, type MascotKind } from "@/lib/mascots";
 import { AGENT_HARNESSES, useRoster, type RosterAgent } from "@/lib/roster";
 import { cn } from "@/lib/utils";
 import type { ApprovalPolicy, Harness, Project } from "@/types/events";
@@ -27,24 +35,57 @@ const LABEL: Record<Harness, string> = {
   mcode: "mcode",
 };
 
+const HARNESS_OF: Record<AgentTemplate["cli"], Harness> = {
+  Claude: "claude-acp",
+  Codex: "codex-acp",
+  OpenCode: "opencode",
+};
+
 /// The mockup's order for the stances, narrowest first. A CLI that does not
 /// honour one leaves it out rather than offering a promise it cannot keep.
 const STANCE_ORDER: ApprovalPolicy[] = ["plan", "manual", "auto", "bypassPermissions"];
 
-const FIELD =
-  "w-full rounded-(--r2) bg-s2 px-3 py-[9px] text-[13px] text-ink shadow-[inset_0_0_0_1px_var(--line)] outline-none transition-shadow placeholder:text-ink4 focus:shadow-[inset_0_0_0_1px_var(--line3)]";
+const POSES: readonly [Pose, string][] = [
+  ["sleep", "Resting"],
+  ["idle", "Idle"],
+  ["work", "Working"],
+  ["vm", "Its computer"],
+  ["mac", "Your Mac"],
+];
 
-/// The new-agent card and the agent's settings, which are the same card: a
-/// dithered banner with the face on its edge, then the fields. With `editing`
-/// set (an agent id) only the look and the name are shown, since the CLI, folder
-/// and instructions belong to a conversation already under way.
+type Part = "body" | "eyes" | "mouth" | "acc" | "pat" | "color";
+
+const PARTS: { value: Part; label: string }[] = [
+  { value: "body", label: "Body" },
+  { value: "eyes", label: "Eyes" },
+  { value: "mouth", label: "Mouth" },
+  { value: "acc", label: "Extra" },
+  { value: "pat", label: "Pattern" },
+  { value: "color", label: "Colour" },
+];
+
+const OPTIONS: Record<Exclude<Part, "body" | "color">, readonly string[]> = {
+  eyes: EYES,
+  mouth: MOUTHS,
+  acc: ACCS,
+  pat: PATS,
+};
+
+const pick = <T,>(a: readonly T[]): T => a[Math.floor(Math.random() * a.length)];
+
+const FIELD =
+  "w-full rounded-(--r1) bg-s1 px-[11px] text-[13px] text-ink shadow-[inset_0_0_0_1px_var(--line2)] outline-none transition-[box-shadow,background] placeholder:text-ink4 hover:shadow-[inset_0_0_0_1px_var(--line3)] focus:bg-s2 focus:shadow-[inset_0_0_0_1px_var(--line3)] h-[34px]";
+
+/// The new-agent card and the agent's settings, which are the same card: a pixel field behind a face built from
+/// parts, the name, and a look picker. A new agent also takes a role, an engine, a stance and instructions.
+/// With `editing` set (an agent id) only the look and the name are shown, since the CLI, folder and instructions
+/// belong to a conversation already under way.
 export default function NewAgentDialog({
   open,
   editing,
   presetName,
   projects,
   defaultProjectPath,
-  onPickFolder,
   onClose,
   onSubmit,
 }: {
@@ -57,8 +98,8 @@ export default function NewAgentDialog({
   /// The folder the composer had selected, offered first so a reader with one
   /// project never has to choose.
   defaultProjectPath: string | null;
-  /// Opens the folder picker and answers the path, or null if cancelled.
-  onPickFolder: () => Promise<string | null>;
+  /// Kept for the caller; the card no longer has a folder row, so it is not called here.
+  onPickFolder?: () => Promise<string | null>;
   onClose: () => void;
   /// `id` is the new agent's id, or the edited agent's own.
   onSubmit: (draft: AgentDraft, id: string) => void;
@@ -72,40 +113,42 @@ export default function NewAgentDialog({
   const defaults = workspace?.defaults;
   const defaultPerm = STANCE_ORDER.find((m) => m === defaults?.permission) ?? "auto";
 
-  // Each open starts from the defaults, so a reader who opens the card a second
-  // time does not find the last draft. Fields that depend on the environment
-  // (the CLI, the folder) stay unset until the reader picks, and read the live
-  // value until then.
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
-  const [kind, setKind] = useState<MascotKind>(DEFAULT_LOOK.kind);
+  const [shape, setShape] = useState<ShapeName | string>(DEFAULT_LOOK.shape);
+  const [look, setLook] = useState<Required<Look>>(DEFAULT_LOOK.look);
   const [color, setColor] = useState<string>(DEFAULT_LOOK.color);
-  const [template, setTemplate] = useState<TemplateName>("Blank");
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [pose, setPose] = useState<Pose>("idle");
+  const [tab, setTab] = useState<"make" | "ready">("make");
+  const [part, setPart] = useState<Part>("body");
   const [instructions, setInstructions] = useState("");
   const [pickedHarness, setPickedHarness] = useState<Harness | null>(null);
-  const [pickedDir, setPickedDir] = useState<string | null>(null);
   const [pickedPerm, setPickedPerm] = useState<ApprovalPolicy>(defaultPerm);
   const [nameMissing, setNameMissing] = useState(false);
-  const [folderMissing, setFolderMissing] = useState(false);
   const [lastOpen, setLastOpen] = useState(open);
   const nameRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // Reset during render, not in an effect, so the first frame of a reopened
   // card already shows the fresh draft rather than the last one for a beat.
   if (open !== lastOpen) {
     setLastOpen(open);
     if (open) {
-      setName(editingAgent?.name ?? presetName ?? "");
-      setRole(editingAgent?.role ?? "");
-      setKind(editingAgent?.kind ?? DEFAULT_LOOK.kind);
-      setColor(editingAgent?.color ?? DEFAULT_LOOK.color);
-      setTemplate("Blank");
-      setInstructions(editingAgent?.instructions ?? "");
+      const base = editingAgent;
+      setName(base?.name ?? presetName ?? "");
+      setRole(base?.role ?? "");
+      setShape(base ? (base.shape ?? shapeOfKind(base.kind)) : DEFAULT_LOOK.shape);
+      setLook(base ? { ...lookFor(base.id), ...(base.look ?? {}) } : DEFAULT_LOOK.look);
+      setColor(base?.color ?? DEFAULT_LOOK.color);
+      setPhoto(base?.photo ?? null);
+      setPose("idle");
+      setTab("make");
+      setPart("body");
+      setInstructions(base?.instructions ?? "");
       setPickedHarness(null);
-      setPickedDir(null);
-      setPickedPerm(editingAgent?.permission ?? defaultPerm);
+      setPickedPerm(base?.permission ?? defaultPerm);
       setNameMissing(false);
-      setFolderMissing(false);
     }
   }
 
@@ -116,24 +159,51 @@ export default function NewAgentDialog({
     (h) => h === defaults?.harness && agents?.find((a) => a.harness === h)?.available,
   );
   const harness: Harness = editingAgent?.harness ?? pickedHarness ?? preferred ?? firstReady ?? "claude-acp";
-  const chosen = agents?.find((a) => a.harness === harness);
-  const dir =
-    editingAgent?.projectPath ?? pickedDir ?? defaults?.folder ?? defaultProjectPath ?? projects[0]?.path ?? null;
+  const dir = editingAgent?.projectPath ?? defaults?.folder ?? defaultProjectPath ?? projects[0]?.path ?? null;
   const stances = STANCE_ORDER.filter((m) => honouredModes(harness).includes(m));
   const perm: ApprovalPolicy = stances.includes(pickedPerm) ? pickedPerm : "auto";
+  const models = useModels(harness);
+  const [pickedModel, setPickedModel] = useState<string | null>(null);
+  const [pickedEffort, setPickedEffort] = useState<string | null>(null);
+  const modelId = models?.some((m) => m.id === pickedModel) ? pickedModel : null;
+  const efforts = models?.find((m) => m.id === modelId)?.efforts ?? [];
+  const effort = pickedEffort && efforts.includes(pickedEffort as never) ? pickedEffort : null;
 
-  const applyTemplate = (key: TemplateName) => {
-    const t = TEMPLATES[key];
-    setTemplate(key);
-    if (t.role !== undefined) setRole(t.role);
-    if (t.kind !== undefined) setKind(t.kind);
-    if (t.color !== undefined) setColor(t.color);
-    if (t.instructions !== undefined) setInstructions(t.instructions);
+  const applyTemplate = (t: AgentTemplate) => {
+    setName(t.name);
+    setRole(t.role);
+    setShape(t.shape);
+    setLook({ ...t.look });
+    setColor(t.color);
+    setPhoto(null);
+    setPickedHarness(HARNESS_OF[t.cli]);
+    setPickedPerm(t.permission);
+    setInstructions(t.instructions);
+    setNameMissing(false);
+    setTab("make");
   };
 
   const shuffle = () => {
-    setKind(MASCOT_KINDS[Math.floor(Math.random() * MASCOT_KINDS.length)]);
-    setColor(MASCOT_COLORS[Math.floor(Math.random() * MASCOT_COLORS.length)]);
+    setShape(pick(SHAPE_NAMES));
+    setColor(pick(MASCOT_COLORS));
+    setLook({ eyes: pick(EYES), mouth: pick(MOUTHS), acc: pick(ACCS), pat: pick(PATS) });
+    setPhoto(null);
+  };
+
+  const choose = (p: Part, v: string) => {
+    if (p === "body") setShape(v);
+    else if (p === "color") setColor(v);
+    else setLook((l) => ({ ...l, [p]: v }));
+    setPhoto(null);
+  };
+
+  const readPhoto = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setPhoto(reader.result);
+    };
+    reader.readAsDataURL(file);
   };
 
   const submit = () => {
@@ -150,29 +220,32 @@ export default function NewAgentDialog({
         ...editingAgent,
         name: trimmed,
         role: role.trim(),
-        kind,
+        kind: editingAgent.kind,
         color,
+        shape,
+        look,
+        photo,
       };
       onSubmit(draft, editingAgent.id);
       return;
     }
 
-    if (dir === null) {
-      setFolderMissing(true);
-      return;
-    }
+    if (dir === null) return;
 
     const id = agentIdFor(trimmed, new Set(roster.agents.map((a) => a.id)));
     onSubmit(
       {
         name: trimmed,
         role: role.trim(),
-        kind,
+        kind: DEFAULT_LOOK.kind as MascotKind,
         color,
+        shape,
+        look,
+        photo,
         harness,
         projectPath: dir,
-        modelId: null,
-        effort: null,
+        modelId,
+        effort,
         permission: perm,
         workspaceId: workspace?.id ?? null,
         instructions: instructions.trim(),
@@ -182,10 +255,8 @@ export default function NewAgentDialog({
   };
 
   const liveName = name.trim() || (editingAgent ? editingAgent.name : "New agent");
-  const liveRole =
-    role.trim() ||
-    (editingAgent ? "Its chat, memory and folder stay as they are" : `Joins ${workspace?.name ?? "your workspace"}`);
-
+  const liveRole = role.trim();
+  const previewId = editingAgent?.id ?? "new-agent";
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
@@ -196,264 +267,312 @@ export default function NewAgentDialog({
           e.preventDefault();
           nameRef.current?.focus({ preventScroll: true });
         }}
-        className="flex max-h-[88vh] w-[620px] max-w-[620px] flex-col gap-0 overflow-hidden rounded-[20px] p-0"
+        className="flex max-h-[calc(100vh-48px)] w-[min(860px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden rounded-(--r4) border-0 bg-(--sheet) p-0"
       >
-        <div className="relative h-28 shrink-0">
-          <Dither color={color} seed={`${kind}${color}`} cols={150} rows={28} light={0.8} />
+        <div className="flex shrink-0 items-center gap-3 px-5 pt-[18px] pb-2">
+          <DialogTitle className="min-w-0 flex-1 text-[16px] leading-[1.3] font-semibold tracking-[-0.015em]">
+            {isEdit ? "Change look" : "New agent"}
+          </DialogTitle>
+          <DialogDescription className="sr-only">{liveName}</DialogDescription>
+          {!isEdit && (
+            <UnderlineTabs
+              className="border-0 px-0"
+              size="sm"
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: "make", label: "Make one" },
+                { value: "ready", label: "Ready-made" },
+              ]}
+            />
+          )}
           <button
             type="button"
-            onClick={shuffle}
-            className="absolute top-3.5 right-3.5 flex h-7 cursor-pointer items-center gap-1.5 rounded-full bg-black/40 px-2.5 text-[12px] font-medium text-white backdrop-blur-md"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink3 transition-colors hover:bg-hover hover:text-ink"
           >
-            <Dices className="size-[13px]" />
-            Shuffle look
+            <X className="size-4" />
           </button>
-          <div className="absolute bottom-[-44px] left-6 z-10 rounded-[28px] bg-pop p-[5px]">
-            <AgentTile id={`draft${kind}${color}`} kind={kind} color={color} size={88} />
-          </div>
         </div>
 
-        <div className="flex shrink-0 items-start gap-3.5 pt-3 pr-6 pb-0 pl-32">
-          <div className="min-w-0 flex-1">
-            <DialogTitle className="text-[19px] leading-[1.2] font-semibold tracking-[-0.02em]">
-              {liveName}
-            </DialogTitle>
-            <DialogDescription className="mt-0.5 text-[12.5px] text-ink3">{liveRole}</DialogDescription>
+        {tab === "ready" && !isEdit ? (
+          <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto px-5 pt-1.5 pb-5">
+            {TEMPLATES.map((t) => (
+              <button
+                key={t.name}
+                type="button"
+                onClick={() => applyTemplate(t)}
+                className="flex cursor-pointer items-center gap-3 rounded-(--r3) p-3 text-left shadow-[inset_0_0_0_1px_var(--line)] transition-colors hover:bg-s2"
+              >
+                <Face id={`tpl-${t.name}`} color={t.color} shape={t.shape} look={t.look} size={46} />
+                <span className="min-w-0">
+                  <b className="block text-[13px] font-semibold">{t.name}</b>
+                  <span className="block text-[12px] leading-snug text-ink3">{t.description}</span>
+                </span>
+              </button>
+            ))}
           </div>
-          {!isEdit && (
-            <span className="mt-1 ml-auto inline-flex items-center gap-1.5 rounded-full bg-s2 px-2.5 py-[3px] text-[11.5px] whitespace-nowrap text-ink3">
-              <AgentIcon harness={harness} className="size-[13px]" />
-              {LABEL[harness]} · {MODE_COPY[perm].label}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-1 flex-col overflow-y-auto px-6 pt-3.5 pb-2">
-          {!isEdit && (
-            <Section title="Start from" hint="Fills the role, look and instructions">
-              <div className="flex flex-wrap gap-1.5">
-                {TEMPLATE_NAMES.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    aria-pressed={t === template}
-                    onClick={() => applyTemplate(t)}
-                    className={cn(
-                      "h-[26px] cursor-pointer rounded-full px-[11px] text-[12px] font-medium transition-colors",
-                      t === template ? "bg-ink text-background" : "bg-s2 text-ink2 hover:bg-s3 hover:text-ink",
-                    )}
-                  >
-                    {t}
-                  </button>
-                ))}
+        ) : (
+          <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)] gap-5 overflow-y-auto px-5 pt-1 pb-2 max-[720px]:grid-cols-1">
+            <div>
+              <div className="relative flex min-h-[400px] flex-col items-center justify-end overflow-hidden rounded-(--r4) bg-s1 px-3.5 pb-6 text-center shadow-[inset_0_0_0_1px_var(--line)]">
+                <Dither color={color} seed="new-agent" cols={36} rows={60} light={1} className="opacity-80" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[48%] bg-linear-to-b from-transparent to-(--sheet)/90" />
+                <div className="relative z-[2] mt-auto flex flex-col items-center gap-[3px]">
+                  <span className="mb-3.5 grid drop-shadow-[0_12px_20px_rgba(0,0,0,0.35)]">
+                    <Face id={previewId} color={color} shape={shape} look={look} photo={photo} pose={pose} size={128} />
+                  </span>
+                  <b className="max-w-full truncate text-[16px] font-semibold tracking-[-0.015em]">{liveName}</b>
+                  <span className="max-w-full truncate text-[12.5px] text-ink3">{liveRole || "No role yet"}</span>
+                </div>
               </div>
-            </Section>
-          )}
-
-          <Section title="Who it is">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Name">
-                <input
-                  ref={nameRef}
-                  aria-label="Name"
-                  value={name}
-                  maxLength={18}
-                  placeholder="Atlas"
-                  aria-invalid={nameMissing}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    setNameMissing(false);
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && submit()}
-                  className={cn(FIELD, nameMissing && "shadow-[inset_0_0_0_1px_var(--red)]")}
-                />
-              </Field>
-              <Field label="What it does">
-                <input
-                  value={role}
-                  aria-label="What it does"
-                  placeholder="Strategy, pricing, numbers"
-                  onChange={(e) => setRole(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && submit()}
-                  className={FIELD}
-                />
-              </Field>
-            </div>
-            <div className="mt-3.5 flex items-center gap-3.5">
-              <div className="flex gap-0.5">
-                {MASCOT_KINDS.map((k) => (
+              <div className="mt-2 flex flex-wrap justify-center gap-0.5">
+                {POSES.map(([k, label]) => (
                   <button
                     key={k}
                     type="button"
-                    title={k}
-                    aria-label={`Face ${k}`}
-                    aria-pressed={k === kind}
-                    onClick={() => setKind(k)}
+                    aria-pressed={pose === k}
+                    onClick={() => setPose(k)}
                     className={cn(
-                      "grid size-9 cursor-pointer place-items-center rounded-(--r2) transition-colors hover:bg-hover",
-                      k === kind && "bg-active shadow-[inset_0_0_0_1px_var(--line3)]",
+                      "h-6 cursor-pointer rounded-full px-[9px] text-[11.5px] font-medium transition-colors",
+                      pose === k ? "bg-s3 text-ink" : "text-ink3 hover:text-ink",
                     )}
                   >
-                    <Mascot kind={k} color={color} size={24} />
+                    {label}
                   </button>
-                ))}
-              </div>
-              <span aria-hidden className="h-[22px] w-px shrink-0 bg-line2" />
-              <div className="flex items-center gap-[7px]">
-                {MASCOT_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    aria-label={`Colour ${c}`}
-                    aria-pressed={c === color}
-                    onClick={() => setColor(c)}
-                    style={{ backgroundColor: c }}
-                    className={cn(
-                      "size-[18px] cursor-pointer rounded-full transition-transform hover:scale-110",
-                      c === color && "shadow-[0_0_0_2px_var(--pop),0_0_0_4px_var(--ink)]",
-                    )}
-                  />
                 ))}
               </div>
             </div>
-          </Section>
 
-          {!isEdit && (
-            <Section title="Where it runs">
-              <div className="grid grid-cols-3 gap-2">
-                {AGENT_HARNESSES.map((h) => {
-                  const on = h === harness;
-                  const ready = agents?.find((a) => a.harness === h)?.available === true;
-                  return (
-                    <button
-                      key={h}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => setPickedHarness(h)}
-                      className={cn(
-                        "cursor-pointer rounded-(--r3) bg-s1 px-3 py-2.5 text-left shadow-[inset_0_0_0_1px_var(--line)] transition-colors hover:bg-s2",
-                        on && "bg-s2 shadow-[inset_0_0_0_1.5px_var(--ink2)]",
-                      )}
-                    >
-                      <div className="flex items-center gap-2 text-[13px] font-semibold">
-                        <AgentIcon harness={h} className="size-[15px]" />
-                        {LABEL[h]}
-                        {on && (
-                          <span className="ml-auto grid size-4 place-items-center rounded-full bg-ink">
-                            <Check className="size-2.5 text-background" strokeWidth={3} />
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 text-[11.5px] text-ink3">
-                        {agents === null ? "Checking…" : ready ? "Default model · signed in" : "Not ready"}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              {chosen && !chosen.available && (
-                <p className="mt-2.5 text-[12px] text-ink3">
-                  {chosen.reason}
-                  {chosen.installCommand && (
-                    <>
-                      {" "}
-                      Install it with <code className="font-mono">{chosen.installCommand}</code>.
-                    </>
-                  )}
-                </p>
-              )}
-
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <Field label="Works in">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void onPickFolder().then((p) => {
-                        if (!p) return;
-                        setPickedDir(p);
-                        setFolderMissing(false);
-                      })
-                    }
-                    title={dir ?? undefined}
-                    className={cn(
-                      FIELD,
-                      "flex h-9 cursor-pointer items-center gap-2 text-left",
-                      folderMissing && "shadow-[inset_0_0_0_1px_var(--red)]",
-                    )}
-                  >
-                    <Folder className="size-3.5 shrink-0 text-ink3" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12px]">
-                      {dir ? basename(dir) : "Choose a folder"}
-                    </span>
-                    <ChevronDown className="size-3.5 shrink-0 text-ink3" />
-                  </button>
-                </Field>
-                <Field label="Can do">
-                  <Segmented
-                    label="Can do"
-                    value={perm}
-                    onChange={setPickedPerm}
-                    options={stances.map((m) => ({ value: m, label: MODE_COPY[m].label }))}
-                    className="flex w-full [&>button]:flex-1 [&>button]:justify-center"
-                  />
-                </Field>
-              </div>
-              <p className="mt-2 text-[12px] text-ink4">{MODE_COPY[perm].hint}.</p>
-            </Section>
-          )}
-
-          {!isEdit && (
-            <Section title="How it works" hint="Its instructions">
-              <textarea
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                placeholder="How it should think and answer. You can change this any time."
-                aria-label="Instructions"
-                className={cn(FIELD, "h-24 resize-none leading-[1.6]")}
+            <div className="min-w-0">
+              <input
+                ref={nameRef}
+                aria-label="Name"
+                value={name}
+                maxLength={18}
+                placeholder="Agent name"
+                aria-invalid={nameMissing}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameMissing(false);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+                className={cn(FIELD, "h-10 text-[15px] font-medium", nameMissing && "shadow-[inset_0_0_0_1px_var(--red)]")}
               />
-            </Section>
-          )}
-        </div>
+              <div className="mt-3.5 mb-2.5 flex items-center gap-0.5 border-b border-line">
+                <UnderlineTabs className="gap-3.5 border-0 px-0" size="sm" value={part} onChange={setPart} options={PARTS.map((p) => ({ value: p.value, label: p.label }))} />
+                <span className="flex-1" />
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    readPhoto(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <Button variant="ghost" size="sm" onClick={shuffle}>
+                  <Dices /> Shuffle
+                </Button>
+                {photo ? (
+                  <Button variant="ghost" size="sm" onClick={() => setPhoto(null)}>
+                    Remove photo
+                  </Button>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}>
+                    <ImageIcon /> Photo
+                  </Button>
+                )}
+              </div>
 
-        <div className="flex shrink-0 items-center gap-2 border-t border-line px-6 py-3.5">
-          <Button variant="ghost" className="h-[34px] px-3.5" onClick={onClose}>
+              <div className={cn("min-h-[108px] transition-opacity", photo && "opacity-40")}>
+                {part === "color" ? (
+                  <div className="flex flex-wrap gap-[9px]">
+                    {MASCOT_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        aria-label={`Colour ${c}`}
+                        aria-pressed={color === c}
+                        onClick={() => choose("color", c)}
+                        style={{ backgroundColor: c }}
+                        className={cn(
+                          "size-5 cursor-pointer rounded-full transition-transform hover:scale-[1.15]",
+                          color === c && "shadow-[0_0_0_2px_var(--sheet),0_0_0_3.5px_var(--ink)]",
+                        )}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-6 gap-1">
+                    {(part === "body" ? SHAPE_NAMES : OPTIONS[part]).map((v) => {
+                      const current = part === "body" ? shape === v : look[part] === v;
+                      const over = part === "body" ? { shape: v } : { look: { ...look, [part]: v } };
+                      return (
+                        <button
+                          key={v}
+                          type="button"
+                          title={v}
+                          aria-label={`${part} ${v}`}
+                          aria-pressed={current}
+                          onClick={() => choose(part, v)}
+                          className={cn("grid h-[54px] cursor-pointer place-items-center rounded-(--r2) transition-colors hover:bg-s2", current && "bg-s3")}
+                        >
+                          <Face id={`opt-${part}-${v}`} color={color} shape={over.shape ?? shape} look={over.look ?? look} size={40} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {!isEdit && (
+                <Group className="mt-4">
+                  <Row
+                    title="Role"
+                    right={
+                      <input
+                        value={role}
+                        aria-label="Role"
+                        placeholder="Optional"
+                        onChange={(e) => setRole(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && submit()}
+                        className="w-[190px] rounded-md bg-transparent px-1.5 py-[3px] text-right text-[12.5px] text-ink outline-none transition-colors placeholder:text-ink4 hover:bg-s3 focus:bg-s3"
+                      />
+                    }
+                  />
+                  <Row
+                    title="Brain"
+                    right={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button type="button" className="inline-flex cursor-pointer items-center gap-[5px] text-[12.5px] text-ink2 transition-colors hover:text-ink">
+                            <EngineMark harness={harness} size={14} />
+                            {CLI[harness]?.label ?? LABEL[harness]}
+                            <ChevronDown className="size-3.5 text-ink4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-[270px]">
+                          <DropdownMenuRadioGroup value={harness} onValueChange={(v) => setPickedHarness(v as Harness)}>
+                            {AGENT_HARNESSES.map((h) => {
+                              const ready = agents?.find((a) => a.harness === h)?.available === true;
+                              return (
+                                <DropdownMenuRadioItem key={h} value={h}>
+                                  <EngineMark harness={h} size={16} />
+                                  {CLI[h]?.label ?? LABEL[h]}
+                                  <span className="ml-auto whitespace-nowrap pl-4 text-[11.5px] text-ink4">
+                                    {agents === null ? "Checking…" : ready ? "Signed in" : "Not ready"}
+                                  </span>
+                                </DropdownMenuRadioItem>
+                              );
+                            })}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  />
+                  <Row
+                    title="Model"
+                    right={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild disabled={!models || models.length === 0}>
+                          <button type="button" className="inline-flex cursor-pointer items-center gap-[5px] text-[12.5px] text-ink2 transition-colors hover:text-ink disabled:cursor-default disabled:text-ink4">
+                            {models?.find((m) => m.id === modelId)?.label ?? "Default"}
+                            <ChevronDown className="size-3.5 text-ink4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="max-h-72 min-w-[220px] overflow-y-auto">
+                          <DropdownMenuRadioGroup value={modelId ?? ""} onValueChange={(v) => setPickedModel(v || null)}>
+                            <DropdownMenuRadioItem value="">Default</DropdownMenuRadioItem>
+                            {(models ?? []).map((m) => (
+                              <DropdownMenuRadioItem key={m.id} value={m.id}>
+                                {m.label}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  />
+                  {efforts.length > 0 && (
+                    <Row
+                      title="Effort"
+                      right={
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button type="button" className="inline-flex cursor-pointer items-center gap-[5px] text-[12.5px] text-ink2 transition-colors hover:text-ink">
+                              {effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : "Default"}
+                              <ChevronDown className="size-3.5 text-ink4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[180px]">
+                            <DropdownMenuRadioGroup value={effort ?? ""} onValueChange={(v) => setPickedEffort(v || null)}>
+                              <DropdownMenuRadioItem value="">Default</DropdownMenuRadioItem>
+                              {efforts.map((e) => (
+                                <DropdownMenuRadioItem key={e} value={e}>
+                                  {e.charAt(0).toUpperCase() + e.slice(1)}
+                                </DropdownMenuRadioItem>
+                              ))}
+                            </DropdownMenuRadioGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      }
+                    />
+                  )}
+                  <Row
+                    title="Permission"
+                    right={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button type="button" className="inline-flex cursor-pointer items-center gap-[5px] text-[12.5px] text-ink2 transition-colors hover:text-ink">
+                            {MODE_COPY[perm].label}
+                            <ChevronDown className="size-3.5 text-ink4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-[300px]">
+                          <DropdownMenuRadioGroup value={perm} onValueChange={(v) => setPickedPerm(v as ApprovalPolicy)}>
+                            {stances.map((m) => (
+                              <DropdownMenuRadioItem key={m} value={m}>
+                                {MODE_COPY[m].label}
+                                <span className="ml-auto whitespace-nowrap pl-4 text-[11.5px] text-ink4">{MODE_COPY[m].hint}</span>
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  />
+                  <div className="px-3 py-[9px]">
+                    <b className="mb-1.5 block text-[13px] font-medium">Instructions</b>
+                    <textarea
+                      value={instructions}
+                      onChange={(e) => setInstructions(e.target.value)}
+                      rows={3}
+                      placeholder="The goal, how to work, what needs your approval"
+                      aria-label="Instructions"
+                      className={cn(FIELD, "h-auto resize-none py-[9px] leading-[1.55]")}
+                    />
+                  </div>
+                </Group>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-5 pt-3 pb-4">
+          {dir === null && !isEdit && (
+            <span className="mr-auto text-[12px] text-red">Choose a folder for it in Settings first.</span>
+          )}
+          <Button variant="ghost" className="h-[30px]" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="solid" className="ml-auto h-[34px] px-3.5" onClick={submit}>
-            {isEdit ? (
-              "Save"
-            ) : (
-              <>
-                <Sparkles className="size-3.5" />
-                Create and say hello
-              </>
-            )}
+          <Button variant="solid" className={cn("h-[30px]", !name.trim() && !isEdit && "opacity-35")} onClick={submit}>
+            {isEdit ? "Save" : "Create agent"}
           </Button>
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
-  return (
-    <section className="border-t border-line py-4 first:border-t-0 first:pt-1.5">
-      <div className="mb-3 flex items-baseline gap-2.5">
-        <b className="text-[13px] font-semibold">{title}</b>
-        {hint && <span className="text-[12px] text-ink4">{hint}</span>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/// A caption over a control. A div and not a label: a label forwards a click on
-/// its caption to the first control inside it, which would pick the first stance.
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col">
-      <span className="mb-2 text-[12px] font-medium text-ink2">{label}</span>
-      {children}
-    </div>
   );
 }

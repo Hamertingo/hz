@@ -3,7 +3,7 @@ import { lazy, type ReactNode, Suspense, useCallback, useEffect, useLayoutEffect
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Eraser, Hash, Sparkles, Square } from "lucide-react";
+import { Eraser, Hash, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -28,13 +28,19 @@ import { prefetchPrList } from "@/hooks/usePrList";
 import { reportViewing, useInbox } from "@/hooks/useInbox";
 import { usePaletteSources } from "@/hooks/usePaletteSources";
 import { DO_ICONS, jumpRows } from "@/components/jumpRows";
+import { ChannelTile } from "@/components/sidebar/ConvRow";
 import { setJumpTarget } from "@/lib/jumpTarget";
 import { prKey, type PrRow } from "@/hooks/usePrList";
-import AgentAvatar from "@/components/AgentAvatar";
-import AgentHero from "@/components/AgentHero";
 import { AgentChatContext } from "@/hooks/useAgentChat";
+import { kit } from "@/lib/kit";
+import { agentFromRequest, type AgentCreateRequest } from "@/lib/agentFactory";
+import { useAgentGlances } from "@/hooks/useAgentGlances";
+import { useTeamStatus } from "@/hooks/useTeamTalk";
+import { teamActivity } from "@/lib/teamTalk";
 import { INTRO_PROMPT } from "@/lib/intro";
-import AgentProfile, { type ProfileTab } from "@/components/profile/AgentProfile";
+import CallScreen from "@/components/call/CallScreen";
+import EditAgentDialog from "@/components/profile/EditAgentDialog";
+import ProfilePanel, { type ProfileTab } from "@/components/profile/ProfilePanel";
 import AgentSidebar, { type SidebarPage } from "@/components/AgentSidebar";
 import ChannelView from "@/components/ChannelView";
 import NewChannelDialog from "@/components/NewChannelDialog";
@@ -44,10 +50,9 @@ import { RESTORABLE_PAGES, resolveLanding, storedFor, withView, readLastView, ty
 import { usePreference } from "@/lib/prefs";
 import { saveOrder, useSavedOrder, useWorkspaces } from "@/hooks/useWorkspaces";
 import { applyOrder, toFront } from "@/lib/order";
-import AgentWorking from "@/components/composer/AgentWorking";
 import AgentChatHeader from "@/components/chat/AgentChatHeader";
 import ChatSheets from "@/components/chat/ChatSheets";
-import { EmojiButton, MentionButton } from "@/components/composer/ComposerActions";
+import ThreadView from "@/components/chat/ThreadView";
 import ReplyBar from "@/components/composer/ReplyBar";
 import { toast } from "@/components/ui/toast";
 import { clearPage } from "@/lib/chatMarks";
@@ -55,7 +60,7 @@ import { askPrompt, handoffPrompt, hzSlashCommands, parseHz, splitTeammate } fro
 import { rememberInChat } from "@/lib/remember";
 import { cancelReply, replyFor, startReply, useReplyDraft, type ReplyDraft } from "@/lib/replyDraft";
 import { setRoutineDraft } from "@/lib/routineDraft";
-import { lastPromptAt, timingsOf } from "@/lib/steps";
+import { timingsOf } from "@/lib/steps";
 import NewAgentDialog, { type AgentDraft } from "@/components/NewAgentDialog";
 import AttachButton from "@/components/composer/AttachButton";
 import { inWorkspace, newAgent, pinnedFirst, rosterAdd, rosterRemove, rosterSetPending, useRoster, type RosterAgent } from "@/lib/roster";
@@ -320,11 +325,13 @@ function App() {
   const inboxOpen = page === "inbox";
     const prsOpen = page === "prs";
   const pluginsOpen = page === "plugins";
-  const profileOpen = page === "profile";
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [panelSlot, setPanelSlot] = useState<HTMLElement | null>(null);
+  const [callAgentId, setCallAgentId] = useState<string | null>(null);
   /// Whose profile the page shows, and on which tab. Kept when the page closes,
   /// so coming back from the chat lands where the reader left.
   const [profileAgentId, setProfileAgentId] = useState<string | null>(null);
-  const [profileTab, setProfileTab] = useState<ProfileTab>("overview");
+  const [profileTab, setProfileTab] = useState<"details" | "library" | "computer">("details");
     // Pages the sidebar links to that a later phase builds: they draw a note and
   // nothing else, and close like the usage page does.
   const placeholderOpen = page === "channels";
@@ -587,7 +594,7 @@ function App() {
       if (session === selectedSessionId) focusComposer();
     },
     onNeedsModel: () => {
-      setSettingsTab("prefs");
+      setSettingsTab("voice");
       setSettingsOpen(true);
     },
     // Drawn in the composer's own error slot, which is where every other thing
@@ -784,7 +791,10 @@ function App() {
   /// Read off the one value the pages are held in, so it cannot be a list that
   /// was written out again and came up short: it was, and the composer drew under
   /// a page for it.
-  const pageOpen = page !== "none";
+  /// Apps and Routines are sheets over the conversation, not pages that replace it, so the
+  /// chat stays up behind them and keeps its composer.
+  const sheetPage: boolean = page === "plugins" || page === "routines" || page === "prs";
+  const pageOpen: boolean = page !== "none" && !sheetPage;
 
   /// The transcript is actually on screen: no page over it, and not behind the
   /// pane at its wide size. What `Chat` and `SplitView` take as `active`, which
@@ -879,6 +889,8 @@ function App() {
 
   // Who the header names: the agent whose conversation is open, or, on the
   // empty composer, the one the next message will start.
+  const headerGlance = useAgentGlances(selectedSessionId ? [selectedSessionId] : [])[selectedSessionId ?? ""];
+  const teamStatus = useTeamStatus();
   const headerAgent = selectedSessionId
     ? roster.agents.find((a) => a.sessionId === selectedSessionId)
     : roster.agents.find((a) => a.id === roster.pendingId);
@@ -925,6 +937,10 @@ function App() {
     cancelReply(selectedSessionId);
     toast(`Fresh page. ${headerAgent.name} keeps its memory.`, { icon: <Eraser /> });
   };
+
+  // An agent nobody has written to yet still opens as its chat: header, empty
+  // transcript, composer at the bottom.
+  const freshAgent = !selectedSession && Boolean(headerAgent);
 
   /// What Enter does in an agent's composer. A line that is one of hz's own
   /// commands is answered here — `/remember`, `/routine`, `/clear` never reach
@@ -1297,6 +1313,9 @@ function App() {
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
   const settingsAgent = roster.agents.find((a) => a.id === settingsAgentId) ?? null;
 
+  const [editAgentId, setEditAgentId] = useState<string | null>(null);
+  const editAgent = roster.agents.find((a) => a.id === editAgentId) ?? null;
+
   const openNewAgent = useStableCallback(() => setNewAgentOpen(true));
   // Creating an Agent marks it pending and opens the empty composer: the session
   // does not exist until the first prompt, and that mint is where it is bound.
@@ -1313,23 +1332,25 @@ function App() {
       const agent = newAgent(draft, id);
       rosterAdd(agent);
       rosterSetPending(agent.id);
+      // Its computer is made now, in the background, and left asleep: nobody waits on it.
+      void kit.vmEnsure(agent.id).catch(() => {});
       setNewAgentOpen(false);
       goToSession(handleNewSession);
       // After, not before: `handleNewSession` puts the composer back on the
       // reader's remembered harness, and this agent was made on its own.
       applyAgent(agent);
       // Settings → Agent defaults → Say hello on create.
-      if (activeWs?.defaults.sayHello !== false) setGreeting(agent.id);
+      if (activeWs?.defaults.sayHello !== false) setGreeting({ id: agent.id, prompt: INTRO_PROMPT });
     },
   );
   // The agent just made, waiting to say hello. A send reads the composer's own
   // harness, folder and model, and those only take the agent's values on the
   // render after `applyAgent`, so the greeting is sent from an effect that waits
   // for them to agree rather than from the click.
-  const [greeting, setGreeting] = useState<string | null>(null);
+  const [greeting, setGreeting] = useState<{ id: string; prompt: string } | null>(null);
   useEffect(() => {
     if (!greeting) return;
-    const agent = roster.agents.find((a) => a.id === greeting);
+    const agent = roster.agents.find((a) => a.id === greeting.id);
     if (!agent || agent.sessionId) return setGreeting(null);
 
     const ready =
@@ -1341,14 +1362,14 @@ function App() {
     if (!ready) return;
 
     setGreeting(null);
-    void handleSendMsg(INTRO_PROMPT);
+    void handleSendMsg(greeting.prompt);
   });
-  /// Opens an agent's profile, on `tab`. A page like the others: the chat it came
-  /// from stays selected underneath and comes back with Back to chat.
+  /// Opens an agent's profile, on `tab`, docked beside its chat.
   const openProfile = useStableCallback((id: string, tab: ProfileTab = "overview") => {
     setProfileAgentId(id);
-    setProfileTab(tab);
-    setPage("profile");
+    setProfileTab(tab === "computer" ? "computer" : tab === "activity" ? "library" : "details");
+    setProfileOpen(true);
+    openAgentChat(id);
   });
   const profileAgent = roster.agents.find((a) => a.id === profileAgentId) ?? null;
   // The inbox files a finished turn as news only when its chat was not the one
@@ -1391,6 +1412,20 @@ function App() {
     );
     return () => void off.then((f) => f()).catch(() => {});
   }, [openProfile]);
+  // An agent's `create_agent`: made here, where the roster lives, and the reader stays in the chat they are in.
+  // `rosterAdd` mirrors the roster to the backend first, so the maker can message the new agent at once.
+  const makeRequestedAgent = useStableCallback((req: AgentCreateRequest) => {
+    const made = agentFromRequest(req, roster.agents);
+    if (typeof made === "string") return void kit.agentCreated(req.requestId, null, made).catch(() => {});
+    rosterAdd(made);
+    void kit.vmEnsure(made.id).catch(() => {});
+    void kit.agentCreated(req.requestId, made.id).catch(() => {});
+    toast(`${made.name} joined the team`, { ms: 6000, action: { label: "Open", onClick: () => openProfile(made.id) } });
+  });
+  useEffect(() => {
+    const off = listen<AgentCreateRequest>("agent_create_request", ({ payload }) => makeRequestedAgent(payload));
+    return () => void off.then((f) => f()).catch(() => {});
+  }, [makeRequestedAgent]);
 
   // An Agent that has never been sent anything has no session to select, so its
   // row opens the same empty composer, pending on it.
@@ -1718,7 +1753,7 @@ function App() {
               id: c.id,
               label: `#${c.name}`,
               detail: c.purpose || undefined,
-              icon: DO_ICONS.channel,
+              icon: <ChannelTile color={workspaceAgents.find((a) => a.id === c.lead)?.color ?? "#8d8d88"} size={22} />,
               run: () => openChannel(c.id),
             },
       );
@@ -1732,7 +1767,7 @@ function App() {
     // The first six are the mockup's "Do" rows, in its order; only the ones with
     // a chord in the registry carry caps (`shortcut`), the rest have no key.
     const actions: { id: ShortcutId | null; key: string; label: string; icon?: ReactNode; run: () => void }[] = [
-      { id: "session.new", key: "session.new", label: "Create agent", icon: DO_ICONS.agent, run: () => setNewAgentOpen(true) },
+      { id: "session.new", key: "session.new", label: "New agent", icon: DO_ICONS.agent, run: () => setNewAgentOpen(true) },
       { id: null, key: "do.channel", label: "New channel", icon: DO_ICONS.channel, run: newChannel },
       {
         id: null,
@@ -1744,23 +1779,22 @@ function App() {
           openRoutines();
         },
       },
+      { id: "inbox.open", key: "inbox.open", label: "What's waiting for you", icon: DO_ICONS.inbox, run: openInbox },
       {
         id: null,
         key: "do.plugin",
-        label: "Connect a plugin",
+        label: "Connect apps",
         icon: DO_ICONS.plugin,
         run: () => {
           setJumpTarget({ kind: "catalog" });
           openPlugins();
         },
       },
+      { id: "prs.open", key: "prs.open", label: "Pull requests", icon: DO_ICONS.prs, run: openPrs },
       { id: "settings", key: "settings", label: "Settings", icon: DO_ICONS.settings, run: () => setSettingsOpen(true) },
-      { id: "inbox.open", key: "inbox.open", label: "Inbox", icon: DO_ICONS.inbox, run: openInbox },
       // The row and the chord do the same thing, which is what a palette row is
       // for — and it is the same thing whether or not the sidebar is up.
-      { id: "sidebar.toggle", key: "sidebar.toggle", label: "Toggle the sidebar", run: toggleSidebar },
-      { id: "prs.open", key: "prs.open", label: "Open pull requests", run: openPrs },
-      { id: "plugins.open", key: "plugins.open", label: "Open plugins", run: openPlugins },
+      { id: "sidebar.toggle", key: "sidebar.toggle", label: "Toggle the sidebar", icon: DO_ICONS.sidebar, run: toggleSidebar },
     ];
 
 
@@ -1866,19 +1900,11 @@ function App() {
   // The header's label off a page. A session draws its own name in the agent band below.
   const headerLabel = inboxOpen
     ? "Inbox"
-    : prsOpen
-      ? "Pull requests"
-      : pluginsOpen
-        ? "Plugins"
-        : profileOpen
-          ? "Profile"
-          : page === "routines"
-            ? "Routines"
-            : page === "channels"
-              ? activeChannel
-                ? `#${activeChannel.name}`
-                : "Channels"
-              : "";
+    : page === "channels"
+        ? activeChannel
+          ? `#${activeChannel.name}`
+          : "Channels"
+        : "";
 
   return (
     <TooltipProvider>
@@ -1886,7 +1912,7 @@ function App() {
     <AppShell
       // A page fills the column, so the centred empty-composer state is wrong
       // there even with no session selected.
-      centered={!selectedSession && !pageOpen}
+      centered={!selectedSession && !pageOpen && !freshAgent}
       overlay={singleDrop && <DropZone region={singleDrop.region} label={singleDrop.label} />}
       sidebar={
         <AgentSidebar
@@ -1902,6 +1928,9 @@ function App() {
           onChangeWorkspace={changeWorkspace}
           onSelectSession={selectFromSidebar}
           onOpenAgent={openAgent}
+onCallAgent={(id) => setCallAgentId(id)}
+onAgentVersions={(id) => openProfile(id)}
+onEditAgent={(id) => setEditAgentId(id)}
           onNewAgent={openNewAgent}
           onOpenInbox={openInbox}
           onOpenRoutines={openRoutines}
@@ -1927,7 +1956,7 @@ function App() {
           // here must clip at the column's edge, never spill over the pane
           // beside it. Every child below decides how it gives up width; this
           // decides that it has to.
-          className="flex h-(--titlebar-h) shrink-0 items-center gap-2 overflow-hidden px-3"
+          className={cn("flex h-(--titlebar-h) shrink-0 items-center gap-2 overflow-hidden px-3", headerAgent && (selectedSession ? isAgentChat : freshAgent) && !pageOpen && "border-b border-line")}
           // `deep`, not bare: bare drags only on direct hits, so every label
           // inside this row was a dead strip in a titlebar that looks uniform.
           // Buttons still block on their own — Tauri stops walking up at any
@@ -1936,7 +1965,32 @@ function App() {
         >
           {sidebarLead}
 
-          <span className="min-w-0 flex-1 truncate text-ui font-medium text-foreground">{headerLabel}</span>
+          {headerAgent && (selectedSession ? isAgentChat : freshAgent) && !pageOpen ? (
+        <AgentChatHeader
+          agent={headerAgent}
+          onChange={changeAgent}
+          onOpenProfile={(tab) => openProfile(headerAgent.id, tab ?? "overview")}
+          onExport={() => selectedSession && void exportSessionById(selectedSession.sessionId, "md")}
+          onCall={() => setCallAgentId(headerAgent.id)}
+          activity={
+            pendingAsks.length
+              ? "asking"
+              : busy
+                ? (headerGlance?.activity ?? "thinking")
+                : (teamActivity(teamStatus, headerAgent.id)?.activity ?? null)
+          }
+          who={teamActivity(teamStatus, headerAgent.id)
+            ?.who.map((id) => roster.agents.find((a) => a.id === id)?.name ?? "a teammate")
+            .join(", ")}
+          onClear={clearAgentChat}
+          onRemove={() => {
+            rosterRemove(headerAgent.id);
+            goToSession(handleNewSession);
+          }}
+        />
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-ui font-medium text-foreground">{headerLabel}</span>
+          )}
 
           {prsOpen && activePrKey && <PanelToggle onToggle={() => closePr(activePrKey)} open />}
         
@@ -1993,12 +2047,27 @@ function App() {
               </TabBody>
             ))}
           </RightPanel>
-        ) : placeholderOpen ? null
+        ) : placeholderOpen ? (
+          // A channel's panel is drawn by `ChannelView`, which owns what it shows, into this slot so it stands the full height of the window.
+          <div ref={setPanelSlot} className="contents" />
+        )
         : // Mounted whenever a session is, open or not — closing or switching
         // tabs only hides, so reopening shows what was already there instead of
         // refetching and re-highlighting it. `active` is what stops the hidden
         // changes tab from snapshotting the working tree in the background.
-        null
+        profileOpen && profileAgent && !pageOpen ? (
+        <ProfilePanel
+          agent={profileAgent}
+          working={profileAgent.sessionId !== null && statusBySession[profileAgent.sessionId] === "in_progress"}
+          tab={profileTab}
+          onTab={setProfileTab}
+          onChange={changeProfileAgent}
+          onClose={() => setProfileOpen(false)}
+          onEditLook={() => setSettingsAgentId(profileAgent.id)}
+          onEdit={() => setEditAgentId(profileAgent.id)}
+          onRoutines={() => setPage("routines")}
+        />
+        ) : null
       }
       footer={
         // Only under the transcript it writes into: a page is not a
@@ -2064,8 +2133,7 @@ function App() {
           queuedCount={queuedMessages.length}
           busy={busy}
           sessionId={selectedSessionId}
-          isNewTask={!selectedSession}
-          hero={!selectedSession && headerAgent ? <AgentHero agent={headerAgent} /> : undefined}
+          isNewTask={!selectedSession && !freshAgent}
           target={composerTarget}
           // Walked by ↑/↓ in an empty box. The transcript is the history — no
           // second store to keep in step, and a resumed session arrives with its
@@ -2085,6 +2153,7 @@ function App() {
                 onAnswer={handleAnswerQuestions}
                 onCancelQuestion={handleCancelQuestion}
                 autoFocus
+                permissionsInChat={Boolean(headerAgent)}
               />
             ) : undefined
           }
@@ -2111,36 +2180,10 @@ function App() {
               leading={
             <>
               <AttachButton onAttach={() => void pickAttachments(selectedSessionId)} />
-              {headerAgent && (
-                <>
-                  <EmojiButton sessionId={selectedSessionId} />
-                  <MentionButton sessionId={selectedSessionId} />
-                </>
-              )}
             </>
           }
-          status={
-            headerAgent && selectedSessionId && busy ? (
-              <AgentWorking
-                agent={headerAgent}
-                sessionId={selectedSessionId}
-                since={lastPromptAt(selectedSession?.events ?? EMPTY_EVENTS)}
-                onStop={() => {
-                  handleInterrupt();
-                  toast(`${headerAgent.name} stopped`, { icon: <Square className="fill-current" /> });
-                }}
-              />
-            ) : undefined
-          }
-          placeholder={headerAgent ? `Message ${headerAgent.name}` : undefined}
-          recipient={
-            headerAgent ? (
-              <span className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-ui font-medium text-foreground">
-                <AgentAvatar agent={headerAgent} size={20} />
-                {headerAgent.name}
-              </span>
-            ) : undefined
-          }
+          placeholder={headerAgent ? (headerAgent.paused ? `${headerAgent.name} is paused. Messages wait here.` : `Message ${headerAgent.name}`) : undefined}
+          recipient={headerAgent ? <></> : undefined}
         />
         )
       }
@@ -2158,11 +2201,11 @@ function App() {
           back, which is the trip this page exists to make. */}
 
       {pageSeen("prs") && (
-      <TabBody active={prsOpen}>
+      <>
         <Suspense fallback={null}>
           <PrsView
             cwds={prsCwds}
-            active={prsOpen}
+            active={prsOpen && !activePrKey}
             onClose={() => setPage("none")}
             refreshRef={prsRefreshRef}
             agentBranches={prAgentBranches}
@@ -2170,7 +2213,7 @@ function App() {
             onWrite={() => prMarks.refreshAfterWrite()}
           />
         </Suspense>
-      </TabBody>
+      </>
       )}
 
       {pageSeen("inbox") && (
@@ -2196,6 +2239,7 @@ function App() {
             workspaceAgents={workspaceAgents}
             workspaceName={activeWs?.name ?? "this workspace"}
             active
+            panelSlot={panelSlot}
             onEdit={(c) => setChannelDialog({ editing: c })}
             onOpenProfile={(id) => openProfile(id)}
             onMessageAgent={openAgentChat}
@@ -2239,7 +2283,7 @@ function App() {
       </TabBody>
       )}
       {pageSeen("routines") && (
-      <TabBody active={page === "routines"}>
+      <>
         <Suspense fallback={null}>
           <RoutinesView
             active={page === "routines"}
@@ -2252,35 +2296,15 @@ function App() {
               if (agent?.sessionId) selectFromSidebar(agent.sessionId);
               else openAgent(id);
             }}
+            onClose={() => setPage("none")}
           />
         </Suspense>
-      </TabBody>
+      </>
       )}
 
-      {profileOpen && profileAgent && (
-      <TabBody active>
-        <AgentProfile
-          agent={profileAgent}
-          teammates={roster.agents.filter((a) => a.id !== profileAgent.id && a.workspaceId === profileAgent.workspaceId)}
-          workspaces={workspaces}
-          workspace={workspaces.find((w) => w.id === profileAgent.workspaceId)}
-          working={profileAgent.sessionId !== null && statusBySession[profileAgent.sessionId] === "in_progress"}
-          tab={profileTab}
-          onTab={setProfileTab}
-          onBack={() =>
-            profileAgent.sessionId ? selectFromSidebar(profileAgent.sessionId) : openAgent(profileAgent.id)
-          }
-          onEditLook={() => setSettingsAgentId(profileAgent.id)}
-          onChange={changeProfileAgent}
-          onOpenAgent={(id) => openProfile(id)}
-          onOpenPlugins={openPlugins}
-          onOpenSettings={openSettingsAt}
-        />
-      </TabBody>
-      )}
 
       {pageSeen("plugins") && (
-      <TabBody active={pluginsOpen}>
+      <>
         <Suspense fallback={null}>
           <PluginsView
             active={pluginsOpen}
@@ -2289,15 +2313,17 @@ function App() {
             agents={roster.agents.filter((a) => inWorkspace(a, activeWs?.id ?? null))}
             onOpenAccess={(id) => openProfile(id, "access")}
             refreshRef={pluginsRefreshRef}
+            onClose={() => setPage("none")}
           />
         </Suspense>
-      </TabBody>
+      </>
       )}
 
       {/* Hidden rather than unmounted, the same bargain the right panel's tabs
           make: the transcript keeps its scroll position and its highlighted
           diffs across a trip into a page and back. */}
-      <TabBody active={!pageOpen}>
+      <div className={cn("min-h-0 flex-1", pageOpen ? "hidden" : "flex")}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <TabBody active>
       {activeGroup ? (
         <SplitView
@@ -2338,19 +2364,6 @@ function App() {
           )}
         </div>
       )}
-      {headerAgent && selectedSession && isAgentChat && (
-        <AgentChatHeader
-          agent={headerAgent}
-          onChange={changeAgent}
-          onOpenProfile={(tab) => openProfile(headerAgent.id, tab ?? "overview")}
-          onExport={() => void exportSessionById(selectedSession.sessionId, "md")}
-          onClear={clearAgentChat}
-          onRemove={() => {
-            rosterRemove(headerAgent.id);
-            goToSession(handleNewSession);
-          }}
-        />
-      )}
       {/* The band above is a sibling, so the transcript takes what is left. */}
       <div className="min-h-0 flex-1">
       <AgentChatContext.Provider value={agentChat}>
@@ -2381,8 +2394,20 @@ function App() {
       </div>
       )}
       </TabBody>
-      </TabBody>
+      </div>
+      </div>
       </RenderErrorBoundary>
+      {callAgentId && roster.agents.find((a) => a.id === callAgentId) && (
+        <CallScreen
+          agent={roster.agents.find((a) => a.id === callAgentId)!}
+          onEnd={(sum) => {
+            setCallAgentId(null);
+            toast(`Call ended · ${Math.floor(sum.seconds / 60)}:${String(sum.seconds % 60).padStart(2, "0")}`);
+          }}
+        />
+      )}
+      {/* Inside the column, so it covers the header, the transcript and the composer and nothing else. */}
+      <ThreadView />
     </AppShell>
     {/* Outside `AppShell` on purpose: it is fixed to the window rather than
         placed in the layout, and the shell has no slot that isn't a pane. */}
@@ -2411,7 +2436,6 @@ function App() {
         }}
         items={paletteItems}
         loading={paletteSources.loading}
-        workspaceName={activeWs?.name ?? "Workspace"}
         onCreateAgent={(name) => {
           setNewAgentName(name);
           setNewAgentOpen(true);
@@ -2446,6 +2470,11 @@ function App() {
           setSettingsTab("profile");
           openProfile(id, "access");
         }}
+        onOpenAgentMemory={(id) => {
+          setSettingsOpen(false);
+          setSettingsTab("profile");
+          openProfile(id, "memory");
+        }}
       />
     </Suspense>
     )}
@@ -2471,6 +2500,22 @@ function App() {
       onClose={() => setSettingsAgentId(null)}
       onSubmit={saveAgentSettings}
     />
+    {editAgent && (
+      <EditAgentDialog
+        agent={editAgent}
+        open
+        onOpenChange={(o) => !o && setEditAgentId(null)}
+        onChange={changeProfileAgent}
+        onLook={() => {
+          setEditAgentId(null);
+          setSettingsAgentId(editAgent.id);
+        }}
+        onRoutines={() => {
+          setEditAgentId(null);
+          setPage("routines");
+        }}
+      />
+    )}
     <NewChannelDialog
       open={channelDialog !== null}
       editing={channelDialog?.editing ?? null}

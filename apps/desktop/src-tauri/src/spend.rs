@@ -35,6 +35,8 @@ pub struct AgentSpend {
     pub harness: String,
     pub usd: f64,
     pub calls: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 /// The month across a workspace.
@@ -122,9 +124,13 @@ pub fn overview(calls: &[CallRow], month: &str) -> SpendOverview {
             harness: c.harness.clone(),
             usd: 0.0,
             calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
         });
         row.usd += c.cost_usd;
         row.calls += 1;
+        row.input_tokens += c.input_tokens;
+        row.output_tokens += c.output_tokens;
     }
     let mut agents: Vec<AgentSpend> = by_agent.into_values().collect();
     agents.sort_by(|a, b| b.usd.total_cmp(&a.usd).then_with(|| a.name.cmp(&b.name)));
@@ -211,6 +217,7 @@ mod tests {
         assert_eq!(o.agents.len(), 2);
         assert_eq!(o.agents[0].agent_id, "leo");
         assert_eq!((o.agents[1].agent_id.as_str(), o.agents[1].calls), ("ada", 2));
+        assert_eq!((o.agents[1].input_tokens, o.agents[1].output_tokens), (20, 10));
         assert!((o.total_usd - 6.5).abs() < 1e-9);
     }
 

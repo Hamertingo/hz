@@ -39,6 +39,7 @@ use tokio::sync::oneshot;
 use ts_rs::TS;
 
 use crate::{
+    agentkit::group_triage::{self, Member, Pick},
     agents,
     events::TurnStatus,
     store::{get_home_app_dir, read_json, write_atomic},
@@ -65,6 +66,9 @@ pub enum Mode {
     Turns,
     /// The lead reads the message and hands it on.
     Lead,
+    /// The members whose roles fit the message answer, together; everyone when
+    /// nothing fits. A quick read of names and roles, no model call.
+    Triage,
 }
 
 /// One channel as stored.
@@ -101,6 +105,11 @@ pub struct Channel {
     /// How far the reader has read.
     #[serde(default)]
     pub read_seq: u64,
+    /// A thread between two agents (`talk.rs`): hidden from the sidebar, and the
+    /// person reads it without writing in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pair: Option<bool>,
 }
 
 /// An emoji on a message and the people who put it there (`me` or agent ids).
@@ -131,7 +140,7 @@ pub enum MessageKind {
 }
 
 /// One line of a channel's transcript.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "events.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelMessage {
@@ -154,6 +163,16 @@ pub struct ChannelMessage {
     pub kind: MessageKind,
     #[serde(default)]
     pub attachments: Vec<ChannelAttachment>,
+    /// In a pair thread: the author wrote it from its own chat, which already
+    /// shows it as a sent message, so that chat's thread line does not count it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub from_chat: Option<bool>,
+    /// In a pair thread: it woke the receiver in its own chat rather than in the
+    /// thread, the same bargain from the other end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub to_chat: Option<bool>,
 }
 
 /// Where a task stands.
@@ -506,6 +525,16 @@ pub fn plan_user(channel: &Channel, roster: &[Person], incoming: &Incoming<'_>, 
             Some(lead) => Plan { turns: vec![turn_for(lead, incoming, true)], sequential: false },
             None => Plan { turns: Vec::new(), sequential: false },
         },
+        Mode::Triage => {
+            let people: Vec<&Person> = channel.members.iter().filter_map(|id| by_id(id)).collect();
+            let members: Vec<Member> =
+                people.iter().map(|p| Member { name: p.name.clone(), role: p.role.clone() }).collect();
+            let picked = match group_triage::pick(incoming.text, &members, None) {
+                Pick::Some(names) => people.iter().filter(|p| names.contains(&p.name)).copied().collect(),
+                Pick::Everyone => people,
+            };
+            Plan { turns: picked.into_iter().map(|p| turn_for(p, incoming, false)).collect(), sequential: false }
+        }
         Mode::Mention => {
             let owners: HashSet<&String> = open_owners.iter().collect();
             if owners.len() == 1 {
@@ -608,7 +637,7 @@ pub fn context_prompt(ctx: &PromptCtx<'_>) -> String {
     out.push_str(&format!(
         "\nHow it works:\n\
          - This is round {round} of at most {}. Each agent answers once per round.\n\
-         - Your final answer is posted in the channel for you. Do not use team_message to reply here.\n\
+         - Your final answer is posted in the channel for you. team_message to a member here posts an @Name line for them; nobody outside the channel can be reached from it.\n\
          - Write @Name to hand something to a member; they answer in the next round. Only do it when you need them.\n\
          - If you have nothing to add, answer exactly (pass) and nothing is posted.\n\
          - Keep it short, like a message in a team chat.\n\
@@ -796,7 +825,7 @@ impl Core {
         Self { home: Arc::new(home), app }
     }
 
-    async fn live(app: &AppHandle) -> Result<Self, String> {
+    pub(crate) async fn live(app: &AppHandle) -> Result<Self, String> {
         let home = get_home_app_dir().await.map_err(|e| format!("{e:#}"))?;
         Ok(Self::at(home, Some(app.clone())))
     }
@@ -930,6 +959,7 @@ impl Core {
             last_ts: 0,
             last_agent_seq: 0,
             read_seq: 0,
+            pair: None,
         };
         all.push(channel.clone());
         self.write_channels(&all).await.map_err(|e| format!("{e:#}"))?;
@@ -1246,6 +1276,50 @@ impl Core {
         Ok((session_id, false))
     }
 
+    /// The thread between two agents, made on first use. Members are kept in id
+    /// order so either end finds the same one.
+    pub async fn pair_for(&self, a: &str, b: &str, workspace_id: Option<String>) -> Result<Channel, String> {
+        let mut members = vec![a.to_string(), b.to_string()];
+        members.sort();
+        let _guard = LOCK.lock().await;
+        let mut all = self.read_channels().await.map_err(|e| format!("{e:#}"))?;
+        if let Some(c) = all.iter().find(|c| c.pair == Some(true) && c.members == members) {
+            return Ok(c.clone());
+        }
+        let channel = Channel {
+            id: uuid::Uuid::now_v7().to_string(),
+            workspace_id,
+            name: format!("pair-{}", uuid::Uuid::now_v7().simple()),
+            purpose: String::new(),
+            lead: members[0].clone(),
+            members,
+            mode: Mode::Mention,
+            rounds: 1,
+            muted: true,
+            archived: false,
+            created: now_ms(),
+            last_seq: 0,
+            last_ts: 0,
+            last_agent_seq: 0,
+            read_seq: 0,
+            pair: Some(true),
+        };
+        all.push(channel.clone());
+        self.write_channels(&all).await.map_err(|e| format!("{e:#}"))?;
+        Ok(channel)
+    }
+
+    /// Every pair thread `agent` is in.
+    pub async fn pairs_of(&self, agent: &str) -> Result<Vec<Channel>, String> {
+        Ok(self
+            .read_channels()
+            .await
+            .map_err(|e| format!("{e:#}"))?
+            .into_iter()
+            .filter(|c| c.pair == Some(true) && c.members.iter().any(|m| m == agent))
+            .collect())
+    }
+
     /// Everything the page draws for one channel.
     pub async fn detail(&self, id: &str) -> Result<ChannelDetail, String> {
         let channel = self.channel(id).await?;
@@ -1399,7 +1473,7 @@ fn settle_stopped(session_id: &str) {
 
 /// The agent's identity, for the first prompt of a thread: a CLI with no system
 /// prompt reads the channel brief and nothing else of who it is.
-fn identity(agent: &agents::AgentRecord) -> String {
+pub(crate) fn identity(agent: &agents::AgentRecord) -> String {
     let mut out = format!("You are {}", agent.name);
     if !agent.role.is_empty() {
         out.push_str(&format!(", {}", agent.role.trim_end_matches('.')));
@@ -1515,6 +1589,7 @@ impl Host for AppHost {
             task_id: task_id.clone(),
             kind: MessageKind::Message,
             attachments: Vec::new(),
+            ..Default::default()
         };
         let Ok(msg) = self.core.append(&channel.id, msg).await else { return };
 
@@ -1546,6 +1621,7 @@ impl Host for AppHost {
             task_id: None,
             kind: MessageKind::Note,
             attachments: Vec::new(),
+            ..Default::default()
         };
         let _ = self.core.append(&channel.id, msg).await;
     }
@@ -1619,6 +1695,9 @@ pub async fn post_as_me(
     if channel.archived {
         return Err("This channel is archived. Bring it back to write in it.".into());
     }
+    if channel.pair == Some(true) {
+        return Err("This thread is between two agents: you can read it, not write in it.".into());
+    }
     let msg = core
         .append(
             channel_id,
@@ -1639,6 +1718,7 @@ pub async fn post_as_me(
                         name: Path::new(p).file_name().map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned()),
                     })
                     .collect(),
+                ..Default::default()
             },
         )
         .await?;
@@ -1745,6 +1825,7 @@ pub async fn post_as_agent(app: &AppHandle, channel_id: &str, agent_id: &str, te
                 task_id: None,
                 kind: MessageKind::Message,
                 attachments: Vec::new(),
+                ..Default::default()
             },
         )
         .await?;
@@ -1775,6 +1856,9 @@ pub async fn load(app: AppHandle) {
     let Ok(all) = core.read_channels().await else { return };
     for c in all {
         for t in core.read_threads(&c.id).await.unwrap_or_default() {
+            // So a thread resumed after a restart is opened as its agent's,
+            // with the team tools, before the roster mirror arrives.
+            agents::bind(&t.session_id, &t.agent_id);
             THREADS
                 .lock()
                 .expect("channel threads poisoned")
@@ -1795,7 +1879,8 @@ pub async fn drop_workspace(app: &AppHandle, workspace_id: &str) {
 /// The channels of a workspace (archived ones included), or all of them.
 #[tauri::command]
 pub async fn channels_list(app: AppHandle, workspace_id: Option<String>) -> Result<Vec<Channel>, String> {
-    Core::live(&app).await?.list(workspace_id.as_deref()).await
+    let all = Core::live(&app).await?.list(workspace_id.as_deref()).await?;
+    Ok(all.into_iter().filter(|c| c.pair != Some(true)).collect())
 }
 
 /// Makes a channel in the workspace. Its members must be on the roster.
@@ -1939,6 +2024,84 @@ pub async fn tool_task_update(
     Ok(format!("Task \"{}\" is {} in #{}.", t.title, t.status.sentence().to_lowercase(), channel.name))
 }
 
+/// The channel and agent a channel thread's session belongs to, or `None` for a
+/// session that is not one. Pair threads count: they are channels too.
+pub fn thread_of(session_id: &str) -> Option<(String, String)> {
+    THREADS.lock().expect("channel threads poisoned").get(session_id).cloned()
+}
+
+/// `post_to_channel`: the caller posts in a channel it belongs to. An `@member`
+/// in it starts a round there, like anything an agent says in the room.
+pub async fn tool_post(app: &AppHandle, agent_id: &str, channel: &str, text: &str) -> Result<String> {
+    anyhow::ensure!(!text.trim().is_empty(), "post_to_channel needs some `text`");
+    let (_, channel) = member_channel(app, agent_id, channel).await?;
+    post_as_agent(app, &channel.id, agent_id, text).await.map_err(anyhow::Error::msg)?;
+    let named: Vec<String> = mentions(text, &roster_of(&channel))
+        .into_iter()
+        .filter(|id| id != agent_id)
+        .filter_map(|id| agents::name_of(&id))
+        .collect();
+    Ok(if named.is_empty() {
+        format!("Posted in #{}.", channel.name)
+    } else {
+        format!("Posted in #{}. {} will answer there.", channel.name, named.join(", "))
+    })
+}
+
+/// `read_channel`: the caller's channels, or the newest `limit` lines of one.
+pub async fn tool_read(app: &AppHandle, agent_id: &str, channel: Option<&str>, limit: usize) -> Result<String> {
+    let name = |id: &str| -> String {
+        if id == "me" {
+            "the person".into()
+        } else {
+            agents::name_of(id).unwrap_or_else(|| "someone".into())
+        }
+    };
+    let Some(want) = channel.filter(|c| !c.trim().is_empty()) else {
+        let core = Core::live(app).await.map_err(anyhow::Error::msg)?;
+        let me = agents::by_id(agent_id).context("you are not a known agent")?;
+        let mine: Vec<String> = core
+            .list(None)
+            .await
+            .map_err(anyhow::Error::msg)?
+            .into_iter()
+            .filter(|c| !c.archived && c.pair != Some(true) && c.workspace_id == me.workspace_id && c.members.iter().any(|m| m == agent_id))
+            .map(|c| {
+                let members: Vec<String> = c.members.iter().filter(|m| *m != agent_id).map(|m| name(m)).collect();
+                let about = if c.purpose.is_empty() { String::new() } else { format!(" \u{2014} {}", c.purpose) };
+                format!("#{}{about} (with {})", c.name, if members.is_empty() { "nobody else".into() } else { members.join(", ") })
+            })
+            .collect();
+        return Ok(if mine.is_empty() { "You are in no channel.".into() } else { mine.join("\n") });
+    };
+    let (core, channel) = member_channel(app, agent_id, want).await?;
+    let messages = core.messages(&channel.id).await?;
+    let start = messages.len().saturating_sub(limit.clamp(1, 50));
+    let lines: Vec<String> = messages[start..]
+        .iter()
+        .map(|m| {
+            let who = if m.kind == MessageKind::Note { "hz".to_string() } else if m.from == agent_id { format!("{} (you)", name(&m.from)) } else { name(&m.from) };
+            format!("[{}] {who}: {}", clock(m.ts), m.text.trim())
+        })
+        .collect();
+    Ok(if lines.is_empty() { format!("#{} has no messages yet.", channel.name) } else { lines.join("\n") })
+}
+
+/// `team_message` called from inside a channel: the message becomes an
+/// `@Target` line in the room, and only a member can be reached that way.
+pub async fn tool_mention(app: &AppHandle, channel_id: &str, agent_id: &str, to: &str, text: &str) -> Result<String> {
+    let core = Core::live(app).await.map_err(anyhow::Error::msg)?;
+    let channel = core.channel(channel_id).await.map_err(anyhow::Error::msg)?;
+    let roster: Vec<Person> = roster_of(&channel).into_iter().filter(|p| p.id != agent_id).collect();
+    let names: Vec<String> = roster.iter().map(|p| p.name.clone()).collect();
+    let at = crate::talk::match_name(to, &names).map_err(|why| {
+        anyhow::anyhow!("{why} In #{} you can only reach its members; anyone else is outside this channel.", channel.name)
+    })?;
+    let target = &roster[at];
+    post_as_agent(app, &channel.id, agent_id, &format!("@{} {}", target.name, text.trim())).await.map_err(anyhow::Error::msg)?;
+    Ok(format!("Posted in #{} for {}; they answer there.", channel.name, target.name))
+}
+
 async fn member_channel(app: &AppHandle, agent_id: &str, name: &str) -> Result<(Core, Channel)> {
     let core = Core::live(app).await.map_err(anyhow::Error::msg)?;
     let me = agents::by_id(agent_id).context("you are not a known agent")?;
@@ -1948,7 +2111,9 @@ async fn member_channel(app: &AppHandle, agent_id: &str, name: &str) -> Result<(
         .await
         .map_err(anyhow::Error::msg)?
         .into_iter()
-        .find(|c| !c.archived && c.name == want && c.workspace_id == me.workspace_id && c.members.iter().any(|m| m == agent_id))
+        .find(|c| {
+            !c.archived && c.pair != Some(true) && c.name == want && c.workspace_id == me.workspace_id && c.members.iter().any(|m| m == agent_id)
+        })
         .with_context(|| format!("you are in no channel called #{want}"))?;
     Ok((core, channel))
 }
@@ -1985,6 +2150,7 @@ mod tests {
             last_ts: 0,
             last_agent_seq: 0,
             read_seq: 0,
+            pair: None,
         }
     }
 
@@ -2077,6 +2243,21 @@ mod tests {
     }
 
     #[test]
+    fn triage_sends_a_message_to_the_roles_it_fits_and_else_to_everyone() {
+        let r = vec![
+            Person { id: "a".into(), name: "Atlas".into(), role: "strategy and pricing".into() },
+            Person { id: "m".into(), name: "Mila".into(), role: "marketing, posts and campaigns".into() },
+            Person { id: "l".into(), name: "Leo".into(), role: "developer, backend code".into() },
+        ];
+        let ch = channel(Mode::Triage, 3);
+        let fit = plan_user(&ch, &r, &incoming("the backend code is crashing"), &[]);
+        assert_eq!(ids(&fit), ["l"]);
+        assert!(!fit.sequential, "the ones picked answer together");
+        assert_eq!(ids(&plan_user(&ch, &r, &incoming("Mila, can you look?"), &[])), ["m"], "a name said aloud counts");
+        assert_eq!(ids(&plan_user(&ch, &r, &incoming("what is the weather"), &[])), ["a", "m", "l"]);
+    }
+
+    #[test]
     fn a_lead_who_left_is_replaced_by_the_first_member() {
         let mut ch = channel(Mode::Mention, 3);
         ch.lead = "gone".into();
@@ -2114,6 +2295,7 @@ mod tests {
             task_id: None,
             kind: MessageKind::Message,
             attachments: vec![ChannelAttachment { path: "/tmp/plan.md".into(), name: "plan.md".into() }],
+            ..Default::default()
         }];
         let turn = Turn { agent: "a".into(), from: "Gabriel".into(), text: "ship it".into(), routing: true };
         let text = context_prompt(&PromptCtx { channel: &ch, me: "Gabriel", roster: &r, agent: &r[0], recent: &recent, turn: &turn, round: 1 });
@@ -2343,6 +2525,7 @@ mod tests {
             task_id: None,
             kind: MessageKind::Message,
             attachments: vec![],
+            ..Default::default()
         }
     }
 
@@ -2546,7 +2729,7 @@ mod tests {
             let update = parse_notification("session/update", params).unwrap().unwrap();
             events.extend(mapper.map(McodeEvent::Update(Box::new(update))));
         }
-        events.extend(mapper.map(McodeEvent::PromptDone(PromptResponse { stop_reason: "end_turn".into() })));
+        events.extend(mapper.map(McodeEvent::PromptDone(PromptResponse { stop_reason: "end_turn".into(), ..Default::default() })));
 
         let closing = events
             .into_iter()

@@ -1067,7 +1067,7 @@ async fn open_session(
     };
     let servers = agent_id
         .as_deref()
-        .map_or_else(|| json!([]), crate::agents::mcp_servers);
+        .map_or_else(|| json!([]), |id| crate::agents::mcp_servers(id, session_id));
     // Claude takes the agent's briefing as its system prompt, at `session/new`
     // and again at every resume. `excludeDynamicSections` moves cwd and git status
     // into the first message so the prompt stays identical and cached.
@@ -2722,16 +2722,38 @@ async fn raise_permission(
     let raw_input = request.tool_call.raw_input.clone().unwrap_or(json!({}));
     let agent = crate::agents::agent_of(&handles.session_id);
 
-    // A standing "always allow" the reader gave this agent answers on their
-    // behalf, with the allow-once option and no wider one. Logged in the inbox
-    // so what ran unasked can still be read.
+    // A Mac shell command goes past the reviewer first, under the agent's mode;
+    // the safety floor it applies outranks every standing rule below.
+    let mut floor: Option<String> = None;
     if let Some(agent) = &agent {
         let offered: Vec<(String, String)> =
             request.options.iter().map(|o| (o.option_id.clone(), o.kind.clone())).collect();
-        if let Some(option_id) = crate::inbox::auto_allow(&agent.id, &tool, &raw_input, &offered) {
-            client.respond(rpc_id, permissions::selected(&option_id))?;
-            crate::inbox::record_auto(app, agent, &handles.session_id, &tool, &raw_input);
-            return Ok(());
+        let once = offered.iter().find(|(_, kind)| kind == "allow_once").map(|(id, _)| id.clone());
+        let is_execute = request.tool_call.kind == parser::ToolKind::Execute;
+        if let Some(command) = crate::command_review::shell_command(is_execute, &raw_input) {
+            let mode = crate::command_review::mode_for(agent).await;
+            match crate::command_review::screen(mode, &command, std::path::Path::new(&handles.session_cwd)) {
+                crate::command_review::Screen::Allow(label) if once.is_some() => {
+                    client.respond(rpc_id, permissions::selected(once.as_deref().unwrap_or_default()))?;
+                    crate::command_review::note_auto(app, harness, handles, &rpc_id.to_string(), &request.tool_call.tool_call_id, &label).await;
+                    return Ok(());
+                }
+                crate::command_review::Screen::Floor(why) => floor = Some(why),
+                _ => {}
+            }
+        }
+
+        // A standing "always allow" the reader gave this agent answers on their
+        // behalf, with the allow-once option and no wider one. Logged in the inbox
+        // so what ran unasked can still be read.
+        if floor.is_none() {
+            if let Some(option_id) = crate::inbox::auto_allow(&agent.id, &tool, &raw_input, &offered) {
+                client.respond(rpc_id, permissions::selected(&option_id))?;
+                crate::inbox::record_auto(app, agent, &handles.session_id, &tool, &raw_input);
+                let label = crate::inbox::rule_for(&raw_input).map(|(_, l)| l).unwrap_or_else(|| "Always allowed".into());
+                crate::command_review::note_auto(app, harness, handles, &rpc_id.to_string(), &request.tool_call.tool_call_id, &label).await;
+                return Ok(());
+            }
         }
     }
 
@@ -2770,11 +2792,13 @@ async fn raise_permission(
         // mcode's own `title` is the tool name repeated, which the row above
         // already says.
         title: command.map(str::to_string).or_else(|| path.clone()),
-        description: None,
+        description: floor.as_ref().map(|why| format!("Safety check: {why}.")),
         input,
         blocked_path: path,
-        decision_reason: None,
-        decision_reason_type: None,
+        decision_reason: floor.clone(),
+        // The card reads this to leave "Always allow this" off: no rule may
+        // stand in for a floor that tripped.
+        decision_reason_type: floor.as_ref().map(|_| "safetyCheck".to_string()),
         // Main-thread only: mcode files a subagent's request through the same
         // channel with no field saying so, and a card that claimed to be a
         // child's would be the one thing worse than saying nothing.

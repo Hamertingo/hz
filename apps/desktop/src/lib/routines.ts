@@ -45,7 +45,7 @@ export const TEMPLATES: Template[] = [
     description: "Weekdays at 08:00, what changed overnight.",
     set: {
       name: "Morning digest",
-      act: "sums up what changed overnight",
+      act: "sum up what changed overnight",
       to: "inbox",
       trigger: { kind: "schedule", days: WEEKDAYS, time: "08:00", tz: "local" },
     },
@@ -56,7 +56,7 @@ export const TEMPLATES: Template[] = [
     description: "Mondays at 09:00, numbers against last week.",
     set: {
       name: "Weekly report",
-      act: "writes the weekly report",
+      act: "write the weekly report",
       to: "agent_chat",
       trigger: { kind: "schedule", days: [0], time: "09:00", tz: "local" },
     },
@@ -67,7 +67,7 @@ export const TEMPLATES: Template[] = [
     description: "Runs when GitHub, Stripe or Sentry calls.",
     set: {
       name: "Review PRs",
-      act: "reviews the pull request",
+      act: "review the pull request",
       to: "pr_comment",
       trigger: { kind: "webhook", source: "GitHub", event: "pull_request.opened" },
     },
@@ -78,7 +78,7 @@ export const TEMPLATES: Template[] = [
     description: "Every night, tidy memory and stale tasks.",
     set: {
       name: "Nightly cleanup",
-      act: "tidies its memory and closes stale tasks",
+      act: "tidy its memory and close stale tasks",
       to: "inbox",
       trigger: { kind: "schedule", days: ALL_DAYS, time: "03:00", tz: "local" },
     },
@@ -144,19 +144,28 @@ export function destLabel(to: string, agentName: string, channels: Channel[] = [
 }
 
 /// Which word of a sentence opens which menu.
-export type Chip = "days" | "time" | "agent" | "act" | "to" | "src" | "ev";
+export type Chip = "days" | "time" | "agent" | "act" | "src" | "ev";
+
+/// The sentence reads "will <verb>", but routines saved before that carry a third-person verb ("posts").
+/// The first word is turned back into its base form; one already in it is left alone.
+export function infinitive(act: string): string {
+  const [first, ...rest] = act.trim().split(/\s+/);
+  let verb = first;
+  if (/[^aeiou]ies$/i.test(first)) verb = first.slice(0, -3) + "y";
+  else if (/(ss|sh|ch|x|z|o)es$/i.test(first)) verb = first.slice(0, -2);
+  else if (/[^su]s$/i.test(first) && !/is$/i.test(first)) verb = first.slice(0, -1);
+  return [verb, ...rest].join(" ");
+}
 
 export type SentencePart = { text: string; chip?: Chip };
 
 /// The one sentence a routine is, split so each underlined word knows its menu.
-/// "Every weekday at 09:00, Atlas pulls the numbers and posts it in Atlas's chat."
+/// "Every weekday at 09:00, Atlas will pull the numbers."
 export function sentenceParts(
-  r: Pick<RoutineInput, "trigger" | "act" | "to">,
+  r: Pick<RoutineInput, "trigger" | "act">,
   agentName: string,
-  channels: Channel[] = [],
 ): SentencePart[] {
-  const act = r.act.trim() || "does something";
-  const to = destLabel(r.to, agentName, channels);
+  const act = infinitive(r.act.trim() || "do something");
   const t = r.trigger;
   if (t.kind === "schedule") {
     return [
@@ -165,10 +174,8 @@ export function sentenceParts(
       { text: t.time, chip: "time" },
       { text: ", " },
       { text: agentName, chip: "agent" },
-      { text: " " },
+      { text: " will " },
       { text: act, chip: "act" },
-      { text: " and posts it in " },
-      { text: to, chip: "to" },
       { text: "." },
     ];
   }
@@ -179,20 +186,14 @@ export function sentenceParts(
     { text: t.event, chip: "ev" },
     { text: ", " },
     { text: agentName, chip: "agent" },
-    { text: " " },
+    { text: " will " },
     { text: act, chip: "act" },
-    { text: " and puts it in " },
-    { text: to, chip: "to" },
     { text: "." },
   ];
 }
 
-export function sentenceText(
-  r: Pick<RoutineInput, "trigger" | "act" | "to">,
-  agentName: string,
-  channels: Channel[] = [],
-): string {
-  return sentenceParts(r, agentName, channels)
+export function sentenceText(r: Pick<RoutineInput, "trigger" | "act">, agentName: string): string {
+  return sentenceParts(r, agentName)
     .map((p) => p.text)
     .join("");
 }

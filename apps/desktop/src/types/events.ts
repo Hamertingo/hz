@@ -324,7 +324,7 @@ trigger: string | null, preTokens: number | null, postTokens: number | null, dur
 /**
  * One agent's month.
  */
-export type AgentSpend = { agentId: string, name: string, harness: string, usd: number, calls: number, };
+export type AgentSpend = { agentId: string, name: string, harness: string, usd: number, calls: number, inputTokens: number, outputTokens: number, };
 
 /**
  * A standing "always allow" the reader gave one agent.
@@ -658,7 +658,12 @@ lastAgentSeq: number,
 /**
  * How far the reader has read.
  */
-readSeq: number, };
+readSeq: number, 
+/**
+ * A thread between two agents (`talk.rs`): hidden from the sidebar, and the
+ * person reads it without writing in it.
+ */
+pair?: boolean, };
 
 /**
  * A file named on a message.
@@ -685,7 +690,17 @@ from: string, text: string, replyTo: number | null, reactions: Array<Reaction>,
 /**
  * The round this answer belongs to; 0 for what the reader wrote.
  */
-round: number, taskId: string | null, kind: MessageKind, attachments: Array<ChannelAttachment>, };
+round: number, taskId: string | null, kind: MessageKind, attachments: Array<ChannelAttachment>, 
+/**
+ * In a pair thread: the author wrote it from its own chat, which already
+ * shows it as a sent message, so that chat's thread line does not count it.
+ */
+fromChat?: boolean, 
+/**
+ * In a pair thread: it woke the receiver in its own chat rather than in the
+ * thread, the same bargain from the other end.
+ */
+toChat?: boolean, };
 
 /**
  * The fields an edit may change. A field left out is left alone.
@@ -1031,7 +1046,7 @@ export type FeedItem = {
  */
 group: string, 
 /**
- * `answer`, `file`, `pr`, `team_ask`, `team_message`, `team_in`, `note`.
+ * `answer`, `file`, `image` (a shared screenshot, with its `path`), `pr`, `team_ask`, `team_message`, `team_in`, `note`.
  */
 kind: string, title: string, sub: string, atMs: number, seq: number, path: string | null, url: string | null, number: number | null, repo: string | null, peer: string | null, ask: string | null, answer: string | null, note: string | null, };
 
@@ -1472,7 +1487,7 @@ export type MessageSender = { sessionId: string, title: string, };
 /**
  * Who answers a message nobody was named on.
  */
-export type Mode = "mention" | "turns" | "lead";
+export type Mode = "mention" | "turns" | "lead" | "triage";
 
 export type Model = { 
 /**
@@ -1641,6 +1656,15 @@ export type OpenTurn = { sinceMs: number,
  * `you`, or the name of the teammate who asked.
  */
 by: string, };
+
+/**
+ * One pair thread, as an agent's chat draws its "N messages with X" lines.
+ */
+export type PairThread = { channelId: string, 
+/**
+ * The agent at the other end.
+ */
+other: string, messages: Array<ChannelMessage>, };
 
 export type PermissionBehavior = "allow" | "deny";
 
@@ -3169,6 +3193,19 @@ export type TaskStatus = "waiting" | "writing" | "done" | "waiting_for_you";
 export type TaskStep = { at: number, text: string, };
 
 /**
+ * One agent's place in its conversations, for the sidebar and the header.
+ */
+export type TeamStatus = { agentId: string, 
+/**
+ * Teammates it wrote to that have not answered yet.
+ */
+waitingFor: Array<string>, 
+/**
+ * Teammates it is answering in a thread right now.
+ */
+workingFor: Array<string>, };
+
+/**
  * The thread an agent answers a channel in.
  */
 export type Thread = { agentId: string, sessionId: string, };
@@ -3541,11 +3578,13 @@ tidyTime: string,
  */
 sharedMemory: boolean, 
 /**
- * How many times one request may be passed on before it stops.
+ * How many hops one conversation between agents may take: each message and
+ * each answer is one (`talk.rs`).
  */
 handoffs: number, 
 /**
- * Minutes an agent waits for a teammate's answer.
+ * Kept so saved files still read. Nothing waits on a teammate any more:
+ * `team_message` returns at once and the answer wakes the sender.
  */
 waitMins: number, 
 /**

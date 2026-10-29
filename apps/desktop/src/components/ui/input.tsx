@@ -11,7 +11,7 @@ const inputClassName =
 /// it that brightens on focus. For the new screens; `inputClassName` is the
 /// older box the rest of the app still draws.
 const fieldClassName =
-  "w-full min-w-0 rounded-(--r2) bg-s2 px-3 py-[9px] text-[13px] text-ink shadow-[inset_0_0_0_1px_var(--line)] outline-none transition-shadow placeholder:text-ink4 focus:shadow-[inset_0_0_0_1px_var(--line3)] disabled:opacity-50"
+  "w-full min-w-0 rounded-(--r1) bg-s1 px-[11px] py-[7px] text-[13px] text-ink shadow-[inset_0_0_0_1px_var(--line2)] outline-none transition-[box-shadow,background] placeholder:text-ink4 hover:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ink)_16%,transparent)] focus:bg-s2 focus:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ink)_30%,transparent),0_0_0_3px_color-mix(in_srgb,var(--ink)_6%,transparent)] disabled:opacity-50"
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (

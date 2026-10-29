@@ -34,6 +34,8 @@ pub enum Kind {
     Finished,
     Question,
     Approval,
+    /// The agent wants the person to take over its screen (a sign-in, a CAPTCHA, a payment).
+    Takeover,
 }
 
 /// One event worth a buzz.
@@ -62,6 +64,7 @@ fn generic_line(n: &Notice) -> String {
         Kind::Finished => format!("{} finished", n.who),
         Kind::Question => format!("{} has a question", n.who),
         Kind::Approval => format!("{} needs approval", n.who),
+        Kind::Takeover => format!("{} needs you to take over", n.who),
     }
 }
 
@@ -140,6 +143,8 @@ mod tests {
         let a = build_request(&cfg(None), &notice(Kind::Approval), false).unwrap();
         assert_eq!(f.body_json["body"], "Leo finished");
         assert_eq!(a.body_json["body"], "Leo needs approval");
+        let t = build_request(&cfg(None), &notice(Kind::Takeover), false).unwrap();
+        assert_eq!(t.body_json["body"], "Leo needs you to take over");
     }
 
     #[test]

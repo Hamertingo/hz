@@ -1,15 +1,22 @@
-import { Bell } from "lucide-react";
+import { Bell, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { MacTile, Pick, useSettingsNav } from "@/components/settings/parts";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
+
 import ShortcutsSettings from "@/components/settings/ShortcutsSettings";
-import { Lead, SetHeading, StudioRow } from "@/components/settings/StudioRow";
+import MeAvatar from "@/components/MeAvatar";
+import { Card1, SetHeading, StudioRow } from "@/components/settings/StudioRow";
 import { Button } from "@/components/ui/button";
 import { fieldClassName } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { setFontSize, useFontSizes } from "@/hooks/useFontSizes";
+import { useMe } from "@/hooks/useMe";
 import { useTheme } from "@/hooks/useTheme";
+import { useWorkspaces } from "@/hooks/useWorkspaces";
+import { inWorkspace, useRoster } from "@/lib/roster";
 import { invoke } from "@tauri-apps/api/core";
 import {
   NOTIFY_CHOICES,
@@ -27,55 +34,6 @@ const LEVEL_LABEL: Record<NotifyLevel, string> = {
   badge: "Badge only",
   off: "Off",
 };
-
-/// The preview chips, drawn in the palette each mode really uses: the Default theme's
-/// `--background`, `--side` and `--surface-card` in App.css. Literal on purpose — a
-/// chip that read the live tokens would show the current mode for both.
-const PREVIEWS: { mode: ThemeMode; label: string; bg: string; side: string; main: string }[] = [
-  { mode: "dark", label: "Dark", bg: "#121213", side: "#0e0e0f", main: "#18181a" },
-  { mode: "light", label: "Light", bg: "#f4f3ef", side: "#e6e5e0", main: "#ffffff" },
-  {
-    mode: "system",
-    label: "System",
-    bg: "linear-gradient(90deg,#121213 50%,#f4f3ef 50%)",
-    side: "linear-gradient(90deg,#0e0e0f 50%,#e6e5e0 50%)",
-    main: "linear-gradient(90deg,#18181a 50%,#ffffff 50%)",
-  },
-];
-
-function ThemePicker() {
-  const { theme, mode, setMode } = useTheme();
-  const light = hasLightMode(theme);
-  return (
-    <div role="radiogroup" aria-label="Theme" className="grid grid-cols-[repeat(3,120px)] gap-2.5">
-      {PREVIEWS.map((p) => {
-        const on = mode === p.mode;
-        const disabled = !light && p.mode !== "dark";
-        return (
-          <button
-            key={p.mode}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            disabled={disabled}
-            title={disabled ? "The colour theme you picked is dark only" : undefined}
-            onClick={() => setMode(p.mode)}
-            className={cn(
-              "cursor-pointer overflow-hidden rounded-(--r3) text-left shadow-[inset_0_0_0_1px_var(--line2)] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40",
-              on && "shadow-[0_0_0_2px_var(--ink)]",
-            )}
-          >
-            <span className="flex h-16 gap-1 p-2" style={{ background: p.bg }}>
-              <i className="block rounded-[3px]" style={{ width: "28%", background: p.side }} />
-              <i className="block flex-1 rounded-[3px]" style={{ background: p.main }} />
-            </span>
-            <span className="block border-t border-line px-2.5 py-[7px] text-xs">{p.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function Toggle({
   label,
@@ -119,19 +77,68 @@ async function sendTest() {
 /// Settings → Preferences: how hz looks and behaves on this Mac. The sections
 /// that used to be pages of their own (code theme, apps, dictation, updates)
 /// arrive as `extras`, since their rows are owned by the dialog.
-export default function PreferencesSettings({ extras }: { extras: { appearance: ReactNode; apps: ReactNode; about: ReactNode } }) {
+export default function PreferencesSettings({
+  extras,
+  advanced,
+  onAdvanced,
+}: {
+  extras: { theme: ReactNode; appearance: ReactNode; apps: ReactNode };
+  advanced: boolean;
+  onAdvanced: (next: boolean) => void;
+}) {
   const [prefs, set] = useStudio();
   const sizes = useFontSizes();
+  const me = useMe();
+  const { active } = useWorkspaces();
+  const roster = useRoster();
+  const here = active ? roster.agents.filter((a) => inWorkspace(a, active.id)).length : roster.agents.length;
+
+  const { theme, mode, setMode } = useTheme();
+  const nav = useSettingsNav();
+  const [paused, setPaused] = useLocalStorage("hz.pauseAll", false);
+  const modes: { value: ThemeMode; label: string }[] = [
+    { value: "system", label: "Follow the system" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ];
 
   return (
     <>
-      <Lead>How hz looks and behaves on this Mac.</Lead>
+      <Card1
+        title="Advanced mode"
+        sub="Shows Usage & limits and CLIs, plus the technical controls: tokens, spend, raw JSON for routines. Nothing is deleted either way."
+      >
+        <Toggle label="Advanced mode" checked={advanced} onChange={onAdvanced} />
+      </Card1>
+      <Card1 lead={<MeAvatar me={me} size={46} />} title={me.name} sub={me.calls || `${me.language} · ${me.status}`}>
+        <Button variant="outline" onClick={() => nav("profile")}>
+          Edit profile
+        </Button>
+      </Card1>
+      <Card1
+        lead={
+          <MacTile dot={paused ? "bg-amber" : "bg-green"}>
+            <Laptop className="size-[22px]" />
+          </MacTile>
+        }
+        title="Agents are ready on this Mac"
+        sub={paused ? "Everything is paused" : `${here} ${here === 1 ? "agent" : "agents"} here. They work while hz is open.`}
+      >
+        <span className="text-[13px] text-ink2">Pause all</span>
+        <Toggle label="Pause all" checked={paused} onChange={setPaused} />
+      </Card1>
 
-      <SetHeading>Appearance</SetHeading>
+      <SetHeading className="mt-4">Appearance</SetHeading>
       <div>
-        <StudioRow label="Theme">
-          <ThemePicker />
+        <StudioRow label="Light or dark">
+          <Pick
+            label="Light or dark"
+            value={mode}
+            options={modes.filter((m) => m.value === "dark" || hasLightMode(theme))}
+            onChange={setMode}
+          />
         </StudioRow>
+        {extras.theme}
         <StudioRow label="Density" hint="Comfortable spaces messages out. Compact fits more on screen.">
           <Segmented
             label="Density"
@@ -155,7 +162,7 @@ export default function PreferencesSettings({ extras }: { extras: { appearance: 
           <Toggle label="Living faces" checked={prefs.livingFaces} onChange={(livingFaces) => set({ livingFaces })} />
         </StudioRow>
       </div>
-      <div className="flex flex-col gap-7">{extras.appearance}</div>
+      {extras.appearance}
 
       <SetHeading>Chat</SetHeading>
       <div>
@@ -213,11 +220,10 @@ export default function PreferencesSettings({ extras }: { extras: { appearance: 
       </div>
 
       <SetHeading>Shortcuts</SetHeading>
-      <p className="-mt-2 text-xs text-ink3">Click a shortcut, then press the new keys.</p>
+      <p className="-mt-2 px-1 text-xs text-ink3">Click a shortcut, then press the new keys.</p>
       <ShortcutsSettings />
 
       {extras.apps}
-      {extras.about}
     </>
   );
 }

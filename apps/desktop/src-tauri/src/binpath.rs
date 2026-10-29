@@ -213,6 +213,20 @@ fn resource_dir(exe: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The folder `scripts/vendor-hyzevm.sh` stages: `bin/hyzevm` and the `qemu/` it runs on. In a release it sits in
+/// `<Name>.app/Contents/Resources/hyzevm`; under `tauri dev` it is the staged tree in the source checkout. `None`
+/// means the build was made without the script, and the caller says so rather than asking the reader to install QEMU.
+pub fn shipped_hyzevm() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let bin = if cfg!(windows) { "hyzevm.exe" } else { "hyzevm" };
+    let bundled = resource_dir(&exe)?.join("hyzevm");
+    if bundled.join("bin").join(bin).is_file() {
+        return Some(bundled);
+    }
+    let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/hyzevm");
+    staged.join("bin").join(bin).is_file().then_some(staged)
+}
+
 fn shipped_mcode() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let bundled = resource_dir(&exe)?.join("agent").join("bin").join(LAUNCHER);

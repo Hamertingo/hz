@@ -34,7 +34,7 @@ export function lastDays(stamps: readonly number[], days: number, now: number): 
   });
 }
 
-export type HeatCell = {
+type HeatCell = {
   key: string;
   /// Midnight of that day.
   ms: number;
@@ -127,7 +127,7 @@ export function heroNumbers(scan: Pick<ActivityScan, "messages" | "tasks">, now:
   };
 }
 
-export function workClock(secs: number): { h: number; m: number } {
+function workClock(secs: number): { h: number; m: number } {
   return { h: Math.floor(secs / 3600), m: Math.floor((secs % 3600) / 60) };
 }
 
@@ -147,4 +147,3 @@ export function dayHeading(ms: number, now: number): string {
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: diff > 300 ? "numeric" : undefined });
 }
 
-export const HEAT_WEEKS = 26;

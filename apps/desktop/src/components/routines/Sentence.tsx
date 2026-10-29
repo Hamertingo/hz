@@ -1,4 +1,4 @@
-import { Check, Hash, Inbox, MessageSquare, MessageSquareReply, Webhook } from "lucide-react";
+import { Check, Webhook } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import AgentTile from "@/components/AgentTile";
@@ -14,7 +14,6 @@ import {
   TIME_PRESETS,
   WEEKDAYS,
   sentenceParts,
-  type Channel,
   type Chip,
 } from "@/lib/routines";
 import type { RosterAgent } from "@/lib/roster";
@@ -37,7 +36,7 @@ export function SourceMark({ source, size = 16 }: { source: string; size?: numbe
 }
 
 const CK =
-  "cursor-pointer text-ink2 underline decoration-ink4 decoration-dotted underline-offset-[3px] transition-colors hover:text-ink hover:decoration-ink2 hover:decoration-solid focus-visible:outline-none focus-visible:text-ink";
+  "cursor-pointer border-b border-dashed border-transparent transition-colors hover:border-ink4 focus-visible:border-ink4 focus-visible:outline-none";
 
 /// A row in a chip's menu: an optional lead, a label, a check when it is the pick.
 function Option({
@@ -77,7 +76,6 @@ type SentenceProps = {
   routine: Pick<RoutineInput, "trigger" | "act" | "to" | "agentId" | "prompt">;
   agent: RosterAgent | null;
   agents: RosterAgent[];
-  channels: Channel[];
   onPatch: Patch;
   /// "Edit the full prompt" in the what-it-does menu.
   onEditPrompt: () => void;
@@ -85,9 +83,9 @@ type SentenceProps = {
 
 /// A routine as one sentence whose underlined words open their own menu: days,
 /// time, who, what, where, which service, which event. Each pick is saved at once.
-export default function Sentence({ routine, agent, agents, channels, onPatch, onEditPrompt }: SentenceProps) {
+export default function Sentence({ routine, agent, agents, onPatch, onEditPrompt }: SentenceProps) {
   const name = agent?.name ?? "Nobody";
-  const parts = sentenceParts(routine, name, channels);
+  const parts = sentenceParts(routine, name);
   return (
     // The card behind this opens the editor on a click; a click on a word is
     // not that, and the menus are portaled children that bubble the same way.
@@ -101,7 +99,6 @@ export default function Sentence({ routine, agent, agents, channels, onPatch, on
             routine={routine}
             agent={agent}
             agents={agents}
-            channels={channels}
             onPatch={onPatch}
             onEditPrompt={onEditPrompt}
           />
@@ -119,7 +116,6 @@ function ChipMenu({
   routine,
   agent,
   agents,
-  channels,
   onPatch,
   onEditPrompt,
 }: SentenceProps & { chip: Chip; text: string }) {
@@ -137,12 +133,8 @@ function ChipMenu({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={cn(
-            CK,
-            isAgent && "inline-flex items-center gap-[5px] align-[-3px] font-medium text-ink no-underline hover:text-ink",
-          )}
+          className={cn(CK, isAgent && "border-ink4")}
         >
-          {isAgent && agent && <AgentTile id={agent.id} kind={agent.kind} color={agent.color} size={18} />}
           {text}
         </button>
       </PopoverTrigger>
@@ -161,25 +153,6 @@ function ChipMenu({
                 {a.name}
               </Option>
             ))}
-          </>
-        )}
-        {chip === "to" && (
-          <>
-            <Label>Where the result goes</Label>
-            <Option lead={<MessageSquare className="size-4 text-ink3" />} checked={routine.to === "agent_chat"} onClick={() => pick({ to: "agent_chat" })}>
-              {agent?.name ?? "Agent"}&apos;s chat
-            </Option>
-            {channels.map((c) => (
-              <Option key={c.id} lead={<Hash className="size-4 text-ink3" />} checked={routine.to === `channel:${c.id}`} onClick={() => pick({ to: `channel:${c.id}` })}>
-                {c.name}
-              </Option>
-            ))}
-            <Option lead={<Inbox className="size-4 text-ink3" />} checked={routine.to === "inbox"} onClick={() => pick({ to: "inbox" })}>
-              Inbox
-            </Option>
-            <Option lead={<MessageSquareReply className="size-4 text-ink3" />} checked={routine.to === "pr_comment"} onClick={() => pick({ to: "pr_comment" })}>
-              a PR comment
-            </Option>
           </>
         )}
         {chip === "src" && t.kind === "webhook" && (

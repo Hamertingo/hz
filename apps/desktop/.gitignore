@@ -5,3 +5,6 @@ src-tauri/resources/agent
 
 # The agent's own install, when somebody has built against the source.
 apps/agent/node_modules/
+
+# HyzeVM and the QEMU it runs on, for the agents' computers: staged build output, see scripts/vendor-hyzevm.sh.
+src-tauri/resources/hyzevm/

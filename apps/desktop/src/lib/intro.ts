@@ -20,6 +20,16 @@ export function isIntro(text: string): boolean {
 /// step with `TIDY_MARK` in `agent_profile.rs`.
 export const TIDY_MARK = "<hz-tidy/>";
 
+/// The mark on the prompt that wakes an agent when a command it watches ends. Kept in step with `WAKE_MARK` in
+/// `agent_tools.rs`. Drawn as a quiet line, since nobody typed it.
+export const WAKE_MARK = "<hz-wake/>";
+
+/// The one line a wake says ("\"the build\" finished after 4 min."), or null for any other prompt.
+export function wakeLine(text: string): string | null {
+  if (!text.startsWith(WAKE_MARK)) return null;
+  return text.slice(WAKE_MARK.length).split("\n")[0].trim() || "A watched command ended.";
+}
+
 /// Prompts hz sends on the reader's behalf that the transcript draws nothing for:
 /// the greeting and the memory tidy. The agent's reply to either is still shown.
 export function isHiddenPrompt(text: string): boolean {

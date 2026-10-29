@@ -10,6 +10,7 @@ import {
   nextText,
   occurrences,
   sentenceParts,
+  infinitive,
   sentenceText,
   weekBuckets,
   weekStartOf,
@@ -58,18 +59,27 @@ describe("sentence", () => {
   it("builds the schedule sentence with a menu on each underlined word", () => {
     const r = routine();
     const parts = sentenceParts(r, "Atlas");
-    expect(parts.filter((p) => p.chip).map((p) => p.chip)).toEqual(["days", "time", "agent", "act", "to"]);
-    expect(sentenceText(r, "Atlas")).toBe("Every Monday at 09:00, Atlas pulls the weekly numbers and posts it in Atlas's chat.");
+    expect(parts.filter((p) => p.chip).map((p) => p.chip)).toEqual(["days", "time", "agent", "act"]);
+    expect(sentenceText(r, "Atlas")).toBe("Every Monday at 09:00, Atlas will pull the weekly numbers.");
   });
 
   it("builds the webhook sentence", () => {
     const r = routine({ trigger: { kind: "webhook", source: "Stripe", event: "charge.dispute.created" }, to: "inbox", act: "drafts a reply" });
-    expect(sentenceText(r, "Atlas")).toBe("When Stripe sends charge.dispute.created, Atlas drafts a reply and puts it in Inbox.");
-    expect(sentenceParts(r, "Atlas").filter((p) => p.chip).map((p) => p.chip)).toEqual(["src", "ev", "agent", "act", "to"]);
+    expect(sentenceText(r, "Atlas")).toBe("When Stripe sends charge.dispute.created, Atlas will draft a reply.");
+    expect(sentenceParts(r, "Atlas").filter((p) => p.chip).map((p) => p.chip)).toEqual(["src", "ev", "agent", "act"]);
   });
 
   it("says something when nothing is said yet", () => {
-    expect(sentenceText(routine({ act: " " }), "Vex")).toContain("Vex does something");
+    expect(sentenceText(routine({ act: " " }), "Vex")).toContain("Vex will do something");
+  });
+
+  it("turns a saved third-person verb back into the base form", () => {
+    expect(infinitive("posts the daily content")).toBe("post the daily content");
+    expect(infinitive("fixes it")).toBe("fix it");
+    expect(infinitive("copies files")).toBe("copy files");
+    expect(infinitive("does the job")).toBe("do the job");
+    expect(infinitive("post it")).toBe("post it");
+    expect(infinitive("focus on tests")).toBe("focus on tests");
   });
 
   it("names a destination in words", () => {

@@ -1,100 +1,78 @@
+import { ChevronRight } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { formatClock } from "@/lib/clock";
 import { cn } from "@/lib/utils";
 
-/// "21 Oct 2026, 22:36" in the reader's own locale.
-function stamp(ts: string): string {
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return "";
-
-  const day = date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-  return `${day}, ${formatClock(date)}`;
-}
-
 /// The one line a message between agents is drawn as, from either end: a
-/// sentence, the other agent's face and name, and when. Centred and quiet — it
-/// is a record that something passed between two agents, not a chat bubble — and
-/// the words themselves sit one click away so a long brief never fills the
-/// transcript.
+/// sentence, the other agent's face and name, and a chevron when it opens the
+/// thread. Plain centred text, no box — a record that something passed between
+/// two agents, not a bubble — and the words sit one click away so a long brief
+/// never fills the transcript.
 export default function TeamLine({
   lead,
   face,
   name,
-  ts,
   body,
   reply,
   busy = false,
   error = null,
-  self,
-  meta,
   onOpen,
 }: {
-  /// Whose chat this is, drawn first: "Atlas asked Hugo". Absent where the
-  /// sentence needs no subject.
-  self?: ReactNode;
-  /// A count after the name, such as "2 messages".
-  meta?: string;
-  /// Opens the exchange in a sheet instead of unfolding it in place.
+  /// Opens the thread instead of unfolding the words in place.
   onOpen?: () => void;
-  /// What happened, as the start of the sentence: "Message sent to".
+  /// What happened, as the start of the sentence: "Sent a message to".
   lead: string;
   face: ReactNode;
   name: string;
-  ts: string;
-  /// The message text, shown on click. Absent where there is nothing to open.
+  /// The message text, unfolded on click where nothing opens.
   body?: string;
-  /// The answer that came back to an ask, shown under the question.
+  /// The answer that came back to an old ask, shown under the question.
   reply?: string;
-  /// Still in flight: a ring after the name.
+  /// Still in flight: dots after the name.
   busy?: boolean;
-  /// Why it did not go. Open by default, since it is the reason to look at all.
+  /// Why it did not go. Always shown, since it is the reason to look at all.
   error?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const shown = open || error !== null;
+  const clickable = Boolean(body || onOpen);
 
   return (
-    <div className="my-2 flex flex-col items-center gap-1.5">
+    <div className="team-line my-3 flex flex-col items-center gap-1.5">
       <button
         type="button"
         onClick={() => (onOpen ? onOpen() : setOpen((v) => !v))}
-        disabled={!body && !onOpen}
+        disabled={!clickable}
         aria-expanded={body && !onOpen ? shown : undefined}
         className={cn(
-          "flex max-w-full items-center gap-2 text-ui text-muted-foreground transition-colors disabled:cursor-default",
-          (body || onOpen) && "cursor-pointer hover:text-foreground",
-          error !== null && "text-destructive hover:text-destructive",
+          "group/tl inline-flex max-w-[90%] items-center gap-1.5 text-[13.5px] text-ink3 disabled:cursor-default",
+          clickable && "cursor-pointer",
+          error !== null && "text-red",
         )}
       >
-        {self}
         <span className="shrink-0">{lead}</span>
         {face}
-        <span className={cn("truncate font-medium", error === null && "text-foreground")}>
-          {name}
-        </span>
+        <span className={cn("truncate font-semibold", error === null && "text-ink transition-colors group-hover/tl:text-ink2")}>{name}</span>
         {busy && (
-          <span
-            aria-hidden
-            className="size-3 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
-          />
+          <span className="team-wait inline-flex gap-[2px]" aria-label="waiting">
+            <i />
+            <i />
+            <i />
+          </span>
         )}
-        {meta && <span className="shrink-0 text-muted-foreground/70">· {meta}</span>}
-        <span className="shrink-0 text-muted-foreground/70">· {stamp(ts)}</span>
+        {clickable && error === null && (
+          <ChevronRight className="-ml-0.5 size-3.5 shrink-0 text-ink4 transition-transform group-hover/tl:translate-x-0.5" strokeWidth={2.2} />
+        )}
       </button>
 
-      {error !== null && <p className="max-w-[85%] text-center text-ui text-destructive/90">{error}</p>}
+      {error !== null && <p className="max-w-[80%] text-center text-[12px] text-red/90">{error}</p>}
 
       {shown && body && !onOpen && (
-        <p className="max-w-[85%] text-center text-chat whitespace-pre-wrap wrap-anywhere text-muted-foreground">
-          {body}
-        </p>
+        <p className="max-w-[80%] rounded-[12px] bg-s1 px-3 py-2 text-[13px] whitespace-pre-wrap wrap-anywhere text-ink2">{body}</p>
       )}
 
       {shown && reply && !onOpen && (
-        <p className="max-w-[85%] text-center text-chat whitespace-pre-wrap wrap-anywhere text-foreground/90">
-          {reply}
-        </p>
+        <p className="max-w-[80%] rounded-[12px] bg-s2 px-3 py-2 text-[13px] whitespace-pre-wrap wrap-anywhere text-ink">{reply}</p>
       )}
     </div>
   );

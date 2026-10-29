@@ -1,25 +1,32 @@
-import { Check, ChevronRight, Copy } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from "react";
 
 import AgentTrace from "@/components/chat/AgentTrace";
+import AgentStatus from "@/components/chat/AgentStatus";
 import AssistantMessage from "@/components/chat/AssistantMessage";
 import BloubAvatar from "@/components/BloubAvatar";
 import EventRow from "@/components/chat/EventRow";
 import SubagentRow from "@/components/chat/SubagentRow";
 import ToolGroupRow from "@/components/chat/ToolGroupRow";
+import AgentPosts from "@/components/chat/AgentPosts";
 import ChatCards from "@/components/chat/ChatCards";
-import MessageShell, { AgentFace } from "@/components/chat/MessageShell";
-import StepTrace from "@/components/chat/StepTrace";
+import MessageShell from "@/components/chat/MessageShell";
+import { ApprovedRow, RichCard } from "@/components/chat/cards";
 import TerminalCard from "@/components/chat/TerminalCard";
 import UserMessage from "@/components/chat/UserMessage";
 import { useAgentChat, useAgentChatActions } from "@/hooks/useAgentChat";
 import type { RosterAgent } from "@/lib/roster";
+import { approvedOf } from "@/lib/approved";
 import { cardsOf } from "@/lib/chatCards";
+import { toolPosts } from "@/lib/hzTools";
 import { openSheet } from "@/lib/chatSheets";
 import { useStudio } from "@/lib/studio";
-import { traceOf } from "@/lib/steps";
+import { toast } from "@/components/ui/toast";
+import { openLink } from "@/lib/openLink";
+import { splitCards } from "@/lib/richCards";
 import { stripAnsi } from "@/lib/termScreen";
 import { groupLabel, teamTool, toolLabel, toolSummary } from "@/lib/tools";
+import { activityOf, type Hint } from "@/lib/agentStatus";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -44,12 +51,18 @@ type TurnBlockProps = {
   /// indicator above it carries, so the face working is the face that stopped.
   /// Absent draws no bot, which is right for a caller with no session behind it.
   botSeed?: string;
+  /// In an agent chat: what the stream says before anything commits, for the status line's phrase.
+  activity?: Hint;
   /// Trails the turn's work inside this block's own stack. The thinking
   /// indicator and the streaming preview both go here rather than after the
   /// block, so they sit at the same gap the committed event will — placing them
   /// outside left them at the between-turn gap, and the content that replaced
   /// them jumped up by the difference.
   footer?: ReactNode;
+  /// Whether the session is mid-turn. An agent chat draws a turn with no end
+  /// event as still working only while this holds: a missed end, or a turn cut
+  /// off by a quit, would otherwise say "thinking" under a finished reply forever.
+  live?: boolean;
 };
 
 /// How many rendered rows a turn must have before it collapses behind its
@@ -120,6 +133,8 @@ function TurnBlock({
   onOpenSession,
   botSeed,
   footer,
+  activity,
+  live = true,
 }: TurnBlockProps) {
   // Per segment, not per turn: a stretch of work between queued prompts opens
   // and closes on its own, so peeking at one leaves the others collapsed. Keyed
@@ -166,6 +181,8 @@ function TurnBlock({
         todosByCallId={todosByCallId}
         onOpenSession={onOpenSession}
         footer={footer}
+        hint={activity}
+        live={live}
       />
     );
   }
@@ -541,6 +558,8 @@ function AgentTurn({
   todosByCallId,
   onOpenSession,
   footer,
+  hint,
+  live: sessionLive,
 }: {
   agent: RosterAgent;
   turn: Turn;
@@ -551,13 +570,15 @@ function AgentTurn({
   todosByCallId?: Map<string, TodoTask[]>;
   onOpenSession: (sessionId: string) => void;
   footer?: ReactNode;
+  /// What the stream says before events commit: nothing yet, reasoning, or reply text.
+  hint?: Hint;
+  live: boolean;
 }) {
   const [studio] = useStudio();
   const [open, setOpen] = useState(studio.openTrace);
-  const [full, setFull] = useState(false);
   const chat = useAgentChatActions();
 
-  const running = turn.completed === null;
+  const running = turn.completed === null && sessionLive;
   const failed =
     turn.completed?.payload.type === "turn_completed" && drawsFailure(turn.completed.payload);
   const render = (item: WorkItem) =>
@@ -589,11 +610,10 @@ function AgentTurn({
     [running, turn.work, resultByCallId],
   );
 
-  const timings = chat?.timings ?? NO_TIMINGS;
-  const steps = useMemo(
-    () => (running ? [] : traceOf(turn.work, resultByCallId, timings)),
-    [running, turn.work, resultByCallId, timings],
-  );
+  // Drawn while it works too: a sign-in card is the agent waiting on the person.
+  const posts = useMemo(() => toolPosts(calls, resultByCallId), [calls, resultByCallId]);
+
+  const approved = useMemo(() => approvedOf(turn.work), [turn.work]);
   const cards = useMemo(
     () => (running ? [] : cardsOf(turn.work, resultByCallId, turn.finalText)),
     [running, turn.work, resultByCallId, turn.finalText],
@@ -615,10 +635,6 @@ function AgentTurn({
     }
     return null;
   }, [running, calls, resultByCallId]);
-
-  const ms =
-    turn.prompt && turn.completed ? Date.parse(turn.completed.ts) - Date.parse(turn.prompt.ts) : NaN;
-  const took = Number.isFinite(ms) && ms >= 0 ? formatDuration(ms) : null;
 
   // Built before the `<ul>` is decided, because its left rule is the only
   // thing a row-less list still draws: an item `render` turns into nothing
@@ -650,8 +666,22 @@ function AgentTurn({
   const reactKey =
     chat?.sessionId && turn.completed ? `${chat.sessionId}:${turn.completed.id}` : undefined;
 
+  const said = useMemo(() => splitCards(turn.finalText ?? ""), [turn.finalText]);
+  // While it works, the newest thing it has finished saying stands as the reply, whole; the turn's end only
+  // confirms it (the final text is that same block), so nothing jumps.
+  const soFar = running ? splitCards(latestSaid(calls) ?? "").text || null : null;
+  const words = running
+    ? (soFar ? <AssistantMessage text={soFar} /> : footer)
+    : (
+        <>
+          {said.text && !failed && <AssistantMessage text={said.text} />}
+          {failed && turn.completed && <EventRow event={turn.completed} resultByCallId={resultByCallId} />}
+        </>
+      );
+  const hasWords = running ? Boolean(soFar || footer) : Boolean((said.text && !failed) || (failed && turn.completed));
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-[5px]">
       {turn.prompt && <UserMessage {...promptProps} onOpenSession={onOpenSession} />}
 
       {exchanges.map((e) => (
@@ -660,90 +690,81 @@ function AgentTurn({
 
       {hasReply && (
         <MessageShell
-          face={<AgentFace agent={agent} />}
           name={agent.name}
-          status={
-            running ? (
-              <span className="shimmer-text text-[11.5px] text-ink3">working</span>
-            ) : null
-          }
-          time={clockTime((turn.completed ?? turn.prompt)?.ts ?? "")}
-          copy={!running && turn.finalText ? turn.finalText : undefined}
-          reactKey={reactKey}
+          time={hasWords ? clockTime((turn.completed ?? turn.prompt)?.ts ?? "") : null}
+          copy={!running && said.text ? said.text : undefined}
+          reactKey={hasWords ? reactKey : undefined}
           seq={turn.completed?.seq}
           author={agent.id}
-        >
-          {liveRows.length > 0 && (
-            <ul className="mt-1.5 mb-2 flex flex-col gap-2 border-l border-line2 pl-3.5">
-              {liveRows}
-            </ul>
-          )}
-
-          {running && shell && (
-            <TerminalCard
-              name={agent.name}
-              command={shell.command}
-              output={shell.output}
-              running={shell.running}
-              onTakeOver={() =>
-                chat?.cwd && openSheet({ kind: "terminal", agentId: agent.id, cwd: chat.cwd })
-              }
-            />
-          )}
-
-          {running && footer}
-
-          {!running && turn.finalText && !failed && <AssistantMessage text={turn.finalText} />}
-
-          {failed && turn.completed && (
-            <EventRow event={turn.completed} resultByCallId={resultByCallId} />
-          )}
-
-          <ChatCards cards={cards} />
-
-          {!running && turn.work.length > 0 && (
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                aria-expanded={open}
-                className="-ml-1.5 flex h-[26px] cursor-pointer items-center gap-1.5 rounded-(--r1) pr-2 pl-1.5 text-xs text-ink3 transition-colors hover:bg-hover hover:text-ink2"
-              >
-                <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
-                See what it did
-                {(steps.length > 0 || took) && (
-                  <span className="text-ink4">
-                    {steps.length > 0 && `· ${steps.length} ${steps.length === 1 ? "step" : "steps"}`}
-                    {took && ` · ${took}`}
-                  </span>
-                )}
-              </button>
-              {open && (
-                <div className="mt-1.5 overflow-hidden rounded-(--r3) bg-s1 shadow-[inset_0_0_0_1px_var(--line)]">
-                  <StepTrace steps={steps} />
-                  <button
-                    type="button"
-                    onClick={() => setFull((v) => !v)}
-                    className="w-full cursor-pointer border-t border-line px-3.5 py-1.5 text-left text-xs text-ink3 transition-colors hover:bg-hover hover:text-ink2"
-                  >
-                    {full ? "Hide the full conversation" : "Full conversation"}
-                  </button>
-                  {full && (
-                    <div className="flex flex-col gap-3 border-t border-line p-3">
-                      {turn.work.map(render)}
-                    </div>
-                  )}
-                </div>
+          above={
+            !running && said.before.length > 0
+              ? said.before.map((card, i) => <RichCard key={i} card={card} {...CARD_ACTIONS} />)
+              : undefined
+          }
+          after={
+            <>
+              {running && shell && (
+                <TerminalCard
+                  name={agent.name}
+                  command={shell.command}
+                  output={shell.output}
+                  running={shell.running}
+                  onTakeOver={() =>
+                    chat?.cwd && openSheet({ kind: "terminal", agentId: agent.id, cwd: chat.cwd })
+                  }
+                />
               )}
-            </div>
-          )}
+
+              <AgentPosts posts={posts} running={running} />
+
+              {approved.map((a) => (
+                <ApprovedRow key={a.key} what={a.what} command={a.command} time={clockTime(a.ts) ?? undefined} />
+              ))}
+
+              <ChatCards cards={cards} />
+
+              {!running &&
+                said.cards.map((card, i) => (
+                  <RichCard key={i} card={card} {...CARD_ACTIONS} />
+                ))}
+
+              {running && (
+                <AgentStatus agent={agent} activity={activityOf(calls, hint, (id) => resultByCallId.has(id))} open={open} onToggle={() => setOpen((v) => !v)}>
+                  {liveRows.length > 0 && <ul className="mt-1 mb-1 ml-1 flex flex-col gap-2 border-l border-line pl-3">{liveRows}</ul>}
+                </AgentStatus>
+              )}
+            </>
+          }
+        >
+          {hasWords ? words : null}
         </MessageShell>
       )}
     </div>
   );
 }
 
-const NO_TIMINGS: ReadonlyMap<string, number> = new Map();
+/// The text of the newest finished message in the work so far.
+function latestSaid(events: readonly AgentEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const p = events[i].payload;
+    if (p.type === "assistant_text" && p.text.trim()) return p.text;
+  }
+  return null;
+}
+
+/// What a card's buttons do until an agent-side producer says more: sources open, the rest answer with a line.
+const CARD_ACTIONS = {
+  onOpenSource: (domain: string) => openLink(`https://${domain}`),
+  onOpenPage: () => toast("Opening the page"),
+  onVersions: () => toast("Page versions"),
+  onTakeOver: () => toast("You are in control of the browser"),
+  onSaveKey: () => toast("Saved to the keychain"),
+  onApprove: () => toast("Approved"),
+  onDeny: () => toast("Denied"),
+  onPlay: () => toast("Playing"),
+  onDismiss: () => toast("Dismissed"),
+};
+
 
 /// The last lines of a command's output, without the colour codes a terminal
 /// would have drawn.

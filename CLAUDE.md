@@ -82,6 +82,7 @@ pnpm workspace, two apps plus the CLI and its wire crate.
 apps/desktop/   the Tauri app — everything below this section describe it
 apps/web/       marketing site: Next.js App Router, Tailwind 4, deploy Vercel
 apps/cli/       the `hz` CLI: creates and lists sessions in the running app over a socket
+apps/hyzevm/    HyzeVM, vendored (MIT): one Linux machine per agent. The app drives its CLI; the bundle carries QEMU too
 crates/hz-proto/  the wire types that CLI and app share
 ```
 
@@ -116,7 +117,7 @@ That = real entry point. `pnpm tauri` = shim ([scripts/tauri.mjs](apps/desktop/s
 **Shim also pick dev port, and it only side that can.** Vite and Tauri have to agree on one, and both start from here — so shim ask the OS for a free one (`listen(0)`), hand it to Vite as `HZ_DEV_PORT` and to Tauri as second `--config` carrying `build.devUrl`. Fixed 1420 was hard failure before, which = one worktree's dev build refusing to start because another's already running. `strictPort: true` **stay** on Vite side: port already known free, and Vite wandering off it leave Tauri loading URL nothing serve.
 
 - `pnpm dev` — frontend only, port 1420 unless `HZ_DEV_PORT` say otherwise. `invoke` do nothing in plain browser, so only useful for pure-CSS/layout work.
-- `pnpm build` — `tsc && vite build`. `pnpm tauri build` for bundled app — **run [scripts/vendor-agent.sh](apps/desktop/scripts/vendor-agent.sh) first**, or the bundle ships without its agent.
+- `pnpm build` — `tsc && vite build`. `pnpm tauri build` for bundled app — **run [scripts/vendor-agent.sh](apps/desktop/scripts/vendor-agent.sh) and [scripts/vendor-hyzevm.sh](apps/desktop/scripts/vendor-hyzevm.sh) first** (the build machine needs `brew install qemu` once), or the bundle ships without its agent or the agents' computers (HyzeVM and the QEMU it runs on).
 - `cd apps/desktop/src-tauri && cargo test` — Rust tests (parser + mapper + event-model compatibility, plus git and file index). Single test: `cargo test every_update_in_the_capture_is_named`.
 - `cd apps/desktop/src-tauri && cargo check` — fast type check, no linking whole app.
 - `pnpm test` — frontend tests (vitest, node environment, no DOM). Scoped to pure logic where being wrong invisible on screen: [mcode.test.ts](apps/desktop/src/lib/mcode.test.ts) for the model/effort/stance rules, [todo.ts](apps/desktop/src/lib/todo.ts) for reading a plan off a capture, composer's caret arithmetic ([slash.ts](apps/desktop/src/lib/slash.ts), [mention.ts](apps/desktop/src/lib/mention.ts), [highlight.ts](apps/desktop/src/lib/highlight.ts)); and [theme.ts](apps/desktop/src/lib/theme.ts)'s coercion. Components not tested — no DOM here.

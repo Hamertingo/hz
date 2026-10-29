@@ -58,7 +58,8 @@
       "minimumSystemVersion": "12.0"
     },
     "resources": {
-      "resources/agent": "agent"
+      "resources/agent": "agent",
+      "resources/hyzevm": "hyzevm"
     },
     "windows": {
       "nsis": {

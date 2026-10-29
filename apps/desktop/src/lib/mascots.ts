@@ -79,13 +79,6 @@ export function mixHex(a: string, b: string, t: number): string {
   return `#${mixed.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/// An agent's colour as text on the page. `mixHex` toward white is right on dark and
-/// a washout on light, so this mixes toward the theme's own foreground: lighter than
-/// the colour on a dark page, darker on a light one, with the same amount either way.
-export function inkTint(color: string, towardInk: number): string {
-  return `color-mix(in oklab, ${color} ${Math.round((1 - towardInk) * 100)}%, var(--foreground))`;
-}
-
 const cache = new Map<string, string>();
 
 /// The head as one SVG string, coloured from `color`.

@@ -1,6 +1,7 @@
-import AgentTile from "@/components/AgentTile";
+import AgentAvatar from "@/components/AgentAvatar";
 import { Markdown } from "@/components/chat/Markdown";
 import { StatusDot } from "@/components/channel/ChannelRows";
+import { Section } from "@/components/kit/kit";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { clockTime, TASK_LABEL } from "@/lib/channels";
@@ -39,7 +40,7 @@ export default function TaskSheet({
       width={460}
       title={task?.title ?? "Task"}
       sub={`Task in #${channel.name} · ${name} owns it`}
-      icon={owner ? <AgentTile id={owner.id} kind={owner.kind} color={owner.color} size={30} /> : undefined}
+      icon={owner ? <AgentAvatar agent={owner} size={30} /> : undefined}
       footer={
         owner && (
           <>
@@ -55,14 +56,14 @@ export default function TaskSheet({
     >
       {task && (
         <>
-          <h4 className="mb-2.5 text-xs font-medium text-ink3">Status</h4>
+          <Section title="Status" className="mt-0" />
           <div className="flex items-center gap-2 text-[13px]">
             <StatusDot status={task.status} />
             {TASK_LABEL[task.status]}
           </div>
 
-          <h4 className="mt-6 mb-2.5 text-xs font-medium text-ink3">Thread</h4>
-          <ol className="flex flex-col gap-2.5 border-l border-line2 pl-3.5">
+          <Section title="Thread" />
+          <ol className="flex flex-col gap-2.5 border-l border-line2 px-1 pl-3.5">
             {asked && (
               <li className="text-[13px]">
                 You asked in #{channel.name}
@@ -79,7 +80,7 @@ export default function TaskSheet({
 
           {task.result && (
             <>
-              <h4 className="mt-6 mb-2.5 text-xs font-medium text-ink3">Result</h4>
+              <Section title="Result" />
               <div className="rounded-(--r3) bg-s1 px-3.5 py-3 text-[13.5px] shadow-[inset_0_0_0_1px_var(--line)]">
                 <Markdown>{task.result}</Markdown>
               </div>

@@ -56,6 +56,16 @@ pub fn cost_microusd(model: &str, input_tokens: u64, output_tokens: u64) -> Opti
     a.checked_add(b).map(|v| v / 1000)
 }
 
+/// A turn's estimated cost in micro-dollars with its cache traffic priced too: a cached read at a
+/// tenth of the input price, a cache write at a quarter above it, the providers' common ratios.
+/// `None` for an unknown model or on overflow.
+pub fn estimate_microusd(model: &str, input: u64, output: u64, cache_read: u64, cache_write: u64) -> Option<u64> {
+    let (pi, _) = price_for(model)?;
+    let base = cost_microusd(model, input, output)?;
+    let per = |tokens: u64, ratio: f64| -> Option<u64> { tokens.checked_mul((pi * ratio * 1000.0).round() as u64).map(|v| v / 1000) };
+    base.checked_add(per(cache_read, 0.1)?)?.checked_add(per(cache_write, 1.25)?)
+}
+
 /// "$0.0012" under a cent, "$1.23" above; never scientific notation.
 pub fn format_cost(micro: u64) -> String {
     let usd = micro as f64 / 1_000_000.0;
@@ -170,6 +180,15 @@ mod tests {
         assert_eq!(cost_microusd("claude-sonnet-4", 1_000_000, 1_000_000), Some(18_000_000));
         assert_eq!(cost_microusd("gpt-5-nano", 1000, 1000), Some(450));
         assert_eq!(cost_microusd("gpt-5", 0, 0), Some(0));
+    }
+
+    #[test]
+    fn cache_traffic_is_priced_below_and_above_input() {
+        // Sonnet at $3 in: 1M cached reads $0.30, 1M cache writes $3.75.
+        assert_eq!(estimate_microusd("claude-sonnet-5-5", 0, 0, 1_000_000, 0), Some(300_000));
+        assert_eq!(estimate_microusd("claude-sonnet-5-5", 0, 0, 0, 1_000_000), Some(3_750_000));
+        assert_eq!(estimate_microusd("claude-sonnet-5-5", 1_000_000, 0, 0, 0), cost_microusd("claude-sonnet", 1_000_000, 0));
+        assert_eq!(estimate_microusd("mystery", 1, 1, 1, 1), None);
     }
 
     #[test]

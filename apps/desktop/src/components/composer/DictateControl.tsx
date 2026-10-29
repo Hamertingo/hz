@@ -157,9 +157,9 @@ export default function DictateControl({
           size="icon-sm"
           onClick={onStart}
           aria-label="Dictate"
-          className="rounded-full text-muted-foreground"
+          className="size-[30px] rounded-lg text-ink3 hover:bg-s3 hover:text-ink [&_svg]:size-[17px]"
         >
-          <Mic />
+          <Mic strokeWidth={1.75} />
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top">

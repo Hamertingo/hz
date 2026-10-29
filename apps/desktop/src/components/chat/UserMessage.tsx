@@ -1,4 +1,4 @@
-import { Image, Paperclip } from "lucide-react";
+import { AlarmClock, Image, Paperclip } from "lucide-react";
 import { memo, type CSSProperties } from "react";
 
 import SessionAvatar from "@/components/SessionAvatar";
@@ -18,13 +18,15 @@ import {
 } from "@/lib/highlight";
 import { openLink } from "@/lib/openLink";
 import { commandBrand } from "@/lib/pluginBrand";
-import MessageShell, { PersonFace } from "@/components/chat/MessageShell";
+import MessageShell from "@/components/chat/MessageShell";
 import TeamReceived from "@/components/chat/TeamReceived";
 import { useAgentChatActions } from "@/hooks/useAgentChat";
 import { useMe } from "@/hooks/useMe";
 import { clockTime } from "@/lib/format";
-import { isHiddenPrompt } from "@/lib/intro";
+import { SysRow } from "@/components/chat/cards";
+import { isHiddenPrompt, wakeLine } from "@/lib/intro";
 import { stripSenderPrefix, teamBody } from "@/lib/relay";
+import { answerBody } from "@/lib/teamTalk";
 import { shortenPath } from "@/lib/tools";
 import { cn } from "@/lib/utils";
 import type { ImageRef, MessageSender, ReplyTo } from "@/types/events";
@@ -102,6 +104,7 @@ function UserMessage({
   const cwd = writtenIn ?? sessionCwd;
   // A teammate's message is a card of its own, not a bubble: it is not the
   // reader's words, and the agent's name is the point of it.
+  const answer = answerBody(text, from);
   const team = teamBody(text, from);
   const body = withLineBreaks(stripSenderPrefix(text, from));
   const segments = withPaths(highlightSegments(body));
@@ -115,11 +118,199 @@ function UserMessage({
   // those, so this row is what is left to say about them.
   const missing = images.filter((image) => !image.path && !image.url);
 
+  if (from && answer !== null) return <TeamReceived from={from} text={answer} ts={ts} answer />;
   if (from && team !== null) return <TeamReceived from={from} text={team} ts={ts} />;
 
   // The agent's opening prompt is for the model alone: the chat starts with its
   // greeting, not with a request nobody typed.
   if (isHiddenPrompt(text)) return null;
+
+  const wake = wakeLine(text);
+  if (wake) return <SysRow icon={<AlarmClock />}>{wake}</SysRow>;
+
+  const fromLine = from && (
+    <button
+      type="button"
+      onClick={() => onOpenSession?.(from.sessionId)}
+      disabled={!onOpenSession}
+      className="flex max-w-[85%] cursor-pointer items-center gap-1 text-ui text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:hover:text-muted-foreground"
+    >
+      <SessionAvatar sessionId={from.sessionId} name={from.title} />
+      <span className="truncate">{from.title}</span>
+    </button>
+  );
+
+  const words = (
+    <span className="text-chat whitespace-pre-wrap wrap-anywhere">
+            {/* Plain runs concatenate back to `text` exactly, so the spacing the
+                user typed survives — nothing here is rebuilt from a parse.
+                A mention is the one run drawn shorter than it was sent: the
+                directory is dropped and kept on the tooltip, since a deep path
+                is most of a line and says little the filename doesn't. The
+                composer can't do this — see `splitMention`. */}
+            {segments.map((segment, i) => {
+              // Bold, italic, code, strikethrough and links, drawn without
+              // their delimiters. First, so the marks are read before the
+              // coloured runs — they share no character, so the order is only
+              // about keeping the coloured cases below reading as they did.
+              const mark = inlineMark(segment, i);
+              if (mark) return mark;
+
+              if (segment.kind === "mention") {
+                const { name } = splitMention(segment.text);
+                const raw = segment.text.slice(1);
+                // Written against the agent's own working directory, which is
+                // what the context carries. Inert without one.
+                const path = absolutePath(raw, cwd);
+
+                if (!path) {
+                  return (
+                    <span key={i} className={SEGMENT_COLOR.mention} title={raw}>
+                      @{name}
+              </span>
+                  );
+                }
+
+                return (
+                  <FileLink key={i} path={path} title={raw} className={SEGMENT_COLOR.mention}>
+                    @{name}
+                  </FileLink>
+                );
+              }
+
+              if (segment.kind === "quote") {
+                // The `>` stays, dimmed, and the words take the quote's colour —
+                // the same split a mention makes. The mark is how a reader knows
+                // these are somebody else's words and not their own, and dropping
+                // it would leave a paragraph of muted prose with no reason given.
+                // Inline rather than a block, because every run here shares one
+                // `whitespace-pre-wrap` span and a block would break the line box
+                // the bubble's own breaks are drawn in.
+                return (
+                  <span key={i} className={SEGMENT_COLOR.quote}>
+                    <span className="opacity-45">{"> "}</span>
+                    {segment.text.slice(2)}
+            </span>
+                );
+              }
+
+              // A path the reader typed rather than mentioned. Drawn the way a
+              // mention is — `@` and the filename, the directory on the tooltip
+              // — since the two name the same thing and a deep path is most of
+              // a line. Relative resolves against the same cwd a mention does.
+              // A locator stays on the name, inside the link: `@a.ts:12` is one
+              // reference, and a link stopping short of it read as broken.
+              if (segment.kind === "path") {
+                const file = segment.inner ?? segment.text;
+                const name =
+                  (file.split("/").filter(Boolean).at(-1) ?? file) +
+                  segment.text.slice(file.length);
+                const path = absolutePath(file, cwd);
+
+                if (!path) {
+                  return (
+                    <span key={i} className={SEGMENT_COLOR.path} title={segment.text}>
+                      @{name}
+              </span>
+                  );
+                }
+
+                return (
+                  <FileLink
+                    key={i}
+                    path={path}
+                    line={segment.line}
+                    title={segment.text}
+                    className={SEGMENT_COLOR.path}
+                  >
+                    @{name}
+                  </FileLink>
+                );
+              }
+
+              if (segment.kind === "url") {
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className={cn(SEGMENT_COLOR.url, "cursor-pointer hover:decoration-current")}
+                    onClick={(e) => openLink(segment.text, e)}
+                  >
+                    {segment.text}
+                  </button>
+                );
+              }
+
+              // **An attachment's run is drawn, not echoed.** The token is
+              // `📎 name size` — a paperclip *character*, because that is the
+              // only kind of mark a textarea can hold, and the composer paints
+              // its icon over it. Left as plain words here, the same run put a
+              // colour emoji in the middle of a monochrome sentence, which is
+              // what a reader saw and called ugly. So the mark is dropped from
+              // the glyphs and drawn as the icon both surfaces use, and the size
+              // steps back from the name it qualifies. Still one line, still no
+              // pill: this is the sentence the model was given, and a chip in it
+              // would stop reading as one.
+              if (segment.kind === "attachment") {
+                const run = segment.text.slice(ATTACHMENT_MARK.length);
+                const size = run.match(ATTACHMENT_SIZE);
+                const name = (size ? run.slice(0, run.length - size[0].length) : run).trim();
+                return (
+                  <span key={i}>
+                    <Paperclip
+                      aria-hidden
+                      className="mr-1 inline size-3.5 -translate-y-px align-baseline opacity-70"
+                    />
+                    <span className="font-mono">{name}</span>
+                    {size && <span className="ml-1 opacity-60">{size[0].trim()}</span>}
+            </span>
+                );
+              }
+
+              return (
+                <span key={i} className={SEGMENT_COLOR[segment.kind]}>
+                  {segment.text}
+          </span>
+              );
+            })}
+    </span>
+  );
+
+  const gone = missing.map((image, i) => (
+    <span key={i} className="flex items-center gap-1.5 text-chat text-muted-foreground">
+      <Image className="size-3.5 shrink-0" />
+      <span className="truncate">{image.path ? shortenPath(image.path) : "image"}</span>
+    </span>
+  ));
+
+  // In an agent chat the shell draws the bubble, so the text goes in bare and
+  // the pictures sit above it, outside the fill.
+  if (inAgentChat) {
+    return (
+      <MessageShell
+        name={me.name || "You"}
+        time={clockTime(ts)}
+        copy={body || undefined}
+        reactKey={chat?.sessionId && eventId ? `${chat.sessionId}:${eventId}` : undefined}
+        seq={seq}
+        author="me"
+        quote={replyTo}
+        above={
+          <>
+            {fromLine}
+            <ImageRow images={images} variant="sent" align="end" />
+          </>
+        }
+        after={gone.length > 0 ? <div className="mt-1 flex flex-col items-end gap-1">{gone}</div> : undefined}
+      >
+        {body ? (
+          <div data-brand={brand ? "" : undefined} style={brand ? ({ "--brand": brand } as CSSProperties) : undefined}>
+            {words}
+          </div>
+        ) : undefined}
+      </MessageShell>
+    );
+  }
 
   const content = (
     <div className={cn("flex flex-col gap-1.5", inAgentChat ? "items-start" : "items-end")}>
@@ -323,22 +514,7 @@ function UserMessage({
     </div>
   );
 
-  if (!inAgentChat) return content;
-
-  return (
-    <MessageShell
-      face={<PersonFace />}
-      name={me.name || "You"}
-      time={clockTime(ts)}
-      copy={body || undefined}
-      reactKey={chat?.sessionId && eventId ? `${chat.sessionId}:${eventId}` : undefined}
-      seq={seq}
-      author="me"
-      quote={replyTo}
-    >
-      {content}
-    </MessageShell>
-  );
+  return content;
 }
 
 export default memo(UserMessage);

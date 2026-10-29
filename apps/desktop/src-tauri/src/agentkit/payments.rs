@@ -177,7 +177,24 @@ impl Payments {
     }
 }
 
-fn fmt(cents: u64) -> String {
+impl Payments {
+    /// Books a purchase a person approved by hand, over the limits or not, so it still counts toward the month.
+    pub fn record_approved(&mut self, agent: &str, cents: i64, purpose: &str, place: &str, now: DateTime<Utc>) -> Result<()> {
+        self.roll(now);
+        if cents <= 0 {
+            bail!("the amount must be above zero");
+        }
+        self.ledger.spent_cents = self.ledger.spent_cents.saturating_add(cents as u64);
+        self.ledger.history.push(Spend { agent: agent.to_string(), cents: cents as u64, at: now.timestamp(), purpose: purpose.to_string(), place: place.to_string() });
+        if self.ledger.history.len() > 200 {
+            self.ledger.history.remove(0);
+        }
+        Ok(())
+    }
+}
+
+/// Dollars and cents, the way the limits are written: `12.50`.
+pub fn fmt(cents: u64) -> String {
     format!("{}.{:02}", cents / 100, cents % 100)
 }
 
@@ -294,6 +311,16 @@ mod tests {
         std::fs::write(&path, "{{{").unwrap();
         assert!(!Payments::load(&path).limits.enabled);
         assert!(!Payments::load(&dir.join("none.json")).limits.enabled);
+    }
+
+    #[test]
+    fn a_hand_approved_purchase_counts_toward_the_month() {
+        let mut p = on();
+        let now = t(2026, 1, 5);
+        p.record_approved("bot", 25000, "laptop stand", "shop", now).unwrap();
+        assert_eq!(p.spent_this_month(now), 25000);
+        assert!(matches!(p.request("bot", 100, "x", "y", now), Decision::Ask(_)), "the month is spent");
+        assert!(p.record_approved("bot", 0, "x", "y", now).is_err());
     }
 
     #[test]

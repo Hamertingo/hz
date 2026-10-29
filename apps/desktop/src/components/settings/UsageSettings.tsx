@@ -5,7 +5,8 @@ import { useState } from "react";
 
 import AgentIcon from "@/components/AgentIcon";
 import AgentTile from "@/components/AgentTile";
-import { Lead, SetHeading, StudioRow } from "@/components/settings/StudioRow";
+import { Empty, Group, Row, Val } from "@/components/kit/kit";
+import { SetHeading, StudioRow } from "@/components/settings/StudioRow";
 import { Button } from "@/components/ui/button";
 import { fieldClassName } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
@@ -18,48 +19,48 @@ import { useRoster } from "@/lib/roster";
 import {
   csvFileName,
   isWarn,
-  litCells,
   parseUsd,
   pctText,
-  resetNote,
+  untilReset,
   sourceNote,
   usd,
 } from "@/lib/limits";
+import { compactTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { CliLimits, Harness, LimitWindow, WorkspaceDefaults } from "@/types/events";
 
-const CLI_NAME: Record<string, string> = { "claude-acp": "Claude", "codex-acp": "Codex", opencode: "OpenCode" };
+const CLI_NAME: Record<string, string> = { "claude-acp": "Claude Code", "codex-acp": "Codex", opencode: "OpenCode" };
 
 /// The plans hz can size an estimate for, by CLI.
 const PLAN_CHOICES: Record<string, string[]> = { "claude-acp": ["Pro", "Max"], "codex-acp": ["Plus", "Pro"] };
 
-/// The bar's lit colour per CLI, as the mockup tints them: Claude's clay, and the
-/// ink for any other (the mockup's Codex paper is the dark theme's ink).
-const TINT: Record<string, string> = { "claude-acp": "#d97757" };
-
-function Bar({ pct, warn, tint }: { pct: number | null; warn: boolean; tint?: string }) {
-  const lit = litCells(pct);
+function Meter({ pct, warn }: { pct: number | null; warn: boolean }) {
   return (
-    <div className="flex h-1.5 flex-1 gap-0.5" aria-hidden>
-      {Array.from({ length: 30 }, (_, i) => (
-        <i
-          key={i}
-          className={cn("block flex-1 rounded-[1px] bg-foreground/8", i < lit && warn && "bg-amber")}
-          style={i < lit && !warn ? { background: tint ?? "var(--ink)" } : undefined}
-        />
-      ))}
+    <div className="mt-1.5 h-[5px] w-full overflow-hidden rounded-[9px] bg-s3" aria-hidden>
+      <i className={cn("block h-full rounded-[9px] bg-ink2", warn && "bg-amber")} style={{ width: `${Math.max(0, Math.min(100, pct ?? 0))}%` }} />
     </div>
   );
 }
 
-function WindowRow({ w, tint }: { w: LimitWindow; tint?: string }) {
+/// "resets in 2h 10m" inside a day, "resets Monday" past it; empty when the CLI named none.
+function windowReset(w: LimitWindow): string {
+  if (w.resetsAtMs === null || w.resetsAtMs <= Date.now()) return "";
+  const left = untilReset(w.resetsAtMs);
+  if (left && w.resetsAtMs - Date.now() < 24 * 3_600_000) return `resets in ${left}`;
+  return `resets ${new Date(w.resetsAtMs).toLocaleDateString("en-US", { weekday: "long" })}`;
+}
+
+function WindowRow({ w }: { w: LimitWindow }) {
   const warn = isWarn(w);
+  const reset = windowReset(w);
   return (
-    <div className="flex items-center gap-3 text-xs text-ink3">
-      <span className="w-[120px]">{w.label}</span>
-      <Bar pct={w.usedPct} warn={warn} tint={tint} />
-      <span className={cn("w-12 text-right tabular-nums", warn && "text-amber")}>{pctText(w)}</span>
-    </div>
+    <>
+      <div className="mt-[11px] flex text-xs leading-normal text-ink2">
+        <span>{w.label}</span>
+        <span className="ml-auto text-ink3">{reset ? `${reset} · ${pctText(w)}` : pctText(w)}</span>
+      </div>
+      <Meter pct={w.usedPct} warn={warn} />
+    </>
   );
 }
 
@@ -69,7 +70,7 @@ function LimitSkeleton() {
   return (
     <SkeletonRegion
       label="Reading the plan limits"
-      className="mt-3 rounded-(--r3) bg-s1 px-4 py-3.5 shadow-[inset_0_0_0_1px_var(--line)]"
+      className="relative px-3.5 py-3.5 not-first:before:absolute not-first:before:top-0 not-first:before:right-0 not-first:before:left-3 not-first:before:h-px not-first:before:bg-line"
     >
       <div className="flex items-center gap-2.5">
         <Skeleton className="size-[18px] rounded-[5px]" />
@@ -102,32 +103,29 @@ function LimitCard({
   defaults: WorkspaceDefaults;
   onPlan: (harness: string, plan: string) => void;
 }) {
-  const reset = resetNote(limits.windows);
   const choices = PLAN_CHOICES[limits.harness];
   const measured = limits.source === "claude-usage" || limits.source === "codex-app-server";
   const needsPlan = choices && limits.installed && !measured;
 
   return (
-    <div className="mt-3 rounded-(--r3) bg-s1 px-4 py-3.5 shadow-[inset_0_0_0_1px_var(--line)]">
+    <div className="relative px-3.5 py-3.5 not-first:before:absolute not-first:before:top-0 not-first:before:right-0 not-first:before:left-3 not-first:before:h-px not-first:before:bg-line">
       <div className="flex items-center gap-2.5">
-        <AgentIcon harness={limits.harness as Harness} className="size-[18px]" />
-        <b className="text-[13.5px] font-semibold text-ink">{CLI_NAME[limits.harness] ?? limits.harness}</b>
+        <span className="grid size-6 place-items-center text-ink2">
+          <AgentIcon harness={limits.harness as Harness} className="size-[18px]" />
+        </span>
+        <b className="text-[13px] font-[650] text-ink">{CLI_NAME[limits.harness] ?? limits.harness}</b>
         {sourceNote(limits) && (
           <span className="rounded-[5px] bg-s3 px-1.5 py-px text-[11px] font-medium text-ink3">{sourceNote(limits)}</span>
         )}
         <span className="ml-auto flex items-center gap-2 text-xs text-ink3">
           {reading && <Spinner className="size-3" />}
-          {limits.windows.length > 0 ? reset : (limits.note ?? "")}
+          {limits.windows.length > 0 ? "" : (limits.note ?? "")}
         </span>
       </div>
 
-      {limits.windows.length > 0 && (
-        <div className="mt-3 flex flex-col gap-2.5">
-          {limits.windows.map((w) => (
-            <WindowRow key={w.key} w={w} tint={TINT[limits.harness]} />
-          ))}
-        </div>
-      )}
+      {limits.windows.map((w) => (
+        <WindowRow key={w.key} w={w} />
+      ))}
 
       {limits.windows.length > 0 && limits.note && limits.source === "estimate" && (
         <p className="mt-2.5 text-xs text-ink4">{limits.note}</p>
@@ -203,17 +201,7 @@ export default function UsageSettings({ onOpenAccess }: { onOpenAccess: (agentId
 
   return (
     <>
-      <Lead>What your agents spend, and how close each CLI is to its plan's limit.</Lead>
-
-      <div className="-mt-4 flex items-center justify-between">
-        <span className="text-xs text-ink4">Read from each CLI. A bar marked ~ is hz's own estimate.</span>
-        <Button variant="outline" size="sm" disabled={anyReading} onClick={() => void refresh()}>
-          <RefreshCw className={cn(anyReading && "animate-spin")} />
-          Refresh
-        </Button>
-      </div>
-
-      <div className="-mt-4">
+      <Group>
         {CLI_ORDER.map((h) => {
           const l = byCli[h];
           return l ? (
@@ -228,48 +216,62 @@ export default function UsageSettings({ onOpenAccess }: { onOpenAccess: (agentId
             <LimitSkeleton key={h} />
           );
         })}
-      </div>
+      </Group>
 
-      <SetHeading>{spend ? `Spend this month · ${usd(spend.totalUsd)}` : "Spend this month"}</SetHeading>
-      <div className="flex flex-col gap-[9px]">
+      <div className="mx-1 mt-3 flex items-center gap-1.5">
+        <b className="text-xs font-medium text-ink3">Spend this month</b>
+        {spend && <i className="text-xs not-italic text-ink4">{usd(spend.totalUsd)}</i>}
+        <button
+          type="button"
+          disabled={anyReading}
+          onClick={() => void refresh()}
+          className="ml-auto flex cursor-pointer items-center gap-1 rounded-md px-[7px] py-px text-xs font-medium text-ink2 transition-colors hover:bg-s2 hover:text-ink disabled:opacity-50"
+        >
+          <RefreshCw className={cn("size-3", anyReading && "animate-spin")} />
+          Refresh limits
+        </button>
+      </div>
+      <Group>
         {spend === null && (
-          <SkeletonRegion label="Adding up this month" className="flex flex-col gap-[9px]">
+          <SkeletonRegion label="Adding up this month" className="flex flex-col gap-[9px] px-3 py-3">
             {[0.9, 0.55, 0.3].map((w, i) => (
               <div key={i} className="flex items-center gap-2.5">
-                <Skeleton className="size-5 rounded-[6px]" />
+                <Skeleton className="size-[26px] rounded-[8px]" />
                 <Skeleton className="h-3 w-12" />
-                <Skeleton className="h-2 rounded-[2px]" style={{ width: `${w * 60}%` }} />
-                <Skeleton className="ml-auto h-3 w-[72px]" />
+                <Skeleton className="ml-auto h-3 w-[72px]" style={{ opacity: w }} />
               </div>
             ))}
           </SkeletonRegion>
         )}
-        {spend?.agents.length === 0 && <p className="text-xs text-ink3">Nothing spent yet this month.</p>}
+        {spend?.agents.length === 0 && <Empty>Nothing spent yet this month.</Empty>}
         {spend?.agents.map((a) => {
           const agent = roster.agents.find((r) => r.id === a.agentId);
           return (
-            <button
+            <Row
               key={a.agentId}
-              type="button"
+              bareLead={!!agent}
+              lead={agent ? <AgentTile id={agent.id} kind={agent.kind} color={agent.color} shape={agent.shape} look={agent.look} photo={agent.photo} size={26} /> : undefined}
+              title={a.name}
+              sub={
+                <>
+                  <span className="block text-xs text-ink3">
+                    {`${compactTokens(a.inputTokens + a.outputTokens)} tokens · ${a.calls} ${a.calls === 1 ? "run" : "runs"}`}
+                  </span>
+                  <span className="mt-1.5 block h-1 overflow-hidden rounded-[9px] bg-s3" aria-hidden>
+                    <i className="block h-full rounded-[9px] bg-ink2" style={{ width: `${Math.min(100, (a.usd / top) * 100)}%` }} />
+                  </span>
+                </>
+              }
               onClick={() => onOpenAccess(a.agentId)}
-              className="flex cursor-pointer items-center gap-2.5 rounded-(--r1) text-left text-[12.5px] text-ink outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50"
-            >
-              {agent && <AgentTile id={agent.id} kind={agent.kind} color={agent.color} size={20} />}
-              <span className="w-14 truncate">{a.name}</span>
-              <span className="flex h-2 flex-1 gap-px overflow-hidden rounded-[2px]" aria-hidden>
-                {Array.from({ length: 50 }, (_, i) => (
-                  <i
-                    key={i}
-                    className="block h-full flex-1"
-                    style={{ background: i < Math.round((a.usd / top) * 50) ? (agent?.color ?? "var(--ink)") : "var(--s3)" }}
-                  />
-                ))}
-              </span>
-              <span className="w-[76px] text-right text-xs text-ink2 tabular-nums">{usd(a.usd)}</span>
-            </button>
+              right={<Val>{`$${a.usd.toFixed(2)}`}</Val>}
+            />
           );
         })}
-      </div>
+      </Group>
+
+      <p className="mx-1 mt-1.5 text-xs leading-normal text-ink4">
+        What each engine reports. Where it names no price, the cost is estimated from its tokens.
+      </p>
 
       <SetHeading>Limits</SetHeading>
       <div>

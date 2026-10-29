@@ -7,6 +7,7 @@ import RoutineRow from "@/components/routines/RoutineRow";
 import RunSheet from "@/components/routines/RunSheet";
 import WeekStrip from "@/components/routines/WeekStrip";
 import { Button } from "@/components/ui/button";
+import { PageSheet } from "@/components/ui/page-sheet";
 import { toast } from "@/components/ui/toast";
 import { useRoutines } from "@/hooks/useRoutines";
 import type { RosterAgent } from "@/lib/roster";
@@ -34,6 +35,8 @@ const TABS: { key: Filter; label: string }[] = [
   { key: "webhook", label: "Webhooks" },
 ];
 
+const LINK = "cursor-pointer text-ink underline decoration-ink4 underline-offset-[3px]";
+
 /// The page: a week of runs, then every routine as a sentence whose underlined
 /// words change it. Backed by `automations.rs`; this file holds no schedule of
 /// its own and draws what the backend says.
@@ -44,8 +47,10 @@ export default function RoutinesView({
   workspaceName,
   channels,
   onOpenChat,
+  onClose,
 }: {
   active: boolean;
+  onClose?: () => void;
   /// The workspace's agents, who a routine can be given to.
   agents: RosterAgent[];
   /// Every agent, so a routine of another workspace's agent is not drawn as nobody's.
@@ -75,9 +80,14 @@ export default function RoutinesView({
     () => r.routines.filter((x) => inWorkspace.has(x.agentId) || !known.has(x.agentId)),
     [r.routines, inWorkspace, known],
   );
-  const shown = filterRoutines(mine, filter);
-  const tabCounts = counts(mine);
+  const [dayKey, setDayKey] = useState<string | null>(null);
   const week = useMemo(() => weekBuckets(mine, now), [mine, now]);
+  const onDay = useMemo(
+    () => new Set(week.find((d) => d.date === dayKey)?.marks.map((m) => m.routineId)),
+    [week, dayKey],
+  );
+  const shown = filterRoutines(mine, filter).filter((x) => dayKey === null || onDay.has(x.id));
+  const tabCounts = counts(mine);
   const agentOf = (id: string) => allAgents.find((a) => a.id === id) ?? null;
 
   const openNew = useCallback(
@@ -156,62 +166,56 @@ export default function RoutinesView({
   const markRoutine = mark ? r.routines.find((x) => x.id === mark.routineId) : undefined;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-14 flex-none items-center gap-3 border-b border-line pr-4 pl-5">
-        <h1 className="flex items-center gap-[9px] text-[14.5px] font-semibold tracking-[-0.01em]">
-          <Clock className="size-4 text-ink3" /> Routines
-        </h1>
-        <div className="ml-3.5 flex gap-0.5" role="tablist">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={filter === t.key}
-              onClick={() => setFilter(t.key)}
-              className={cn(
-                "flex h-7 cursor-pointer items-center gap-1.5 rounded-(--r1) px-2.5 text-[12.5px] font-medium transition-colors",
-                filter === t.key ? "bg-active text-ink" : "text-ink3 hover:text-ink2",
-              )}
-            >
-              {t.label}
-              <em className={cn("text-[11px] not-italic tabular-nums", filter === t.key ? "text-ink3" : "text-ink4")}>
-                {tabCounts[t.key]}
-              </em>
-            </button>
-          ))}
-        </div>
-        <Button variant="solid" className="ml-auto" onClick={() => openNew()} disabled={agents.length === 0}>
+    <PageSheet
+      active={active}
+      title="Routines"
+      onClose={onClose}
+      actions={
+        <Button variant="solid" onClick={() => openNew()} disabled={agents.length === 0}>
           <Plus className="size-3.5" /> New routine
         </Button>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[900px] px-9 pt-7 pb-[70px]">
+      }
+    >
+      <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto">
+        <div className="px-5 pt-4 pb-5">
           {r.error && <p className="mb-4 text-[13px] text-red">{r.error}</p>}
           {!r.loaded ? (
             <RoutinesSkeleton />
           ) : (
             <>
-          {shown.length > 0 && <WeekStrip days={week} routines={mine} agents={allAgents} onOpen={setMark} />}
+          {mine.length > 0 && <WeekStrip days={week} routines={mine} selected={dayKey} onSelect={setDayKey} onOpen={setMark} />}
 
-          <div className="mt-[34px] mb-2.5 flex items-baseline gap-2.5">
-            <h3 className="text-[13px] font-semibold">
-              {shown.length} routine{shown.length === 1 ? "" : "s"}
-            </h3>
-            <span className="text-xs text-ink4">Click an underlined word to change it</span>
+          <div className="mx-1 mt-5 mb-2 flex items-baseline gap-1.5 leading-normal">
+            <b className="text-xs leading-normal font-medium text-ink3">{filter === "all" ? "All routines" : TABS.find((t) => t.key === filter)?.label}</b>
+            <i className="text-xs not-italic text-ink4">{shown.length}</i>
+            {tabCounts.webhook > 0 && (
+              <span className="ml-auto flex gap-0.5">
+                {TABS.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setFilter(t.key)}
+                    className={cn(
+                      "h-[22px] cursor-pointer rounded-full px-2 text-[11.5px] font-medium transition-colors",
+                      filter === t.key ? "bg-s3 text-ink" : "text-ink3 hover:text-ink",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </span>
+            )}
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          {shown.length > 0 && (
+          <div className="flex flex-col gap-0 rounded-[13px] bg-s1 shadow-[inset_0_0_0_1px_var(--line)] [&>*+*]:relative [&>*+*]:before:absolute [&>*+*]:before:top-0 [&>*+*]:before:right-0 [&>*+*]:before:left-3 [&>*+*]:before:h-px [&>*+*]:before:bg-line">
             {shown.map((routine) => (
               <RoutineRow
                 key={routine.id}
                 routine={routine}
                 agent={agentOf(routine.agentId)}
                 agents={agents}
-                channels={channels}
                 running={r.running.find((x) => x.id === routine.id)}
-                now={now}
                 onEdit={() => setEditing({ seed: inputOf(routine), existing: routine })}
                 onPatch={(change) => patch(routine, change)}
                 onRun={() => void run(routine)}
@@ -221,29 +225,33 @@ export default function RoutinesView({
                 onDelete={() => void remove(routine)}
               />
             ))}
-            {shown.length === 0 && r.loaded && (
-              <div className="rounded-(--r4) bg-s1 p-11 text-center text-[13px] text-ink3 shadow-[inset_0_0_0_1px_var(--line)]">
-                {mine.length === 0 ? (
-                  <>
-                    No routines in {workspaceName} yet.{" "}
-                    {agents.length > 0 ? (
-                      <button
-                        type="button"
-                        className="cursor-pointer text-ink underline decoration-ink4 underline-offset-[3px]"
-                        onClick={() => openNew()}
-                      >
-                        Make the first one
-                      </button>
-                    ) : (
-                      "Make an agent first: a routine is something an agent does."
-                    )}
-                  </>
-                ) : (
-                  "Nothing of this kind yet."
-                )}
-              </div>
-            )}
           </div>
+          )}
+          {shown.length === 0 && r.loaded && (
+            <div className="flex flex-col items-center gap-2 px-4 py-7 text-center text-[12.5px] text-ink3">
+              {mine.length === 0 ? (
+                <>
+                  <p>No routines in {workspaceName} yet.</p>
+                  {agents.length > 0 ? (
+                    <button type="button" className={LINK} onClick={() => openNew()}>
+                      Make the first one
+                    </button>
+                  ) : (
+                    <p>Make an agent first: a routine is something an agent does.</p>
+                  )}
+                </>
+              ) : dayKey !== null ? (
+                <>
+                  <p>Nothing scheduled for {week.find((d) => d.date === dayKey)?.label}.</p>
+                  <button type="button" className={LINK} onClick={() => setDayKey(null)}>
+                    Show all
+                  </button>
+                </>
+              ) : (
+                <p>Nothing of this kind yet.</p>
+              )}
+            </div>
+          )}
             </>
           )}
         </div>
@@ -276,6 +284,6 @@ export default function RoutinesView({
           onOpenChat(id);
         }}
       />
-    </div>
+    </PageSheet>
   );
 }

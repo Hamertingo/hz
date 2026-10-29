@@ -64,6 +64,10 @@ pub struct AgentRecord {
     /// hz's own tool servers the reader switched off: `"team"` and `"memory"`.
     #[serde(default)]
     pub tools_off: Vec<String>,
+    /// How its Mac commands are approved: `always_ask`, `auto_review` or
+    /// `allow_all`. Absent means the default in Settings → Agents.
+    #[serde(default)]
+    pub command_review: Option<String>,
 }
 
 /// One "always ask me before" line.
@@ -371,8 +375,10 @@ fn last_line_said(chunk: &str, whole: bool) -> String {
         if payload["type"] != "assistant_text" || !event["subagent"].is_null() {
             continue;
         }
+        // A `NO_REPLY` is the agent saying nothing, and the row says nothing of it.
         if let Some(first) = payload["text"]
             .as_str()
+            .filter(|t| !crate::talk::is_no_reply(t))
             .and_then(|t| t.lines().map(str::trim).find(|l| !l.is_empty()))
         {
             return first.chars().take(160).collect();
@@ -417,15 +423,16 @@ pub async fn agent_glances(session_ids: Vec<String>) -> Vec<Glance> {
 /// not up. A server the reader switched
 /// off in Access is left out, so the next session simply does not have it.
 /// Handed over at `session/new` and again at every resume, since the port changes
-/// with each launch.
-pub fn mcp_servers(agent_id: &str) -> Value {
+/// with each launch. The team's URL names `session_id`, which is how a message
+/// sent from it knows where its answer comes back to.
+pub fn mcp_servers(agent_id: &str, session_id: &str) -> Value {
     let Some(port) = crate::team::port() else { return json!([]) };
     let mut out = Vec::new();
     if tool_enabled(agent_id, "team") {
         out.push(json!({
             "type": "http",
             "name": "team",
-            "url": format!("http://127.0.0.1:{port}/mcp/{agent_id}"),
+            "url": format!("http://127.0.0.1:{port}/mcp/{agent_id}?s={session_id}"),
             "headers": [],
         }));
     }
@@ -437,9 +444,48 @@ pub fn mcp_servers(agent_id: &str) -> Value {
             "headers": [],
         }));
     }
+    if tool_enabled(agent_id, "hz") {
+        out.push(json!({
+            "type": "http",
+            "name": "hz",
+            "url": format!("http://127.0.0.1:{port}/mcp/{agent_id}/hz"),
+            "headers": [],
+        }));
+    }
+    out.extend(computer_server(agent_id));
+    out.extend(crate::kit_mcp::servers(agent_id, port));
     // The plugins the reader granted this agent, through hz's proxy.
     out.extend(crate::plugin_store::servers_for_agent(agent_id));
     Value::Array(out)
+}
+
+/// Whether the agent has its own computer: this build carries HyzeVM and the reader has not switched it off.
+fn has_computer(agent_id: &str) -> bool {
+    crate::binpath::shipped_hyzevm().is_some() && tool_enabled(agent_id, "computer")
+}
+
+/// The agent's computer as an MCP server: the bundled `hyzevm mcp`, pinned to this agent's machine so every tool is
+/// about it and nothing reaches another machine. Stdio, started by the CLI with the QEMU folder beside it.
+fn computer_server(agent_id: &str) -> Option<Value> {
+    if !has_computer(agent_id) {
+        return None;
+    }
+    let dir = crate::binpath::shipped_hyzevm()?;
+    let bin = dir.join("bin").join(if cfg!(windows) { "hyzevm.exe" } else { "hyzevm" });
+    Some(json!({
+        "name": "computer",
+        "command": bin.to_string_lossy(),
+        "args": ["mcp"],
+        "env": [
+            {"name": "HYZEVM_MCP_MACHINE", "value": crate::hyzevm::machine_name(agent_id)},
+            {"name": "HYZEVM_QEMU_DIR", "value": dir.join("qemu").to_string_lossy()},
+            // Where `{{NAME}}` keys are read from and which to scrub (`safety_tools.rs`), and the door back for a purchase.
+            {"name": "HZ_KEYS_SERVICE", "value": "hz.plugins"},
+            {"name": "HZ_KEYS_ACCOUNT", "value": crate::safety_tools::key_account_prefix(agent_id)},
+            {"name": "HZ_KEYS_INDEX", "value": crate::safety_tools::key_index(agent_id).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()},
+            {"name": "HZ_SAFETY_URL", "value": crate::team::port().map(|p| format!("http://127.0.0.1:{p}/mcp/{agent_id}/safety")).unwrap_or_default()},
+        ],
+    }))
 }
 
 /// Whether one of hz's own tool servers is on for this agent. An unknown agent
@@ -497,7 +543,8 @@ async fn current_layers(agent: &AgentRecord) -> Option<(Vec<Layer>, PathBuf)> {
         None => None,
     };
     let person = crate::settings::read().await.me.briefing_line();
-    let about = Preamble { workspace: workspace.as_deref(), person: person.as_deref() };
+    let computer = has_computer(&agent.id).then(|| crate::hyzevm::machine_name(&agent.id));
+    let about = Preamble { workspace: workspace.as_deref(), person: person.as_deref(), computer };
     Some((layers(agent, &dir, &team, &about), dir))
 }
 
@@ -556,6 +603,8 @@ pub async fn agent_briefing_layers(agent_id: String) -> Result<Vec<LayerInfo>, S
 struct Preamble<'a> {
     workspace: Option<&'a str>,
     person: Option<&'a str>,
+    /// The agent's own computer (its HyzeVM machine), when this build carries one and the agent may use it.
+    computer: Option<String>,
 }
 
 fn digest_of(text: &str) -> String {
@@ -725,6 +774,34 @@ fn layers(
     };
     out.push(Layer { key: "memory", label: "Memory", text: memory_text });
 
+    out.push(Layer { key: "safety", label: "Outside text, keys and money", text: crate::safety_tools::briefing_rules() });
+
+    if let Some(machine) = &about.computer {
+        out.push(Layer {
+            key: "computer",
+            label: "Its computer",
+            text: format!(
+                "\nYour computer: besides the person's Mac, where you are running and where their project folder is, \
+                 you have a computer of your own: a Debian Linux machine called {machine}, with a desktop, a terminal \
+                 and Chromium. The person can watch its screen live in hz and take it over. When someone asks which \
+                 computer you are on, say both: you work in their folder on their Mac, and you have your own Linux \
+                 computer for browsing and running things. The `computer` tools act on it and already point at it: \
+                 machine_exec runs bash there (install what you need with sudo apt-get or pip; it is yours, no \
+                 approval needed), machine_read_file and machine_write_file move text in and out, browser_goto, \
+                 browser_snapshot, browser_click and browser_type drive its Chromium, and desktop_* use the screen. \
+                 For anything on the web, use its browser rather than the Mac: read pages with browser_snapshot, \
+                 which is cheaper and more exact than a screenshot, and take desktop_screenshot only when the look \
+                 matters. Reuse the tab you have; close the ones you open. Batch shell commands into one call. The \
+                 computer sleeps when idle and wakes by itself on the next tool call. Never type passwords, codes or \
+                 card numbers: for a sign-in, a CAPTCHA, a two-step code or a payment, open the page, call \
+                 request_takeover saying exactly what the person should do, then takeover_wait, and carry on when they \
+                 hand it back. Before anything that leaves the computer (posting, sending, buying, deleting), call \
+                 approve_action and wait for the yes. Commands on the Mac itself still go through the person's \
+                 approval.\n"
+            ),
+        });
+    }
+
     if !team.is_empty() {
         let names: Vec<String> = team
             .iter()
@@ -739,14 +816,7 @@ fn layers(
         out.push(Layer {
             key: "team",
             label: "Team",
-            text: format!(
-                "\nTeam: your teammates are {}. Use team_ask when you need their answer to carry \
-                 on: it waits and returns what they say. Use team_message to hand something off \
-                 without waiting; they answer in your conversation if a reply is needed. Give \
-                 them everything they need, since they cannot see your conversation. team_list \
-                 shows who is there.\n",
-                names.join(", ")
-            ),
+            text: team_text(&names),
         });
     }
 
@@ -766,6 +836,28 @@ fn layers(
         });
     }
 
+    if !agent.tools_off.iter().any(|t| t == "hz") {
+        let mut text = String::from(
+            "\nWhat you post: besides words, the hz tools put things in this chat. Never send mail or messages \
+             yourself, by any route: write them with propose_draft, and the person edits the card and sends, \
+             copies or discards it. page_create posts anything long worth reading at full size (a report, a \
+             table) and page_update changes it; show_chart turns numbers into a chart; show_widget shows a \
+             small interactive page with no network; show_plan shows the steps of long work, sent again whole \
+             as they move. create_agent makes a new teammate, only when the person asks for one.",
+        );
+        if about.computer.is_some() {
+            text.push_str(
+                " On your computer: share_screenshot shows the person your screen and keeps the picture in your \
+                 Library. For a command that runs long, start it in the background, call wake_when_done with its \
+                 pid and end your turn; you are woken in this chat when it ends. For a sign-in, open the page and \
+                 call request_login (qr_login for a code to scan): the person types into the page, and you never \
+                 see or ask for the password. request_takeover stays for CAPTCHAs, payments and the rest.",
+            );
+        }
+        text.push('\n');
+        out.push(Layer { key: "posting", label: "What it posts", text });
+    }
+
     if !agent.tools_off.iter().any(|t| t == "team") {
         out.push(Layer {
             key: "ask",
@@ -779,7 +871,35 @@ fn layers(
         });
     }
 
+    if let Some(text) = crate::kit_mcp::briefing(&agent.id) {
+        out.push(Layer { key: "accounts", label: "Accounts", text });
+    }
+
     out
+}
+
+/// The team part of the briefing: who the teammates are and how to work with
+/// them, for `talk.rs`'s rules (one message tool, nothing waits, answers come
+/// back by themselves).
+fn team_text(names: &[String]) -> String {
+    format!(
+        "\nTeam: you work with {}.\n\
+         - When a teammate is better placed for part of the work, offer to pass it on, and send it once the person \
+         agrees, or straight away if they asked for it. When you are not sure who should take something, ask the \
+         person.\n\
+         - To reach a teammate, call team_message with their name and a complete brief: who asked and why, the exact \
+         paths and names involved, what is already known, what to be careful with, and that they should report back. \
+         They cannot see this conversation.\n\
+         - team_message returns at once. Tell the person in a sentence or two what you passed on, then end your turn. \
+         The answer comes back to this chat by itself, starting with \"[Name answered in your thread]\": tell the \
+         person briefly what came back and carry on.\n\
+         - Writing @Name in this chat reaches nobody; only team_message does.\n\
+         - Do not message a teammate just to thank them or say goodbye. When a message to you needs nothing back, \
+         answer exactly NO_REPLY and nothing is shown.\n\
+         - In a channel you belong to, post_to_channel posts as you (an @Name there wakes that member) and \
+         read_channel shows what was said. team_list says who is busy with what.\n",
+        names.join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -811,6 +931,8 @@ mod tests {
         assert!(text.contains("Answer in Portuguese."));
         assert!(text.contains("/h/agents/mavis/memory"));
         assert!(text.contains("Rex (reviews code)"));
+        assert!(text.contains("team_message") && text.contains("NO_REPLY"));
+        assert!(!text.contains("team_ask"), "nothing tells an agent to wait on a teammate");
     }
 
     #[test]
@@ -854,6 +976,7 @@ mod tests {
         let about = Preamble {
             workspace: Some("  Hyze Cloud sells sandbox VMs.  "),
             person: Some("The person you work for: Gabriel."),
+            computer: None,
         };
         let text = briefing(&me, std::path::Path::new("/m"), &[], &about);
 
@@ -869,7 +992,7 @@ mod tests {
     #[test]
     fn a_blank_workspace_context_adds_nothing() {
         let me = agent("Ada", "", "");
-        let about = Preamble { workspace: Some("   "), person: None };
+        let about = Preamble { workspace: Some("   "), person: None, computer: None };
 
         assert_eq!(
             briefing(&me, std::path::Path::new("/m"), &[], &about),
@@ -881,8 +1004,8 @@ mod tests {
     fn a_change_of_workspace_context_changes_the_digest() {
         let me = agent("Ada", "", "");
         let dir = std::path::Path::new("/m");
-        let a = briefing(&me, dir, &[], &Preamble { workspace: Some("one"), person: None });
-        let b = briefing(&me, dir, &[], &Preamble { workspace: Some("two"), person: None });
+        let a = briefing(&me, dir, &[], &Preamble { workspace: Some("one"), person: None, computer: None });
+        let b = briefing(&me, dir, &[], &Preamble { workspace: Some("two"), person: None, computer: None });
 
         assert_ne!(digest_of(&a), digest_of(&b));
     }
@@ -928,12 +1051,12 @@ mod tests {
     #[test]
     fn the_layers_are_the_briefing_split_in_order() {
         let me = agent("Ada", "dev", "Be brief.");
-        let about = Preamble { workspace: Some("Hyze."), person: Some("The person: G.") };
+        let about = Preamble { workspace: Some("Hyze."), person: Some("The person: G."), computer: None };
         let dir = std::path::Path::new("/m");
         let parts = layers(&me, dir, &[], &about);
         let keys: Vec<&str> = parts.iter().map(|l| l.key).collect();
 
-        assert_eq!(keys, vec!["workspace", "instructions", "person", "memory", "ask"]);
+        assert_eq!(keys, vec!["workspace", "instructions", "person", "memory", "safety", "posting", "ask"]);
         assert!(parts.last().unwrap().text.contains("ask_user"));
         assert_eq!(join_layers(&parts), briefing(&me, dir, &[], &about));
         assert_eq!(estimate_tokens("abcdefgh"), 2);
@@ -1007,4 +1130,16 @@ mod tests {
 
         assert_eq!(last_line_said(chunk, false), "");
     }
+
+    #[test]
+    fn an_agent_with_a_computer_is_told_about_it_by_name() {
+        let me = agent("a1", "Atlas", "");
+        let about = Preamble { workspace: None, person: None, computer: Some("hz-a1".into()) };
+        let parts = layers(&me, std::path::Path::new("/m"), &[], &about);
+        let computer = parts.iter().find(|l| l.key == "computer").expect("a computer layer");
+        assert!(computer.text.contains("hz-a1") && computer.text.contains("request_takeover"));
+        let none = layers(&me, std::path::Path::new("/m"), &[], &Preamble::default());
+        assert!(!none.iter().any(|l| l.key == "computer"));
+    }
+
 }

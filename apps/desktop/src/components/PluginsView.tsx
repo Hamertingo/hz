@@ -1,26 +1,26 @@
-import { BookOpen, Check, Lock, Plug, Plus, Search, X } from "lucide-react";
+import { BookOpen, Check, Plug, Plus, Search, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 
-import AgentTile from "@/components/AgentTile";
-import MeAvatar from "@/components/MeAvatar";
+import Dither from "@/components/Dither";
 import AddServerDialog from "@/components/plugins/AddServerDialog";
 import ConnectModal from "@/components/plugins/ConnectModal";
+import { GoogleTile } from "@/components/plugins/GoogleApp";
 import PluginSheet from "@/components/plugins/PluginSheet";
 import PluginsSkeleton from "@/components/plugins/PluginsSkeleton";
 import SkillSheet from "@/components/plugins/SkillSheet";
-import { Faces, PluginMark } from "@/components/plugins/parts";
+import { Faces, PluginMark, liftDark } from "@/components/plugins/parts";
+import { Empty, Group, Row, UnderlineTabs, Val } from "@/components/kit/kit";
+import { PageSheet } from "@/components/ui/page-sheet";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { useMe } from "@/hooks/useMe";
 import { usePlugins } from "@/hooks/usePlugins";
 import {
   authNote,
-  callsThisWeek,
   catalogGroups,
   grantToast,
   holders,
   matches,
-  matrixCount,
   spark,
   type PluginsTab,
 } from "@/lib/pluginsView";
@@ -48,10 +48,12 @@ export default function PluginsView({
   workspaceId,
   workspaceName,
   agents,
-  onOpenAccess,
+  onOpenAccess: _onOpenAccess,
+  onClose,
   refreshRef,
 }: {
   active: boolean;
+  onClose?: () => void;
   workspaceId: string | null;
   workspaceName: string;
   /// The workspace's agents: the rows of the matrix.
@@ -70,7 +72,6 @@ export default function PluginsView({
   const [editing, setEditing] = useState<{ skill: Skill | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [hoverCol, setHoverCol] = useState<string | null>(null);
   // Jump to → Plugins opens the plugin's detail; "Connect a plugin" opens the catalog.
   useJumpTarget("plugin", (t) => {
     setTab("connected");
@@ -131,7 +132,7 @@ export default function PluginsView({
   const startConnect = (entry: CatalogEntry) => setConnecting({ entry, existing: null });
 
   const search = (
-    <label className="flex h-[30px] w-[210px] items-center gap-2 rounded-(--r2) bg-s2 px-2.5 text-ink3 shadow-[inset_0_0_0_1px_var(--line)] focus-within:shadow-[inset_0_0_0_1px_var(--line3)]">
+    <label className="ml-auto flex h-[30px] w-[220px] items-center gap-2 rounded-(--r1) bg-s1 px-2.5 text-ink3 shadow-[inset_0_0_0_1px_var(--line2)] focus-within:shadow-[inset_0_0_0_1px_var(--line3)]">
       <Search className="size-3.5 shrink-0" />
       <input
         className="min-w-0 flex-1 bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink4"
@@ -144,50 +145,45 @@ export default function PluginsView({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-14 flex-none items-center gap-3 border-b border-line pr-4 pl-5">
-        <h1 className="flex items-center gap-[9px] text-[14.5px] font-semibold tracking-[-0.01em]">
-          <Plug className="size-4 text-ink3" /> Plugins
-        </h1>
-        <div className="ml-3.5 flex gap-0.5" role="tablist">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.key}
-              onClick={() => {
-                setTab(t.key);
-                setQuery("");
-              }}
-              className={cn(
-                "flex h-7 cursor-pointer items-center gap-1.5 rounded-(--r1) px-2.5 text-[12.5px] font-medium transition-colors",
-                tab === t.key ? "bg-active text-ink" : "text-ink3 hover:text-ink2",
-              )}
-            >
-              {t.label}
-              <em className={cn("text-[11px] not-italic tabular-nums", tab === t.key ? "text-ink3" : "text-ink4")}>
-                {counts[t.key]}
-              </em>
-            </button>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          {search}
-          {tab === "skills" ? (
-            <Button variant="outline" onClick={() => setEditing({ skill: null })} disabled={!workspaceId}>
-              <Plus className="size-3.5" /> New skill
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={() => setAdding({ name: "" })} disabled={!workspaceId}>
-              <Plus className="size-3.5" /> Add MCP server
-            </Button>
-          )}
-        </div>
+    <PageSheet
+      active={active}
+      title="Connect apps"
+      onClose={onClose}
+      actions={
+        tab === "skills" ? (
+          <Button variant="outline" onClick={() => setEditing({ skill: null })} disabled={!workspaceId}>
+            <Plus className="size-3.5" /> New skill
+          </Button>
+        ) : (
+          <Button variant="outline" onClick={() => setAdding({ name: "" })} disabled={!workspaceId}>
+            <Plus className="size-3.5" /> Add MCP server
+          </Button>
+        )
+      }
+    >
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-line px-5">
+        <UnderlineTabs
+          className="border-0 px-0"
+          value={tab}
+          onChange={(next) => {
+            setTab(next);
+            setQuery("");
+          }}
+          options={TABS.map((t) => ({
+            value: t.key,
+            label: (
+              <span className="flex items-center gap-1.5">
+                {t.label}
+                {t.key === "connected" && <em className="text-[11px] not-italic tabular-nums text-ink3">{counts.connected}</em>}
+              </span>
+            ),
+          }))}
+        />
+        {search}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1040px] px-9 pt-7 pb-[70px]">
+      <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto">
+        <div className="px-5 pt-4 pb-5">
           {(notice || p.error) && (
             <p className="mb-4 flex items-start gap-2 text-[13px] break-words text-red">
               <span className="min-w-0 flex-1">{notice ?? p.error}</span>
@@ -209,15 +205,11 @@ export default function PluginsView({
               agents={agents}
               calls={p.calls}
               now={now}
-              hoverCol={hoverCol}
-              setHoverCol={setHoverCol}
               moreCount={catalogLeft.length}
               workspaceName={workspaceName}
               loaded={p.loaded}
               onOpen={setOpenId}
               onBrowse={() => setTab("catalog")}
-              onGrant={grant}
-              onOpenAccess={onOpenAccess}
             />
           ) : tab === "catalog" ? (
             <CatalogTab
@@ -231,7 +223,6 @@ export default function PluginsView({
             <SkillsTab
               skills={p.skills.filter((s) => matches(s.name, query))}
               agents={agents}
-              meName={me.name}
               onOpen={(skill) => setEditing({ skill })}
               onNew={() => setEditing({ skill: null })}
             />
@@ -311,7 +302,7 @@ export default function PluginsView({
           void p.deleteSkill(skill.slug).then((ok) => ok && toast("Skill deleted", { icon: <BookOpen /> }));
         }}
       />
-    </div>
+    </PageSheet>
   );
 }
 
@@ -321,32 +312,23 @@ function ConnectedTab({
   agents,
   calls,
   now,
-  hoverCol,
-  setHoverCol,
   moreCount,
   workspaceName,
   loaded,
   onOpen,
   onBrowse,
-  onGrant,
-  onOpenAccess,
 }: {
   plugins: Plugin[];
   all: Plugin[];
   agents: RosterAgent[];
   calls: ReturnType<typeof usePlugins>["calls"];
   now: number;
-  hoverCol: string | null;
-  setHoverCol: (id: string | null) => void;
   moreCount: number;
   workspaceName: string;
   loaded: boolean;
   onOpen: (id: string) => void;
   onBrowse: () => void;
-  onGrant: (plugin: Plugin, agent: RosterAgent, on: boolean) => Promise<void>;
-  onOpenAccess: (agentId: string) => void;
 }) {
-  const { on, all: total } = matrixCount(all, agents);
   return (
     <>
       {all.length === 0 && loaded && (
@@ -357,10 +339,10 @@ function ConnectedTab({
           </button>
         </div>
       )}
-      <div className="grid grid-cols-3 gap-2.5 max-[900px]:grid-cols-2 max-[620px]:grid-cols-1">
+      <div className="grid grid-cols-3 gap-2.5 max-[760px]:grid-cols-2 max-[560px]:grid-cols-1">
+        <GoogleTile agents={agents} card={CARD} />
         {plugins.map((pl) => {
           const users = holders(pl, agents);
-          const week = callsThisWeek(calls, pl.id, now);
           return (
             <div
               key={pl.id}
@@ -368,38 +350,42 @@ function ConnectedTab({
               tabIndex={0}
               onClick={() => onOpen(pl.id)}
               onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen(pl.id)}
-              className={cn(CARD, "flex cursor-pointer flex-col gap-3 p-4 transition-colors outline-none hover:bg-s2 focus-visible:ring-2 focus-visible:ring-ring/50")}
+              className={cn(CARD, "flex cursor-pointer flex-col overflow-hidden rounded-(--r3) bg-transparent transition-[background,box-shadow] outline-none hover:bg-s1 hover:shadow-[inset_0_0_0_1px_var(--line2)] focus-visible:ring-2 focus-visible:ring-ring/50")}
             >
-              <div className="flex items-center gap-3">
-                <PluginMark face={pl} size={40} />
-                <div className="min-w-0">
-                  <b className="block truncate text-sm font-semibold">{pl.name}</b>
-                  <div className="mt-px text-xs text-ink4">
-                    {pl.tools.length} tool{pl.tools.length === 1 ? "" : "s"}
-                  </div>
+              <div className="relative h-[52px] overflow-hidden bg-s2">
+                <Dither color={liftDark(pl.color)} seed={`${pl.id}:band`} cols={90} rows={20} light={0.8} />
+              </div>
+              <div className="flex flex-1 flex-col gap-[5px] px-3.5 pb-[13px]">
+                <span className="relative z-[2] -mt-[19px] flex w-max rounded-[12px] bg-(--sheet) p-[3px]">
+                  <PluginMark face={pl} size={40} />
+                </span>
+                <div className="flex items-center gap-2">
+                  <b className="truncate text-[13.5px] font-semibold">{pl.name}</b>
+                  <span className="ml-auto inline-flex items-center gap-[5px] text-[11.5px] whitespace-nowrap text-ink3">
+                    <i className={cn("size-1.5 rounded-full", pl.status === "connected" ? "bg-green" : "bg-amber")} />
+                    {pl.status === "connected" ? "Connected" : "Reconnect"}
+                  </span>
                 </div>
-                <span className="ml-auto flex items-center gap-[5px] text-[11.5px] whitespace-nowrap text-ink3">
-                  <i className={cn("size-1.5 rounded-full", pl.status === "connected" ? "bg-green" : "bg-amber")} />
-                  {pl.status === "connected" ? "Connected" : "Reconnect"}
-                </span>
-              </div>
-              <div className="min-h-[38px] text-[12.5px] leading-normal text-ink3">
-                {pl.error ? <span className="line-clamp-2 text-red">{pl.error}</span> : pl.description}
-              </div>
-              <div className="flex items-center gap-2 text-[11.5px] text-ink4">
-                {users.length > 0 ? (
-                  <>
-                    <Faces agents={users} />
-                    <span>{week} call{week === 1 ? "" : "s"} this week</span>
-                  </>
-                ) : (
-                  "Nobody uses it yet"
-                )}
-                <span className="ml-auto flex h-3.5 items-end gap-px" aria-hidden>
-                  {spark(calls, pl.id, now).map((h, i) => (
-                    <i key={i} className="w-[3px] rounded-[1px] bg-ink4" style={{ height: h }} />
-                  ))}
-                </span>
+                <div className="flex-1 text-[12.5px] leading-normal text-ink3">
+                  {pl.error ? <span className="line-clamp-2 text-red">{pl.error}</span> : pl.description}
+                </div>
+                <div className="mt-[5px] flex items-center gap-2 text-[11.5px] leading-normal text-ink3">
+                  {users.length > 0 ? (
+                    <>
+                      <Faces agents={users} />
+                      <span>
+                        {users.length} agent{users.length === 1 ? "" : "s"}
+                      </span>
+                    </>
+                  ) : (
+                    "Nobody uses it yet"
+                  )}
+                  <span className="ml-auto flex h-3.5 items-end gap-0.5" aria-hidden>
+                    {spark(calls, pl.id, now).map((h, i) => (
+                      <i key={i} className="w-0.5 rounded-[2px] bg-ink4" style={{ height: h }} />
+                    ))}
+                  </span>
+                </div>
               </div>
             </div>
           );
@@ -408,104 +394,13 @@ function ConnectedTab({
           <button
             type="button"
             onClick={onBrowse}
-            className="grid cursor-pointer place-items-center rounded-(--r4) p-4 text-center text-ink3 shadow-[inset_0_0_0_1px_var(--line)] transition-colors hover:bg-s1 hover:text-ink"
+            className="flex min-h-[170px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-(--r3) border border-dashed border-line2 text-center text-[13px] font-medium text-ink3 transition-colors hover:bg-s1 hover:text-ink"
           >
-            <div>
-              <Plus className="mx-auto size-5" />
-              <div className="mt-2 font-medium">Browse {moreCount} more</div>
-              <div className="mt-0.5 text-xs text-ink4">Slack, Drive, Notion…</div>
-            </div>
+            <Plus className="size-[22px]" />
+            <span>Browse {moreCount} more</span>
           </button>
         )}
       </div>
-
-      {all.length > 0 && (
-        <>
-          <div className="mt-9 mb-3 flex items-baseline gap-2.5">
-            <h3 className="text-[13px] font-semibold">Who can use what</h3>
-            <span className="text-xs text-ink4">
-              Click a square to give or take a plugin. A new grant reaches an agent when its next session starts; a taken one stops at once.
-            </span>
-          </div>
-          <div className="overflow-hidden rounded-(--r4) shadow-[inset_0_0_0_1px_var(--line)]" onMouseLeave={() => setHoverCol(null)}>
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className="px-4 pt-3.5 pb-3 text-left text-xs font-medium text-ink4">Agent</th>
-                  {all.map((pl) => (
-                    <th
-                      key={pl.id}
-                      onClick={() => onOpen(pl.id)}
-                      onMouseEnter={() => setHoverCol(pl.id)}
-                      className={cn(
-                        "cursor-pointer border-b border-line px-1.5 pt-3.5 pb-3 align-bottom text-xs font-medium text-ink2 hover:text-ink",
-                        hoverCol === pl.id && "bg-hover",
-                      )}
-                    >
-                      <div className="flex flex-col items-center gap-2">
-                        <PluginMark face={pl} size={26} />
-                        <span>{pl.name}</span>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {agents.map((a) => (
-                  <tr key={a.id} className="group/row">
-                    <td
-                      onClick={() => onOpenAccess(a.id)}
-                      className="cursor-pointer border-b border-line py-[9px] pr-1.5 pl-3.5 group-last/row:border-b-0 group-hover/row:bg-hover"
-                    >
-                      <div className="flex items-center gap-[9px] text-[13px] font-medium">
-                        <AgentTile id={a.id} kind={a.kind} color={a.color} size={24} />
-                        {a.name}
-                        <em className="text-[11.5px] font-normal text-ink4 not-italic">{a.role}</em>
-                      </div>
-                    </td>
-                    {all.map((pl) => {
-                      const has = pl.grants.includes(a.id);
-                      return (
-                        <td
-                          key={pl.id}
-                          onMouseEnter={() => setHoverCol(pl.id)}
-                          className={cn(
-                            "border-b border-line px-1.5 py-[9px] text-center group-last/row:border-b-0 group-hover/row:bg-hover",
-                            hoverCol === pl.id && "bg-hover",
-                          )}
-                        >
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={has}
-                            aria-label={`${a.name} can use ${pl.name}`}
-                            title={`${a.name} · ${pl.name}`}
-                            onClick={() => void onGrant(pl, a, !has)}
-                            className={cn(
-                              "inline-grid size-5 cursor-pointer place-items-center rounded-[6px] text-[#111] transition-[transform,background,box-shadow] duration-100 outline-none hover:scale-[1.08] focus-visible:ring-2 focus-visible:ring-ring/50",
-                              has ? "shadow-none" : "shadow-[inset_0_0_0_1.5px_var(--line3)] hover:shadow-[inset_0_0_0_1.5px_var(--ink3)]",
-                            )}
-                            style={has ? { background: a.color } : undefined}
-                          >
-                            {has && <Check className="size-3" strokeWidth={3} />}
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {agents.length === 0 && <p className="px-4 py-5 text-[13px] text-ink3">There are no agents in this workspace yet.</p>}
-            <div className="flex items-center gap-2 border-t border-line px-4 py-[11px] text-xs text-ink4">
-              <Lock className="size-[13px]" /> Tools set to Ask wait for you in the Inbox.
-              <span className="ml-auto">
-                {on} of {total} on
-              </span>
-            </div>
-          </div>
-        </>
-      )}
     </>
   );
 }
@@ -523,89 +418,81 @@ function CatalogTab({
   onConnect: (entry: CatalogEntry) => void;
   onAddAs: () => void;
 }) {
-  const featured = catalog.find((c) => c.id === "slack");
   const groups = catalogGroups(catalog, connectedIds, query);
-  const showFeatured = featured && !connectedIds.has(featured.id) && matches(featured.name, query);
+  const pool = groups.flatMap((g) => g.items);
+  const featured = query.trim() ? undefined : (pool.find((c) => c.id === "slack") ?? pool[0]);
+  const showFeatured = !!featured;
+  const items = pool.filter((c) => c.id !== featured?.id);
   return (
     <>
-      {showFeatured && (
-        <div className="relative mb-1.5 flex items-center gap-[26px] overflow-hidden rounded-[20px] px-7 py-[26px] shadow-[inset_0_0_0_1px_var(--line)]">
+      {featured && (
+        <div className="relative mb-5 flex items-center gap-[22px] overflow-hidden rounded-(--r4) px-6 py-[22px] shadow-[inset_0_0_0_1px_var(--line)]">
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-[0.22]"
-            style={{ background: `radial-gradient(ellipse 60% 120% at 0% 50%, ${featured.color}, transparent 70%)` }}
-          />
-          <span className="relative">
-            <PluginMark face={featured} size={76} />
+            className="absolute inset-0 opacity-35 [mask-image:linear-gradient(90deg,transparent_25%,#000_90%)]"
+          >
+            <Dither color={liftDark(featured.color)} seed={`${featured.id}:feat`} cols={120} rows={30} light={0.8} />
+          </div>
+          <span className="relative flex">
+            <PluginMark face={featured} size={72} />
           </span>
-          <div className="relative flex flex-1 flex-col gap-2">
+          <div className="relative flex flex-1 flex-col gap-1">
             <span className="text-[11.5px] font-medium text-ink3">Featured</span>
-            <h2 className="text-xl font-semibold tracking-[-0.02em]">Your agents, in Slack</h2>
-            <p className="max-w-[460px] text-[13px] leading-[1.55] text-ink3">
-              Let agents search, read and post in your Slack channels. Anything that posts asks you first.
+            <h2 className="text-lg font-semibold tracking-[-0.02em]">Your agents, in {featured.name}</h2>
+            <p className="max-w-[420px] text-[13px] leading-[1.55] text-ink3">
+              {featured.description.replace(/\.$/, "")}. Give it to the agents who need it; anything that writes asks you first.
             </p>
-            <div className="mt-1.5">
-              <Button variant="solid" onClick={() => onConnect(featured)}>
-                Connect Slack
-              </Button>
-            </div>
+            <Button variant="solid" className="mt-2 w-max" onClick={() => onConnect(featured)}>
+              Connect {featured.name}
+            </Button>
           </div>
         </div>
       )}
-      {groups.map((g) => (
-        <section key={g.category}>
-          <div className="mt-9 mb-3 flex items-baseline gap-2.5">
-            <h3 className="text-[13px] font-semibold">{g.category}</h3>
-            <span className="text-xs text-ink4">{g.items.length}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2.5 max-[900px]:grid-cols-2 max-[620px]:grid-cols-1">
-            {g.items.map((c) => {
-              const note = authNote(c);
-              return (
-                <div
-                  key={c.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onConnect(c)}
-                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onConnect(c)}
-                  className={cn(CARD, "flex cursor-pointer flex-col gap-2.5 p-4 transition-colors outline-none hover:bg-s2 focus-visible:ring-2 focus-visible:ring-ring/50")}
+      <div className="grid grid-cols-3 gap-2 max-[760px]:grid-cols-2 max-[560px]:grid-cols-1">
+        {items.map((c) => {
+          const note = authNote(c);
+          return (
+            <div
+              key={c.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onConnect(c)}
+              onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onConnect(c)}
+              className="flex cursor-pointer flex-col gap-2 rounded-(--r3) p-[13px] shadow-[inset_0_0_0_1px_var(--line)] transition-colors outline-none hover:bg-s1 focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <div className="flex items-center gap-2.5">
+                <PluginMark face={c} size={36} />
+                <b className="min-w-0 truncate text-[13.5px] font-medium">{c.name}</b>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onConnect(c);
+                  }}
                 >
-                  <div className="flex items-center gap-3">
-                    <PluginMark face={c} size={36} />
-                    <b className="min-w-0 truncate text-[13.5px] font-semibold">{c.name}</b>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="ml-auto"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onConnect(c);
-                      }}
-                    >
-                      Connect
-                    </Button>
-                  </div>
-                  <div className="text-[12.5px] leading-normal text-ink3">{c.description}</div>
-                  {note && <div className="text-[11.5px] text-ink4">{note}</div>}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
-      {!showFeatured && groups.length === 0 && (
-        <div className={cn(CARD, "p-11 text-center text-[13px] text-ink3")}>
-          {query.trim() ? (
-            <>
-              Nothing in the catalog matches “{query.trim()}”.{" "}
-              <button type="button" className="cursor-pointer text-ink underline decoration-ink4 underline-offset-[3px]" onClick={onAddAs}>
-                Add it as an MCP server
-              </button>
-            </>
-          ) : (
-            "Everything in the catalog is connected."
-          )}
-        </div>
+                  Connect
+                </Button>
+              </div>
+              <div className="text-[12.5px] leading-normal text-ink3">{c.description}</div>
+              {note && <div className="text-[11.5px] text-ink4">{note}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {!showFeatured && items.length === 0 && (
+        <Empty
+          action={
+            query.trim() ? (
+              <Button variant="outline" size="sm" onClick={onAddAs}>
+                <Plus /> Add an MCP server
+              </Button>
+            ) : undefined
+          }
+        >
+          {query.trim() ? `Nothing in the catalog matches “${query.trim()}”.` : "Everything in the catalog is connected."}
+        </Empty>
       )}
     </>
   );
@@ -614,58 +501,37 @@ function CatalogTab({
 function SkillsTab({
   skills,
   agents,
-  meName,
   onOpen,
   onNew,
 }: {
   skills: Skill[];
   agents: RosterAgent[];
-  meName: string;
   onOpen: (skill: Skill) => void;
   onNew: () => void;
 }) {
-  const me = useMe();
   return (
-    <div className="grid grid-cols-3 gap-2.5 max-[900px]:grid-cols-2 max-[620px]:grid-cols-1">
-      {skills.map((s) => {
-        const author = agents.find((a) => a.id === s.by);
-        const users = agents.filter((a) => s.grants.includes(a.id));
-        return (
-          <div
-            key={s.slug}
-            role="button"
-            tabIndex={0}
-            onClick={() => onOpen(s)}
-            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen(s)}
-            className={cn(CARD, "relative cursor-pointer px-[18px] pt-[18px] pb-4 transition-colors outline-none hover:bg-s2 focus-visible:ring-2 focus-visible:ring-ring/50")}
-          >
-            <div className="flex items-center gap-2 text-sm font-semibold tracking-[-0.01em]">
-              <BookOpen className="size-[15px] text-ink3" /> <span className="truncate">{s.name}</span>
-            </div>
-            <pre className="mt-3 h-[104px] overflow-hidden font-mono text-[11px] leading-[1.7] whitespace-pre-wrap text-ink3 [mask-image:linear-gradient(#000_50%,transparent)]">
-              {s.md}
-            </pre>
-            <div className="mt-2.5 flex items-center gap-2 text-xs text-ink3">
-              {author ? <AgentTile id={author.id} kind={author.kind} color={author.color} size={18} /> : <MeAvatar me={me} size={18} />}
-              by {author?.name ?? meName}
-              <span className="ml-auto">
-                <Faces agents={users} />
-              </span>
-            </div>
-          </div>
-        );
-      })}
-      <button
-        type="button"
-        onClick={onNew}
-        className="grid min-h-[200px] cursor-pointer place-items-center rounded-(--r4) text-ink3 shadow-[inset_0_0_0_1px_var(--line)] transition-colors hover:bg-s1 hover:text-ink"
-      >
-        <div className="text-center">
-          <Plus className="mx-auto size-5" />
-          <div className="mt-2 font-medium">New skill</div>
-          <div className="mt-0.5 text-xs text-ink4">A how-to any agent can follow</div>
-        </div>
-      </button>
-    </div>
+    <>
+      <Group>
+        {skills.map((s) => {
+          const n = agents.filter((a) => s.grants.includes(a.id)).length;
+          return (
+            <Row
+              key={s.slug}
+              lead={<Zap />}
+              title={s.name}
+              sub={`${n} agent${n === 1 ? "" : "s"} use${n === 1 ? "s" : ""} it`}
+              right={<Val kind="next" />}
+              onClick={() => onOpen(s)}
+            />
+          );
+        })}
+        {skills.length === 0 && <Empty>No skill matches.</Empty>}
+      </Group>
+      <div className="mt-3.5 flex gap-1.5">
+        <Button variant="outline" onClick={onNew}>
+          <Plus className="size-3.5" /> New skill
+        </Button>
+      </div>
+    </>
   );
 }

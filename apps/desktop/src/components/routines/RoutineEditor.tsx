@@ -1,20 +1,24 @@
-import { Bell, BarChart3, Check, Copy, Eye, EyeOff, Globe, Hash, Inbox, Key, MessageSquare, MessageSquareReply, Moon, Plus, RefreshCw, Trash2, Zap, Clock, Webhook } from "lucide-react";
+import { Bell, BarChart3, ChevronDown, Clock, Copy, Eye, EyeOff, Globe, Key, Moon, RefreshCw, Zap } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import AgentTile from "@/components/AgentTile";
+import { Group, Row, Section, Val } from "@/components/kit/kit";
 import { SourceMark } from "@/components/routines/Sentence";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { fieldClassName } from "@/components/ui/input";
-import { Segmented } from "@/components/ui/segmented";
-import { Sheet } from "@/components/ui/sheet";
+import { Modal } from "@/components/ui/modal";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import {
   ALL_DAYS,
   DAY_LETTERS,
+  DAY_NAMES,
   SOURCES,
   TEMPLATES,
+  WEEKDAYS,
   hookUrl,
+  infinitive,
   newSecret,
   sentenceParts,
   type Channel,
@@ -25,24 +29,52 @@ import type { HookInfo, Routine, RoutineInput } from "@/types/events";
 
 const TEMPLATE_ICON = { bell: Bell, usage: BarChart3, bolt: Zap, moon: Moon } as const;
 
-const H = ({ children }: { children: ReactNode }) => (
-  <h4 className="mt-5 mb-2 text-xs font-medium text-ink2 first:mt-0">{children}</h4>
+type Repeat = "daily" | "weekday" | "weekly" | "custom" | "service";
+const REPEATS: { value: Repeat; label: string }[] = [
+  { value: "daily", label: "Every day" },
+  { value: "weekday", label: "Every weekday" },
+  { value: "weekly", label: "Every week" },
+  { value: "custom", label: "Chosen days" },
+  { value: "service", label: "When a service calls" },
+];
+
+const repeatOf = (t: RoutineInput["trigger"]): Repeat => {
+  if (t.kind === "webhook") return "service";
+  const key = [...new Set(t.days)].sort().join();
+  if (key === ALL_DAYS.join()) return "daily";
+  if (key === WEEKDAYS.join()) return "weekday";
+  return t.days.length === 1 ? "weekly" : "custom";
+};
+
+const Sec = ({ className, ...p }: React.ComponentProps<typeof Section>) => (
+  <Section {...p} className={cn("[&>b]:leading-[1.5]", className)} />
 );
 
-/// The pill a pick in the editor is drawn as: lit when chosen.
-function Pill({ on, onClick, children, mono }: { on: boolean; onClick: () => void; children: ReactNode; mono?: boolean }) {
+const PICK =
+  "flex min-h-11 w-full cursor-pointer items-center gap-[11px] px-3 py-[9px] text-left transition-colors hover:bg-s2 focus-visible:bg-s2 focus-visible:outline-none";
+
+/// A row whose right side is a value that opens a menu of choices: the mockup's `Down` row.
+function PickRow({ title, value, current, onPick, children }: {
+  title: string;
+  value: ReactNode;
+  current: string;
+  onPick: (v: string) => void;
+  children: ReactNode;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex h-7 cursor-pointer items-center rounded-full px-3 text-xs transition-colors",
-        mono && "font-mono text-[11.5px]",
-        on ? "bg-ink text-background" : "bg-s2 text-ink2 hover:bg-s3 hover:text-ink",
-      )}
-    >
-      {children}
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={PICK}>
+          <b className="block flex-1 text-[13px] leading-[1.4] font-medium">{title}</b>
+          <Val kind="down">{value}</Val>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        <DropdownMenuRadioGroup value={current} onValueChange={onPick}>
+          {children}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -56,9 +88,10 @@ function HookRow({ icon, children, actions }: { icon: ReactNode; children: React
   );
 }
 
-/// The centered sheet that makes or changes a routine: templates, who, when
-/// (a clock or a service), what, where the result goes, quiet, and the sentence
-/// it adds up to, live on the right.
+/// The dialog that makes or changes a routine: who, when, what, in the mockup's four fields.
+/// Everything the page can do beyond that (name, full prompt, where the result goes, quiet,
+/// templates, run history) sits behind "More options", and a service's address and secret
+/// appear only once "When a service calls" is picked.
 export default function RoutineEditor({
   seed,
   existing,
@@ -81,8 +114,14 @@ export default function RoutineEditor({
   onSave: (input: RoutineInput) => Promise<boolean>;
   onDelete: () => void;
 }) {
-  const [draft, setDraft] = useState<RoutineInput>(seed);
+  // A routine made from a chat message arrives with a prompt and no short line.
+  const [draft, setDraft] = useState<RoutineInput>(() => ({
+    ...seed,
+    act: infinitive(seed.act || seed.prompt.slice(0, 80)),
+  }));
+  const [repeat, setRepeat] = useState<Repeat>(() => repeatOf(seed.trigger));
   const [template, setTemplate] = useState<number | null>(null);
+  const [more, setMore] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [saving, setSaving] = useState(false);
   const isNew = existing === null;
@@ -93,175 +132,137 @@ export default function RoutineEditor({
   const set = (patch: Partial<RoutineInput>) => setDraft((d) => ({ ...d, ...patch }));
   const url = hookUrl(hook.base, agent?.workspaceId ?? null, draft.id ?? "");
   const secret = draft.secret ?? "";
-  const ready = draft.prompt.trim().length > 0 && !!draft.agentId;
+  const ready = draft.act.trim().length > 0 && !!draft.agentId;
+  const schedule = t.kind === "schedule" ? t : null;
 
   const copy = (text: string, what: string) => {
     void navigator.clipboard?.writeText(text).catch(() => {});
     toast(`${what} copied`, { icon: <Copy /> });
   };
 
+  const pickRepeat = (next: string) => {
+    const r = next as Repeat;
+    setRepeat(r);
+    if (r === "service") {
+      set({ trigger: { kind: "webhook", source: "GitHub", event: SOURCES.GitHub[0] }, secret: draft.secret || newSecret() });
+      return;
+    }
+    const base = schedule ?? { kind: "schedule" as const, days: WEEKDAYS, time: "09:00", tz: "local" };
+    const days = r === "daily" ? ALL_DAYS : r === "weekday" ? WEEKDAYS : r === "weekly" ? [base.days[0] ?? 0] : base.days;
+    set({ trigger: { ...base, days: r === "custom" && days.length < 2 ? [0, 2, 4] : days } });
+  };
+
   const save = async () => {
     if (!ready || saving) return;
     setSaving(true);
-    const ok = await onSave({ ...draft, act: draft.act.trim() || "does the job" });
+    const act = draft.act.trim();
+    const ok = await onSave({ ...draft, act, name: draft.name.trim() || act[0].toUpperCase() + act.slice(1), prompt: draft.prompt.trim() || act });
     setSaving(false);
     if (ok) onClose();
   };
 
   const recent = (existing?.runs ?? []).slice(-16);
-  const parts = sentenceParts(draft, name, channels);
+  const parts = sentenceParts({ trigger: t, act: draft.act.trim() || "…" }, name);
   const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  const destinations: { value: string; label: ReactNode }[] = [
-    { value: "agent_chat", label: <><MessageSquare className="size-3.5" />{name}&apos;s chat</> },
-    ...channels.map((c) => ({ value: `channel:${c.id}`, label: <><Hash className="size-3.5" />{c.name}</> })),
-    { value: "inbox", label: <><Inbox className="size-3.5" />Inbox</> },
-    { value: "pr_comment", label: <><MessageSquareReply className="size-3.5" />a PR comment</> },
+  const destinations: { value: string; label: string }[] = [
+    { value: "agent_chat", label: `${name}'s chat` },
+    ...channels.map((c) => ({ value: `channel:${c.id}`, label: `#${c.name}` })),
+    { value: "inbox", label: "Inbox" },
+    { value: "pr_comment", label: "A PR comment" },
   ];
 
   return (
-    <Sheet
+    <Modal
       open
-      onOpenChange={(o) => !o && onClose()}
-      mode="centered"
-      width={860}
-      title={isNew ? "New routine" : existing.name}
-      sub={
-        isNew
-          ? "An agent does something on its own, on a clock or a signal"
-          : `${name} · ${existing.trigger.kind === "webhook" ? "webhook" : "schedule"}`
-      }
-      icon={
-        <span className="grid size-[30px] place-items-center rounded-(--r2) bg-s3 text-ink2">
-          {isNew ? <Plus className="size-4" /> : <Clock className="size-4" />}
+      onClose={onClose}
+      width={540}
+      title={isNew ? "New routine" : "Edit routine"}
+      lead={
+        <span className="grid size-11 shrink-0 place-items-center text-ink2">
+          <Clock className="size-[22px]" />
         </span>
       }
       footer={
         <>
           {!isNew && (
-            <Button variant="bad" onClick={onDelete}>
-              <Trash2 className="size-[13px]" /> Delete
+            <Button variant="bad" className="mr-auto" onClick={onDelete}>
+              Delete
             </Button>
           )}
-          <Button variant="ghost" className="ml-auto" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="solid" disabled={!ready || saving} onClick={save}>
-            {isNew ? "Create routine" : "Save changes"}
+            Save routine
           </Button>
         </>
       }
     >
-      {isNew && (
-        <>
-          <H>Start from a template</H>
-          <div className="mb-1.5 grid grid-cols-4 gap-2">
-            {TEMPLATES.map((tpl, i) => {
-              const Icon = TEMPLATE_ICON[tpl.icon];
-              return (
-                <button
-                  key={tpl.name}
-                  type="button"
-                  onClick={() => {
-                    setTemplate(i);
-                    set({ ...tpl.set });
-                  }}
-                  className={cn(
-                    "cursor-pointer rounded-(--r3) bg-s1 p-3 text-left shadow-[inset_0_0_0_1px_var(--line)] transition-[background,box-shadow] hover:bg-s2",
-                    template === i && "shadow-[inset_0_0_0_1.5px_var(--ink2)]",
-                  )}
-                >
-                  <Icon className="mb-2.5 size-[18px] text-ink2" />
-                  <b className="block text-[12.5px] font-semibold">{tpl.name}</b>
-                  <span className="mt-[3px] block text-[11.5px] leading-[1.4] text-ink3">{tpl.description}</span>
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
+      <Sec title="Who" className="first:mt-5" />
+      <Group>
+        <PickRow
+          title="Agent"
+          current={draft.agentId}
+          onPick={(agentId) => set({ agentId })}
+          value={
+            <>
+              {agent && <AgentTile id={agent.id} kind={agent.kind} color={agent.color} shape={agent.shape} look={agent.look} photo={agent.photo} size={22} />}
+              {name}
+            </>
+          }
+        >
+          {agents.map((a) => (
+            <DropdownMenuRadioItem key={a.id} value={a.id}>
+              <AgentTile id={a.id} kind={a.kind} color={a.color} shape={a.shape} look={a.look} photo={a.photo} size={20} />
+              {a.name}
+            </DropdownMenuRadioItem>
+          ))}
+        </PickRow>
+      </Group>
 
-      <div className="mt-5 grid grid-cols-[1fr_250px] gap-7 max-md:grid-cols-1">
-        <div className="min-w-0">
-          <H>Name</H>
-          <input
-            value={draft.name}
-            onChange={(e) => set({ name: e.target.value })}
-            placeholder="Weekly numbers"
-            className={fieldClassName}
-          />
-
-          <H>Who runs it</H>
-          {agents.length === 0 ? (
-            <p className="text-[13px] text-ink3">Make an agent first. A routine is something an agent does.</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-1.5">
-              {agents.map((a) => {
-                const on = a.id === draft.agentId;
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => set({ agentId: a.id })}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-[9px] rounded-(--r3) px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-s2",
-                      on ? "bg-s2 shadow-[inset_0_0_0_1.5px_var(--ink3)]" : "bg-s1 shadow-[inset_0_0_0_1px_var(--line)]",
-                    )}
-                  >
-                    <AgentTile id={a.id} kind={a.kind} color={a.color} size={26} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{a.name}</span>
-                      <em className="block truncate text-[11.5px] font-normal text-ink3 not-italic">{a.role}</em>
-                    </span>
-                    <span
-                      className={cn(
-                        "grid size-4 shrink-0 place-items-center rounded-full",
-                        on ? "bg-ink text-background" : "shadow-[inset_0_0_0_1.5px_var(--line3)]",
-                      )}
-                    >
-                      {on && <Check className="size-[11px]" strokeWidth={2.6} />}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          <H>When</H>
-          <Segmented
-            value={t.kind}
-            label="When it runs"
-            onChange={(kind) =>
-              set({
-                trigger:
-                  kind === "schedule"
-                    ? { kind: "schedule", days: [0, 1, 2, 3, 4], time: "09:00", tz: "local" }
-                    : { kind: "webhook", source: "GitHub", event: SOURCES.GitHub[0] },
-                secret: draft.secret || newSecret(),
-              })
-            }
-            options={[
-              { value: "schedule", label: <><Clock className="size-[13px]" /> On a schedule</> },
-              { value: "webhook", label: <><Webhook className="size-[13px]" /> When a service calls</> },
-            ]}
-          />
-
-          {t.kind === "schedule" ? (
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <div className="flex gap-1">
+      <Sec title="When" />
+      <Group>
+        <PickRow title="Repeat" current={repeat} onPick={pickRepeat} value={REPEATS.find((r) => r.value === repeat)?.label}>
+          {REPEATS.map((r) => (
+            <DropdownMenuRadioItem key={r.value} value={r.value}>
+              {r.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </PickRow>
+        {schedule && repeat === "weekly" && (
+          <PickRow
+            title="Day"
+            current={String(schedule.days[0] ?? 0)}
+            onPick={(d) => set({ trigger: { ...schedule, days: [Number(d)] } })}
+            value={DAY_NAMES[schedule.days[0] ?? 0]}
+          >
+            {DAY_NAMES.map((n, i) => (
+              <DropdownMenuRadioItem key={n} value={String(i)}>
+                {n}
+              </DropdownMenuRadioItem>
+            ))}
+          </PickRow>
+        )}
+        {schedule && repeat === "custom" && (
+          <Row
+            title="Days"
+            right={
+              <span className="flex gap-1">
                 {DAY_LETTERS.map((letter, i) => {
-                  const on = t.days.includes(i);
+                  const on = schedule.days.includes(i);
                   return (
                     <button
                       key={i}
                       type="button"
+                      aria-label={DAY_NAMES[i]}
                       aria-pressed={on}
                       onClick={() => {
-                        if (on && t.days.length === 1) return;
-                        set({ trigger: { ...t, days: on ? t.days.filter((d) => d !== i) : [...t.days, i].sort() } });
+                        if (on && schedule.days.length === 1) return;
+                        set({ trigger: { ...schedule, days: on ? schedule.days.filter((d) => d !== i) : [...schedule.days, i].sort() } });
                       }}
                       className={cn(
-                        "grid size-[30px] cursor-pointer place-items-center rounded-full text-xs font-medium transition-colors",
+                        "grid size-6 cursor-pointer place-items-center rounded-full text-[11px] font-medium transition-colors",
                         on ? "bg-ink text-background" : "bg-s2 text-ink3 hover:bg-s3",
                       )}
                     >
@@ -269,42 +270,62 @@ export default function RoutineEditor({
                     </button>
                   );
                 })}
-              </div>
+              </span>
+            }
+          />
+        )}
+        {schedule && (
+          <Row
+            title="Time"
+            right={
               <input
                 type="time"
-                value={t.time}
-                onChange={(e) => e.target.value && set({ trigger: { ...t, time: e.target.value } })}
-                className={cn(fieldClassName, "w-[110px] tabular-nums")}
+                title={`${tzName} time`}
+                value={schedule.time}
+                onChange={(e) => e.target.value && set({ trigger: { ...schedule, time: e.target.value } })}
+                className="w-[120px] rounded-md bg-transparent px-1.5 py-[3px] text-right text-[12.5px] text-ink2 tabular-nums outline-none transition-colors hover:bg-s3 hover:text-ink focus:bg-s3 focus:text-ink"
               />
-              <span className="text-xs text-ink4">{tzName} time</span>
-              <button
-                type="button"
-                className="cursor-pointer text-xs text-ink3 underline decoration-ink4 underline-offset-[3px] hover:text-ink"
-                onClick={() => set({ trigger: { ...t, days: ALL_DAYS } })}
-              >
-                Every day
-              </button>
-            </div>
-          ) : (
-            <div className="mt-3">
-              <Segmented
-                value={t.source}
-                label="Which service"
-                onChange={(source) => set({ trigger: { kind: "webhook", source, event: SOURCES[source][0] } })}
-                options={Object.keys(SOURCES).map((s) => ({
-                  value: s,
-                  label: <><SourceMark source={s} size={16} />{s}</>,
-                }))}
-              />
-              <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {(SOURCES[t.source] ?? []).map((e) => (
-                  <Pill key={e} mono on={e === t.event} onClick={() => set({ trigger: { ...t, event: e } })}>
-                    {e}
-                  </Pill>
-                ))}
-              </div>
-
-              <div className="mt-4 mb-2 text-xs font-medium text-ink2">Point {t.source} at this address</div>
+            }
+          />
+        )}
+        {t.kind === "webhook" && (
+          <>
+            <PickRow
+              title="Service"
+              current={t.source}
+              onPick={(source) => set({ trigger: { kind: "webhook", source, event: SOURCES[source][0] } })}
+              value={
+                <>
+                  <SourceMark source={t.source} size={16} />
+                  {t.source}
+                </>
+              }
+            >
+              {Object.keys(SOURCES).map((s) => (
+                <DropdownMenuRadioItem key={s} value={s}>
+                  <SourceMark source={s} size={16} />
+                  {s}
+                </DropdownMenuRadioItem>
+              ))}
+            </PickRow>
+            <PickRow
+              title="Event"
+              current={t.event}
+              onPick={(event) => set({ trigger: { ...t, event } })}
+              value={<code className="font-mono text-[11.5px]">{t.event}</code>}
+            >
+              {(SOURCES[t.source] ?? [t.event]).map((e) => (
+                <DropdownMenuRadioItem key={e} value={e}>
+                  <code className="font-mono text-[11.5px]">{e}</code>
+                </DropdownMenuRadioItem>
+              ))}
+            </PickRow>
+          </>
+        )}
+      </Group>
+      {t.kind === "webhook" && (
+        <div className="mx-1 mt-3">
+              <div className="mb-2 text-xs font-medium text-ink2">Point {t.source} at this address</div>
               <HookRow
                 icon={<Globe />}
                 actions={
@@ -343,70 +364,126 @@ export default function RoutineEditor({
                 cannot reach it by itself: run a tunnel such as <code className="font-mono">cloudflared tunnel --url {hook.base || "http://127.0.0.1:47831"}</code> or
                 ngrok, and put its public address in place of {hook.base || "the local one"}. Routines run while hz is open.
               </p>
-            </div>
+        </div>
+      )}
+
+      <Sec title="What it does" />
+      <textarea
+        rows={3}
+        value={draft.act}
+        onChange={(e) => set({ act: e.target.value })}
+        placeholder="check the pool and report capacity"
+        className={cn(fieldClassName, "resize-none py-[9px] leading-[1.55]")}
+      />
+      <p className="px-1 py-2 text-[13px] leading-[1.55] text-ink3">
+        {parts.map((p, i) =>
+          p.chip === "agent" ? (
+            <span key={i} className="border-b border-dashed border-ink4 font-medium">
+              {p.text}
+            </span>
+          ) : (
+            <span key={i}>{p.text}</span>
+          ),
+        )}
+      </p>
+
+      <button
+        type="button"
+        aria-expanded={more}
+        onClick={() => setMore((m) => !m)}
+        className="mx-1 mt-1 inline-flex cursor-pointer items-center gap-1 text-xs text-ink3 transition-colors hover:text-ink"
+      >
+        More options <ChevronDown className={cn("size-3.5 transition-transform", more && "rotate-180")} />
+      </button>
+
+      {more && (
+        <div className="mt-1">
+          {isNew && (
+            <>
+              <Sec title="Start from a template" />
+              <div className="grid grid-cols-2 gap-2">
+                {TEMPLATES.map((tpl, i) => {
+                  const Icon = TEMPLATE_ICON[tpl.icon];
+                  return (
+                    <button
+                      key={tpl.name}
+                      type="button"
+                      onClick={() => {
+                        setTemplate(i);
+                        set({ ...tpl.set });
+                        if (tpl.set.trigger) setRepeat(repeatOf(tpl.set.trigger));
+                        if (tpl.set.trigger?.kind === "webhook") set({ secret: draft.secret || newSecret() });
+                      }}
+                      className={cn(
+                        "cursor-pointer rounded-(--r3) bg-s1 p-3 text-left shadow-[inset_0_0_0_1px_var(--line)] transition-[background,box-shadow] hover:bg-s2",
+                        template === i && "shadow-[inset_0_0_0_1.5px_var(--ink2)]",
+                      )}
+                    >
+                      <Icon className="mb-2 size-[17px] text-ink2" />
+                      <b className="block text-[12.5px] font-medium">{tpl.name}</b>
+                      <span className="mt-[3px] block text-[11.5px] leading-[1.4] text-ink3">{tpl.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
           )}
 
-          <H>What {name} does</H>
-          <input
-            value={draft.act}
-            onChange={(e) => set({ act: e.target.value })}
-            placeholder="pulls the weekly numbers"
-            className={fieldClassName}
-          />
+          <Sec title="Details" />
+          <Group>
+            <Row
+              title="Name"
+              right={
+                <input
+                  value={draft.name}
+                  onChange={(e) => set({ name: e.target.value })}
+                  placeholder="Weekly numbers"
+                  className="w-[220px] rounded-md bg-transparent px-1.5 py-[3px] text-right text-[12.5px] text-ink2 outline-none transition-colors placeholder:text-ink4 hover:bg-s3 hover:text-ink focus:bg-s3 focus:text-ink"
+                />
+              }
+            />
+            <PickRow
+              title="Send the result to"
+              current={draft.to}
+              onPick={(to) => set({ to })}
+              value={destinations.find((d) => d.value === draft.to)?.label ?? draft.to}
+            >
+              {destinations.map((d) => (
+                <DropdownMenuRadioItem key={d.value} value={d.value}>
+                  {d.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </PickRow>
+            <Row
+              title="Quiet run"
+              sub="No ping unless something changed or it needs you"
+              right={<Switch checked={draft.quiet} onCheckedChange={(quiet) => set({ quiet })} aria-label="Quiet run" />}
+            />
+          </Group>
+
+          <Sec title="Full prompt" />
           <textarea
+            rows={4}
             value={draft.prompt}
             onChange={(e) => set({ prompt: e.target.value })}
-            placeholder={`The full prompt ${name} gets every run.`}
-            className={cn(fieldClassName, "mt-2 h-[110px] resize-none leading-[1.6]")}
+            placeholder={`What ${name} gets every run. Left empty, it is the line above.`}
+            className={cn(fieldClassName, "resize-none py-[9px] leading-[1.55]")}
           />
 
-          <H>Where the result goes</H>
-          <Segmented value={draft.to} label="Where the result goes" onChange={(to) => set({ to })} options={destinations} />
-          <p className="mt-1.5 text-xs text-ink4">
-            {name} always answers in its own chat. The Inbox and channels get a copy as well: a channel posts it as {name}.
-          </p>
-
-          <div className="mt-4 flex items-center gap-3 text-[13px]">
-            <div>
-              <div className="font-medium">Quiet run</div>
-              <div className="mt-px text-xs text-ink3">No ping unless something changed or it needs you</div>
-            </div>
-            <Switch className="ml-auto" checked={draft.quiet} onCheckedChange={(quiet) => set({ quiet })} aria-label="Quiet run" />
-          </div>
-          {error && <p className="mt-3 text-xs text-red">{error}</p>}
+          {!isNew && (
+            <>
+              <Sec title="Last runs" />
+              <div className="flex gap-[3px]">
+                {recent.length === 0 && <span className="text-xs text-ink4">None yet.</span>}
+                {recent.map((r) => (
+                  <i key={r.at} className={cn("h-5 max-w-3.5 flex-1 rounded-[3px] opacity-75", r.status === "fail" ? "bg-red" : "bg-green")} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
-
-        <div>
-          <div className="sticky top-0 rounded-(--r3) bg-s1 p-4 shadow-[inset_0_0_0_1px_var(--line)]">
-            <div className="text-xs font-medium text-ink3">In one sentence</div>
-            <div className="mt-2.5 text-sm leading-[1.65] text-ink2">
-              {parts.map((p, i) =>
-                p.chip ? (
-                  <b key={i} className="font-[550] text-ink">
-                    {p.text || "…"}
-                  </b>
-                ) : (
-                  <span key={i}>{p.text}</span>
-                ),
-              )}
-            </div>
-            {!isNew && (
-              <>
-                <div className="mt-5 text-xs font-medium text-ink3">Last runs</div>
-                <div className="mt-1 flex gap-[3px]">
-                  {recent.length === 0 && <span className="text-xs text-ink4">None yet.</span>}
-                  {recent.map((r) => (
-                    <i
-                      key={r.at}
-                      className={cn("h-5 max-w-3.5 flex-1 rounded-[3px] opacity-75", r.status === "fail" ? "bg-red" : "bg-green")}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </Sheet>
+      )}
+      {error && <p className="mt-3 text-xs text-red">{error}</p>}
+    </Modal>
   );
 }

@@ -1,0 +1,16 @@
+/* The left column's motion: a list settling in, the working dots, a dot arriving, the face lifting under the cursor.
+   Prefixed so nothing collides with the app's own keyframes. */
+@keyframes side-rise{from{opacity:0;transform:translateY(4px)}}
+@keyframes side-tdot{0%,60%,100%{opacity:.3;transform:none}30%{opacity:1;transform:translateY(-2px)}}
+@keyframes side-dotin{from{transform:scale(0)}}
+.side-rise>*{animation:side-rise .32s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 18ms)}
+.side-wk{display:inline-flex;gap:2px;flex:none}
+.side-wk i{width:3px;height:3px;border-radius:50%;background:var(--blue);animation:side-tdot 1.2s infinite}
+.side-wk i:nth-child(2){animation-delay:.15s}
+.side-wk i:nth-child(3){animation-delay:.3s}
+.side-dot{animation:side-dotin .35s cubic-bezier(.3,1.35,.5,1)}
+.side-face{transition:transform .3s cubic-bezier(.3,1.35,.5,1)}
+.side-row:hover .side-face{transform:scale(1.06)}
+.side-pin:hover .side-face{transform:translateY(-2px) scale(1.04)}
+.side-row:active,.side-pin:active{transform:scale(.985)}
+@media (prefers-reduced-motion:reduce){.side-rise>*,.side-dot,.side-wk i{animation:none}.side-face{transition:none}}

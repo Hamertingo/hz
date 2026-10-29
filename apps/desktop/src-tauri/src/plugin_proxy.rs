@@ -206,7 +206,8 @@ async fn call(app: Option<&AppHandle>, ws: &str, agent: &agents::AgentRecord, pl
         Ok(value) => {
             let ok = value["isError"].as_bool() != Some(true);
             log(outcome, ok, ms);
-            value
+            // A connector's answer is outside text: the agent reads it as data, never as orders.
+            crate::safety_tools::wrap_result(value, &plugin.name)
         }
         Err(e) => {
             // The connection may be the thing that broke; the next call opens a new one.
